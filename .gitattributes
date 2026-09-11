@@ -1,0 +1,15 @@
+* text=auto eol=lf
+
+*.v    text
+*.sv   text
+*.vhd  text
+*.xdc  text
+*.tcl  text
+*.md   text
+Makefile text
+
+*.bit  binary
+*.bin  binary
+*.pdf  binary
+*.png  binary
+*.jpg  binary
