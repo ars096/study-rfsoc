@@ -39,15 +39,21 @@ make prog                     # JTAG 書き込み
 
 ## 運用
 
-Mac で編集し、Vivado サーバでビルドする。remote を2つ持つ。
+Mac で編集し、Vivado サーバでビルドする。**サーバは GitHub から直接 pull する。**
+public リポジトリなので認証なしで clone でき、Mac を中継する必要がない。
 
 ```bash
-git remote add origin git@github.com:<user>/rfsoc.git                       # 正本
-git remote add build  ssh://<user>@<server>/home/<user>/git/rfsoc           # ビルド機
-
+# Mac
 git push origin main
-git push build  main          # サーバ側で receive.denyCurrentBranch=updateInstead
+
+# Vivado サーバ
+git pull
+make
+make prog
 ```
+
+サーバが GitHub に到達できない環境では、Mac に build remote を足してサーバへ直接 push する
+代替案がある（サーバ側で `receive.denyCurrentBranch=updateInstead`）。現時点では不要。
 
 ## ライセンス
 
