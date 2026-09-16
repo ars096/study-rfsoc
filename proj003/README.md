@@ -112,6 +112,13 @@ VCO = 9830.4 MHz (FeedbackDiv = 20) / OutDiv = 8 → fs = 1228.8 MSPS
   **重要**: 待機中も `s_axis_tready` は 1 に保つ。上流に backpressure をかけると
   RFDC 側がサンプルを落とす
 
+- **決定**: 動いているタイルには触らない（既定は検証のみ）
+  **理由**: ビットストリームをロードした時点でタイルは起動し、PLL もロックしている
+  （2026-09-16 に確認: `PLLLockStatus` = 2 / `SamplingFreq` = 1.2288 / `ClockSource` = 1）。
+  そこへ `DynamicPLLConfig` や `StartUp` をかけるのは、**動いている状態をわざわざ
+  壊しにいく**ことになる。`adc_capture.py` は状態を読んで検証するだけで、
+  作り直しは `--pll-config` / `--restart` を明示したときにしか行わない
+
 - **決定**: XDC には制約だけを書き、検証は `build.tcl` 側で行う
   **理由**: **XDC では一般の Tcl が使えない。** `if` / `foreach` / `lsort` / `concat`
   は `CRITICAL WARNING: [Designutils 20-1307]` で弾かれ、**その行は実行されない**。
@@ -294,13 +301,12 @@ sudo python3 adc_capture.py --tone 800.0 --zone 2   # 第 2 ナイキストゾ�
 
 ## 着手前に裏取りが要ること
 
-- **ADC_A の tile / block**。RefMan A6 では **ADC_A / ADC_B が Tile 226、
-  ADC_C / ADC_D が Tile 224**。デュアルタイルのスライス番号は **0 と 2**
-  （1 と 3 は disabled parameter になる。2026-09-16 のビルド警告で確定）。
-  したがって **ADC_A = Tile 226 slice 0 / ADC_B = Tile 226 slice 2**。
-  `build.tcl` はこれを前提にしている。`xrfdc` 側の `blocks[]` の並びが
-  これと一致するかは `adc_capture.py --probe` で確かめる。
-  **ここを間違えると「DMA は完走するのに中身がノイズだけ」になる**
+- ~~**ADC_A の tile / block**~~ → **確定済み（2026-09-16）**。
+  Vivado 側は Tile 226 slice 0、PYNQ 側は **`rfdc.adc_tiles[2].blocks[0]`**。
+  他のタイル・ブロックは `not available in XRFdc_GetBlockStatus` を返すので、
+  無効化が効いていることも同時に確認できた。
+  デュアルタイルのスライス番号が 0 と 2 であることは、`ADC_Slice*1_Enable` /
+  `*3_Enable` が disabled parameter になることから分かる
 - 14 bit サンプルを 16 bit 語に収める際のビットの寄せ方。`--probe` の後の
   取得で `max|x|` を見る（±32768 級なら MSB 揃え、±8192 級なら LSB 揃え）
 - 試験トーンの周波数。ADC 入力は **MABA-011118 バラン（10 MHz 〜 10 GHz）** で
@@ -328,6 +334,7 @@ sudo python3 adc_capture.py --tone 800.0 --zone 2   # 第 2 ナイキストゾ�
 | タイル PLL がロックしない | `xrfclk.set_ref_clk()` を先に呼んだか。LMX が 491.52 MHz を出しているか |
 | DMA が完了しない / `done`=0 かつ `busy`=0 | ゲートが一度も起動していない。GPIO の配線か arm のビット割り当て |
 | DMA が完了しない / `busy`=1 のまま | RFDC から `tvalid` が出ていない。タイルの起動と、MMCM がロックしているか |
+| `IsFIFOFlagsAsserted` が 0 以外になる | **RFDC がサンプルを落としている = 記録が不連続**。下流の帯域（FIFO / DMA / HP ポート）。ブロックに `GetIntrStatus` は無く、これが唯一の検出手段 |
 | 取れたデータが全部 0 | **ADC_A の tile / slice の取り違え**。`--probe` |
 | ピーク周波数が合わない | fs の思い込み。`adc_capture.py` が実測 fs を出すのでそれを見る |
 | 振幅が 1/4 になる | 14 bit のビット寄せ |

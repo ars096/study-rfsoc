@@ -60,37 +60,69 @@ def setup_clocks():
     fn(lmk_freq=LMK_FREQ, lmx_freq=LMX_FREQ)
 
 
-def start_tile(rfdc, fs_hz, zone):
-    """タイルを起動して PLL のロックを確かめる。ロックしなければ止める。"""
-    tile = rfdc.adc_tiles[TILE]
-    try:
-        # source=1 は内蔵 PLL。単位は MHz
-        # fs = 1228.8 = VCO 9830.4 / OutDiv 8、refclk 491.52 = VCO / 20
-        tile.DynamicPLLConfig(1, LMX_FREQ, fs_hz / 1e6)
-    except Exception as e:                      # noqa: BLE001
-        log(f"WARNING: DynamicPLLConfig が失敗した: {e}")
-        log("  ビットストリームに焼かれた設定のまま続行する")
+def start_tile(rfdc, fs_hz, zone, restart=False, pll_config=False):
+    """タイルの状態を確かめる。**すでに動いていれば触らない。**
 
-    tile.SetupFIFO(True)
-    tile.StartUp()
-    time.sleep(0.1)
+    ビットストリームをロードした時点でタイルは起動し、PLL もロックしている
+    （2026-09-16 に確認: PLLLockStatus = 2 / SamplingFreq = 1.2288）。
+    そこへ DynamicPLLConfig や StartUp をかけると、動いている状態をわざわざ
+    壊しにいくことになる。**既定は検証のみ。** 明示的に指示されたときだけ触る。
+    """
+    tile = rfdc.adc_tiles[TILE]
+    block = tile.blocks[BLOCK]
+
+    if pll_config:
+        # fs = 1228.8 = VCO 9830.4 / OutDiv 8、refclk 491.52 = VCO / 20
+        log(f"DynamicPLLConfig(1, {LMX_FREQ}, {fs_hz / 1e6})")
+        tile.DynamicPLLConfig(1, LMX_FREQ, fs_hz / 1e6)
+    if restart:
+        log("tile.ShutDown() → StartUp()")
+        tile.ShutDown()
+        tile.StartUp()
+        time.sleep(0.2)
+
+    try:
+        tile.SetupFIFO(True)
+    except Exception as e:                      # noqa: BLE001
+        log(f"WARNING: SetupFIFO が失敗した: {e}")
 
     lock = tile.PLLLockStatus
-    log(f"PLLLockStatus = {lock}  (2 = locked)")
+    log(f"PLLLockStatus = {lock}  (2 = locked) / ClockSource = {_try(tile, 'ClockSource')}")
     if lock != 2:
         log("ERROR: タイル PLL がロックしていない。")
-        log("  1. xrfclk.set_ref_clk() を呼んだか")
+        log("  1. xrfclk.set_ref_clks() を呼んだか")
         log("  2. LMX が 491.52 MHz を出しているか")
-        log("  3. build.tcl の VCO 計算（8.5〜13.2 GHz）を外していないか")
+        log("  3. --pll-config / --restart で作り直してみる")
         sys.exit(1)
 
-    block = tile.blocks[BLOCK]
+    st = block.BlockStatus
+    log(f"BlockStatus = {st}")
+    got_fs = st.get("SamplingFreq")
+    if got_fs is not None and abs(got_fs * 1e9 - fs_hz) > 1e3:
+        log(f"ERROR: 実際の fs = {got_fs} GSPS が要求 {fs_hz / 1e9} GSPS と違う")
+        sys.exit(1)
+    log(f"fs (実機) = {got_fs} GSPS")
+
     try:
         block.NyquistZone = zone
         log(f"NyquistZone = {block.NyquistZone}")
     except Exception as e:                      # noqa: BLE001
         log(f"WARNING: NyquistZone を設定できない: {e}")
     return tile, block
+
+
+def fifo_flags(block):
+    """RFDC の FIFO オーバーフローを見る。
+
+    ブロックに GetIntrStatus は無い（2026-09-16 に確認）。
+    BlockStatus の IsFIFOFlagsAsserted が立てば取りこぼしが起きている。
+    **これが記録の不連続を検出できる唯一の手段。**
+    """
+    try:
+        st = block.BlockStatus
+        return st.get("IsFIFOFlagsAsserted")
+    except Exception as e:                      # noqa: BLE001
+        return f"(読めない: {e})"
 
 
 def _api(obj, keep):
@@ -167,7 +199,7 @@ def probe(ol, rfdc):
 
 
 # ------------------------------------------------------------------- 取得
-def capture(ol, n_samples):
+def capture(ol, n_samples, block=None):
     """ゲートを arm して n_samples 取る。DMA を先に張ってから arm する。"""
     from pynq import allocate
 
@@ -179,6 +211,13 @@ def capture(ol, n_samples):
 
     gpio = ol.gpio_capture
     dma = ol.dma_adc
+    try:
+        gpio.channel1.setdirection("out")
+        gpio.channel2.setdirection("in")
+    except Exception:                           # noqa: BLE001
+        pass
+    if block is not None:
+        log(f"取得前  IsFIFOFlagsAsserted = {fifo_flags(block)}")
 
     buf = allocate(shape=(n_samples,), dtype=np.int16)
 
@@ -212,25 +251,18 @@ def capture(ol, n_samples):
     if not st & STATUS_DONE:
         log("WARNING: ゲートの done が立っていない。記録が途中で切れている可能性がある")
 
+    if block is not None:
+        f = fifo_flags(block)
+        log(f"取得後  IsFIFOFlagsAsserted = {f}")
+        if f:
+            log("  **RFDC がサンプルを落としている。記録が不連続。**")
+            log("  下流が詰まっている（FIFO / DMA / HP ポートの帯域）")
+
     out = np.array(buf)
     buf.freebuffer()
     return out
 
 
-def check_overflow(block):
-    """RFDC の FIFO オーバーフローを見る。取りこぼしを検出できる唯一の手段。"""
-    for attr in ("IntrStatus", "GetIntrStatus", "FIFOStatus"):
-        try:
-            v = getattr(block, attr)
-            v = v() if callable(v) else v
-            log(f"RFDC {attr} = {v}")
-            return
-        except Exception:                       # noqa: BLE001
-            continue
-    log("NOTE: RFDC の割り込み状態を読む口が見つからなかった（取りこぼしは検出できない）")
-
-
-# ------------------------------------------------------------------- 解析
 def analyse(x, fs_hz, tone_hz, window):
     n = len(x)
     rbw = fs_hz / n
@@ -311,6 +343,10 @@ def main():
     p.add_argument("--save", default=None, help="生サンプルを .npy で保存する")
     p.add_argument("--probe", action="store_true", help="構成を出して終わる")
     p.add_argument("--no-clk", action="store_true", help="xrfclk を触らない")
+    p.add_argument("--restart", action="store_true",
+                   help="タイルを ShutDown → StartUp する（既定は触らない）")
+    p.add_argument("--pll-config", action="store_true",
+                   help="DynamicPLLConfig でタイル PLL を設定し直す（既定は触らない）")
     args = p.parse_args()
 
     from pynq import Overlay
@@ -351,10 +387,10 @@ def main():
         return
 
     fs_hz = args.fs * 1e6
-    _, block = start_tile(rfdc, fs_hz, args.zone)
+    _, block = start_tile(rfdc, fs_hz, args.zone,
+                          restart=args.restart, pll_config=args.pll_config)
 
-    x = capture(ol, args.nsamples)
-    check_overflow(block)
+    x = capture(ol, args.nsamples, block)
 
     if args.save:
         np.save(args.save, x)

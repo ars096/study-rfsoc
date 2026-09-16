@@ -156,6 +156,21 @@ RFSoC4x2 で LMX の 491.52 MHz を使う場合、成立する動作点は
 
 RFSoC4x2 の `xrfclk` 引数は `lmk_freq=245.76, lmx_freq=491.52`。
 
+**ビットストリームをロードした時点でタイルは起動し、PLL もロックしている。**
+`StartUp()` / `DynamicPLLConfig()` を呼ぶ必要はなく、呼べば動いている状態を壊しうる。
+状態は `tile.PLLLockStatus`（2 = locked）と `block.BlockStatus` で読む。
+
+| 使える API | |
+|---|---|
+| `tile` | `ClockSource` `DynamicPLLConfig` `FIFOStatus` `GetFIFOStatusObs` `PLLConfig` `PLLLockStatus` `Reset` `SetupFIFO` `SetupFIFOBoth` `SetupFIFOObs` `ShutDown` `StartUp` `blocks` |
+| `block` | `BlockStatus` `CalFreeze` `CalibrationMode` `GetCalCoefficients` `MixerSettings` `NyquistZone` `ResetNCOPhase` `SetCalCoefficients` |
+
+**ブロックに `GetIntrStatus` は無い。** ADC の取りこぼし（= 記録の不連続）は
+`block.BlockStatus['IsFIFOFlagsAsserted']` で見る。これが唯一の検出手段。
+
+無効にしたタイル / ブロックは `not available in XRFdc_GetBlockStatus` を返す。
+**どのタイルが生きているかはこれで確認できる。**
+
 ### 外部 10 MHz 基準クロックの罠
 
 **外部基準を挿していなくても LMK04828 の PLL2 はオンボード VCXO で出力を作る。**
