@@ -156,6 +156,38 @@ RFSoC4x2 で LMX の 491.52 MHz を使う場合、成立する動作点は
 
 評価ボードで動く設定ファイルが実装基板では動かない例が報告されている。
 
+## XDC と Vivado の run について
+
+**XDC では一般の Tcl が使えない。** `if` / `foreach` / `while` / `lsort` / `concat` は
+
+```
+CRITICAL WARNING: [Designutils 20-1307] Command 'if' is not supported in the xdc constraint file.
+```
+
+で弾かれ、**その行は実行されない**。オブジェクトが取れないときに警告を出すような
+防御的な書き方をすると、防御自体が動かず制約が丸ごと無効になる。
+**XDC には制約だけを書き、条件分岐や検証は `build.tcl` 側（`open_run` 後）で行う。**
+
+**`launch_runs` は別プロセスなので、run の中の警告は `make` のコンソールに出ない。**
+`build/vivado/<proj>.runs/*/runme.log` にしかない。上の 20-1307 はこれと重なると
+永久に見えないため、`build.tcl` の末尾で run のログから `CRITICAL WARNING` を
+拾い上げること（proj003 で実装）。
+
+2026-09-16 に proj003 で、この 2 つが重なって **WNS = −4.556 ns のビットストリームが
+完走した**。クロック内の経路はすべて余裕があり、違反はクロック間だけだった。
+
+### RFSoC4x2 のクロック実名（proj003 のブロックデザイン）
+
+| クロック | 周期 | 中身 |
+|---|---|---|
+| `clk_pl_0` | 10.000 ns | PS の PL クロック 0 |
+| `clk_pl_1` | 5.714 ns | PS の PL クロック 1。**200 MHz を要求して 175 MHz になる** |
+| `RFADC<n>_CLK` | — | RFDC の `clk_adc<n>`（= `Outclk_Freq`） |
+| `clk_out1_system_<clkwiz>_0` | — | Clocking Wizard の出力（生成クロック） |
+
+**PS の PL クロックは要求値どおりに出るとは限らない。** PLL の刻みで下がり、
+警告も出ない。`get_property CONFIG.FREQ_HZ` で読み返して確かめること。
+
 ## board files の置き場所
 
 `board.repoPaths` に渡すのは **`board.xml` の 2 階層上**（`rfsoc4x2/` を含むディレクトリ）。

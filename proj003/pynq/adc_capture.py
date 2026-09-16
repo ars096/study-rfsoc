@@ -41,9 +41,23 @@ def log(*a):
 
 # --------------------------------------------------------------------- 起動
 def setup_clocks():
+    """LMK04828 / LMX2594 を設定する。
+
+    関数名は xrfclk の版で変わる（v3.1.1 は set_ref_clks、旧版は set_ref_clk）。
+    どちらでも動くように実体を探す。
+    """
     import xrfclk
-    log(f"xrfclk.set_ref_clk(lmk_freq={LMK_FREQ}, lmx_freq={LMX_FREQ})")
-    xrfclk.set_ref_clk(lmk_freq=LMK_FREQ, lmx_freq=LMX_FREQ)
+    fn = None
+    for name in ("set_ref_clks", "set_ref_clk"):
+        fn = getattr(xrfclk, name, None)
+        if fn is not None:
+            break
+    if fn is None:
+        log("ERROR: xrfclk に set_ref_clks / set_ref_clk のどちらも無い")
+        log(f"  使える名前: {[n for n in dir(xrfclk) if not n.startswith('_')]}")
+        sys.exit(1)
+    log(f"xrfclk.{fn.__name__}(lmk_freq={LMK_FREQ}, lmx_freq={LMX_FREQ})")
+    fn(lmk_freq=LMK_FREQ, lmx_freq=LMX_FREQ)
 
 
 def start_tile(rfdc, fs_hz, zone):
@@ -95,6 +109,14 @@ def _try(obj, name):
 
 
 def probe(ol, rfdc):
+    try:
+        import xrfclk
+        log("=== xrfclk ===")
+        log(f"  {[n for n in dir(xrfclk) if not n.startswith('_')]}")
+        log("")
+    except Exception as e:                      # noqa: BLE001
+        log(f"xrfclk が import できない: {e}")
+
     log("=== ip_dict ===")
     for k in sorted(ol.ip_dict):
         log(f"  {k}")

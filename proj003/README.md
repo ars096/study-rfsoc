@@ -112,6 +112,22 @@ VCO = 9830.4 MHz (FeedbackDiv = 20) / OutDiv = 8 → fs = 1228.8 MSPS
   **重要**: 待機中も `s_axis_tready` は 1 に保つ。上流に backpressure をかけると
   RFDC 側がサンプルを落とす
 
+- **決定**: XDC には制約だけを書き、検証は `build.tcl` 側で行う
+  **理由**: **XDC では一般の Tcl が使えない。** `if` / `foreach` / `lsort` / `concat`
+  は `CRITICAL WARNING: [Designutils 20-1307]` で弾かれ、**その行は実行されない**。
+  2026-09-16、「オブジェクトが取れなかったら警告を出す」という防御的な書き方をして
+  これを踏んだ。**防御そのものが動かない構文だったため制約が丸ごと無効になり、
+  WNS = −4.556 ns のビットストリームが完走した**
+  **付随**: `launch_runs` は別プロセスなので、run の中の警告は `make` のコンソールに
+  出ない。`build.tcl` は実装後に run のログから `CRITICAL WARNING` を拾い上げる。
+  これが無いと 20-1307 は永久に見えない
+  **付随**: クロックは実装の段階で出そろうので、`timing.xdc` は
+  `USED_IN_SYNTHESIS false` にしてある
+
+- **決定**: タイミングが閉じていないビルドは `make` を失敗させる
+  **理由**: 「できたように見えるが使ってはいけない `.bit`」を黙って置いていくと、
+  あとで必ず取り違える。成果物は調査のために残すが、終了コードは非ゼロにする
+
 - **決定**: AXIS クロックは `rfdc/clk_adc2` から Clocking Wizard で作る
   **理由**: RFDC は AXIS の 153.6 MHz を出さない。IP の出力ピン `clk_adc2` は
   `Outclk_Freq`（fs/16, fs/32, fs/64 から選ぶ）で、AXIS が必要とする `Fabric_Freq`
@@ -302,7 +318,9 @@ sudo python3 adc_capture.py --tone 800.0 --zone 2   # 第 2 ナイキストゾ�
 | BUFG の段数に関する DRC が出る | `clk_wiz_adc` の `PRIM_SOURCE`。`No_buffer` を前提にしているので `Global_buffer` に変えてみる |
 | MMCM がロックしない | `clk_adc2` はタイルが起動して初めて出る。`xrfdc` でタイルを起動する前は `locked` が 0 で正常 |
 | RFDC が設定を丸めた、と言って止まる | タイル PLL の VCO 範囲（8.5〜13.2 GHz）。上の計算をやり直す |
-| **WNS が説明できない値になる** | `src/timing.xdc` の非同期クロックグループが効いているか。`build/clocks.rpt` でクロック名を確認 |
+| **WNS が説明できない値になる** | 非同期クロックグループが効いているか。`---- クロック ----` と `GROUP:` の出力を見る。クロック内は余裕があるのに WNS が大きく負なら、乗り換えの宣言漏れ |
+| XDC を書いたのに効いていない | **XDC では `if` / `foreach` / `lsort` / `concat` が使えない**（`Designutils 20-1307`）。弾かれた行は実行されない。`---- run の CRITICAL WARNING ----` に出る |
+| DRC に `27 net(s) have no routable loads` | 無効にした ADC/DAC タイルの `*_done_i` など。**正常**（使っていないタイルの信号） |
 | `xrfdc` がタイルを見つけない | `.hwh` に RFDC が入っているか。**ボードに持ち込む前に確認できる** |
 | タイル PLL がロックしない | `xrfclk.set_ref_clk()` を先に呼んだか。LMX が 491.52 MHz を出しているか |
 | DMA が完了しない / `done`=0 かつ `busy`=0 | ゲートが一度も起動していない。GPIO の配線か arm のビット割り当て |

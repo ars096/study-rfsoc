@@ -561,8 +561,37 @@ assign_bd_address
 validate_bd_design
 save_bd_design
 
+# ---- PS の PL クロックの実周波数を確かめる ----
+# **要求した値がそのまま出るとは限らない。**PS の PLL の刻みで下がる
+# （2026-09-16: 200 MHz を要求して 175 MHz になった）。
+# しかも誰も警告しないので、clocks.rpt を見るまで気づけない。part のすり替えと同じ構図。
+puts ""
+puts "---- PS の PL クロック ----"
+set hz_data 0
+foreach {pin want} [list \
+        zynq_ultra_ps_e_0/pl_clk0 $ctrl_mhz \
+        zynq_ultra_ps_e_0/pl_clk1 $data_mhz] {
+    set hz ""
+    catch {set hz [get_property CONFIG.FREQ_HZ [BP $pin]]}
+    set mhz [expr {$hz eq "" ? 0 : $hz / 1e6}]
+    puts [format "  %-12s 要求 %6s MHz → 実際 %8.3f MHz" [file tail $pin] $want $mhz]
+    if {[file tail $pin] eq "pl_clk1"} { set hz_data $hz }
+}
+
+# データ経路の帯域が足りるか。足りないと FIFO が溢れ、RFDC がサンプルを落として
+# 記録が不連続になる（FFT ではノイズフロアの上昇として現れ、原因が遠い）。
+set need_bps  [expr {$fs_gsps * 1e9 * 2}]
+set avail_bps [expr {$hz_data * ($spw * 2)}]
+puts [format "  必要 %.4f GB/s / MM 側 %.4f GB/s （余裕 %.1f %%）" \
+      [expr {$need_bps/1e9}] [expr {$avail_bps/1e9}] \
+      [expr {($avail_bps/$need_bps - 1.0) * 100}]]
+if {$avail_bps < $need_bps * 1.1} {
+    puts "ERROR: データ経路の帯域が足りない（余裕 10% 未満）。"
+    puts "  pl_clk1 を上げるか、fs を下げるか、AXI の語幅を広げること"
+    exit 1
+}
+
 set fh [open $outdir/address_map.rpt w]
-foreach seg [get_bd_addr_segs -excluded -quiet] { puts $fh "EXCLUDED $seg" }
 foreach seg [get_bd_addr_segs -quiet] {
     puts $fh [format "%-56s %s +%s" $seg \
         [get_property OFFSET $seg] [get_property RANGE $seg]]
@@ -583,6 +612,9 @@ set_property top ${bd_name}_wrapper [current_fileset]
 update_compile_order -fileset sources_1
 
 add_files -fileset constrs_1 -norecurse ./src/timing.xdc
+# クロックは実装の段階で出そろう。合成時に get_clocks が空を返すと
+# set_clock_groups がエラーになるので、実装でのみ使う。
+set_property USED_IN_SYNTHESIS false [get_files timing.xdc]
 
 # ---- part の検証 ----
 # board_part による part のすり替えは WARNING 1 行でしか通知されない。
@@ -611,12 +643,58 @@ report_utilization    -file $outdir/utilization.rpt
 report_drc            -file $outdir/drc.rpt
 report_clocks         -file $outdir/clocks.rpt
 
+# ---- run のログから CRITICAL WARNING を拾い上げる ----
+# **launch_runs は別プロセスなので、run の中の警告はこのコンソールに出ない。**
+# 特に Designutils 20-1307（XDC で使えない Tcl コマンド）は、制約が丸ごと
+# 効かないまま実装が完走するので、これを見落とすと実在しない違反を追うことになる
+# （2026-09-16 に WNS = -4.556 ns のビットストリームを作った）。
+puts ""
+puts "---- run の CRITICAL WARNING ----"
+set seen 0
+foreach lf [lsort [glob -nocomplain $projdir/$proj.runs/*/runme.log]] {
+    set fh [open $lf r]
+    foreach line [split [read $fh] \n] {
+        if {[string match "CRITICAL WARNING*" $line]} {
+            puts "  [file tail [file dirname $lf]]: $line"
+            incr seen
+        }
+    }
+    close $fh
+}
+if {$seen == 0} { puts "  （なし）" }
+
+# ---- クロックと非同期グループ ----
+puts ""
+puts "---- クロック ----"
+foreach c [get_clocks -quiet] {
+    puts [format "  %-34s %8.3f ns  (%7.3f MHz)" $c \
+          [get_property PERIOD $c] [expr {1000.0/[get_property PERIOD $c]}]]
+}
+set grps [get_clock_groups -quiet]
+if {[llength $grps] == 0} {
+    puts "  **非同期クロックグループが 1 つも無い。src/timing.xdc が効いていない。**"
+} else {
+    foreach g $grps { puts "  GROUP: $g" }
+}
+
 set wns [get_property STATS.WNS [get_runs impl_1]]
 set whs [get_property STATS.WHS [get_runs impl_1]]
+puts ""
 puts "TIMING: WNS = $wns ns / WHS = $whs ns"
 if {$wns ne "" && $wns < 0} {
-    puts "WARNING: セットアップ違反あり（WNS < 0）"
-    puts "  まず src/timing.xdc の非同期クロックグループが効いているかを $outdir/clocks.rpt で確認する"
+    puts ""
+    puts "---- 違反している経路（上位 10、起点と終点のクロック）----"
+    puts "  クロック対が違っていれば乗り換えの制約漏れ。同じなら設計が重い。"
+    foreach pth [get_timing_paths -quiet -max_paths 10 -nworst 1 -setup \
+                 -slack_lesser_than 0] {
+        puts [format "  slack %9.3f  %-28s → %s" \
+              [get_property SLACK $pth] \
+              [get_property STARTPOINT_CLOCK $pth] \
+              [get_property ENDPOINT_CLOCK $pth]]
+    }
+    puts ""
+    puts "WARNING: セットアップ違反あり（WNS < 0）。この .bit は実機に使わない"
+    set timing_failed 1
 }
 
 # ---- 成果物を build/ 直下へ。PYNQ は .bit と .hwh が同名同階層であることを要求する ----
@@ -632,6 +710,19 @@ file copy -force $hwh $outdir/$proj.hwh
 
 puts "=== wrote $outdir/$proj.bit ==="
 puts "=== wrote $outdir/$proj.hwh ==="
+
+# **タイミングが閉じていないビルドは失敗として扱う。**
+# 成果物は調査のために残すが、make は非ゼロで終わる。
+# 「できたように見えるが使ってはいけない .bit」を黙って置いていくと、
+# あとで必ず取り違える。
+if {[info exists timing_failed]} {
+    puts ""
+    puts "ERROR: タイミングが閉じていない。成果物は調査用に残したが実機に使わないこと。"
+    puts "  上の「違反している経路」でクロック対を見る。"
+    puts "  クロック対が違っていれば src/timing.xdc の非同期宣言の漏れ。"
+    puts "  **XDC で if / foreach を使うと黙って無効になる**（Designutils 20-1307）"
+    exit 1
+}
 
 if {!$use_board} {
     puts ""
