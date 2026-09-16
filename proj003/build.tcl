@@ -643,6 +643,12 @@ report_utilization    -file $outdir/utilization.rpt
 report_drc            -file $outdir/drc.rpt
 report_clocks         -file $outdir/clocks.rpt
 
+# ---- ここから診断。**診断の失敗でビルドを壊さない。** ----
+# 2026-09-16、存在しないコマンド（get_clock_groups）を診断に書いたために、
+# write_bitstream まで成功していたのに成果物のコピーに到達しなかった。
+# 調べるためのコードが、調べたい対象を壊してはいけない。
+if {[catch {
+
 # ---- run のログから CRITICAL WARNING を拾い上げる ----
 # **launch_runs は別プロセスなので、run の中の警告はこのコンソールに出ない。**
 # 特に Designutils 20-1307（XDC で使えない Tcl コマンド）は、制約が丸ごと
@@ -670,11 +676,19 @@ foreach c [get_clocks -quiet] {
     puts [format "  %-34s %8.3f ns  (%7.3f MHz)" $c \
           [get_property PERIOD $c] [expr {1000.0/[get_property PERIOD $c]}]]
 }
-set grps [get_clock_groups -quiet]
-if {[llength $grps] == 0} {
-    puts "  **非同期クロックグループが 1 つも無い。src/timing.xdc が効いていない。**"
-} else {
-    foreach g $grps { puts "  GROUP: $g" }
+# 非同期宣言が効いたかは report_clock_interaction で見る。
+# **get_clock_groups というコマンドは存在しない**（2026-09-16 に書いて落とした）。
+report_clock_interaction -delay_type min_max -significant_digits 3 \
+    -file $outdir/clock_interaction.rpt
+set fh [open $outdir/clock_interaction.rpt r]
+set ci [read $fh]
+close $fh
+set n_async [regexp -all -nocase {asynchronous} $ci]
+puts ""
+puts "クロック間の制約: $outdir/clock_interaction.rpt"
+puts "  asynchronous を含む箇所 = $n_async"
+if {$n_async == 0} {
+    puts "  **非同期の宣言が見当たらない。src/timing.xdc が効いていない可能性がある**"
 }
 
 set wns [get_property STATS.WNS [get_runs impl_1]]
@@ -694,8 +708,19 @@ if {$wns ne "" && $wns < 0} {
     }
     puts ""
     puts "WARNING: セットアップ違反あり（WNS < 0）。この .bit は実機に使わない"
-    set timing_failed 1
 }
+
+} diag_err]} {
+    puts ""
+    puts "WARNING: 診断の途中で失敗した（ビルドは続行する）: $diag_err"
+}
+
+# 診断が途中で落ちても、WNS の判定だけは必ず行う
+set wns [get_property STATS.WNS [get_runs impl_1]]
+set whs [get_property STATS.WHS [get_runs impl_1]]
+puts ""
+puts "TIMING (確定): WNS = $wns ns / WHS = $whs ns"
+if {$wns ne "" && $wns < 0} { set timing_failed 1 }
 
 # ---- 成果物を build/ 直下へ。PYNQ は .bit と .hwh が同名同階層であることを要求する ----
 set bit [lindex [glob -nocomplain $projdir/$proj.runs/impl_1/${bd_name}_wrapper.bit] 0]
