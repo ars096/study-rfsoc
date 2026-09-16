@@ -107,15 +107,17 @@ zynq_ultra_ps_e ──M_AXI_HPM0_FPD──▶ AXI SmartConnect ──▶ axi_gpi
 ```bash
 # Vivado サーバ
 cd proj002
-make            # 合成〜実装〜ビットストリーム（build/proj002.bit, build/proj002.hwh）
+make               # 合成〜実装〜ビットストリーム（build/proj002.bit, build/proj002.hwh）
+make timing-check  # 速度グレード -1 でも閉じるかを確認（build-1-e/ に出る）
 ```
 
-`Makefile` 先頭の 2 つを自分の環境に合わせる。
+`Makefile` 先頭の変数を自分の環境に合わせる。
 
 | 変数 | 意味 |
 |---|---|
 | `XILINX_VIVADO` | Vivado のインストール先。proj002 は **2024.1** |
 | `BOARD_REPO` | `RFSoC4x2-BSP/board_files` の場所。ここが違うと board part が見つからない |
+| `PART` | 既定は `xczu48dr-ffvg1517-2-e`。既定以外を指定すると出力先が `build-<grade>/` に分かれ、検証済みの成果物を上書きしない |
 
 **ボードの SD カードは v3.0.1 なので、先に v3.1.1 へ更新する**（[`../VERSIONS.md`](../VERSIONS.md)）。
 急ぐ場合の暫定策として `Overlay(BIT, ignore_version=True)` で 3.0.1 のまま試すこともできるが、

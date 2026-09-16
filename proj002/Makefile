@@ -9,18 +9,31 @@ XILINX_VIVADO ?= /tools/Xilinx/Vivado/2024.1
 VIVADO        := $(XILINX_VIVADO)/bin/vivado
 
 # RealDigitalOrg/RFSoC4x2-BSP を clone した先の board_files ディレクトリ。
-# 環境ごとに違うので Makefile では固定せず、ここを書き換えるか環境変数で渡す。
+# Vivado のインストールツリーの中には置かない（VERSIONS.md 参照）。
 BOARD_REPO ?= $(HOME)/src/RFSoC4x2-BSP/board_files
+
+# part。速度グレードは BSP board_files の宣言値が -2、RefMan A5 は -1 と読める記載で
+# 未決着（VERSIONS.md 参照）。**-1 で閉じる設計は -2 でも必ず閉じる**ので、
+# タイミングが効く設計は `make timing-check` で -1 でも通しておく。
+PART_DEFAULT := xczu48dr-ffvg1517-2-e
+PART         ?= $(PART_DEFAULT)
+
+# 既定以外の part は別ディレクトリに出し、検証済みの成果物を上書きしない。
+ifeq ($(PART),$(PART_DEFAULT))
+  OUTDIR := build
+else
+  OUTDIR := build-$(patsubst xczu48dr-ffvg1517-%,%,$(PART))
+endif
 
 JOBS ?= 8
 PROJ ?= proj002
 
-export BOARD_REPO
+export BOARD_REPO PART OUTDIR
 
-.PHONY: all prog id clean
+.PHONY: all prog id timing-check clean
 
-all: build
-	$(VIVADO) -mode batch -nojournal -log build/vivado.log -source build.tcl -tclargs $(JOBS)
+all: $(OUTDIR)
+	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(JOBS)
 
 prog:
 	$(VIVADO) -mode batch -nojournal -nolog -source program.tcl
@@ -29,8 +42,12 @@ prog:
 id:
 	$(VIVADO) -mode batch -nojournal -nolog -source program.tcl -tclargs id
 
-build:
-	mkdir -p build
+# 速度グレード -1 で通るかを確かめる。成果物は build-1-e/ に出るので build/ は無傷。
+timing-check:
+	$(MAKE) PART=xczu48dr-ffvg1517-1-e
+
+$(OUTDIR):
+	mkdir -p $(OUTDIR)
 
 clean:
-	rm -rf build .Xil *.jou *.log
+	rm -rf build build-* .Xil *.jou *.log

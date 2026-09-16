@@ -8,7 +8,9 @@
 #   make id     デバイスを表示するだけ（合成ライセンス不要）
 
 set id_only [expr {[llength $argv] > 0 && [lindex $argv 0] eq "id"}]
-set bitfile ./build/projNNN.bit
+set outdir ./build
+if {[info exists ::env(OUTDIR)] && $::env(OUTDIR) ne ""} { set outdir ./$::env(OUTDIR) }
+set bitfile $outdir/projNNN.bit
 
 open_hw_manager
 connect_hw_server -url localhost:3121   ;# 別機なら <host>:3121

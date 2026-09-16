@@ -14,6 +14,13 @@ set proj    proj002
 set part    xczu48dr-ffvg1517-2-e
 set bd_name system
 set outdir  ./build
+
+# part と出力先は Makefile から環境変数で受ける。
+# 既定以外の part（速度グレードの検証など）は別ディレクトリに出て、build/ を壊さない。
+if {[info exists ::env(PART)] && $::env(PART) ne ""} { set part $::env(PART) }
+if {[info exists ::env(OUTDIR)] && $::env(OUTDIR) ne ""} { set outdir ./$::env(OUTDIR) }
+puts "PART   : $part"
+puts "OUTDIR : $outdir"
 set projdir $outdir/vivado
 
 set jobs 8

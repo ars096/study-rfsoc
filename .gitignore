@@ -1,5 +1,6 @@
 # ---- Vivado の生成物（すべて再生成できる）----
 build/
+build-*/
 *.jou
 *.log
 *.str
