@@ -79,30 +79,69 @@ def start_tile(rfdc, fs_hz, zone):
     return tile, block
 
 
+def _api(obj, keep):
+    """オブジェクトが実際に持つ名前のうち、関係しそうなものだけ出す。"""
+    return sorted(n for n in dir(obj)
+                  if not n.startswith("_")
+                  and any(k.lower() in n.lower() for k in keep))
+
+
+def _try(obj, name):
+    try:
+        v = getattr(obj, name)
+        return v() if callable(v) else v
+    except Exception as e:                      # noqa: BLE001
+        return f"(読めない: {type(e).__name__}: {e})"
+
+
 def probe(ol, rfdc):
-    log("--- ip_dict ---")
+    log("=== ip_dict ===")
     for k in sorted(ol.ip_dict):
         log(f"  {k}")
-    log("--- ADC タイルとブロック ---")
-    for ti, tile in enumerate(rfdc.adc_tiles):
-        try:
-            en = [bi for bi, b in enumerate(tile.blocks) if _block_enabled(b)]
-        except Exception as e:                  # noqa: BLE001
-            en = f"(読めない: {e})"
-        log(f"  adc_tiles[{ti}]  (= Tile {224 + ti})  有効なブロック: {en}")
+
     log("")
-    log("**ADC_A に信号を入れた状態で取得し、どのブロックに乗るかで裏を取ること。**")
-    log("RefMan A6 では ADC_A / ADC_B が Tile 226、ADC_C / ADC_D が Tile 224。")
+    log("=== オーバーレイの属性 ===")
+    for name in ("rfdc", "dma_adc", "gpio_capture"):
+        log(f"  ol.{name}: {type(getattr(ol, name, None))}")
 
+    log("")
+    log("=== RFdc オブジェクト ===")
+    log(f"  type = {type(rfdc)}")
+    log(f"  API  = {_api(rfdc, ['tile', 'mts', 'reset', 'startup', 'clk'])}")
 
-def _block_enabled(block):
-    for attr in ("BlockStatus", "MixerSettings"):
+    log("")
+    log("=== ADC タイル ===")
+    try:
+        tiles = rfdc.adc_tiles
+    except Exception as e:                      # noqa: BLE001
+        log(f"  adc_tiles が読めない: {e}")
+        return
+    log(f"  タイル数 = {len(tiles)}")
+    for ti, tile in enumerate(tiles):
+        log(f"  --- adc_tiles[{ti}]  (= Tile {224 + ti}) ---")
+        if ti == TILE:
+            log("    API = " + str(_api(tile, ["pll", "startup", "fifo", "block",
+                                               "reset", "shutdown", "clock", "status"])))
+        for attr in ("PLLLockStatus", "ClockSource"):
+            log(f"    {attr} = {_try(tile, attr)}")
         try:
-            getattr(block, attr)
-            return True
-        except Exception:                       # noqa: BLE001
-            continue
-    return False
+            blocks = tile.blocks
+            log(f"    blocks の数 = {len(blocks)}")
+            for bi, b in enumerate(blocks):
+                mark = "   ← 使う予定" if (ti == TILE and bi == BLOCK) else ""
+                log(f"      blocks[{bi}] BlockStatus = {_try(b, 'BlockStatus')}{mark}")
+                if ti == TILE and bi == BLOCK:
+                    log("      blocks[%d] API = %s" % (bi, _api(
+                        b, ["mixer", "nyquist", "intr", "status", "nco", "cal"])))
+        except Exception as e:                  # noqa: BLE001
+            log(f"    blocks が読めない: {e}")
+
+    log("")
+    log("**確かめること**")
+    log("  1. adc_tiles[2] の blocks が 0/2 で並ぶのか 0/1 に詰まるのか")
+    log("     （Vivado 側では ADC_A = Tile 226 slice 0 / ADC_B = slice 2 で確定）")
+    log("  2. PLLLockStatus / SetupFIFO / StartUp / DynamicPLLConfig が API 一覧にあるか")
+    log("  3. ADC_A に信号を入れて取得し、どの blocks[] に乗るかで最終確認する")
 
 
 # ------------------------------------------------------------------- 取得
