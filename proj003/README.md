@@ -195,6 +195,7 @@ proj003 の中を 3 段に切る。詰まったときに容疑者が分かれる
 | `sim/tb_capture_gate.v` | `capture_gate` のテストベンチ（icarus verilog） |
 | `build/rfdc_params.rpt` | RFDC IP の全 CONFIG と許容値（生成物。版のズレを追う唯一の手がかり） |
 | `pynq/adc_capture.py` | ボード上での取得と FFT 検証 |
+| `tools/apsyn.py` | 試験トーンの供給。AnaPico APSYN420 を USBTMC で叩く（**Vivado サーバ**に USB 接続。標準ライブラリのみ） |
 | `program.tcl` | JTAG 書き込み（PYNQ 経由で使うので通常は不要） |
 
 ## 再現手順
@@ -208,6 +209,19 @@ make sim           # capture_gate のテストベンチ。RTL を触ったらま
 make               # 合成〜実装〜ビットストリーム
 make timing-check  # 速度グレード -1 でも閉じるか（build-1-e/ に出る）
 ```
+
+```bash
+# Vivado サーバ — 試験トーンの供給（APSYN420 を USB-B で繋ぐ）
+cd proj003
+python3 tools/apsyn.py --probe          # まずこれ。*IDN? と現在の設定
+python3 tools/apsyn.py --preset bin     # 100.005 MHz / -10 dBm / 出力 ON
+python3 tools/apsyn.py --preset leak    # 100.000 MHz（ビン中心から外す）
+python3 tools/apsyn.py --preset fold    # 600 MHz（第 2 ナイキストゾーン）
+python3 tools/apsyn.py --off            # 終わったら切る
+```
+
+**出力は -10 dBm を既定にしてある。** ADC 入力のフルスケールは +1 dBm 級しかなく、
+0 dBm を超える設定には `--force` が要る。
 
 ```bash
 # ボード（PYNQ v3.1.1）
@@ -263,4 +277,5 @@ sudo python3 adc_capture.py --tone 600.0 --zone 2   # 第 2 ナイキストゾ�
 | 振幅が 1/4 になる | 14 bit のビット寄せ |
 | ピークが 2 本立つ・位置が違う | ナイキストゾーンの折返し。`--zone` |
 | ノイズフロアが妙に高い | 記録が不連続になっている疑い。`make sim` と RFDC のオーバーフロー状態 |
+| `/dev/usbtmc*` が無い / 開けない | SG 側。`lsusb` と `dmesg \| tail`、udev ルール（`tools/apsyn.py` の docstring） |
 | board part / part がすり替わる | proj002 で入れた **part 一致検証**。RFDC はボード依存設定が多いのでここで効く |
