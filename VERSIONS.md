@@ -10,7 +10,7 @@
 |---|---|---|
 | Vivado | 2023.2 と 2024.1 を併設 | proj001 は 2023.2、**proj002 以降は 2024.1**（BSP と PYNQ v3.1 が前提とする版）。2026-09-16 に 2024.1 で `get_parts` / `get_board_parts` が通ることを確認 |
 | PYNQ image | v3.1.1 (Carlisle) | 2026-09-16 にカードを新規作成し、ボード上で `pynq.__version__` = 3.1.1 を確認。Vivado 2024.1 と整合。**旧 v3.0.1 カードは温存してある** |
-| Board files | RealDigitalOrg/RFSoC4x2-BSP `board_files/rfsoc4x2/1.0` | **Vivado のインストールツリーの外に clone し、`board.repoPaths` で指す。** ツリー内（`<Vivado>/data/boards/board_files`）に置くと版を増やすたびにコピーが要り、入れ直しで消える。commit は未固定 |
+| Board files | RealDigitalOrg/RFSoC4x2-BSP `board_files/rfsoc4x2/1.0` | commit **`40e6814a3b62eead76e41a29fdabc43030f89b6c`**（2025-09-24）。proj002 のビルドが実際に使って成功した版。**Vivado のインストールツリーの外に clone し、`board.repoPaths` で指す** |
 | Part | `xczu48dr-ffvg1517-2-e` | 根拠: BSP board_files の宣言値 |
 
 ### PYNQ イメージの版
@@ -50,7 +50,7 @@ JTAG からは判別できない（IDCODE に速度グレードが入ってお�
 | 書き込みポート | **PROG UART**（microUSB） |
 | FTDI | `0403:6010` FT2232C/D/H |
 | 自走 PL クロック | SYS_CLK_100M 100 MHz LVDS（Si5395 生成）/ P = AM15 |
-| ユーザ LED | AR11 / AW10 / AT11 / AU10（LVCMOS18） |
+| ユーザ LED | AR11 / AW10 / AT11 / AU10（LVCMOS18）。2026-09-16 に proj002 で点灯順序を物理的に確認済み |
 | 押しボタン | AV12 / AV10 / AW9 / AT12 |
 | スライドスイッチ | AN13 / AU12 / AW11 / AV11 |
 
@@ -69,6 +69,40 @@ JTAG からは判別できない（IDCODE に速度グレードが入ってお�
 各 proj の `Makefile` の `BOARD_REPO` で持つ。**Vivado のインストールツリーの中には置かない**
 （`<Vivado>/data/boards/board_files` は Vivado が自動で読むため指定が不要になり、
 「どこに置いたか」が記録されないまま版を増やすと見失う）。
+
+## board files の版は commit でしか識別できない
+
+**版表記 `1.0` は中身が変わっても据え置かれる。** 実際、RealDigital は `1.0` のまま
+`preset.xml` の DDR 設定を修正している。
+
+| commit | 内容 |
+|---|---|
+| `7981645` Added board files for RFSoC4x2 | `PSU__DDRC__ROW_ADDR_COUNT` = **17** |
+| `4b61c2a` Corrected DDR-4 Row Address Count | 同 = **16**（こちらが正） |
+
+したがって `1.0` と書くだけでは実体を特定できない。**必ず commit を記録する。**
+
+これは PL only の設計では表に出ない（`preset.xml` を読まないため）。
+PYNQ でも PS は SD の boot イメージで初期化済みなので影響しない。
+**効くのはこのブロックデザインから boot ファイル（FSBL / PetaLinux / `boot.bin`）を
+生成するとき**で、DDR の行アドレス幅が 1 bit ずれた状態で焼くことになる。
+
+2026-09-16 時点で `/tools/Xilinx/Vivado/2023.2/data/boards/board_files/rfsoc4x2` に
+修正**前**（17）のコピーが存在していた。同じ VLNV `realdigital.org:rfsoc4x2:part0:1.0` を
+名乗る中身の違う board file が同時に見えている状態は、どちらが採用されるか不定になるため退避した。
+
+## Vivado_init.tcl に注意
+
+`~/.Xilinx/Vivado/Vivado_init.tcl` は **Vivado の全バージョンが起動時に読む**初期化スクリプト。
+ここに `board.repoPaths` のような設定を書くと、**GUI とバッチで別の board file を見る**状態に
+なりうるし、設定が git に残らないので他のマシンで再現できない。
+
+各 proj の `build.tcl` は `set_param board.repoPaths` を明示的に実行するので、
+バッチビルドは `Vivado_init.tcl` の内容に影響されない（set であって append ではないため上書きされる）。
+**ただし GUI で開くと `Vivado_init.tcl` 側が効く。** 両者を食い違わせないこと。
+
+環境依存の設定は各 proj の `Makefile`（`XILINX_VIVADO` / `BOARD_REPO`）に持つのが原則。
+版が git 履歴に残る。
 
 ## ローカル環境（各自の設定。値はここに書かない）
 
