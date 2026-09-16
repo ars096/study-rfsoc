@@ -10,9 +10,10 @@
 #   build/proj002.bit   ビットストリーム
 #   build/proj002.hwh   ハードウェアハンドオフ（PYNQ が読む。.bit と同名にする）
 
-set proj    proj002
-set part    xczu48dr-ffvg1517-2-e
-set bd_name system
+set proj         proj002
+set part_default xczu48dr-ffvg1517-2-e
+set part         $part_default
+set bd_name      system
 set outdir  ./build
 
 # part と出力先は Makefile から環境変数で受ける。
@@ -100,6 +101,19 @@ validate_bd_design
 save_bd_design
 puts "=== block design ok ==="
 
+# board_part を設定すると、Vivado は project の part をボードの宣言値に強制的に
+# 合わせる（WARNING: Project 1-153 "A device change ... is being done"）。
+# そのため速度グレードの検証で -1 を指定しても黙って -2 に戻される。
+# board_part が要るのはボードプリセットを当てる block design の生成までなので、
+# ここで外して part を指定し直す。
+if {$part ne $part_default} {
+    puts "NOTE: 速度グレード検証のため board_part を外し、part を $part に設定し直す"
+    set_property board_part "" [current_project]
+    set_property part $part [current_project]
+    reset_target    all [get_files ${bd_name}.bd]
+    generate_target all [get_files ${bd_name}.bd]
+}
+
 # ---- ラッパと制約 ----
 set bd_file [get_files ${bd_name}.bd]
 make_wrapper -files $bd_file -top
@@ -113,6 +127,18 @@ set_property top ${bd_name}_wrapper [current_fileset]
 update_compile_order -fileset sources_1
 
 add_files -fileset constrs_1 -norecurse ./src/led.xdc
+
+# ---- part の検証 ----
+# 黙ってすり替わっていないことを合成前に確かめる。
+set part_actual [get_property PART [current_project]]
+if {$part_actual ne $part} {
+    puts "ERROR: 要求した part と実際の part が違う"
+    puts "  要求: $part"
+    puts "  実際: $part_actual"
+    puts "  board_part がボードの宣言値に引き戻している可能性がある（WARNING: Project 1-153）"
+    exit 1
+}
+puts "PART (確定): $part_actual"
 
 # ---- 合成〜実装〜ビットストリーム ----
 launch_runs impl_1 -to_step write_bitstream -jobs $jobs
