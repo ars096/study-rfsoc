@@ -52,12 +52,19 @@ set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e zynq_ultra_p
 apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e \
     -config {apply_board_preset "1"} $ps
 
-# PL クロック 100 MHz と AXI マスタ（HPM0_FPD）を有効にする。
-# プリセットで既に有効な場合もあるが、明示しておけば版が変わっても崩れない。
+# PL クロック 100 MHz と AXI マスタを設定する。
+# **使う AXI マスタだけでなく、使わないものも明示的に 0 にする。**
+# ボードプリセットは HPM1_FPD も有効にするため、放置すると maxihpm1_fpd_aclk が
+# どこにも繋がらず validate_bd_design が
+#   ERROR: [BD 41-758] The following clock pins are not connected to a valid clock source
+# で落ちる（2026-09-16 に実際に踏んだ）。
+#   GP0 = M_AXI_HPM0_FPD（使う） / GP1 = M_AXI_HPM1_FPD / GP2 = M_AXI_HPM0_LPD
 set_property -dict [list \
     CONFIG.PSU__FPGA_PL0_ENABLE {1} \
     CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ {100} \
     CONFIG.PSU__USE__M_AXI_GP0 {1} \
+    CONFIG.PSU__USE__M_AXI_GP1 {0} \
+    CONFIG.PSU__USE__M_AXI_GP2 {0} \
 ] $ps
 
 # AXI GPIO。PYNQ 側からは ip_dict のキー "gpio_led" で引く
