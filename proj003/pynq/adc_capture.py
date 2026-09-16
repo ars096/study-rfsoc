@@ -329,20 +329,25 @@ def analyse(x, fs_hz, tone_hz, window):
         f_fold = tone_hz % fs_hz
         if f_fold > fs_hz / 2:
             f_fold = fs_hz - f_fold
-        k_exp = int(round(f_fold / rbw))
-        log(f"期待値          : bin {k_exp} = {f_fold / 1e6:.6f} MHz "
-            f"（入力 {tone_hz / 1e6:.6f} MHz の折返し先）")
-        if k == k_exp:
-            log(f"  → 一致。fs = {fs_hz / 1e6:.3f} MSPS が裏付けられた")
-            # 折返していれば符号が反転する
-            sign = -1.0 if (tone_hz % fs_hz) > fs_hz / 2 else 1.0
-            d_hz = sign * (f_est - f_fold)
-            log(f"  周波数のずれ  : {d_hz:+.1f} Hz  = **{d_hz / tone_hz * 1e6:+.2f} ppm**")
-            log("    信号発生器とボードのクロックは独立なので、これは両者の周波数差。")
+        zone_in = int(tone_hz // (fs_hz / 2)) + 1
+        log(f"期待値          : {f_fold / 1e6:.6f} MHz "
+            f"（入力 {tone_hz / 1e6:.6f} MHz / 第 {zone_in} ナイキストゾーン）")
+
+        # **ビン番号の一致では判定しない。** SG とボードのクロックは独立なので、
+        # 高い周波数では ppm 級のずれが 1 ビットを超える（800 MHz で 15 ppm は
+        # 12 kHz = 0.64 ビン）。サブビン推定値との差を ppm で見る。
+        sign = -1.0 if (tone_hz % fs_hz) > fs_hz / 2 else 1.0
+        d_hz = sign * (f_est - f_fold)
+        ppm = d_hz / tone_hz * 1e6
+        log(f"  ずれ          : {d_hz:+.1f} Hz  = **{ppm:+.2f} ppm**")
+        if abs(ppm) < 100:
+            log(f"  → 一致。fs = {fs_hz / 1e6:.3f} MSPS が裏付けられた"
+                f"{'（折返しも確認）' if zone_in > 1 else ''}")
+            log("    このずれは SG とボードのクロックの周波数差。")
             log("    **proj004（外部 10 MHz 基準）で減るべき量。**")
         else:
-            log(f"  → **ずれ {k - k_exp} bin**。fs の思い込みを疑う。"
-                f"実測 fs ≈ {f_fold * n / (k + delta) / 1e6:.3f} MSPS")
+            log("  → **100 ppm を超えている。fs の思い込みか、ゾーンの読み違い**")
+            log(f"    実測 fs ≈ {f_fold * n / (k + delta) / 1e6:.3f} MSPS")
 
     # ピーク近傍を除いたノイズフロア
     mask = np.ones(len(mag), dtype=bool)
@@ -352,21 +357,29 @@ def analyse(x, fs_hz, tone_hz, window):
     log(f"ノイズフロア    : {floor:.2f} dBFS (中央値) / ピークとの差 {peak_dbfs - floor:.1f} dB")
 
     # ---- 高調波 ----
-    # **レベルが高すぎると ADC が圧縮し、高調波が立つ。**
-    # 入力を 10 dB 下げて高調波が 20〜30 dB 下がれば圧縮、変わらなければ元の信号の歪み。
+    # **dBc が入力レベルに追従するかどうかで、歪みの出どころが分かる。**
+    # 入力を 10 dB 下げて dBc が 20 dB 下がれば ADC の圧縮。変わらなければ
+    # 入力波形そのものの歪み。奇数次だけが 1/n で並べば方形波。
     log("")
-    log("高調波（基本波に対する dBc、ナイキストの折返し込み）:")
-    for h in (2, 3, 4, 5):
-        fh = (f_est * h) % fs_hz
+    log("高調波（基本波に対する dBc）:")
+    log("  n   bin        周波数       実測      方形波なら   ゾーン")
+    for h in range(2, 10):
+        f_h = f_est * h
+        zone_h = int(f_h // (fs_hz / 2)) + 1
+        fh = f_h % fs_hz
         if fh > fs_hz / 2:
             fh = fs_hz - fh
         kh = int(round(fh / rbw))
-        if not 0 < kh < len(mag):
+        if not 0 < kh < len(mag) - 1:
             continue
-        kh = int(np.argmax(mag[max(0, kh - 2):kh + 3]) + max(0, kh - 2))
+        lo = max(1, kh - 2)
+        kh = int(np.argmax(mag[lo:kh + 3]) + lo)
         dbc = 20 * np.log10(max(mag[kh], 1e-12) / max(mag[k], 1e-12))
-        flag = "   ← 大きい。入力レベルを下げる" if dbc > -40 else ""
-        log(f"  H{h}  bin {kh:>6}  {freqs[kh] / 1e6:>11.5f} MHz  {dbc:>7.2f} dBc{flag}")
+        sq = f"{20 * np.log10(1.0 / h):8.2f}" if h % 2 else "       —"
+        log(f"  H{h}  {kh:>6}  {freqs[kh] / 1e6:>11.5f} MHz  {dbc:>8.2f}  {sq}"
+            f"     {zone_h}{'  ← 折返し' if zone_h > 1 else ''}")
+    log("  奇数次が「方形波なら」の値に一致していれば、歪みは ADC ではなく")
+    log("  入力波形そのもの（方形波）。ADC は正しく再現している。")
 
     log("")
     log("上位 5 本:")
@@ -387,6 +400,8 @@ def main():
     p.add_argument("--window", default="hann", choices=("hann", "none"))
     p.add_argument("--fs", type=float, default=FS_HZ / 1e6, help="サンプリング周波数 [MSPS]")
     p.add_argument("--save", default=None, help="生サンプルを .npy で保存する")
+    p.add_argument("--load", default=None,
+                   help="保存した .npy を読んで解析するだけ（ボードを触らない）")
     p.add_argument("--probe", action="store_true", help="構成を出して終わる")
     p.add_argument("--no-clk", action="store_true", help="xrfclk を触らない")
     p.add_argument("--restart", action="store_true",
@@ -394,6 +409,15 @@ def main():
     p.add_argument("--pll-config", action="store_true",
                    help="DynamicPLLConfig でタイル PLL を設定し直す（既定は触らない）")
     args = p.parse_args()
+
+    # 保存したデータの解析だけなら、ボードにも PYNQ にも触らない。
+    # **取り直さずに解析を変えられる**ので、窓関数や期待周波数を変えて
+    # 何度でも見直せる。
+    if args.load:
+        x = np.load(args.load)
+        log(f"loaded: {args.load}  ({len(x)} サンプル)")
+        analyse(x, args.fs * 1e6, args.tone * 1e6 if args.tone else None, args.window)
+        return
 
     from pynq import Overlay
 
