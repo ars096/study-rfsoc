@@ -88,7 +88,7 @@ def probe(ol, rfdc):
             en = [bi for bi, b in enumerate(tile.blocks) if _block_enabled(b)]
         except Exception as e:                  # noqa: BLE001
             en = f"(読めない: {e})"
-        log(f"  adc_tiles[{ti}]  (= Tile {224 + 2 * ti})  有効なブロック: {en}")
+        log(f"  adc_tiles[{ti}]  (= Tile {224 + ti})  有効なブロック: {en}")
     log("")
     log("**ADC_A に信号を入れた状態で取得し、どのブロックに乗るかで裏を取ること。**")
     log("RefMan A6 では ADC_A / ADC_B が Tile 226、ADC_C / ADC_D が Tile 224。")
