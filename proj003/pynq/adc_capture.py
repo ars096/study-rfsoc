@@ -271,8 +271,19 @@ def analyse(x, fs_hz, tone_hz, window):
     log(f"サンプル数      : {n}  ({n / fs_hz * 1e6:.2f} us)")
     log(f"分解能 fs/N     : {rbw / 1e3:.3f} kHz")
     log(f"max|x|          : {amax}")
-    log(f"  → 14bit を 16bit のどこに寄せているか: "
-        f"{'MSB 揃え（±32768 級）' if amax > 8192 else 'LSB 揃え（±8192 級）'}の可能性")
+    # **ビット寄せは値の刻みで確定する。** 14bit を 16bit の上位に寄せていれば
+    # 下位 2bit は常に 0 になり、全サンプルが 4 の倍数になる。
+    nz = np.abs(x[x != 0])
+    step = int(np.gcd.reduce(nz)) if len(nz) else 0
+    full_scale = 32768.0
+    if step >= 4:
+        log(f"値の刻み        : {step}  → 14bit を 16bit の **上位に寄せている**"
+            f"（下位 {int(np.log2(step))} bit は常に 0）")
+    elif step == 1:
+        log("値の刻み        : 1  → 16bit をそのまま使っている（LSB 揃え）")
+        full_scale = 8192.0 if amax <= 8192 else 32768.0
+    else:
+        log(f"値の刻み        : {step}")
     log(f"平均            : {np.mean(x):.2f}   標準偏差: {np.std(x):.2f}")
     if amax == 0:
         log("ERROR: 全サンプルが 0。タイル / ブロックの取り違えか、タイルが起動していない")
@@ -295,11 +306,23 @@ def analyse(x, fs_hz, tone_hz, window):
     freqs = np.fft.rfftfreq(n, 1 / fs_hz)
 
     k = int(np.argmax(mag[1:]) + 1)
-    full_scale = 32768.0 if amax > 8192 else 8192.0
     peak_dbfs = 20 * np.log10(max(mag[k], 1e-12) / full_scale)
+
+    # ---- サブビンの周波数推定 ----
+    # 信号発生器とボードのクロックは独立なので、ピークはビン中心に乗らない。
+    # **そのずれは両者の周波数差そのもの**で、外部基準クロック（proj004）が
+    # 効いたかどうかを判定する量になる。Hann 窓の 3 点補間で求める。
+    delta = 0.0
+    if 0 < k < len(mag) - 1:
+        a3, b3, c3 = mag[k - 1], mag[k], mag[k + 1]
+        den = a3 + 2 * b3 + c3
+        if den > 0:
+            delta = 2.0 * (c3 - a3) / den
+    f_est = (k + delta) * rbw
 
     log("")
     log(f"ピーク          : bin {k} = {freqs[k] / 1e6:.6f} MHz / {peak_dbfs:.2f} dBFS")
+    log(f"サブビン補間    : bin {k + delta:.4f} = **{f_est / 1e6:.6f} MHz**")
 
     if tone_hz:
         # 折返しを考慮した期待値
@@ -307,13 +330,19 @@ def analyse(x, fs_hz, tone_hz, window):
         if f_fold > fs_hz / 2:
             f_fold = fs_hz - f_fold
         k_exp = int(round(f_fold / rbw))
-        log(f"期待値          : bin {k_exp} = {k_exp * rbw / 1e6:.6f} MHz "
+        log(f"期待値          : bin {k_exp} = {f_fold / 1e6:.6f} MHz "
             f"（入力 {tone_hz / 1e6:.6f} MHz の折返し先）")
         if k == k_exp:
-            log("  → 一致。fs = {:.3f} MSPS が裏付けられた".format(fs_hz / 1e6))
+            log(f"  → 一致。fs = {fs_hz / 1e6:.3f} MSPS が裏付けられた")
+            # 折返していれば符号が反転する
+            sign = -1.0 if (tone_hz % fs_hz) > fs_hz / 2 else 1.0
+            d_hz = sign * (f_est - f_fold)
+            log(f"  周波数のずれ  : {d_hz:+.1f} Hz  = **{d_hz / tone_hz * 1e6:+.2f} ppm**")
+            log("    信号発生器とボードのクロックは独立なので、これは両者の周波数差。")
+            log("    **proj004（外部 10 MHz 基準）で減るべき量。**")
         else:
             log(f"  → **ずれ {k - k_exp} bin**。fs の思い込みを疑う。"
-                f"実測 fs ≈ {tone_hz / (k * rbw) * fs_hz / 1e6:.3f} MSPS")
+                f"実測 fs ≈ {f_fold * n / (k + delta) / 1e6:.3f} MSPS")
 
     # ピーク近傍を除いたノイズフロア
     mask = np.ones(len(mag), dtype=bool)
@@ -321,6 +350,23 @@ def analyse(x, fs_hz, tone_hz, window):
     mask[0] = False
     floor = 20 * np.log10(max(np.median(mag[mask]), 1e-12) / full_scale)
     log(f"ノイズフロア    : {floor:.2f} dBFS (中央値) / ピークとの差 {peak_dbfs - floor:.1f} dB")
+
+    # ---- 高調波 ----
+    # **レベルが高すぎると ADC が圧縮し、高調波が立つ。**
+    # 入力を 10 dB 下げて高調波が 20〜30 dB 下がれば圧縮、変わらなければ元の信号の歪み。
+    log("")
+    log("高調波（基本波に対する dBc、ナイキストの折返し込み）:")
+    for h in (2, 3, 4, 5):
+        fh = (f_est * h) % fs_hz
+        if fh > fs_hz / 2:
+            fh = fs_hz - fh
+        kh = int(round(fh / rbw))
+        if not 0 < kh < len(mag):
+            continue
+        kh = int(np.argmax(mag[max(0, kh - 2):kh + 3]) + max(0, kh - 2))
+        dbc = 20 * np.log10(max(mag[kh], 1e-12) / max(mag[k], 1e-12))
+        flag = "   ← 大きい。入力レベルを下げる" if dbc > -40 else ""
+        log(f"  H{h}  bin {kh:>6}  {freqs[kh] / 1e6:>11.5f} MHz  {dbc:>7.2f} dBc{flag}")
 
     log("")
     log("上位 5 本:")

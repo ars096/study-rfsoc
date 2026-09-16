@@ -101,8 +101,9 @@ make timing-check  # -1 で通す → build-1-e/（build/ は無傷）
 
 | | 値 | 状態 |
 |---|---|---|
-| ADC_A / ADC_B | RF-ADC **Tile 226** | RefMan A6 記載。ブロック番号の付き方は `xrfdc` で未確認 |
-| ADC_C / ADC_D | RF-ADC **Tile 224** | 同上 |
+| **ADC_B** | RF-ADC **Tile 226 / slice 0**（`adc_tiles[2].blocks[0]`）| **2026-09-16 に実信号で確定** |
+| ADC_A | RF-ADC Tile 226 / slice 2（推定）| ADC_B が slice 0 だったことからの推定。未確認 |
+| ADC_C / ADC_D | RF-ADC **Tile 224** | RefMan A6 記載。スライスの対応は未確認 |
 | DAC_A | RF-DAC Tile 230 | RefMan A6 記載 |
 | DAC_B | RF-DAC Tile 228 | RefMan A6 記載 |
 | ADC 入力のバラン | **MABA-011118**（10 MHz 〜 10 GHz） | 各 SMA と ADC の間に入る。**DC 結合ではない** |
@@ -164,6 +165,22 @@ RFSoC4x2 の `xrfclk` 引数は `lmk_freq=245.76, lmx_freq=491.52`。
 |---|---|
 | `tile` | `ClockSource` `DynamicPLLConfig` `FIFOStatus` `GetFIFOStatusObs` `PLLConfig` `PLLLockStatus` `Reset` `SetupFIFO` `SetupFIFOBoth` `SetupFIFOObs` `ShutDown` `StartUp` `blocks` |
 | `block` | `BlockStatus` `CalFreeze` `CalibrationMode` `GetCalCoefficients` `MixerSettings` `NyquistZone` `ResetNCOPhase` `SetCalCoefficients` |
+
+### SMA のラベルとスライス番号は並びが逆
+
+**RefMan の ADC_A / ADC_B の並びと、RFDC のスライス番号の並びは逆。**
+Tile 226 の slice 0 だけを有効にしてビットストリームを作り、**ADC_B の SMA に
+100.0125 MHz を入れたところ、その slice 0 に −1.7 dBFS で乗った**（2026-09-16）。
+
+「A が slice 0」と素直に読むと逆になる。**SMA のラベルで設計を書かず、
+実信号でどのスライスに乗るかを確かめること。** 間違えても
+「DMA は完走するのに中身がノイズだけ」になるだけで、原因が遠い。
+
+### ADC のデータ形式
+
+14 bit を 16 bit の **上位に寄せている**（下位 2 bit は常に 0）。
+全サンプルが 4 の倍数になるので、値の刻みを見れば判定できる。
+フルスケールは ±32768 として dBFS を計算してよい。
 
 **ブロックに `GetIntrStatus` は無い。** ADC の取りこぼし（= 記録の不連続）は
 `block.BlockStatus['IsFIFOFlagsAsserted']` で見る。これが唯一の検出手段。

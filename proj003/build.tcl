@@ -43,7 +43,10 @@ if {[info exists ::env(OUTDIR)] && $::env(OUTDIR) ne ""} { set outdir ./$::env(O
 
 # ---- 設計パラメータ ----
 set adc_tile    2          ;# RF-ADC Tile 226 = IP 上の ADC2（RefMan A6: ADC_A / ADC_B が 226）
-set adc_slice   0          ;# ADC_A。デュアルタイルのスライス番号は実機で裏を取ること
+# **slice 0 は SMA の ADC_B。** RefMan の A/B の並びとスライス番号の並びは逆で、
+# 2026-09-16 に ADC_B へ 100.0125 MHz を入れて slice 0 に乗ることを確認した。
+# SMA のラベルで書かないこと。
+set adc_slice   0          ;# = SMA の ADC_B
 set fs_gsps     1.2288     ;# サンプリング周波数 [GSPS]。IP の有効範囲は (1.0, 5.0)
 set refclk_mhz  491.520    ;# LMX2594 → RFDC タイル
 set spw         8          ;# AXI4-Stream 1 語あたりのサンプル数
