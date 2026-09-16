@@ -23,7 +23,7 @@ PL の中身を疑う作業になるが、**中身を疑うには中身を覗く
 ## 設計
 
 ```
-                  ┌──────────── clk_adc2 153.6 MHz ─────────────┐
+                  ┌──── clk_wiz_adc/clk_out1 153.6 MHz ─────────┐
                   │                                              │
  ADC_A ─balun─▶ rfdc ──m20_axis──▶ capture_gate_0 ──▶ axis_fifo ─┼─▶ dma_adc
   (SMA)        Tile 226 / ADC_A     TLAST 生成        非同期      │   S2MM のみ
@@ -42,7 +42,8 @@ PL の中身を疑う作業になるが、**中身を疑うには中身を覗く
 |---|---|
 | `rfdc` | RF Data Converter。PYNQ から `ol.rfdc` で引く |
 | `capture_gate_0` | 自作。TLAST の生成と記録の連続性（下記） |
-| `axis_fifo` | 非同期 FIFO。`clk_adc2` → `pl_clk1` の乗り換えをここに閉じ込める |
+| `clk_wiz_adc` | `rfdc/clk_adc2`（fs/16 = 76.8 MHz）を AXIS の fs/8 = 153.6 MHz に逓倍する |
+| `axis_fifo` | 非同期 FIFO。AXIS ドメイン → `pl_clk1` の乗り換えをここに閉じ込める |
 | `dma_adc` | AXI DMA（S2MM のみ・Simple mode）。`ol.dma_adc` |
 | `gpio_capture` | キャプチャの arm と状態読み。`ol.gpio_capture` |
 
@@ -51,7 +52,7 @@ PL の中身を疑う作業になるが、**中身を疑うには中身を覗く
 | ドメイン | 周波数 | 何が載るか |
 |---|---|---|
 | `pl_clk0` | 100 MHz | AXI4-Lite 制御系（RFDC・DMA・GPIO のレジスタ） |
-| `clk_adc2` | 153.6 MHz | RFDC の AXIS 出力・`capture_gate`・FIFO の書き込み側 |
+| `clk_wiz_adc/clk_out1` | 153.6 MHz | RFDC の AXIS 出力・`capture_gate`・FIFO の書き込み側 |
 | `pl_clk1` | 200 MHz | FIFO の読み出し側・DMA の MM 側・HP ポート |
 
 ### サンプリング周波数の選び方
@@ -81,7 +82,8 @@ VCO = 9830.4 MHz (FeedbackDiv = 20) / OutDiv = 8 → fs = 1228.8 MSPS
 |---|---|---|
 | fs | 1228.8 MSPS | 第 1 ナイキストゾーン = DC 〜 614.4 MHz |
 | AXIS 語 | 8 sample × 16 bit = 128 bit | |
-| AXIS クロック | 1228.8 / 8 = **153.6 MHz** | PL のタイミングが楽 |
+| AXIS クロック | 1228.8 / 8 = **153.6 MHz** | `Fabric_Freq`。**IP からは出ないので Clocking Wizard で作る** |
+| `clk_adc2` | 1228.8 / 16 = **76.8 MHz** | `Outclk_Freq`。IP が出す唯一のクロック。Clocking Wizard の入力 |
 | データレート | 1228.8 MSPS × 2 B = **2.4576 GB/s** | `pl_clk1` 200 MHz の 3.2 GB/s に対し 30% の余裕 |
 | FIFO | 4096 語 = 64 KiB | 記録の半分を吸える。**溢れると記録が不連続になる** |
 | キャプチャ長 | 2^16 = 65536 サンプル（128 KiB） | 53.3 µs 分 = 8192 ビート |
@@ -110,13 +112,25 @@ VCO = 9830.4 MHz (FeedbackDiv = 20) / OutDiv = 8 → fs = 1228.8 MSPS
   **重要**: 待機中も `s_axis_tready` は 1 に保つ。上流に backpressure をかけると
   RFDC 側がサンプルを落とす
 
-- **決定**: AXI4-Lite の制御系は `pl_clk0`、ADC のデータ経路は `clk_adc2` に置き、
+- **決定**: AXIS クロックは `rfdc/clk_adc2` から Clocking Wizard で作る
+  **理由**: RFDC は AXIS の 153.6 MHz を出さない。IP の出力ピン `clk_adc2` は
+  `Outclk_Freq`（fs/16, fs/32, fs/64 から選ぶ）で、AXIS が必要とする `Fabric_Freq`
+  （fs / `Data_Width`）とは別物だった。**両者を同じものだと思って `Outclk_Freq` に
+  153.6 を入れ、弾かれて初めて分かった**（2026-09-16）
+  **見送った案**: PS の PL クロックで AXIS を駆動する案。**AXIS クロックは fs/8
+  きっかりでなければならず**、わずかでもずれれば FIFO が溢れるか枯れる。PS の PLL は
+  153.6 MHz を正確に作れないので成立しない
+  **付随**: 逓倍比を小さくするため `Outclk_Freq` は有効値のうち最大の 76.8 MHz を選ぶ。
+  MMCM のロックは **タイルが起動して `clk_adc2` が出てから**なので、`locked` を
+  `rst_adc/dcm_locked` へ入れて ADC ドメインをそれまでリセットに保つ
+
+- **決定**: AXI4-Lite の制御系は `pl_clk0`、ADC のデータ経路は AXIS クロックに置き、
   AXI DMA は Asynchronous Clocks を有効にする
-  **理由**: `clk_adc2` は **タイルが起動して初めて出る**。制御系を `clk_adc2` に
+  **理由**: `clk_adc2` は **タイルが起動して初めて出る**。制御系をその系統に
   載せると、タイルを起動するためのレジスタアクセス自体がクロック待ちになり、
   永久に起動できない（鶏と卵）
-  **見送った案**: PL 全体を `clk_adc2` の単一ドメインにする案。配線は簡単になるが
-  上記で詰む。`maxihpm0_fpd_aclk` まで `clk_adc2` にすると症状が「PS がハングする」
+  **見送った案**: PL 全体を ADC 系の単一ドメインにする案。配線は簡単になるが
+  上記で詰む。`maxihpm0_fpd_aclk` まで含めると症状が「PS がハングする」
   になって原因が遠くなる
 
 - **決定**: Real モード・NCO なし・デシメーション 1 で、生サンプルをそのまま取る
@@ -283,14 +297,16 @@ sudo python3 adc_capture.py --tone 800.0 --zone 2   # 第 2 ナイキストゾ�
 | `set_property` が RFDC の CONFIG で落ちる | 版のズレ。失敗した項目と**許される値**が一覧で出る。`build/rfdc_params.rpt` に全 CONFIG と許容値 |
 | `WARNING: [BD 41-721] ... disabled parameter` が出る | タイルのパラメータをスライス有効化より前に設定している。**警告 1 行で黙って無視される** |
 | `IP_Flow 19-3461 Value ... is out of the range` | 許容値が他のパラメータに依存して絞られている（例: Real / デシメーション 1 では `ADC_Mixer_Type` は 1 = Bypassed のみ） |
-| `ADC2_Outclk_Freq` に AXIS の周波数を入れて弾かれる | **Outclk は AXIS のクロックではない**（fs/16, /32, /64 の別口の分周出力）。AXIS は `Fabric_Freq` = fs / `Data_Width` で派生する。触らない |
-| `clk_adc2` の周波数が AXIS と違う、と言って止まる | この設計は `clk_adc2` を `m2_axis_aclk` に直結している。IP の出力が分周されているなら Clocking Wizard を挟む必要がある |
+| `ADC2_Outclk_Freq` に AXIS の周波数を入れて弾かれる | **Outclk は AXIS のクロックではなく `clk_adcX` の周波数**（fs/16, /32, /64）。AXIS は `Fabric_Freq` = fs / `Data_Width` で派生し、IP からは出ない |
+| `clk_adc2` の周波数が `Outclk_Freq` と違う | Clocking Wizard の入力周波数の前提が崩れる。`---- RFDC のクロックピン ----` の一覧を見る |
+| BUFG の段数に関する DRC が出る | `clk_wiz_adc` の `PRIM_SOURCE`。`No_buffer` を前提にしているので `Global_buffer` に変えてみる |
+| MMCM がロックしない | `clk_adc2` はタイルが起動して初めて出る。`xrfdc` でタイルを起動する前は `locked` が 0 で正常 |
 | RFDC が設定を丸めた、と言って止まる | タイル PLL の VCO 範囲（8.5〜13.2 GHz）。上の計算をやり直す |
 | **WNS が説明できない値になる** | `src/timing.xdc` の非同期クロックグループが効いているか。`build/clocks.rpt` でクロック名を確認 |
 | `xrfdc` がタイルを見つけない | `.hwh` に RFDC が入っているか。**ボードに持ち込む前に確認できる** |
 | タイル PLL がロックしない | `xrfclk.set_ref_clk()` を先に呼んだか。LMX が 491.52 MHz を出しているか |
 | DMA が完了しない / `done`=0 かつ `busy`=0 | ゲートが一度も起動していない。GPIO の配線か arm のビット割り当て |
-| DMA が完了しない / `busy`=1 のまま | RFDC から `tvalid` が出ていない。タイルの起動と `clk_adc2` |
+| DMA が完了しない / `busy`=1 のまま | RFDC から `tvalid` が出ていない。タイルの起動と、MMCM がロックしているか |
 | 取れたデータが全部 0 | **ADC_A の tile / slice の取り違え**。`--probe` |
 | ピーク周波数が合わない | fs の思い込み。`adc_capture.py` が実測 fs を出すのでそれを見る |
 | 振幅が 1/4 になる | 14 bit のビット寄せ |

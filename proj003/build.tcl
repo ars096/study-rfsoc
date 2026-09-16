@@ -47,6 +47,9 @@ set adc_slice   0          ;# ADC_A。デュアルタイルのスライス番号
 set fs_gsps     1.2288     ;# サンプリング周波数 [GSPS]。IP の有効範囲は (1.0, 5.0)
 set refclk_mhz  491.520    ;# LMX2594 → RFDC タイル
 set spw         8          ;# AXI4-Stream 1 語あたりのサンプル数
+# RFDC の出力クロック。**AXIS のクロックではない。**有効値は fs/16, fs/32, fs/64。
+# 最大（fs/16）を選ぶと Clocking Wizard の逓倍比が小さく済む。
+set outclk_mhz  76.800     ;# = 1228.8 / 16
 set ctrl_mhz    100        ;# pl_clk0: AXI4-Lite 制御系
 set data_mhz    200        ;# pl_clk1: DMA の MM 側と HP ポート
 
@@ -278,10 +281,12 @@ cfg_apply rfdc [list \
 cfg_apply rfdc [list CONFIG.ADC${T}_PLL_Enable    {true}]        0
 cfg_apply rfdc [list CONFIG.ADC${T}_Sampling_Rate $fs_gsps]      0
 cfg_apply rfdc [list CONFIG.ADC${T}_Refclk_Freq   $refclk_mhz]   0
-# ADC2_Outclk_Freq は **AXIS のクロックではない**。有効値が fs/16, fs/32, fs/64
-# （1228.8 MSPS なら 76.8 / 38.4 / 19.2）であることから、別口の分周出力クロックだと
-# 分かる（2026-09-16）。AXIS のクロックは ADC2_Fabric_Freq で、Data_Width から
-# 派生して決まる（fs / 8 = 153.6 MHz）。したがってここでは触らない。
+# ADC2_Outclk_Freq は **AXIS のクロックではない**。有効値は fs/16, fs/32, fs/64 で、
+# IP の出力ピン clk_adc2 の周波数そのもの（2026-09-16 に FREQ_HZ を読んで確定）。
+# AXIS のクロックは ADC2_Fabric_Freq（fs / Data_Width = 153.6 MHz）で、IP からは出ない。
+# したがって clk_adc2 を Clocking Wizard で逓倍して AXIS クロックを作る。
+# 逓倍比を小さくするため、有効値のうち最大の fs/16 = 76.8 MHz を選ぶ。
+cfg_apply rfdc [list CONFIG.ADC${T}_Outclk_Freq   $outclk_mhz]   0
 
 # 5) 残り。ミキサをバイパスすると派生値になりうる
 cfg_apply rfdc [list \
@@ -306,6 +311,7 @@ set ng 0
 foreach {k want kind} [list \
         CONFIG.ADC${T}_Sampling_Rate   $fs_gsps     num \
         CONFIG.ADC${T}_Refclk_Freq     $refclk_mhz  num \
+        CONFIG.ADC${T}_Outclk_Freq     $outclk_mhz  num \
         CONFIG.ADC${T}_Fabric_Freq     $fabric_mhz  num \
         CONFIG.ADC_Data_Type${S}       0            int \
         CONFIG.ADC_Data_Width${S}      $spw         int \
@@ -349,21 +355,59 @@ foreach ipin [lsort [get_bd_intf_pins -quiet rfdc/*]] {
     if {$hz ne ""} { puts [format "  %-28s %s Hz  (intf)" [file tail $ipin] $hz] }
 }
 
-set want_hz [expr {double($fabric_mhz) * 1e6}]
+set want_hz [expr {double($outclk_mhz) * 1e6}]
 set outclk_hz ""
 catch {set outclk_hz [get_property CONFIG.FREQ_HZ [BP rfdc/clk_adc${T}]]}
 if {$outclk_hz eq ""} {
     puts "CRITICAL WARNING: clk_adc${T} の FREQ_HZ が読めない。合成後に clocks.rpt で確認すること"
 } elseif {abs($outclk_hz - $want_hz) > 1.0} {
     puts ""
-    puts "ERROR: clk_adc${T} = $outclk_hz Hz で、AXIS に必要な $want_hz Hz と違う。"
-    puts "  この設計は clk_adc${T} を m${T}_axis_aclk に直結している。"
-    puts "  IP の出力クロックが分周されているなら、Clocking Wizard を挟むか"
-    puts "  m${T}_axis_aclk を別のクロックから供給する必要がある。"
-    puts "  上の「RFDC のクロックピン」一覧を見て判断すること"
+    puts "ERROR: clk_adc${T} = $outclk_hz Hz で、Outclk_Freq の要求 $want_hz Hz と違う。"
+    puts "  Clocking Wizard の入力周波数の前提が崩れる。上の一覧を見て判断すること"
     exit 1
 }
-puts "clk_adc${T} = $outclk_hz Hz （AXIS の期待値と一致）"
+puts "clk_adc${T} = $outclk_hz Hz （Clocking Wizard の入力）"
+puts ""
+
+# ---- AXIS クロックを作る Clocking Wizard ----
+# RFDC は AXIS の 153.6 MHz を出さない（clk_adc2 は fs/16 = 76.8 MHz）。
+# **PS の PL クロックでは代用できない。**AXIS クロックは fs / 8 きっかりである必要が
+# あり、わずかでもずれると FIFO が溢れるか枯れる。PS の PLL では 153.6 MHz を
+# 正確に作れないので、ADC の出力クロックから逓倍する以外にない。
+#
+# PRIM_SOURCE は No_buffer。clk_adc2 は IP 内でバッファ済みの前提。
+# もし BUFG 段数の DRC が出たら Global_buffer に変える。
+set clkw [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz clk_wiz_adc]
+cfg_apply clk_wiz_adc [list \
+    CONFIG.PRIM_SOURCE                  {No_buffer} \
+    CONFIG.PRIM_IN_FREQ                 $outclk_mhz \
+    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ   $fabric_mhz \
+    CONFIG.USE_LOCKED                   {true} \
+    CONFIG.USE_RESET                    {true} \
+    CONFIG.RESET_TYPE                   {ACTIVE_LOW} \
+    CONFIG.RESET_PORT                   {resetn} \
+] 0
+cfg_report "Clocking Wizard の設定"
+
+set got_out ""
+catch {set got_out [get_property CONFIG.CLKOUT1_JITTER $clkw]}
+foreach {k want} [list \
+        CONFIG.PRIM_IN_FREQ               $outclk_mhz \
+        CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $fabric_mhz] {
+    set got [get_property $k $clkw]
+    if {abs($got - $want) > 1e-6} {
+        puts "ERROR: Clocking Wizard が設定を丸めた: $k  要求 $want / 実際 $got"
+        exit 1
+    }
+}
+set act ""
+catch {set act [get_property CONFIG.CLKOUT1_ACTUAL_FREQ $clkw]}
+puts "CLK WIZ    : $outclk_mhz MHz → $fabric_mhz MHz （実際 $act / ジッタ $got_out ps）"
+if {$act ne "" && abs($act - $fabric_mhz) > 1e-3} {
+    puts "ERROR: Clocking Wizard の実出力が要求と違う（$act MHz）。"
+    puts "  AXIS クロックは fs / 8 きっかりでなければならない"
+    exit 1
+}
 puts ""
 
 # ---- キャプチャゲート（自作。TLAST の生成と記録の連続性を担う）----
@@ -429,9 +473,13 @@ set ps_clk0  zynq_ultra_ps_e_0/pl_clk0
 set ps_clk1  zynq_ultra_ps_e_0/pl_clk1
 set ps_rstn  zynq_ultra_ps_e_0/pl_resetn0
 
-# RFDC の出力クロックとストリーム。ピン名は版で変わりうるので拾って確かめる
-set adc_outclk rfdc/clk_adc${T}
+# ADC 側のクロック。IP の出力（fs/16）を Clocking Wizard で AXIS の fs/8 にする。
+set adc_outclk rfdc/clk_adc${T}     ;# 76.8 MHz。Clocking Wizard の入力
+set adc_fabric clk_wiz_adc/clk_out1 ;# 153.6 MHz。AXIS ドメイン
 BP $adc_outclk
+BP $adc_fabric
+nc $adc_outclk clk_wiz_adc/clk_in1
+nc zynq_ultra_ps_e_0/pl_resetn0 clk_wiz_adc/resetn
 
 # クロック
 foreach p [list \
@@ -450,8 +498,11 @@ foreach p [list \
 foreach p [list \
         rst_adc/slowest_sync_clk   rfdc/m${T}_axis_aclk \
         capture_gate_0/aclk        axis_fifo/s_axis_aclk] {
-    nc $adc_outclk $p
+    nc $adc_fabric $p
 }
+# MMCM がロックするまで ADC ドメインをリセットに保つ。
+# **clk_adc2 はタイルが起動して初めて出る**ので、ロックも起動後になる。
+nc clk_wiz_adc/locked rst_adc/dcm_locked
 
 # リセット
 foreach r {rst_ctrl rst_data rst_adc} { nc $ps_rstn $r/ext_reset_in }

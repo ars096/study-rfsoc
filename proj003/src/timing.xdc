@@ -9,9 +9,15 @@
 # WNS が説明できない値になったら、まずこのファイルが効いているかを疑う。
 
 # ---- PS の PL クロックと ADC 側クロックは非同期 ----
+# ADC 側は rfdc/clk_adc2（fs/16）と、そこから Clocking Wizard が作る
+# AXIS クロック（fs/8）の 2 つ。後者は生成クロックなので
+# -include_generated_clocks で一緒に拾う。
 set c_ps  [get_clocks -quiet clk_pl_*]
-set c_adc [get_clocks -quiet -of_objects \
+set c_adc [get_clocks -quiet -include_generated_clocks -of_objects \
              [get_pins -quiet -hier -filter {NAME =~ *rfdc*clk_adc2}]]
+set c_wiz [get_clocks -quiet -of_objects \
+             [get_pins -quiet -hier -filter {NAME =~ *clk_wiz_adc*clk_out1}]]
+set c_adc [lsort -unique [concat $c_adc $c_wiz]]
 
 if {[llength $c_ps] > 0 && [llength $c_adc] > 0} {
     set_clock_groups -asynchronous -group $c_ps -group $c_adc
@@ -20,8 +26,8 @@ if {[llength $c_ps] > 0 && [llength $c_adc] > 0} {
     puts "XDC:   ADC = $c_adc"
 } else {
     puts "CRITICAL WARNING: 非同期クロックグループを設定できなかった。"
-    puts "  clk_pl_*      = $c_ps"
-    puts "  rfdc/clk_adc2 = $c_adc"
+    puts "  clk_pl_*  = $c_ps"
+    puts "  ADC 側    = $c_adc"
     puts "  クロック名が版で変わった可能性がある。report_clocks で実名を確認すること"
 }
 
