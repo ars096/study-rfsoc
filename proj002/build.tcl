@@ -41,24 +41,40 @@ create_project $proj $projdir -part $part -force
 set board_repo "未設定"
 if {[info exists ::env(BOARD_REPO)]} { set board_repo $::env(BOARD_REPO) }
 
-set bp [lindex [get_board_parts -quiet -latest_file_version *rfsoc4x2*] 0]
-if {$bp eq ""} {
-    puts "ERROR: RFSoC4x2 の board part が見つからない。以下を順に確認する:"
-    puts "  1. BOARD_REPO が RFSoC4x2-BSP/board_files を指しているか（= $board_repo）"
-    puts "  2. その下に rfsoc4x2/<version>/board.xml があるか"
-    puts "  3. BSP が Vivado 2024.1 前提。古い Vivado では読まれないことがある"
-    exit 1
+# board_part を設定すると、Vivado は project の part をボードの宣言値（-2）に
+# 強制的に合わせる（WARNING: Project 1-153）。そのため速度グレードの検証ビルド（-1）
+# では board_part を使わず、ボードプリセットも当てない。
+#   - PS の周辺機器設定（DDR / MIO）は既定値になるが、**PL 側のタイミング解析には
+#     影響しない**。検証ビルドの目的は「遅い速度グレードでも閉じるか」であって、
+#     動作するビットストリームを作ることではない
+#   - part を後から差し替える案は不可。BD 内の IP が locked になる
+#   - set_speed_grade は非推奨で機能しない（2024.1 で確認）
+set use_board [expr {$part eq $part_default}]
+
+if {$use_board} {
+    set bp [lindex [get_board_parts -quiet -latest_file_version *rfsoc4x2*] 0]
+    if {$bp eq ""} {
+        puts "ERROR: RFSoC4x2 の board part が見つからない。以下を順に確認する:"
+        puts "  1. BOARD_REPO が RFSoC4x2-BSP/board_files を指しているか（= $board_repo）"
+        puts "  2. その下に rfsoc4x2/<version>/board.xml があるか"
+        puts "  3. BSP が Vivado 2024.1 前提。古い Vivado では読まれないことがある"
+        exit 1
+    }
+    puts "BOARD PART: $bp"
+    set_property board_part $bp [current_project]
+} else {
+    puts "NOTE: 速度グレード検証ビルド。board_part とボードプリセットは使わない"
 }
-puts "BOARD PART: $bp"
-set_property board_part $bp [current_project]
 
 # ---- block design ----
 create_bd_design $bd_name
 
 # Zynq UltraScale+ PS。ボードプリセットを当てる（DDR・MIO・クロックの設定一式）
 set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e zynq_ultra_ps_e_0]
-apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e \
-    -config {apply_board_preset "1"} $ps
+if {$use_board} {
+    apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e \
+        -config {apply_board_preset "1"} $ps
+}
 
 # PL クロック 100 MHz と AXI マスタを設定する。
 # **使う AXI マスタだけでなく、使わないものも明示的に 0 にする。**
@@ -100,19 +116,6 @@ assign_bd_address
 validate_bd_design
 save_bd_design
 puts "=== block design ok ==="
-
-# board_part を設定すると、Vivado は project の part をボードの宣言値に強制的に
-# 合わせる（WARNING: Project 1-153 "A device change ... is being done"）。
-# そのため速度グレードの検証で -1 を指定しても黙って -2 に戻される。
-# board_part が要るのはボードプリセットを当てる block design の生成までなので、
-# ここで外して part を指定し直す。
-if {$part ne $part_default} {
-    puts "NOTE: 速度グレード検証のため board_part を外し、part を $part に設定し直す"
-    set_property board_part "" [current_project]
-    set_property part $part [current_project]
-    reset_target    all [get_files ${bd_name}.bd]
-    generate_target all [get_files ${bd_name}.bd]
-}
 
 # ---- ラッパと制約 ----
 set bd_file [get_files ${bd_name}.bd]
@@ -171,3 +174,10 @@ file copy -force $hwh $outdir/$proj.hwh
 
 puts "=== wrote $outdir/$proj.bit ==="
 puts "=== wrote $outdir/$proj.hwh ==="
+
+if {!$use_board} {
+    puts ""
+    puts "NOTE: これは速度グレード検証ビルド（$part）。"
+    puts "      ボードプリセットを当てていないので、このビットストリームは配布・実機使用に使わない。"
+    puts "      見るのは上の TIMING の値だけ。"
+}
