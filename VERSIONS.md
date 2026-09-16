@@ -127,7 +127,7 @@ Vivado 2024.1 で実際に弾かれて判明した値。**GUI を開かずに Tc
 | ADC Sampling Rate の有効範囲 | **(1.0, 5.0) GSPS** |
 | ADC Refclk Freq の有効値 | **VCO / FeedbackDiv の離散リスト**。fs を先に決めないと選択肢が出ない |
 | PLL の VCO | 8.5〜13.2 GHz |
-| ADC Outclk Freq の有効値 | fs / 8, /16, /32, /64 |
+| ADC Outclk Freq の有効値 | fs / 16, /32, /64。**AXIS のクロックではない**（別口の分周出力）。AXIS は `Fabric_Freq` = fs / Data_Width |
 | Mixer Type | Data Type と Decimation Mode に依存。**Real / デシメーション 1 では 1（Bypassed）のみ** |
 | デュアルタイルのスライス番号 | **0 と 2**（1 と 3 は disabled parameter） |
 

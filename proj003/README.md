@@ -283,6 +283,8 @@ sudo python3 adc_capture.py --tone 800.0 --zone 2   # 第 2 ナイキストゾ�
 | `set_property` が RFDC の CONFIG で落ちる | 版のズレ。失敗した項目と**許される値**が一覧で出る。`build/rfdc_params.rpt` に全 CONFIG と許容値 |
 | `WARNING: [BD 41-721] ... disabled parameter` が出る | タイルのパラメータをスライス有効化より前に設定している。**警告 1 行で黙って無視される** |
 | `IP_Flow 19-3461 Value ... is out of the range` | 許容値が他のパラメータに依存して絞られている（例: Real / デシメーション 1 では `ADC_Mixer_Type` は 1 = Bypassed のみ） |
+| `ADC2_Outclk_Freq` に AXIS の周波数を入れて弾かれる | **Outclk は AXIS のクロックではない**（fs/16, /32, /64 の別口の分周出力）。AXIS は `Fabric_Freq` = fs / `Data_Width` で派生する。触らない |
+| `clk_adc2` の周波数が AXIS と違う、と言って止まる | この設計は `clk_adc2` を `m2_axis_aclk` に直結している。IP の出力が分周されているなら Clocking Wizard を挟む必要がある |
 | RFDC が設定を丸めた、と言って止まる | タイル PLL の VCO 範囲（8.5〜13.2 GHz）。上の計算をやり直す |
 | **WNS が説明できない値になる** | `src/timing.xdc` の非同期クロックグループが効いているか。`build/clocks.rpt` でクロック名を確認 |
 | `xrfdc` がタイルを見つけない | `.hwh` に RFDC が入っているか。**ボードに持ち込む前に確認できる** |

@@ -278,7 +278,10 @@ cfg_apply rfdc [list \
 cfg_apply rfdc [list CONFIG.ADC${T}_PLL_Enable    {true}]        0
 cfg_apply rfdc [list CONFIG.ADC${T}_Sampling_Rate $fs_gsps]      0
 cfg_apply rfdc [list CONFIG.ADC${T}_Refclk_Freq   $refclk_mhz]   0
-cfg_apply rfdc [list CONFIG.ADC${T}_Outclk_Freq   $fabric_mhz]   0
+# ADC2_Outclk_Freq は **AXIS のクロックではない**。有効値が fs/16, fs/32, fs/64
+# （1228.8 MSPS なら 76.8 / 38.4 / 19.2）であることから、別口の分周出力クロックだと
+# 分かる（2026-09-16）。AXIS のクロックは ADC2_Fabric_Freq で、Data_Width から
+# 派生して決まる（fs / 8 = 153.6 MHz）。したがってここでは触らない。
 
 # 5) 残り。ミキサをバイパスすると派生値になりうる
 cfg_apply rfdc [list \
@@ -303,7 +306,6 @@ set ng 0
 foreach {k want kind} [list \
         CONFIG.ADC${T}_Sampling_Rate   $fs_gsps     num \
         CONFIG.ADC${T}_Refclk_Freq     $refclk_mhz  num \
-        CONFIG.ADC${T}_Outclk_Freq     $fabric_mhz  num \
         CONFIG.ADC${T}_Fabric_Freq     $fabric_mhz  num \
         CONFIG.ADC_Data_Type${S}       0            int \
         CONFIG.ADC_Data_Width${S}      $spw         int \
@@ -329,6 +331,39 @@ if {$ng > 0} {
     exit 1
 }
 puts "RFDC (確定): fs = $fs_mhz MSPS / refclk = $refclk_mhz MHz / AXIS = $fabric_mhz MHz"
+
+# ---- クロックピンの実周波数を読む ----
+# **clk_adc2 が Fabric_Freq なのか Outclk_Freq なのかで設計が変わる。**
+# この設計は clk_adc2 を m2_axis_aclk / capture_gate / FIFO 書き込み側に直結している
+# ので、153.6 MHz でなければ前提が崩れる。推測せずにピンの FREQ_HZ を読む。
+puts ""
+puts "---- RFDC のクロックピン ----"
+foreach pin [lsort [get_bd_pins -quiet rfdc/*]] {
+    set hz ""
+    catch {set hz [get_property CONFIG.FREQ_HZ $pin]}
+    if {$hz ne ""} { puts [format "  %-28s %s Hz" [file tail $pin] $hz] }
+}
+foreach ipin [lsort [get_bd_intf_pins -quiet rfdc/*]] {
+    set hz ""
+    catch {set hz [get_property CONFIG.FREQ_HZ $ipin]}
+    if {$hz ne ""} { puts [format "  %-28s %s Hz  (intf)" [file tail $ipin] $hz] }
+}
+
+set want_hz [expr {double($fabric_mhz) * 1e6}]
+set outclk_hz ""
+catch {set outclk_hz [get_property CONFIG.FREQ_HZ [BP rfdc/clk_adc${T}]]}
+if {$outclk_hz eq ""} {
+    puts "CRITICAL WARNING: clk_adc${T} の FREQ_HZ が読めない。合成後に clocks.rpt で確認すること"
+} elseif {abs($outclk_hz - $want_hz) > 1.0} {
+    puts ""
+    puts "ERROR: clk_adc${T} = $outclk_hz Hz で、AXIS に必要な $want_hz Hz と違う。"
+    puts "  この設計は clk_adc${T} を m${T}_axis_aclk に直結している。"
+    puts "  IP の出力クロックが分周されているなら、Clocking Wizard を挟むか"
+    puts "  m${T}_axis_aclk を別のクロックから供給する必要がある。"
+    puts "  上の「RFDC のクロックピン」一覧を見て判断すること"
+    exit 1
+}
+puts "clk_adc${T} = $outclk_hz Hz （AXIS の期待値と一致）"
 puts ""
 
 # ---- キャプチャゲート（自作。TLAST の生成と記録の連続性を担う）----
