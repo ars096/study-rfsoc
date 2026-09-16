@@ -8,10 +8,28 @@
 
 | | 値 | 備考 |
 |---|---|---|
-| Vivado | 2023.2 | 2024.1 への移行を検討中（BSP と PYNQ v3.1.1 が前提とする版） |
-| PYNQ image | v3.1.1 (Carlisle) | Vivado 2024.1 前提 |
-| Board files | RealDigitalOrg/RFSoC4x2-BSP | commit 未固定。clone して `board.repoPaths` に指定 |
+| Vivado | 2023.2 と 2024.1 を併設 | proj001 は 2023.2、**proj002 以降は 2024.1**（BSP と PYNQ v3.1 が前提とする版）。2026-09-16 に 2024.1 で `get_parts` / `get_board_parts` が通ることを確認 |
+| PYNQ image | v3.1.1 (Carlisle) へ更新する | **ボードの SD カードは 2026-09-15 時点で v3.0.1**（Vivado 2022.2 相当）。2024.1 で作ったオーバーレイとは版が合わない。下記参照 |
+| Board files | RealDigitalOrg/RFSoC4x2-BSP `board_files/rfsoc4x2/1.0` | **Vivado のインストールツリーの外に clone し、`board.repoPaths` で指す。** ツリー内（`<Vivado>/data/boards/board_files`）に置くと版を増やすたびにコピーが要り、入れ直しで消える。commit は未固定 |
 | Part | `xczu48dr-ffvg1517-2-e` | 根拠: BSP board_files の宣言値 |
+
+### PYNQ イメージの版
+
+**ボードの SD カードは v3.0.1 だった**（2026-09-15 に実機で確認。それまで VERSIONS.md は
+v3.1.1 と記載していたが、これは未確認の想定だった）。
+
+| | Vivado |
+|---|---|
+| PYNQ v3.0.1 | 2022.2 で検証済み（PYNQ 開発元の推奨） |
+| RFSoC-PYNQ v3.1.1 (Carlisle) | 2024.1。RFSoC 4x2 向けの最新イメージ |
+
+BSP の board files が 2024.1 前提である以上、**イメージ側を v3.1.1 に上げて揃える**。
+既存の v3.0.1 カードは上書きせず温存する（proj001 の環境を再現できる唯一の手段のため）。
+
+暫定の逃げ道として `Overlay(..., ignore_version=True)` があるが、
+版の合わない IP が動かない可能性があるとされており、恒久策にはしない。
+特に RF Data Converter は `xrfdc` / `xrfclk` ドライバと IP の版が結合するので、
+Phase 3 に入る前に必ず揃える。
 
 ### Part の未確認事項
 
@@ -37,6 +55,19 @@ JTAG からは判別できない（IDCODE に速度グレードが入ってお�
 
 **`USB DEVICE` ポートに挿すと FTDI が `lsusb` に現れず、JTAG target が 0 個になる。**
 シルク印刷を読んで挿す。
+
+## board files の置き場所
+
+`board.repoPaths` に渡すのは **`board.xml` の 2 階層上**（`rfsoc4x2/` を含むディレクトリ）。
+
+```
+<clone>/board_files
+  └ rfsoc4x2/1.0/board.xml
+```
+
+各 proj の `Makefile` の `BOARD_REPO` で持つ。**Vivado のインストールツリーの中には置かない**
+（`<Vivado>/data/boards/board_files` は Vivado が自動で読むため指定が不要になり、
+「どこに置いたか」が記録されないまま版を増やすと見失う）。
 
 ## ローカル環境（各自の設定。値はここに書かない）
 
