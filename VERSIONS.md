@@ -117,6 +117,31 @@ LMK04828（ジッタクリーナ）＋ LMX2594 × 2（RF シンセ）の 2 系�
 **proj001 / proj002 が使っていた自走 100 MHz は Si5395 側**で、RFDC のサンプリング
 クロックとは別経路である。
 
+### RFDC IP（usp_rf_data_converter）の制約
+
+Vivado 2024.1 で実際に弾かれて判明した値。**GUI を開かずに Tcl で設定するときは
+この 3 つを同時に満たす必要がある。**
+
+| | 値 |
+|---|---|
+| ADC Sampling Rate の有効範囲 | **(1.0, 5.0) GSPS** |
+| ADC Refclk Freq の有効値 | **VCO / FeedbackDiv の離散リスト**。fs を先に決めないと選択肢が出ない |
+| PLL の VCO | 8.5〜13.2 GHz |
+| ADC Outclk Freq の有効値 | fs / 8, /16, /32, /64 |
+| Mixer Type | Data Type と Decimation Mode に依存。**Real / デシメーション 1 では 1（Bypassed）のみ** |
+| デュアルタイルのスライス番号 | **0 と 2**（1 と 3 は disabled parameter） |
+
+タイル単位のパラメータ（`ADC2_Sampling_Rate` 等）は、そのタイルのスライスが有効に
+なるまで disabled parameter 扱いで、`set_property` は `WARNING: [BD 41-721]` の
+1 行だけ出して **黙って無視される**。`ADC2_Enable` と `ADC2_Fabric_Freq` は派生値。
+
+したがって設定の順序は
+**スライス有効化 → スライスの設定 → PLL 有効化 → Sampling Rate → Refclk → Outclk**。
+設定後は必ず読み返して検証する（`proj003/build.tcl`）。
+
+RFSoC4x2 で LMX の 491.52 MHz を使う場合、成立する動作点は
+**VCO 9830.4 MHz（FeedbackDiv 20）/ OutDiv 8 → fs 1228.8 MSPS** 付近に限られる。
+
 ### 外部 10 MHz 基準クロックの罠
 
 **外部基準を挿していなくても LMK04828 の PLL2 はオンボード VCXO で出力を作る。**

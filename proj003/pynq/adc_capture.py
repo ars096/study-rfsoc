@@ -5,9 +5,9 @@
 使い方（ボード上で sudo が要る）:
 
     sudo python3 adc_capture.py --probe            # 何が見えているかだけ出す
-    sudo python3 adc_capture.py --tone 100.005     # 既定の検証（ビン中心のトーン）
+    sudo python3 adc_capture.py --tone 100.0125    # 既定の検証（ビン中心のトーン）
     sudo python3 adc_capture.py --tone 100.0       # ビン中心から外す（リークを見る）
-    sudo python3 adc_capture.py --tone 600.0 --zone 2   # 第 2 ナイキストゾーン
+    sudo python3 adc_capture.py --tone 800.0 --zone 2   # 第 2 ナイキストゾーン
     sudo python3 adc_capture.py --save cap.npy     # 生サンプルを残す
 
 **--probe は実機で最初に打つコマンド。** タイル・ブロックの番号の付き方と、
@@ -20,11 +20,11 @@ import time
 
 import numpy as np
 
-FS_HZ = 983.04e6        # build.tcl の fs_gsps と一致させること
+FS_HZ = 1228.8e6        # build.tcl の fs_gsps と一致させること
 SPW = 8                 # AXI4-Stream 1 語あたりのサンプル数（build.tcl の spw）
 N_DEFAULT = 65536
 TILE = 2                # RF-ADC Tile 226
-BLOCK = 0               # ADC_A。--probe で裏を取る
+BLOCK = 0               # ADC_A = Tile 226 slice 0（ADC_B は slice 2）
 BITFILE = "proj003.bit"
 
 LMK_FREQ = 245.76
@@ -51,6 +51,7 @@ def start_tile(rfdc, fs_hz, zone):
     tile = rfdc.adc_tiles[TILE]
     try:
         # source=1 は内蔵 PLL。単位は MHz
+        # fs = 1228.8 = VCO 9830.4 / OutDiv 8、refclk 491.52 = VCO / 20
         tile.DynamicPLLConfig(1, LMX_FREQ, fs_hz / 1e6)
     except Exception as e:                      # noqa: BLE001
         log(f"WARNING: DynamicPLLConfig が失敗した: {e}")

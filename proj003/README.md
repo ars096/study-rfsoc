@@ -23,13 +23,13 @@ PL の中身を疑う作業になるが、**中身を疑うには中身を覗く
 ## 設計
 
 ```
-                  ┌──────────── clk_adc2 122.88 MHz ────────────┐
+                  ┌──────────── clk_adc2 153.6 MHz ─────────────┐
                   │                                              │
  ADC_A ─balun─▶ rfdc ──m20_axis──▶ capture_gate_0 ──▶ axis_fifo ─┼─▶ dma_adc
   (SMA)        Tile 226 / ADC_A     TLAST 生成        非同期      │   S2MM のみ
-               Real / Mixer 1       記録の連続性      2048 word   │      │
+               Real / Mixer 1       記録の連続性      4096 word   │      │
                デシメーション 1          ▲                        │      │ M_AXI_S2MM
-               fs = 983.04 MSPS          │ ctrl/status           │      ▼
+               fs = 1228.8 MSPS          │ ctrl/status           │      ▼
                   ▲                 gpio_capture                 │   smc_data
                   │ s_axi                ▲ S_AXI                 │      │
                   │                      │              pl_clk1 200 MHz │
@@ -51,36 +51,48 @@ PL の中身を疑う作業になるが、**中身を疑うには中身を覗く
 | ドメイン | 周波数 | 何が載るか |
 |---|---|---|
 | `pl_clk0` | 100 MHz | AXI4-Lite 制御系（RFDC・DMA・GPIO のレジスタ） |
-| `clk_adc2` | 122.88 MHz | RFDC の AXIS 出力・`capture_gate`・FIFO の書き込み側 |
+| `clk_adc2` | 153.6 MHz | RFDC の AXIS 出力・`capture_gate`・FIFO の書き込み側 |
 | `pl_clk1` | 200 MHz | FIFO の読み出し側・DMA の MM 側・HP ポート |
 
 ### サンプリング周波数の選び方
 
-LMX2594 が RFDC タイルへ 491.52 MHz を渡す（ボード既定）。タイル PLL で
-**fs = 983.04 MSPS**。
+LMX2594 が RFDC タイルへ 491.52 MHz を渡す（ボード既定）。これは動かせない。
+**制約は 3 つあり、どれか 1 つを忘れると IP に弾かれる**（2026-09-16 に全部踏んだ）。
+
+| | 制約 |
+|---|---|
+| (a) | IP の Sampling Rate の有効範囲は **(1.0, 5.0) GSPS** |
+| (b) | Refclk Freq の有効値は **VCO / FeedbackDiv の離散リスト**。つまり **fs を先に決めないと refclk の選択肢が決まらない** |
+| (c) | VCO は 8.5〜13.2 GHz |
+
+`491.52 = VCO / N` を満たす VCO は N = 18..26 で 8847.36〜12779.52 MHz。そのうち
+`fs = VCO / OutDiv` が (1.0, 5.0) に入り、AXIS とデータレートが現実的なのは 1 つだけ。
+
+```
+VCO = 9830.4 MHz (FeedbackDiv = 20) / OutDiv = 8 → fs = 1228.8 MSPS
+
+他の候補:
+  OutDiv = 6 → 1638.4 MSPS   3.28 GB/s で MM 側（3.2 GB/s）が足りない
+  OutDiv = 4 → 2457.6 MSPS   AXIS が 307 MHz で重い
+  OutDiv =10 →  983.04 MSPS  (a) の下限 1.0 GSPS を割る
+```
 
 | | 値 | 効いてくるところ |
 |---|---|---|
-| fs | 983.04 MSPS | 第 1 ナイキストゾーン = DC 〜 491.52 MHz |
+| fs | 1228.8 MSPS | 第 1 ナイキストゾーン = DC 〜 614.4 MHz |
 | AXIS 語 | 8 sample × 16 bit = 128 bit | |
-| AXIS クロック | 983.04 / 8 = **122.88 MHz** | PL のタイミングが楽 |
-| データレート | 983.04 MSPS × 2 B = **1.97 GB/s** | MM 側を 100 MHz にすると 1.6 GB/s で足りない → `pl_clk1` を 200 MHz（3.2 GB/s）にする理由 |
-| キャプチャ長 | 2^16 = 65536 サンプル（128 KiB） | 66.7 µs 分 = 8192 ビート |
-| FFT 分解能 | 983.04 MHz / 65536 = **ちょうど 15 kHz** | 試験トーンをビン中心に置ける |
+| AXIS クロック | 1228.8 / 8 = **153.6 MHz** | PL のタイミングが楽 |
+| データレート | 1228.8 MSPS × 2 B = **2.4576 GB/s** | `pl_clk1` 200 MHz の 3.2 GB/s に対し 30% の余裕 |
+| FIFO | 4096 語 = 64 KiB | 記録の半分を吸える。**溢れると記録が不連続になる** |
+| キャプチャ長 | 2^16 = 65536 サンプル（128 KiB） | 53.3 µs 分 = 8192 ビート |
+| FFT 分解能 | 1228.8 MHz / 65536 = **ちょうど 18.75 kHz** | 試験トーンをビン中心に置ける |
 
-**タイル PLL の計算**（fs を変えるときは必ずやり直す）:
+`build.tcl` は設定後に **IP から値を読み返して**、反映されていることを確認する。
+`WARNING: [BD 41-721]` も `set_property` のエラーも「前の正しい設定に戻した」としか
+言わずに進むので、**読み返す以外に「設定したつもりで効いていない」状態を検出する
+手段がない**。
 
-```
-VCO = fs × OutDiv、RFDC の PLL の VCO 範囲は 8.5〜13.2 GHz
-  OutDiv =  8 → 7.86 GHz   範囲外
-  OutDiv = 10 → 9.83 GHz   ← これしかない。FeedbackDiv = 9830.4 / 491.52 = 20
-  OutDiv = 16 → 15.7 GHz   範囲外
-```
-
-XRFdc のドライバは OutDiv として 1, 3 と 2〜32 の偶数を探索するので 10 は選ばれる。
-`build.tcl` は設定後に **IP から値を読み返して**、丸められていないことを確認する。
-
-なお 1.97 GB/s の負荷は **proj003 固有**である。積分器が入れば読み出しは
+なお 2.4576 GB/s の負荷は **proj003 固有**である。積分器が入れば読み出しは
 積分周期ごとのスペクトルだけになり、桁で軽くなる。
 
 ## 決めたこと
@@ -114,10 +126,13 @@ XRFdc のドライバは OutDiv として 1, 3 と 2〜32 の偶数を探索す�
   **見送った案**: 4915.2 MSPS のままデシメーション ×8。最終仕様には近いが、
   設定項目が増え、詰まったときに RFDC の設定と経路のどちらが悪いか分からない
 
-- **決定**: サンプリング周波数を 983.04 MSPS に下げる（ボード既定の 4915.2 MSPS を使わない）
-  **理由**: AXIS クロックが 122.88 MHz に収まり、PL のタイミングが論点にならない。
+- **決定**: サンプリング周波数を 1228.8 MSPS にする（ボード既定の 4915.2 MSPS を使わない）
+  **理由**: AXIS クロックが 153.6 MHz に収まり、PL のタイミングが論点にならない。
   4915.2 MSPS をデシメーションなしで取ると AXIS が 300〜600 MHz 級になり、
   最初の一回としては重い。**上げるのは後からできる**
+  **経緯**: 当初 983.04 MSPS（= 491.52 × 2）を選んだが、**IP の Sampling Rate の
+  有効範囲が (1.0, 5.0) GSPS** で弾かれた。ADC の下限を 0.5 GSPS と見積もっていたのが
+  誤り。491.52 MHz の refclk と両立する範囲で最も軽いのが 1228.8 MSPS になる
 
 - **決定**: 読み出しは AXI DMA（S2MM のみ・Simple mode・Buffer Length Register 26bit）
   **理由**: 単発の有限長キャプチャに Scatter-Gather は不要。26bit にすると 64 MiB まで
@@ -179,9 +194,9 @@ proj003 の中を 3 段に切る。詰まったときに容疑者が分かれる
 |---|---|---|
 | 1 | `xrfdc` がタイルを列挙し、PLL がロックする | `PLLLockStatus` = 2 |
 | 2 | DMA が完走する | 65536 サンプルの転送がタイムアウトしない。`done` が立つ |
-| 3 | **CW のピーク周波数が一致する** | 100.005 MHz（= 15 kHz × 6667）を入れて bin 6667 に立つ。これが **fs の裏取りそのもの** |
+| 3 | **CW のピーク周波数が一致する** | 100.0125 MHz（= 18.75 kHz × 5334）を入れて bin 5334 に立つ。これが **fs の裏取りそのもの** |
 | 4 | リークの挙動が説明できる | 100.000 MHz に変えるとスカートが広がり、窓関数で収まる |
-| 5 | 折返しが説明できる | 600 MHz を入れると 983.04 − 600 = **383.04 MHz** に見える |
+| 5 | 折返しが説明できる | 800 MHz を入れると 1228.8 − 800 = **428.8 MHz** に見える |
 | 6 | 振幅が dBFS で整合する | SG の設定値と、バラン + ADC のフルスケールから予想される値が一致する |
 | 7 | 無入力時のノイズフロアが妥当 | 全 0 でも飽和でもない。**配線ミスはこの 2 つに振れる** |
 
@@ -229,9 +244,9 @@ scp build/proj003.bit build/proj003.hwh pynq/adc_capture.py xilinx@<board>:~/pro
 ssh xilinx@<board>
 cd ~/proj003
 sudo python3 adc_capture.py --probe             # まずこれ。タイル / ブロックの確定
-sudo python3 adc_capture.py --tone 100.005      # ビン中心の CW
+sudo python3 adc_capture.py --tone 100.0125     # ビン中心の CW
 sudo python3 adc_capture.py --tone 100.0        # ビン中心から外す
-sudo python3 adc_capture.py --tone 600.0 --zone 2   # 第 2 ナイキストゾーン
+sudo python3 adc_capture.py --tone 800.0 --zone 2   # 第 2 ナイキストゾーン
 ```
 
 環境の固定値は [`../VERSIONS.md`](../VERSIONS.md)、詰まったときは
@@ -250,9 +265,11 @@ sudo python3 adc_capture.py --tone 600.0 --zone 2   # 第 2 ナイキストゾ�
 ## 着手前に裏取りが要ること
 
 - **ADC_A の tile / block**。RefMan A6 では **ADC_A / ADC_B が Tile 226、
-  ADC_C / ADC_D が Tile 224**。`build.tcl` は Tile 226（IP 上の ADC2）の
-  スライス 0 を有効にしている。デュアルタイルのスライス番号の付き方
-  （0/1 か 0/2 か）は `adc_capture.py --probe` で確定させる。
+  ADC_C / ADC_D が Tile 224**。デュアルタイルのスライス番号は **0 と 2**
+  （1 と 3 は disabled parameter になる。2026-09-16 のビルド警告で確定）。
+  したがって **ADC_A = Tile 226 slice 0 / ADC_B = Tile 226 slice 2**。
+  `build.tcl` はこれを前提にしている。`xrfdc` 側の `blocks[]` の並びが
+  これと一致するかは `adc_capture.py --probe` で確かめる。
   **ここを間違えると「DMA は完走するのに中身がノイズだけ」になる**
 - 14 bit サンプルを 16 bit 語に収める際のビットの寄せ方。`--probe` の後の
   取得で `max|x|` を見る（±32768 級なら MSB 揃え、±8192 級なら LSB 揃え）

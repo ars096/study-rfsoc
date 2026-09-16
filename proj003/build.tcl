@@ -7,14 +7,26 @@
 #   build/rfdc_params.rpt  RFDC IP が実際に持つ CONFIG 一覧（版がズレたときの突き合わせ用）
 #
 # ---- サンプリング周波数の根拠 ----
-# LMX2594 が RFDC タイルへ 491.52 MHz を渡す（ボード既定）。タイル PLL で 983.04 MSPS。
-#   VCO = fs × OutDiv。RFDC の PLL は VCO 8.5〜13.2 GHz。
-#   OutDiv = 10 → VCO = 9.8304 GHz（範囲内） / FeedbackDiv = 9830.4/491.52 = 20
-#   OutDiv = 8 なら 7.86 GHz、16 なら 15.7 GHz で **どちらも範囲外**。10 以外に選択肢はない。
-# XRFdc のドライバは OutDiv として 1, 3 と 2〜32 の偶数を探索するので 10 は選ばれる。
+# LMX2594 が RFDC タイルへ 491.52 MHz を渡す（ボード既定）。これは動かせない。
+# 制約は 3 つ。**どれか 1 つを忘れると IP に弾かれる**（2026-09-16 に全部踏んだ）。
 #
-# fs を変えるときはこの計算をやり直すこと。VCO が範囲外だと IP が黙って別の値に
-# 丸める可能性があるため、下で **設定値を読み返して検証している**。
+#   (a) IP の Sampling Rate の有効範囲は **(1.0, 5.0) GSPS**
+#   (b) Refclk Freq の有効値は **VCO / FeedbackDiv の離散リスト**。
+#       つまり **fs を先に決めないと refclk の選択肢が決まらない**
+#   (c) VCO は 8.5〜13.2 GHz
+#
+# 491.52 = VCO / N を満たす VCO は N = 18..26 で 8847.36〜12779.52 MHz。
+# そのうち fs = VCO / OutDiv が (1.0, 5.0) に入り、かつ AXIS とデータレートが
+# 現実的なのは:
+#
+#   VCO = 9830.4 MHz (N=20, FeedbackDiv=20) / OutDiv = 8 → **fs = 1228.8 MSPS**
+#     AXIS = 1228.8 / 8 sample = 153.6 MHz
+#     データレート = 1228.8 MSPS × 2 B = 2.4576 GB/s（pl_clk1 200 MHz の 3.2 GB/s 以内）
+#
+# 他の候補: OutDiv = 6 → 1638.4 MSPS は 3.28 GB/s で MM 側が足りない。
+#           OutDiv = 4 → 2457.6 MSPS は AXIS が 307 MHz で重い。
+#
+# fs を変えるときはこの計算をやり直すこと。下で **設定値を読み返して検証している**。
 #
 # ---- 版がズレたときの直し方 ----
 # RFDC の CONFIG 名は Vivado の版で変わる。未知の名前があれば build は止まり、
@@ -32,7 +44,7 @@ if {[info exists ::env(OUTDIR)] && $::env(OUTDIR) ne ""} { set outdir ./$::env(O
 # ---- 設計パラメータ ----
 set adc_tile    2          ;# RF-ADC Tile 226 = IP 上の ADC2（RefMan A6: ADC_A / ADC_B が 226）
 set adc_slice   0          ;# ADC_A。デュアルタイルのスライス番号は実機で裏を取ること
-set fs_gsps     0.98304    ;# サンプリング周波数 [GSPS]
+set fs_gsps     1.2288     ;# サンプリング周波数 [GSPS]。IP の有効範囲は (1.0, 5.0)
 set refclk_mhz  491.520    ;# LMX2594 → RFDC タイル
 set spw         8          ;# AXI4-Stream 1 語あたりのサンプル数
 set ctrl_mhz    100        ;# pl_clk0: AXI4-Lite 制御系
@@ -90,10 +102,15 @@ proc cfg_apply {cell cfg {fatal 1}} {
             continue
         }
         if {[catch {set_property $k $v $obj} msg]} {
-            set allowed ""
-            catch {set allowed [list_property_value $k $obj]}
-            if {$allowed eq ""} { set allowed "(列挙ではない)" }
-            lappend ::cfg_fail [list $k $v "許される値: $allowed" $fatal]
+            # list_property_value は BD セルの CONFIG では空を返す。
+            # **有効値は Vivado のエラーメッセージ本文にしか出ない**ので、それを残す。
+            set why [string map {"\n" " "} $msg]
+            if {[regexp {Valid values are - (.*)$} $why -> vals]} {
+                set why "有効値: $vals"
+            } elseif {[regexp {is out of the range \(([^)]*)\)} $why -> rng]} {
+                set why "有効範囲: ($rng)"
+            }
+            lappend ::cfg_fail [list $k $v $why $fatal]
         }
     }
 }
@@ -105,8 +122,8 @@ proc cfg_report {stage} {
     set hard 0
     foreach f $::cfg_fail {
         lassign $f k v why isfatal
-        puts [format "  %-34s = %-10s %s%s" $k $v $why \
-              [expr {$isfatal ? "" : "   ← 任意なので続行"}]]
+        puts "  $k = $v[expr {$isfatal ? "" : "   （任意）"}]"
+        puts "      $why"
         if {$isfatal} { incr hard }
     }
     set ::cfg_fail {}
@@ -211,102 +228,122 @@ set rfdc [create_bd_cell -type ip -vlnv xilinx.com:ip:usp_rf_data_converter rfdc
 set T $adc_tile
 set S "${adc_tile}${adc_slice}"
 
-# **設定の順序が重要。**
-# タイル単位のパラメータ（ADC2_Sampling_Rate 等）は、そのタイルのスライスが有効に
-# なるまで disabled parameter 扱いで、set_property は
-#   WARNING: [BD 41-721] Attempt to set value ... on disabled parameter ... is ignored
-# の警告 1 行だけを出して **黙って無視される**（2026-09-16 に実際に踏んだ）。
-# したがって「スライスを有効にする → タイルの設定 → スライスの設定」の順で行う。
-# ADC2_Enable は派生パラメータなので触らない（スライスの有効化で決まる）。
+# **設定の順序が全て。** 2026-09-16 に順に踏んだ内容を順序として固定してある。
+#
+#   1. スライスを有効にする。これをしないとタイルのパラメータは disabled parameter で、
+#      set_property が WARNING: [BD 41-721] の 1 行だけ出して **黙って無視される**
+#   2. スライスの設定（Data_Width 等）。Fabric_Freq の計算に効く
+#   3. PLL を有効化 → **Sampling Rate** → **Refclk Freq** → Outclk Freq。
+#      Refclk の有効値は VCO / FeedbackDiv の離散リストで、VCO は Sampling Rate から
+#      決まる。**fs を先に入れないと 491.52 が選択肢に現れない**
+#   4. 残り（派生値になりうるもの）
+#
+# ADC2_Enable と ADC2_Fabric_Freq は派生パラメータなので触らない（読むだけ）。
+#
+# 全段を「失敗しても止めない」で流し、**最後に読み返しで検証する**。
+# 途中で止めると、その先の項目が正しいかどうか分からないまま次の 20 分を使うことになる。
 
-# 1) 使うスライスを有効にする。これでタイルが起き、タイルのパラメータが生きる
-cfg_apply rfdc [list CONFIG.ADC_Slice${S}_Enable {true}]
-cfg_report "スライスの有効化"
+# 1) 使うスライスを有効にする
+cfg_apply rfdc [list CONFIG.ADC_Slice${S}_Enable {true}] 0
 dump_rfdc_params $rfdc $outdir/rfdc_params.rpt
 
 # 2) 使わないタイル / スライスを明示的に落とす。
-#    既定で ADC0 が有効になっており（adc0_clk が出る）、放置すると使わない
-#    外部ポートが設計に残り .hwh にも現れる。proj002 の「使わないものも 0 にする」と同じ。
-#    存在しない名前がありうるので、ここは失敗しても止めない。
+#    **デュアルタイルのスライスは 0 と 2 のみ**（1 と 3 は disabled parameter になる。
+#    2026-09-16 の警告で確定した）。したがって ADC_A = Tile 226 slice 0 /
+#    ADC_B = Tile 226 slice 2。
+#    既定で ADC0 が有効なので、放置すると使わない外部ポートが .hwh に残る。
 set off {}
 foreach t {0 1 2 3} {
-    foreach sl {0 1 2 3} {
+    foreach sl {0 2} {
         if {"$t$sl" eq $S} continue
         lappend off CONFIG.ADC_Slice${t}${sl}_Enable {false}
         lappend off CONFIG.DAC_Slice${t}${sl}_Enable {false}
     }
 }
 cfg_apply rfdc $off 0
-cfg_report "使わないスライスの無効化"
 
-# 3) タイル単位の設定
-cfg_apply rfdc [list \
-    CONFIG.ADC${T}_PLL_Enable      {true} \
-    CONFIG.ADC${T}_Refclk_Freq     $refclk_mhz \
-    CONFIG.ADC${T}_Sampling_Rate   $fs_gsps \
-    CONFIG.ADC${T}_Outclk_Freq     $fabric_mhz \
-    CONFIG.ADC${T}_Fabric_Freq     $fabric_mhz \
-    CONFIG.ADC${T}_Clock_Source    $T \
-    CONFIG.ADC${T}_Clock_Dist      {0} \
-    CONFIG.ADC${T}_Multi_Tile_Sync {false} \
-]
-cfg_report "タイルの設定"
-
-# 4) スライス単位の設定
+# 3) スライスの設定
 #    Data_Type       0 = Real
 #    Decimation_Mode 1 = 1x（デシメーションなし）
 #    Mixer_Type      1 = Bypassed。**有効値は Data_Type と Decimation_Mode に依存して
 #                    絞られ、Real / 1x では 1 しか許されない**
-#                    （2026-09-16 に 3 = Fine を入れて IP_Flow 19-3461 で弾かれた）
 cfg_apply rfdc [list \
     CONFIG.ADC_Data_Type${S}        {0} \
     CONFIG.ADC_Data_Width${S}       $spw \
     CONFIG.ADC_Decimation_Mode${S}  {1} \
     CONFIG.ADC_Mixer_Type${S}       {1} \
-]
-cfg_report "スライスの設定（必須）"
-
-# ミキサをバイパスすると、以下は派生値になって設定を受け付けないことがある。
-# 受け付けなくても Mixer_Type = Bypassed が効いていれば意図は満たされるので止めない。
-cfg_apply rfdc [list \
-    CONFIG.ADC_Mixer_Mode${S}       {2} \
-    CONFIG.ADC_NCO_Freq${S}         {0} \
-    CONFIG.ADC_OBS${S}              {false} \
 ] 0
-cfg_report "スライスの設定（任意）"
 
+# 4) タイルの設定。**この順序を崩さないこと**
+cfg_apply rfdc [list CONFIG.ADC${T}_PLL_Enable    {true}]        0
+cfg_apply rfdc [list CONFIG.ADC${T}_Sampling_Rate $fs_gsps]      0
+cfg_apply rfdc [list CONFIG.ADC${T}_Refclk_Freq   $refclk_mhz]   0
+cfg_apply rfdc [list CONFIG.ADC${T}_Outclk_Freq   $fabric_mhz]   0
+
+# 5) 残り。ミキサをバイパスすると派生値になりうる
+cfg_apply rfdc [list \
+    CONFIG.ADC${T}_Clock_Source    $T \
+    CONFIG.ADC${T}_Clock_Dist      {0} \
+    CONFIG.ADC${T}_Multi_Tile_Sync {false} \
+    CONFIG.ADC_Mixer_Mode${S}      {2} \
+    CONFIG.ADC_NCO_Freq${S}        {0} \
+    CONFIG.ADC_OBS${S}             {false} \
+] 0
+
+cfg_report "RFDC の設定（読み返しで検証するので、ここでは止めない）"
 dump_rfdc_params $rfdc $outdir/rfdc_params.rpt
 
-# **設定値を読み返す。** BD 41-721 は警告 1 行しか出さないので、
-# 「設定したつもりで無視されている」状態を検出する手段はこれしかない。
-foreach {k want} [list \
-        CONFIG.ADC${T}_Sampling_Rate $fs_gsps \
-        CONFIG.ADC${T}_Fabric_Freq   $fabric_mhz] {
-    set got [get_property $k $rfdc]
-    if {abs($got - $want) > 1e-6} {
-        puts "ERROR: RFDC が設定を反映していない: $k  要求 $want / 実際 $got"
-        puts "  BD 41-721（disabled parameter）で無視されたか、"
-        puts "  タイル PLL の VCO 範囲（8.5〜13.2 GHz）を外している。"
-        puts "  build.tcl 冒頭の計算と、設定の順序を確認すること"
-        exit 1
+# ---- 読み返しによる検証 ----
+# BD 41-721 は警告 1 行しか出さず、set_property のエラーも
+# 「前の正しい設定に戻した」とだけ言って進む。**結果を読み返す以外に
+# 「設定したつもりで効いていない」状態を検出する手段がない。**
+puts ""
+puts "---- RFDC の確定値 ----"
+set ng 0
+foreach {k want kind} [list \
+        CONFIG.ADC${T}_Sampling_Rate   $fs_gsps     num \
+        CONFIG.ADC${T}_Refclk_Freq     $refclk_mhz  num \
+        CONFIG.ADC${T}_Outclk_Freq     $fabric_mhz  num \
+        CONFIG.ADC${T}_Fabric_Freq     $fabric_mhz  num \
+        CONFIG.ADC_Data_Type${S}       0            int \
+        CONFIG.ADC_Data_Width${S}      $spw         int \
+        CONFIG.ADC_Decimation_Mode${S} 1            int \
+        CONFIG.ADC_Mixer_Type${S}      1            int] {
+    set got ""
+    catch {set got [get_property $k $rfdc]}
+    set ok 0
+    if {$kind eq "num"} {
+        if {![catch {expr {abs($got - $want) < 1e-6}} r] && $r} { set ok 1 }
+    } else {
+        if {$got eq $want} { set ok 1 }
     }
+    puts [format "  %-34s = %-12s %s" $k $got [expr {$ok ? "OK" : "違う（要求 $want）"}]]
+    if {!$ok} { incr ng }
 }
-puts "RFDC (確定): fs = [get_property CONFIG.ADC${T}_Sampling_Rate $rfdc] GSPS / fabric = [get_property CONFIG.ADC${T}_Fabric_Freq $rfdc] MHz"
-foreach k [list CONFIG.ADC_Data_Type${S} CONFIG.ADC_Data_Width${S} \
-                CONFIG.ADC_Decimation_Mode${S} CONFIG.ADC_Mixer_Type${S} \
-                CONFIG.ADC_Mixer_Mode${S}] {
-    puts "RFDC       : $k = [get_property $k $rfdc]"
+if {$ng > 0} {
+    puts ""
+    puts "ERROR: RFDC の設定が $ng 件反映されていない。"
+    puts "  上の「CONFIG の設定に失敗した項目」に有効値が出ている。"
+    puts "  全 CONFIG と現在値は $outdir/rfdc_params.rpt。"
+    puts "  fs / refclk / VCO の関係は build.tcl 冒頭の計算を見直すこと"
+    exit 1
 }
+puts "RFDC (確定): fs = $fs_mhz MSPS / refclk = $refclk_mhz MHz / AXIS = $fabric_mhz MHz"
+puts ""
 
 # ---- キャプチャゲート（自作。TLAST の生成と記録の連続性を担う）----
 set gate [create_bd_cell -type module -reference capture_gate capture_gate_0]
 set_property CONFIG.DATA_W [expr {$spw * 16}] $gate
 
 # ---- 非同期 FIFO（clk_adc → pl_clk1 の乗り換えをここに閉じ込める）----
+# 深さ 4096 語 = 64 KiB で、65536 サンプル（128 KiB）の記録の半分を吸える。
+# 平均では MM 側（3.2 GB/s）がストリーム側（2.4576 GB/s）を上回るので詰まらないが、
+# DDR のリフレッシュ等で瞬間的に止まったときの保険。**ここが溢れると capture_gate が
+# 上流を止め、RFDC がサンプルを落として記録が不連続になる。**
 set fifo [create_bd_cell -type ip -vlnv xilinx.com:ip:axis_data_fifo axis_fifo]
 set_property -dict [list \
     CONFIG.TDATA_NUM_BYTES   [expr {$spw * 2}] \
-    CONFIG.FIFO_DEPTH        {2048} \
+    CONFIG.FIFO_DEPTH        {4096} \
     CONFIG.FIFO_MEMORY_TYPE  {block} \
     CONFIG.IS_ACLK_ASYNC     {1} \
     CONFIG.HAS_TLAST         {1} \
