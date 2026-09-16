@@ -9,27 +9,28 @@
 | | 値 | 備考 |
 |---|---|---|
 | Vivado | 2023.2 と 2024.1 を併設 | proj001 は 2023.2、**proj002 以降は 2024.1**（BSP と PYNQ v3.1 が前提とする版）。2026-09-16 に 2024.1 で `get_parts` / `get_board_parts` が通ることを確認 |
-| PYNQ image | v3.1.1 (Carlisle) へ更新する | **ボードの SD カードは 2026-09-15 時点で v3.0.1**（Vivado 2022.2 相当）。2024.1 で作ったオーバーレイとは版が合わない。下記参照 |
+| PYNQ image | v3.1.1 (Carlisle) | 2026-09-16 にカードを新規作成し、ボード上で `pynq.__version__` = 3.1.1 を確認。Vivado 2024.1 と整合。**旧 v3.0.1 カードは温存してある** |
 | Board files | RealDigitalOrg/RFSoC4x2-BSP `board_files/rfsoc4x2/1.0` | **Vivado のインストールツリーの外に clone し、`board.repoPaths` で指す。** ツリー内（`<Vivado>/data/boards/board_files`）に置くと版を増やすたびにコピーが要り、入れ直しで消える。commit は未固定 |
 | Part | `xczu48dr-ffvg1517-2-e` | 根拠: BSP board_files の宣言値 |
 
 ### PYNQ イメージの版
 
-**ボードの SD カードは v3.0.1 だった**（2026-09-15 に実機で確認。それまで VERSIONS.md は
-v3.1.1 と記載していたが、これは未確認の想定だった）。
+2026-09-15 の時点でボードの SD カードは **v3.0.1** だった（それまで VERSIONS.md は
+v3.1.1 と記載していたが、これは未確認の想定だった）。翌 2026-09-16 に新しいカードへ
+v3.1.1 を焼き、ボード上で `pynq.__version__` = 3.1.1 を確認して解消した。
 
 | | Vivado |
 |---|---|
 | PYNQ v3.0.1 | 2022.2 で検証済み（PYNQ 開発元の推奨） |
 | RFSoC-PYNQ v3.1.1 (Carlisle) | 2024.1。RFSoC 4x2 向けの最新イメージ |
 
-BSP の board files が 2024.1 前提である以上、**イメージ側を v3.1.1 に上げて揃える**。
-既存の v3.0.1 カードは上書きせず温存する（proj001 の環境を再現できる唯一の手段のため）。
+BSP の board files が 2024.1 前提である以上、**イメージ側を v3.1.1 に上げて揃える**のが唯一の解。
+逆方向（Vivado を 2022.2 に下げる）は board files とズレるため成立しない。
+**既存の v3.0.1 カードは上書きせず温存する**（proj001 の環境を再現できる唯一の実体のため）。
 
 暫定の逃げ道として `Overlay(..., ignore_version=True)` があるが、
 版の合わない IP が動かない可能性があるとされており、恒久策にはしない。
-特に RF Data Converter は `xrfdc` / `xrfclk` ドライバと IP の版が結合するので、
-Phase 3 に入る前に必ず揃える。
+特に RF Data Converter は `xrfdc` / `xrfclk` ドライバと IP の版が結合する。
 
 ### Part の未確認事項
 

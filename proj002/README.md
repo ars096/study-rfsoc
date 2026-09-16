@@ -1,7 +1,7 @@
 # proj002 — Zynq MPSoC + AXI GPIO（PYNQ から LED を叩く）
 
-日付: 2026-09-15
-状態: **進行中**
+日付: 2026-09-15 〜 2026-09-16
+状態: **成功**
 
 ## 目的
 
@@ -74,7 +74,7 @@ zynq_ultra_ps_e ──M_AXI_HPM0_FPD──▶ AXI SmartConnect ──▶ axi_gpi
 
 ## 結果
 
-**ビットストリームと `.hwh` の生成まで成功。** PYNQ からのロードは未実施。
+**成功。** ビットストリームの生成から PYNQ でのロード・LED 制御まで通った。
 
 | | 値 |
 |---|---|
@@ -84,8 +84,11 @@ zynq_ultra_ps_e ──M_AXI_HPM0_FPD──▶ AXI SmartConnect ──▶ axi_gpi
 | `build/proj002.hwh` | 185,867 B |
 | AXI GPIO | `FULLNAME="/gpio_led"` / `BASEVALUE="0xA0000000"`（64K） |
 
-- `.hwh` に `gpio_led` が入っていることを確認済み。**ボードに持ち込む前に
-  `ol.ip_dict["gpio_led"]` が引けることが確定している**
+- `.hwh` に `gpio_led` が入っていることをボードに持ち込む前に確認した。
+  **転送前に `ol.ip_dict["gpio_led"]` が引けると分かるので、切り分けが一段減る**
+- ボード側（2026-09-16）: SD カードを RFSoC-PYNQ v3.1.1 で新規作成し、
+  `pynq.__version__` = 3.1.1 を確認。`.bit` / `.hwh` / `led_test.py` を転送して実行し、
+  **オーバーレイの読み込みと LED の制御に成功した**
 - タイミング解析は速度グレード `-2` で実行された。WNS に 6.7 ns の余裕があるため、
   **仮に刻印が `-1` でもこの設計は破綻しない**。速度グレードの裏取りは RFDC まで急がない
 
@@ -93,8 +96,10 @@ zynq_ultra_ps_e ──M_AXI_HPM0_FPD──▶ AXI SmartConnect ──▶ axi_gpi
 
 - **Vivado 2024.1 + BSP board files でボードプリセットが当たることを実証した。**
   proj001 で未検証だった「board file を実際に使う」経路がここで通った
-- **残るは PYNQ からのロード。** ボードの SD カードが v3.0.1 のため、
-  v3.1.1 へ更新してから `led_test.py` を実行する。LED が流れれば Phase 2 完了
+- **Phase 2 完了。** PS ↔ PL の疎通、`.hwh` の扱い、PYNQ からのレジスタアクセスの
+  3 点が実証できた。以降で何かが動かなくても、この経路は容疑者から外せる
+- **版の整合が取れた状態**: Vivado 2024.1 / BSP board_files 1.0 / PYNQ v3.1.1。
+  RFDC は `xrfdc` / `xrfclk` と IP の版が結合するので、この組み合わせを崩さない
 - 次の proj の候補: RF Data Converter を置いて ADC の生データを PS 側へ吸い上げる
 
 ## 再現手順

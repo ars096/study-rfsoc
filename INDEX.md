@@ -6,7 +6,7 @@
 | proj | 日付 | 目的 | 結果 |
 |---|---|---|---|
 | [proj001](proj001/) | 2026-09-11 | 開発環境の再構築と生存確認。PS を使わない最小構成（自走 100 MHz → 27bit カウンタ → ユーザ LED）| **成功**。LED 点滅を確認。ツールチェーン・ライセンス・ケーブル・ボード・ピン定義を同時に検証 |
-| [proj002](proj002/) | 2026-09-15 | PS ↔ PL の疎通と PYNQ オーバーレイの流儀。Zynq MPSoC + AXI GPIO で LED を叩く。Vivado 2024.1 へ移行 | 進行中 |
+| [proj002](proj002/) | 2026-09-15 | PS ↔ PL の疎通と PYNQ オーバーレイの流儀。Zynq MPSoC + AXI GPIO で LED を叩く。Vivado 2024.1 へ移行 | **成功**。PYNQ v3.1.1 からオーバーレイを読み込み LED を制御。board file / block design / `.hwh` の経路を実証 |
 
 ## 凡例
 
