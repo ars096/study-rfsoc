@@ -55,17 +55,46 @@ zynq_ultra_ps_e ──M_AXI_HPM0_FPD──▶ AXI SmartConnect ──▶ axi_gpi
   Vivado の出力は `system_wrapper.bit` と `system.hwh` で名前も階層も揃わないため、
   `build.tcl` の末尾でコピーして揃えている
 
+- **決定**: PS の AXI マスタは、使うものだけでなく**使わないものも明示的に 0 にする**
+  **理由**: ボードプリセットは `M_AXI_HPM1_FPD` も有効にする。放置すると
+  `maxihpm1_fpd_aclk` がどこにも繋がらず `validate_bd_design` が
+  `ERROR: [BD 41-758] The following clock pins are not connected to a valid clock source`
+  で落ちる（2026-09-16 に実際に踏んだ）。「使うものを 1 にする」だけでは、
+  プリセットが何を有効にするかに設計が依存してしまう
+  **見送った案**: `maxihpm1_fpd_aclk` を `pl_clk0` に繋いで黙らせる案。
+  使わないマスタのポートが設計に残り、`.hwh` にも現れる
+
 ## やったこと
 
-- （未実施）
+- `build.tcl` で block design を Tcl から生成し、合成〜実装〜ビットストリームまで通した
+  （Vivado 2024.1、board files は `~/src/RFSoC4x2-BSP/board_files`、実装まで約 8 分）
+- 途中 1 点で詰まり、解消した。使わない `M_AXI_HPM1_FPD` のクロックが未接続で
+  `validate_bd_design` が `BD 41-758` で停止（上記「決めたこと」）
+- `.bit` と `.hwh` を同名で `build/` 直下に出力した
 
 ## 結果
 
-- （未記入）
+**ビットストリームと `.hwh` の生成まで成功。** PYNQ からのロードは未実施。
+
+| | 値 |
+|---|---|
+| DRC | violations **0** |
+| タイミング | WNS = 6.678998 ns / WHS = 0.027402 ns（PL クロック 100 MHz） |
+| `build/proj002.bit` | 8,700,770 B |
+| `build/proj002.hwh` | 185,867 B |
+| AXI GPIO | `FULLNAME="/gpio_led"` / `BASEVALUE="0xA0000000"`（64K） |
+
+- `.hwh` に `gpio_led` が入っていることを確認済み。**ボードに持ち込む前に
+  `ol.ip_dict["gpio_led"]` が引けることが確定している**
+- タイミング解析は速度グレード `-2` で実行された。WNS に 6.7 ns の余裕があるため、
+  **仮に刻印が `-1` でもこの設計は破綻しない**。速度グレードの裏取りは RFDC まで急がない
 
 ## 結論・次にやること
 
-- （未記入）
+- **Vivado 2024.1 + BSP board files でボードプリセットが当たることを実証した。**
+  proj001 で未検証だった「board file を実際に使う」経路がここで通った
+- **残るは PYNQ からのロード。** ボードの SD カードが v3.0.1 のため、
+  v3.1.1 へ更新してから `led_test.py` を実行する。LED が流れれば Phase 2 完了
 - 次の proj の候補: RF Data Converter を置いて ADC の生データを PS 側へ吸い上げる
 
 ## 再現手順
@@ -106,6 +135,7 @@ PL のレジスタを叩くのは PS 側のソフトなので、確認は PYNQ �
 |---|---|
 | board part が見つからない | `BOARD_REPO` のパス。`<repo>/rfsoc4x2/<version>/board.xml` が居るか |
 | `apply_bd_automation` がプリセットを当てられない | BSP が 2024.1 前提。Vivado の版 |
+| `validate_bd_design` が `BD 41-758`（clock pin not connected） | 使っていない AXI マスタが有効になっていないか。`PSU__USE__M_AXI_GP1` / `GP2`（**2026-09-16 に実際に発生**） |
 | `Overlay()` が `.hwh` を見つけられない | `.bit` と `.hwh` が同名で同じディレクトリに居るか |
 | `ip_dict` に `gpio_led` が無い | block design の IP 名。`assign_bd_address` が走ったか |
 | LED が光らない・順序が違う | `src/led.xdc` のピン割り当て（proj001 で確認済みの値） |
