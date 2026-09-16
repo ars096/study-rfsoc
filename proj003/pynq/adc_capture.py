@@ -30,6 +30,40 @@ BITFILE = "proj003.bit"
 LMK_FREQ = 245.76
 LMX_FREQ = 491.52
 
+# ボード内のクロック。無入力で立つスパーの出どころを突き止めるための表。
+# **分光計としては固定周波数のバーディーになるので、素性を記録しておく。**
+KNOWN_CLOCKS = [
+    ("fs（サンプリング）", 1228.8e6),
+    ("LMX2594 → RFDC 基準", 491.52e6),
+    ("LMK04828 → LMX 基準", 245.76e6),
+    ("LMK04828 → PL 基準", 122.88e6),
+    ("AXIS (fs/8)", 153.6e6),
+    ("clk_adc2 (fs/16)", 76.8e6),
+    ("PS pl_clk0", 100.0e6),
+    ("PS pl_clk1", 175.0e6),
+    ("RF SYSREF", 7.68e6),
+    ("Si5395 自走 PL クロック", 100.0e6),
+]
+
+
+def identify(f_hz, fs_hz, tol_hz):
+    """周波数が既知のクロック（の高調波・折返し）と一致するかを調べる。"""
+    best = None
+    for name, f0 in KNOWN_CLOCKS:
+        for h in range(1, 9):
+            fa = (f0 * h) % fs_hz
+            if fa > fs_hz / 2:
+                fa = fs_hz - fa
+            if fa < tol_hz:
+                continue      # 直流に折り返すものは意味がない（fs の整数倍など）
+            d = abs(fa - f_hz)
+            # 次数の低い説明を優先する。同じ周波数を高調波でも説明できることがある。
+            key = (h, d)
+            if d <= tol_hz and (best is None or key < best[0]):
+                best = (key, f"{name}{' × %d' % h if h > 1 else ''}")
+    return best[1] if best else ""
+
+
 CTRL_ARM = 1 << 31
 STATUS_BUSY = 1 << 0
 STATUS_DONE = 1 << 1
@@ -356,36 +390,46 @@ def analyse(x, fs_hz, tone_hz, window):
     floor = 20 * np.log10(max(np.median(mag[mask]), 1e-12) / full_scale)
     log(f"ノイズフロア    : {floor:.2f} dBFS (中央値) / ピークとの差 {peak_dbfs - floor:.1f} dB")
 
-    # ---- 高調波 ----
+    # ---- 高調波（期待周波数が与えられたときだけ）----
     # **dBc が入力レベルに追従するかどうかで、歪みの出どころが分かる。**
     # 入力を 10 dB 下げて dBc が 20 dB 下がれば ADC の圧縮。変わらなければ
     # 入力波形そのものの歪み。奇数次だけが 1/n で並べば方形波。
-    log("")
-    log("高調波（基本波に対する dBc）:")
-    log("  n   bin        周波数       実測      方形波なら   ゾーン")
-    for h in range(2, 10):
-        f_h = f_est * h
-        zone_h = int(f_h // (fs_hz / 2)) + 1
-        fh = f_h % fs_hz
-        if fh > fs_hz / 2:
-            fh = fs_hz - fh
-        kh = int(round(fh / rbw))
-        if not 0 < kh < len(mag) - 1:
-            continue
-        lo = max(1, kh - 2)
-        kh = int(np.argmax(mag[lo:kh + 3]) + lo)
-        dbc = 20 * np.log10(max(mag[kh], 1e-12) / max(mag[k], 1e-12))
-        sq = f"{20 * np.log10(1.0 / h):8.2f}" if h % 2 else "       —"
-        log(f"  H{h}  {kh:>6}  {freqs[kh] / 1e6:>11.5f} MHz  {dbc:>8.2f}  {sq}"
-            f"     {zone_h}{'  ← 折返し' if zone_h > 1 else ''}")
-    log("  奇数次が「方形波なら」の値に一致していれば、歪みは ADC ではなく")
-    log("  入力波形そのもの（方形波）。ADC は正しく再現している。")
+    if tone_hz:
+      log("")
+      log("高調波（基本波に対する dBc）:")
+      log("  n   bin        周波数       実測      方形波なら   ゾーン")
+      for h in range(2, 10):
+          f_h = f_est * h
+          zone_h = int(f_h // (fs_hz / 2)) + 1
+          fh = f_h % fs_hz
+          if fh > fs_hz / 2:
+              fh = fs_hz - fh
+          kh = int(round(fh / rbw))
+          if not 0 < kh < len(mag) - 1:
+              continue
+          lo = max(1, kh - 2)
+          kh = int(np.argmax(mag[lo:kh + 3]) + lo)
+          dbc = 20 * np.log10(max(mag[kh], 1e-12) / max(mag[k], 1e-12))
+          sq = f"{20 * np.log10(1.0 / h):8.2f}" if h % 2 else "       —"
+          log(f"  H{h}  {kh:>6}  {freqs[kh] / 1e6:>11.5f} MHz  {dbc:>8.2f}  {sq}"
+              f"     {zone_h}{'  ← 折返し' if zone_h > 1 else ''}")
+      log("  奇数次が「方形波なら」の値に一致していれば、歪みは ADC ではなく")
+      log("  入力波形そのもの（方形波）。ADC は正しく再現している。")
 
     log("")
-    log("上位 5 本:")
-    for kk in np.argsort(mag[1:])[::-1][:5] + 1:
+    log("上位のピーク（既知クロックとの照合つき）:")
+    shown = []
+    for kk in np.argsort(mag[1:])[::-1] + 1:
+        if any(abs(int(kk) - p) < 4 for p in shown):
+            continue          # 同じ山の裾は 1 本にまとめる
+        shown.append(int(kk))
         d = 20 * np.log10(max(mag[kk], 1e-12) / full_scale)
-        log(f"  bin {kk:>6}  {freqs[kk] / 1e6:>12.6f} MHz  {d:>8.2f} dBFS")
+        who = identify(freqs[kk], fs_hz, 3 * rbw)
+        log(f"  bin {kk:>6}  {freqs[kk] / 1e6:>12.6f} MHz  {d:>8.2f} dBFS  {who}")
+        if len(shown) >= 8:
+            break
+    log("  **既知クロックと一致するものは回り込み。** 分光計では固定周波数の")
+    log("  バーディーになるので、素性と強さを記録しておく。")
 
 
 # --------------------------------------------------------------------- main
