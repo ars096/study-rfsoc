@@ -95,6 +95,41 @@ make timing-check  # -1 で通す → build-1-e/（build/ は無傷）
 **`USB DEVICE` ポートに挿すと FTDI が `lsusb` に現れず、JTAG target が 0 個になる。**
 シルク印刷を読んで挿す。
 
+### RF フロントエンドとクロック（proj003 以降）
+
+出典は RFSoC 4x2 Reference Manual Rev A6。**実機での裏取りが済んだものは印を付けていく。**
+
+| | 値 | 状態 |
+|---|---|---|
+| ADC_A / ADC_B | RF-ADC **Tile 226** | RefMan A6 記載。ブロック番号の付き方は `xrfdc` で未確認 |
+| ADC_C / ADC_D | RF-ADC **Tile 224** | 同上 |
+| DAC_A | RF-DAC Tile 230 | RefMan A6 記載 |
+| DAC_B | RF-DAC Tile 228 | RefMan A6 記載 |
+| ADC 入力のバラン | **MABA-011118**（10 MHz 〜 10 GHz） | 各 SMA と ADC の間に入る。**DC 結合ではない** |
+| RFDC 基準クロック | 491.52 MHz（Tile 224 / 226 / 228 / 230） | LMX2594 が供給 |
+| システム REFCLK | 122.88 MHz DIFF | LMK04828 が供給 |
+| RF SYSREF | 7.68 MHz DIFF | |
+| 外部クロック入力 | **CLK_IN（SMA）** → LMK04828 | 実装済み。**基板改造は不要** |
+| 複数ボード同期 | SYNC_IN（SMA） | |
+
+クロック生成は Si5395B（PL 用 100 MHz LVDS をファクトリプログラムで生成）と、
+LMK04828（ジッタクリーナ）＋ LMX2594 × 2（RF シンセ）の 2 系統に分かれる。
+**proj001 / proj002 が使っていた自走 100 MHz は Si5395 側**で、RFDC のサンプリング
+クロックとは別経路である。
+
+### 外部 10 MHz 基準クロックの罠
+
+**外部基準を挿していなくても LMK04828 の PLL2 はオンボード VCXO で出力を作る。**
+したがってクロックは出るし ADC も動く（入出力間の位相関係が不定になるだけ）。
+**「動いているように見える」ことは、外部基準が効いている証拠にならない。**
+
+判定するには PLL1 のロック状態を読むか、取得した波形の周波数オフセットを測る。
+また `xrfclk` が書き込む LMK04828 のレジスタ設定ファイルを、外部 10 MHz を CLKin0 から
+取る版に差し替える必要がある。TICS Pro で自作する前に、CASPER が持つ RFSoC4x2 向けの
+検証済みファイルを当たること（`rfsoc4x2_lmk_CLKin0_extref_10M_PL_122M88_LMXREF_245M76.txt`）。
+
+評価ボードで動く設定ファイルが実装基板では動かない例が報告されている。
+
 ## board files の置き場所
 
 `board.repoPaths` に渡すのは **`board.xml` の 2 階層上**（`rfsoc4x2/` を含むディレクトリ）。
