@@ -27,7 +27,7 @@ PL の中身を疑う作業になるが、**中身を疑うには中身を覗く
                   │                                              │
  ADC_A ─balun─▶ rfdc ──m20_axis──▶ capture_gate_0 ──▶ axis_fifo ─┼─▶ dma_adc
   (SMA)        Tile 226 / ADC_A     TLAST 生成        非同期      │   S2MM のみ
-               Real / NCO なし      記録の連続性      2048 word   │      │
+               Real / Mixer 1       記録の連続性      2048 word   │      │
                デシメーション 1          ▲                        │      │ M_AXI_S2MM
                fs = 983.04 MSPS          │ ctrl/status           │      ▼
                   ▲                 gpio_capture                 │   smc_data
@@ -124,11 +124,19 @@ XRFdc のドライバは OutDiv として 1, 3 と 2〜32 の偶数を探索す�
   一発で取れる。積分器が入った後の読み出しにもそのまま使い回せる
   **見送った案**: BRAM スナップショット。挙動は決定的だが深さが固定され、後段で使えない
 
-- **決定**: RFDC の CONFIG は **名前の存在を確かめてから設定する**
-  **理由**: RFDC の CONFIG 名は Vivado の版で変わる。`set_property` に未知の名前を
-  渡したときのエラーは原因を示さない。`build.tcl` は未知の名前を集めて一覧で報告し、
-  **IP が実際に持つ CONFIG を `build/rfdc_params.rpt` に書き出す**。
-  版がズレたときの往復を 1 回で済ませるため
+- **決定**: RFDC の CONFIG は **1 つずつ設定し、失敗は集めてまとめて報告する**
+  **理由**: RFDC の CONFIG 名と許容値は Vivado の版と他のパラメータに依存して変わる。
+  まとめて `set_property` すると最初の 1 つで止まり、残りが正しいのか分からないまま
+  往復することになる。`build.tcl` は失敗した項目の「要求値」と「許される値」を
+  控えて先へ進み、最後にまとめて報告したうえで、**IP が実際に持つ CONFIG と
+  その許容値を `build/rfdc_params.rpt` に書き出す**
+
+- **決定**: RFDC は「スライスを有効にする → タイルの設定 → スライスの設定」の順で設定する
+  **理由**: タイル単位のパラメータ（`ADC2_Sampling_Rate` 等）は、そのタイルの
+  スライスが有効になるまで disabled parameter 扱いで、**`WARNING: [BD 41-721]`
+  の 1 行だけを出して黙って無視される**（2026-09-16 に実際に踏んだ）。
+  `ADC2_Enable` は派生パラメータなので触らない。無視されていないことは
+  **設定後に IP から読み返して**確かめる
 
 - **決定**: ADC のキャリブレーションは既定のまま（背景校正を切らない）
   **理由**: 最初から変数を増やさない。分光計として問題になるかどうかは、
@@ -185,6 +193,7 @@ proj003 の中を 3 段に切る。詰まったときに容疑者が分かれる
 | `src/capture_gate.v` | AXI4-Stream の有限長スナップショット（自作 RTL はこれだけ） |
 | `src/timing.xdc` | 非同期クロックグループと CDC の false path |
 | `sim/tb_capture_gate.v` | `capture_gate` のテストベンチ（icarus verilog） |
+| `build/rfdc_params.rpt` | RFDC IP の全 CONFIG と許容値（生成物。版のズレを追う唯一の手がかり） |
 | `pynq/adc_capture.py` | ボード上での取得と FFT 検証 |
 | `program.tcl` | JTAG 書き込み（PYNQ 経由で使うので通常は不要） |
 
@@ -240,7 +249,9 @@ sudo python3 adc_capture.py --tone 600.0 --zone 2   # 第 2 ナイキストゾ�
 
 | 症状 | 見るところ |
 |---|---|
-| `set_property` が RFDC の CONFIG で落ちる | 版のズレ。`build/rfdc_params.rpt` に実際の一覧が出る |
+| `set_property` が RFDC の CONFIG で落ちる | 版のズレ。失敗した項目と**許される値**が一覧で出る。`build/rfdc_params.rpt` に全 CONFIG と許容値 |
+| `WARNING: [BD 41-721] ... disabled parameter` が出る | タイルのパラメータをスライス有効化より前に設定している。**警告 1 行で黙って無視される** |
+| `IP_Flow 19-3461 Value ... is out of the range` | 許容値が他のパラメータに依存して絞られている（例: Real / デシメーション 1 では `ADC_Mixer_Type` は 1 = Bypassed のみ） |
 | RFDC が設定を丸めた、と言って止まる | タイル PLL の VCO 範囲（8.5〜13.2 GHz）。上の計算をやり直す |
 | **WNS が説明できない値になる** | `src/timing.xdc` の非同期クロックグループが効いているか。`build/clocks.rpt` でクロック名を確認 |
 | `xrfdc` がタイルを見つけない | `.hwh` に RFDC が入っているか。**ボードに持ち込む前に確認できる** |

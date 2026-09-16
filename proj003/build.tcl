@@ -43,7 +43,7 @@ set fs_mhz      [format %.3f [expr {$fs_gsps * 1000.0}]]
 
 puts "PART      : $part"
 puts "OUTDIR    : $outdir"
-puts "ADC       : Tile [expr {224 + 2*$adc_tile}] / slice $adc_slice"
+puts "ADC       : Tile [expr {224 + $adc_tile}] / slice $adc_slice"
 puts "fs        : $fs_mhz MSPS （AXIS $fabric_mhz MHz × $spw sample/word）"
 
 set projdir $outdir/vivado
@@ -75,19 +75,64 @@ proc BI {cell patterns what} {
 proc nc {a b} { connect_bd_net  [BP $a] [BP $b] }
 proc ic {a b} { connect_bd_intf_net $a $b }
 
-# CONFIG 名の存在を確かめてから設定する。知らない名前は集めて後でまとめて報告する。
-proc cfg_apply {cell cfg} {
+# CONFIG を **1 つずつ** 設定する。まとめて set_property すると最初の 1 つで止まり、
+# 残りが正しいのかどうか分からないまま往復することになる。
+# 失敗したものは「要求値」と「許される値」を控えて先へ進み、後でまとめて報告する。
+# fatal = 0 の組は「設定できればよい」項目で、失敗しても止めない。
+set ::cfg_fail {}
+
+proc cfg_apply {cell cfg {fatal 1}} {
     set obj   [get_bd_cells $cell]
     set known [list_property $obj]
-    set bad {}
     foreach {k v} $cfg {
         if {[lsearch -exact $known $k] < 0} {
-            lappend bad $k
-        } else {
-            set_property $k $v $obj
+            lappend ::cfg_fail [list $k $v "この IP に存在しない名前" $fatal]
+            continue
+        }
+        if {[catch {set_property $k $v $obj} msg]} {
+            set allowed ""
+            catch {set allowed [list_property_value $k $obj]}
+            if {$allowed eq ""} { set allowed "(列挙ではない)" }
+            lappend ::cfg_fail [list $k $v "許される値: $allowed" $fatal]
         }
     }
-    return $bad
+}
+
+proc cfg_report {stage} {
+    if {[llength $::cfg_fail] == 0} { return }
+    puts ""
+    puts "---- CONFIG の設定に失敗した項目（$stage）----"
+    set hard 0
+    foreach f $::cfg_fail {
+        lassign $f k v why isfatal
+        puts [format "  %-34s = %-10s %s%s" $k $v $why \
+              [expr {$isfatal ? "" : "   ← 任意なので続行"}]]
+        if {$isfatal} { incr hard }
+    }
+    set ::cfg_fail {}
+    puts ""
+    if {$hard > 0} {
+        puts "  IP が実際に持つ CONFIG と許容値は build/rfdc_params.rpt にある"
+        exit 1
+    }
+}
+
+# IP の CONFIG と、列挙なら許される値を書き出す。版がズレたときの唯一の手がかり。
+proc dump_rfdc_params {obj path} {
+    set fh [open $path w]
+    puts $fh "# [get_property VLNV $obj]"
+    foreach k [lsort [list_property $obj]] {
+        if {![string match CONFIG.* $k]} continue
+        set v ""       ; catch {set v [get_property $k $obj]}
+        set allowed "" ; catch {set allowed [list_property_value $k $obj]}
+        if {[llength $allowed] > 1} {
+            puts $fh "$k = $v      \[$allowed\]"
+        } else {
+            puts $fh "$k = $v"
+        }
+    }
+    close $fh
+    puts "=== wrote $path ==="
 }
 
 # ------------------------------------------------------------------ project
@@ -163,62 +208,95 @@ set_property -dict [list \
 # PYNQ 側から ol.rfdc で引けるよう、セル名を rfdc にする
 set rfdc [create_bd_cell -type ip -vlnv xilinx.com:ip:usp_rf_data_converter rfdc]
 
-# 実際に持っている CONFIG を先に書き出す。版がズレたときはこれが唯一の手がかりになる
-set fh [open $outdir/rfdc_params.rpt w]
-puts $fh "# [get_property VLNV $rfdc]"
-foreach k [lsort [list_property $rfdc]] {
-    if {[string match CONFIG.* $k]} { puts $fh "$k = [get_property $k $rfdc]" }
-}
-close $fh
-puts "=== wrote $outdir/rfdc_params.rpt ==="
-
 set T $adc_tile
 set S "${adc_tile}${adc_slice}"
-set cfg_rfdc [list \
-    CONFIG.ADC${T}_Enable            {1} \
-    CONFIG.ADC${T}_PLL_Enable        {true} \
-    CONFIG.ADC${T}_Refclk_Freq       $refclk_mhz \
-    CONFIG.ADC${T}_Sampling_Rate     $fs_gsps \
-    CONFIG.ADC${T}_Outclk_Freq       $fabric_mhz \
-    CONFIG.ADC${T}_Fabric_Freq       $fabric_mhz \
-    CONFIG.ADC${T}_Clock_Source      $T \
-    CONFIG.ADC${T}_Clock_Dist        {0} \
-    CONFIG.ADC${T}_Multi_Tile_Sync   {false} \
-    CONFIG.ADC_Slice${S}_Enable      {true} \
-    CONFIG.ADC_Data_Type${S}         {0} \
-    CONFIG.ADC_Data_Width${S}        $spw \
-    CONFIG.ADC_Decimation_Mode${S}   {1} \
-    CONFIG.ADC_Mixer_Type${S}        {3} \
-    CONFIG.ADC_Mixer_Mode${S}        {2} \
-    CONFIG.ADC_NCO_Freq${S}          {0} \
-    CONFIG.ADC_OBS${S}               {false} \
-]
-# 値の意味: Data_Type 0 = Real / Decimation_Mode 1 = 1x（デシメーションなし）
-#           Mixer_Type 3 = Bypassed / Mixer_Mode 2 = Real→Real
-# 版によって列挙の番号が動く可能性がある。疑うときは rfdc_params.rpt の既定値を見る。
 
-set bad [cfg_apply rfdc $cfg_rfdc]
-if {[llength $bad] > 0} {
-    puts "ERROR: RFDC の CONFIG 名が Vivado の版と食い違っている:"
-    foreach k $bad { puts "  未知: $k" }
-    puts "  実際の一覧: $outdir/rfdc_params.rpt"
-    exit 1
+# **設定の順序が重要。**
+# タイル単位のパラメータ（ADC2_Sampling_Rate 等）は、そのタイルのスライスが有効に
+# なるまで disabled parameter 扱いで、set_property は
+#   WARNING: [BD 41-721] Attempt to set value ... on disabled parameter ... is ignored
+# の警告 1 行だけを出して **黙って無視される**（2026-09-16 に実際に踏んだ）。
+# したがって「スライスを有効にする → タイルの設定 → スライスの設定」の順で行う。
+# ADC2_Enable は派生パラメータなので触らない（スライスの有効化で決まる）。
+
+# 1) 使うスライスを有効にする。これでタイルが起き、タイルのパラメータが生きる
+cfg_apply rfdc [list CONFIG.ADC_Slice${S}_Enable {true}]
+cfg_report "スライスの有効化"
+dump_rfdc_params $rfdc $outdir/rfdc_params.rpt
+
+# 2) 使わないタイル / スライスを明示的に落とす。
+#    既定で ADC0 が有効になっており（adc0_clk が出る）、放置すると使わない
+#    外部ポートが設計に残り .hwh にも現れる。proj002 の「使わないものも 0 にする」と同じ。
+#    存在しない名前がありうるので、ここは失敗しても止めない。
+set off {}
+foreach t {0 1 2 3} {
+    foreach sl {0 1 2 3} {
+        if {"$t$sl" eq $S} continue
+        lappend off CONFIG.ADC_Slice${t}${sl}_Enable {false}
+        lappend off CONFIG.DAC_Slice${t}${sl}_Enable {false}
+    }
 }
+cfg_apply rfdc $off 0
+cfg_report "使わないスライスの無効化"
 
-# **設定値を読み返す。** IP が要求を黙って丸める可能性があるため。
-# part の検証（proj002）と同じ考え方で、要求と実際が違ったらここで止める。
+# 3) タイル単位の設定
+cfg_apply rfdc [list \
+    CONFIG.ADC${T}_PLL_Enable      {true} \
+    CONFIG.ADC${T}_Refclk_Freq     $refclk_mhz \
+    CONFIG.ADC${T}_Sampling_Rate   $fs_gsps \
+    CONFIG.ADC${T}_Outclk_Freq     $fabric_mhz \
+    CONFIG.ADC${T}_Fabric_Freq     $fabric_mhz \
+    CONFIG.ADC${T}_Clock_Source    $T \
+    CONFIG.ADC${T}_Clock_Dist      {0} \
+    CONFIG.ADC${T}_Multi_Tile_Sync {false} \
+]
+cfg_report "タイルの設定"
+
+# 4) スライス単位の設定
+#    Data_Type       0 = Real
+#    Decimation_Mode 1 = 1x（デシメーションなし）
+#    Mixer_Type      1 = Bypassed。**有効値は Data_Type と Decimation_Mode に依存して
+#                    絞られ、Real / 1x では 1 しか許されない**
+#                    （2026-09-16 に 3 = Fine を入れて IP_Flow 19-3461 で弾かれた）
+cfg_apply rfdc [list \
+    CONFIG.ADC_Data_Type${S}        {0} \
+    CONFIG.ADC_Data_Width${S}       $spw \
+    CONFIG.ADC_Decimation_Mode${S}  {1} \
+    CONFIG.ADC_Mixer_Type${S}       {1} \
+]
+cfg_report "スライスの設定（必須）"
+
+# ミキサをバイパスすると、以下は派生値になって設定を受け付けないことがある。
+# 受け付けなくても Mixer_Type = Bypassed が効いていれば意図は満たされるので止めない。
+cfg_apply rfdc [list \
+    CONFIG.ADC_Mixer_Mode${S}       {2} \
+    CONFIG.ADC_NCO_Freq${S}         {0} \
+    CONFIG.ADC_OBS${S}              {false} \
+] 0
+cfg_report "スライスの設定（任意）"
+
+dump_rfdc_params $rfdc $outdir/rfdc_params.rpt
+
+# **設定値を読み返す。** BD 41-721 は警告 1 行しか出さないので、
+# 「設定したつもりで無視されている」状態を検出する手段はこれしかない。
 foreach {k want} [list \
         CONFIG.ADC${T}_Sampling_Rate $fs_gsps \
         CONFIG.ADC${T}_Fabric_Freq   $fabric_mhz] {
     set got [get_property $k $rfdc]
     if {abs($got - $want) > 1e-6} {
-        puts "ERROR: RFDC が設定を丸めた: $k  要求 $want / 実際 $got"
-        puts "  PLL の VCO 範囲（8.5〜13.2 GHz）を外している可能性がある。"
-        puts "  build.tcl 冒頭の計算をやり直すこと"
+        puts "ERROR: RFDC が設定を反映していない: $k  要求 $want / 実際 $got"
+        puts "  BD 41-721（disabled parameter）で無視されたか、"
+        puts "  タイル PLL の VCO 範囲（8.5〜13.2 GHz）を外している。"
+        puts "  build.tcl 冒頭の計算と、設定の順序を確認すること"
         exit 1
     }
 }
 puts "RFDC (確定): fs = [get_property CONFIG.ADC${T}_Sampling_Rate $rfdc] GSPS / fabric = [get_property CONFIG.ADC${T}_Fabric_Freq $rfdc] MHz"
+foreach k [list CONFIG.ADC_Data_Type${S} CONFIG.ADC_Data_Width${S} \
+                CONFIG.ADC_Decimation_Mode${S} CONFIG.ADC_Mixer_Type${S} \
+                CONFIG.ADC_Mixer_Mode${S}] {
+    puts "RFDC       : $k = [get_property $k $rfdc]"
+}
 
 # ---- キャプチャゲート（自作。TLAST の生成と記録の連続性を担う）----
 set gate [create_bd_cell -type module -reference capture_gate capture_gate_0]
@@ -320,6 +398,16 @@ nc capture_gate_0/status   gpio_capture/gpio2_io_i
 
 # データ経路
 set rfdc_axis [BI rfdc [list "m${T}${adc_slice}_axis" "m${T}*_axis"] "RFDC の AXI4-Stream 出力"]
+
+# **語幅で Real / I/Q を判定する。** ミキサの設定が通っていても、出力が I/Q に
+# なっていれば 1 語あたりのバイト数が変わる。実機に持ち込む前にここで気づける。
+if {![catch {set nb [get_property CONFIG.TDATA_NUM_BYTES $rfdc_axis]}] && $nb ne ""} {
+    puts "RFDC AXIS  : TDATA_NUM_BYTES = $nb （期待 [expr {$spw * 2}]）"
+    if {$nb != $spw * 2} {
+        puts "ERROR: AXIS の語幅が期待と違う。Real のつもりが I/Q になっている可能性がある"
+        exit 1
+    }
+}
 ic $rfdc_axis [get_bd_intf_pins capture_gate_0/s_axis]
 ic [get_bd_intf_pins capture_gate_0/m_axis] [get_bd_intf_pins axis_fifo/S_AXIS]
 ic [get_bd_intf_pins axis_fifo/M_AXIS]      [get_bd_intf_pins dma_adc/S_AXIS_S2MM]
