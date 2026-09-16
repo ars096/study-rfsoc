@@ -321,6 +321,9 @@ sudo python3 adc_capture.py --tone 800.0 --zone 2   # 第 2 ナイキストゾ�
 | **WNS が説明できない値になる** | 非同期クロックグループが効いているか。`---- クロック ----` と `GROUP:` の出力を見る。クロック内は余裕があるのに WNS が大きく負なら、乗り換えの宣言漏れ |
 | XDC を書いたのに効いていない | **XDC では `if` / `foreach` / `lsort` / `concat` が使えない**（`Designutils 20-1307`）。弾かれた行は実行されない。`---- run の CRITICAL WARNING ----` に出る |
 | DRC に `27 net(s) have no routable loads` | 無効にした ADC/DAC タイルの `*_done_i` など。**正常**（使っていないタイルの信号） |
+| `ol.rfdc` が `DefaultIP` のまま（`adc_tiles` が無い） | **`import xrfdc` を `Overlay()` より前に書いたか。** PYNQ のドライバは import した時点で VLNV に登録される。書き忘れるとドライバが当たらない |
+| ドライバが当たらない（import はしている） | `.hwh` の VLNV と `xrfdc.RFdc.bindto` を見比べる。**版が食い違うと当たらない** |
+| `xrfclk` に `set_ref_clk` が無い | v3.1.1 は `set_ref_clks`。版で名前が変わる |
 | `xrfdc` がタイルを見つけない | `.hwh` に RFDC が入っているか。**ボードに持ち込む前に確認できる** |
 | タイル PLL がロックしない | `xrfclk.set_ref_clk()` を先に呼んだか。LMX が 491.52 MHz を出しているか |
 | DMA が完了しない / `done`=0 かつ `busy`=0 | ゲートが一度も起動していない。GPIO の配線か arm のビット割り当て |

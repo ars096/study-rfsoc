@@ -143,6 +143,19 @@ Vivado 2024.1 で実際に弾かれて判明した値。**GUI を開かずに Tc
 RFSoC4x2 で LMX の 491.52 MHz を使う場合、成立する動作点は
 **VCO 9830.4 MHz（FeedbackDiv 20）/ OutDiv 8 → fs 1228.8 MSPS** 付近に限られる。
 
+### PYNQ 側のドライバ
+
+| | |
+|---|---|
+| `xrfclk` の関数 | **`set_ref_clks(lmk_freq=, lmx_freq=)`**（v3.1.1）。旧版は `set_ref_clk`。版で名前が変わる |
+| `xrfdc` | **`Overlay()` より前に `import xrfdc` すること。** PYNQ のドライバは import した時点で VLNV に登録される。忘れると `ol.<rfdc>` が素の `DefaultIP` になり `adc_tiles` が生えない |
+
+ドライバが当たっているかは `isinstance(ol.rfdc, xrfdc.RFdc)` で確かめる。
+当たっていなければ `ol.ip_dict['rfdc']['type']`（`.hwh` の VLNV）と
+`xrfdc.RFdc.bindto` を見比べる。**版が食い違うと当たらない。**
+
+RFSoC4x2 の `xrfclk` 引数は `lmk_freq=245.76, lmx_freq=491.52`。
+
 ### 外部 10 MHz 基準クロックの罠
 
 **外部基準を挿していなくても LMK04828 の PLL2 はオンボード VCXO で出力を作る。**

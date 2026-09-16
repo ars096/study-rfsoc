@@ -315,6 +315,12 @@ def main():
 
     from pynq import Overlay
 
+    # **xrfdc は Overlay() より前に import する。**
+    # PYNQ のドライバは import した時点で VLNV に登録される仕組みなので、
+    # これを忘れると ol.rfdc が素の DefaultIP のままになり adc_tiles が生えない
+    # （2026-09-16 に踏んだ）。
+    import xrfdc
+
     if not args.no_clk:
         setup_clocks()
 
@@ -322,6 +328,24 @@ def main():
     log(f"Overlay: {args.bitfile}")
 
     rfdc = ol.rfdc
+    log("")
+    log("=== RFDC のドライバ ===")
+    log(f"  ol.rfdc の型   = {type(rfdc)}")
+    try:
+        log(f"  .hwh の VLNV   = {ol.ip_dict['rfdc']['type']}")
+    except Exception as e:                      # noqa: BLE001
+        log(f"  .hwh の VLNV が読めない: {e}")
+    log(f"  xrfdc の bindto = {getattr(xrfdc.RFdc, 'bindto', '(不明)')}")
+
+    bound = isinstance(rfdc, xrfdc.RFdc)
+    if not bound:
+        log("")
+        log("ERROR: RFDC に xrfdc のドライバが当たっていない（DefaultIP のまま）。")
+        log("  1. import xrfdc を Overlay() より前に書いたか")
+        log("  2. 上の VLNV と bindto を見比べる。**版が食い違うと当たらない**")
+        if not args.probe:
+            sys.exit(1)
+
     if args.probe:
         probe(ol, rfdc)
         return
