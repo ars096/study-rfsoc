@@ -104,6 +104,8 @@ make timing-check  # -1 で通す → build-1-e/（build/ は無傷）
 | **ADC_B** | RF-ADC **Tile 226 / slice 0**（`adc_tiles[2].blocks[0]`）| **2026-09-16 に実信号で確定** |
 | ADC_A | RF-ADC Tile 226 / slice 2（推定）| ADC_B が slice 0 だったことからの推定。未確認 |
 | ADC_C / ADC_D | RF-ADC **Tile 224** | RefMan A6 記載。スライスの対応は未確認 |
+| **PYNQ の `blocks[]` の添字** | Vivado の slice **0 / 2** → `blocks[`**`0`**`]` / `blocks[`**`1`**`]` | **2026-09-17 に proj006 で実測確定。**`xrfdc` は有効なスライスを 0 から詰めて並べる。`blocks[2]` / `blocks[3]` は `not available` で落ちる。**slice 0 しか使わない proj005 までは一致していて表に出なかった** |
+| 4ch 同時起動 | Tile 224 / 226 とも `PLLLockStatus = 2`・`SamplingFreq = 1.2288` | **2026-09-17 に proj006 で実測**（出荷時クロックでも 4 スライスとも起動する）|
 | DAC_A | RF-DAC Tile 230 | RefMan A6 記載 |
 | DAC_B | RF-DAC Tile 228 | RefMan A6 記載 |
 | ADC 入力のバラン | **MABA-011118**（10 MHz 〜 10 GHz） | 各 SMA と ADC の間に入る。**DC 結合ではない** |

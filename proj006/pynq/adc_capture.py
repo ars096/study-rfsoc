@@ -64,7 +64,28 @@ NCH = len(CHANS)
 MAX_BEATS = 8192
 
 # proj003 で ADC_B と実測した組。probe の注目先の既定値としてだけ使う。
-TILE, BLOCK = CHANS[2]
+TILE, SLICE = CHANS[2]
+
+
+def block_index(slice_no):
+    """**Vivado のスライス番号 → PYNQ の `blocks[]` の添字。**
+
+    この 2 つは一致しない。
+
+    - Vivado（`build.tcl`）は **物理スライス番号**で呼ぶ。デュアルタイルでは 0 と 2
+    - `xrfdc` の `blocks[]` は **有効なものを 0 から詰めて**並べる。つまり 0 と 1
+
+    **2026-09-17 に実機で確定した**（`--probe`）。
+    `blocks[2]` / `blocks[3]` は `ADC 2 block 2 not available in XRFdc_GetBlockStatus`
+    で落ちる。proj003 から「0/2 で並ぶのか 0/1 に詰まるのか」を持ち越していた宿題の答え。
+
+    proj005 までは slice 0 しか使っていなかったので 0 → 0 で一致し、**問題が表に出なかった。**
+    4ch にした途端に効いてくる種類の食い違いである。
+    """
+    return slice_no // 2
+
+
+BLOCK = block_index(SLICE)
 
 LMK_FREQ = 245.76
 LMX_FREQ = 491.52
@@ -155,11 +176,22 @@ def start_tile(rfdc, fs_hz, zone, ti=None, si=None, restart=False, pll_config=Fa
     if ti is None:
         ti = TILE
     if si is None:
-        si = BLOCK
+        si = SLICE
+    bi = block_index(si)                 # **スライス番号をそのまま渡さない**
     tile = rfdc.adc_tiles[ti]
-    block = tile.blocks[si]
+    block = tile.blocks[bi]
     log("")
-    log(f"--- Tile {224 + ti} / slice {si} ---")
+    log(f"--- Tile {224 + ti} / slice {si} （PYNQ では blocks[{bi}]）---")
+
+    # ここで一度触って、添字が合っているかを確かめる。
+    # **合っていないと "block N not available" で落ちる。**
+    try:
+        _ = block.BlockStatus
+    except Exception as e:                       # noqa: BLE001
+        log(f"ERROR: adc_tiles[{ti}].blocks[{bi}] が読めない: {e}")
+        log("  Vivado のスライス番号（0/2）と PYNQ の blocks[] の添字（0/1）は**別物**。")
+        log("  block_index() の変換と、build.tcl の chans を突き合わせること")
+        sys.exit(1)
 
     if pll_config:
         # fs = 1228.8 = VCO 9830.4 / OutDiv 8、refclk 491.52 = VCO / 20
@@ -305,7 +337,9 @@ def probe(ol, rfdc):
     log("**確かめること**")
     log("  1. Tile 224 と Tile 226 の両方で PLLLockStatus = 2 になっているか")
     log("     （片方でも落ちていれば axis_combiner は 1 ビートも出さない）")
-    log("  2. blocks が 0/2 で並ぶのか 0/1 に詰まるのか")
+    log("  2. blocks は **0/1 に詰まる**（2026-09-17 に確定）。")
+    log("     Vivado のスライス番号 0/2 とは別物。block_index() が変換する。")
+    log("     blocks[2] / blocks[3] が not available なら、それが正常")
     log("  3. SMA のラベルとチャネルの対応は **slice_map.py で実測して埋める**")
     log("     ここに書いてある CHANS は Vivado 側の並びであって、SMA の並びではない")
 
