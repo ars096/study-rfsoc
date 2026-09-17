@@ -107,6 +107,12 @@ def main():
     p.add_argument("--fs", type=float, default=ac.FS_HZ / 1e6)
     p.add_argument("--clkin", default="stock", choices=("stock", "0", "1", "2"))
     p.add_argument("--ref", type=float, default=10.0)
+    p.add_argument("--epochs", type=int, default=1,
+                   help="**エポックを N 回張り直して、そのたびに測る。**"
+                        "較正定数が装置の定数かエポックごとの定数かを分ける")
+    p.add_argument("--src-tile", type=int, default=2,
+                   help="MMCM の源のタイル（build.tcl の wiz_src_tile）。"
+                        "--epochs > 1 のとき、これを止めて新しいエポックを作る")
     p.add_argument("--save", default=None, help="1 回目の波形を .npy で残す")
     args = p.parse_args()
 
@@ -145,57 +151,144 @@ def main():
     log(f"減衰量 {args.atten_db:.1f} dB / ch{args.ch} / pol={args.pol}")
     log("")
 
-    results = []
-    for t in range(args.trials):
-        start_at, d = pps.next_start(k=args.k, offset=offset)
-        # **予測する PPS のビートは 64 bit で持つ。**start_at は下位 32 bit だけ
-        pps_beat = d["stamp"] + args.k * pps_mod.BEATS_PER_SEC
-        x = ac.capture(ol, args.nsamples, blocks=None, start_at=start_at, pps=pps)
-        snap = pps.snapshot()
-        # **試行をまたいで原点が変わっていないこと。**
-        # 変わっていれば pps_beat の予測が別の原点の値になり、
-        # **遅延ではなく原点の差を測ってしまう**（しかも値は出る）
-        if snap["epoch"] != epoch0:
-            log(f"  [{t}] **時刻の原点が変わった（epoch {epoch0} → {snap['epoch']}）。**")
-            log("       この試行以降は無効。RFDC のタイルか MMCM を疑う")
-            break
-        if (snap["t_start"] & 0xFFFFFFFF) != start_at:
-            log(f"  [{t}] **t_start が start_at と違う** "
-                f"({snap['t_start'] & 0xFFFFFFFF} != {start_at})。発火の設計が壊れている")
-            continue
-        if snap["flags"] & pps_mod.FLAG_LATE:
-            log(f"  [{t}] late。--k を増やす")
-            continue
+    def run_trials(epoch0, tag):
+        """1 エポックぶんの試行。戻り値はサンプル単位の遅延のリスト。"""
+        results = []
+        for t in range(args.trials):
+            start_at, d = pps.next_start(k=args.k, offset=offset)
+            # **予測する PPS のビートは 64 bit で持つ。**start_at は下位 32 bit だけ
+            pps_beat = d["stamp"] + args.k * pps_mod.BEATS_PER_SEC
+            x = ac.capture(ol, args.nsamples, blocks=None, start_at=start_at, pps=pps)
+            snap = pps.snapshot()
+            # **試行をまたいで原点が変わっていないこと。**
+            # 変わっていれば pps_beat の予測が別の原点の値になり、
+            # **遅延ではなく原点の差を測ってしまう**（しかも値は出る）
+            if snap["epoch"] != epoch0:
+                log(f"  [{t}] **時刻の原点が変わった（epoch {epoch0} → {snap['epoch']}）。**")
+                log("       この試行以降は無効。RFDC のタイルか MMCM を疑う")
+                break
+            if (snap["t_start"] & 0xFFFFFFFF) != start_at:
+                log(f"  [{t}] **t_start が start_at と違う** "
+                    f"({snap['t_start'] & 0xFFFFFFFF} != {start_at})。発火の設計が壊れている")
+                continue
+            if snap["flags"] & pps_mod.FLAG_LATE:
+                log(f"  [{t}] late。--k を増やす")
+                continue
 
-        # PL が言う PPS の位置（取得窓の先頭からのサンプル数）
-        pred = (pps_beat - snap["t_start"]) * ac.SPW
-        ch = x[args.ch]
-        half = int(round(args.win_us * 1e-6 * ac.FS_HZ))
-        meas, pk, amp = find_edge(ch, args.frac, center=pred, half=half)
-        dbfs = 20 * np.log10(max(amp, 1e-9) / 32768.0)
-        # **雑音は窓の外から取る。** 信号の在る所を混ぜない。
-        # MAD からガウス相当の σ に直す（外れ値に強い）
-        outside = np.abs(np.concatenate([ch[:max(0, pred - half)],
-                                         ch[pred + half:]]).astype(np.float64))
-        noise = float(np.median(outside)) * 1.4826 if outside.size else 0.0
-        snr = 20 * np.log10(max(amp, 1e-9) / max(noise, 1e-9))
-        delay = meas - pred
-        results.append(delay)
-        flag = ""
-        if amp >= 32700:
-            flag = "  **飽和している。減衰器を足す**"
-        elif snr < 12.0:
-            flag = "  **SNR 不足。減衰器を減らす**"
-        elif abs(meas - pred) > 0.9 * half:
-            flag = "  **窓の端に張り付いた。--win-us を広げる**"
-        log(f"  [{t:2d}] 予測 {pred:8.0f} / 実測 {meas:9.2f} サンプル  "
-            f"差 {delay:+9.2f} = {delay * SAMP_NS:+9.2f} ns  "
-            f"ピーク {dbfs:6.1f} dBFS / SNR {snr:5.1f} dB{flag}")
-        if t == 0 and args.save:
-            np.save(args.save, x)
-            log(f"      {args.save} に保存")
+            # PL が言う PPS の位置（取得窓の先頭からのサンプル数）
+            pred = (pps_beat - snap["t_start"]) * ac.SPW
+            ch = x[args.ch]
+            half = int(round(args.win_us * 1e-6 * ac.FS_HZ))
+            meas, pk, amp = find_edge(ch, args.frac, center=pred, half=half)
+            dbfs = 20 * np.log10(max(amp, 1e-9) / 32768.0)
+            # **雑音は窓の外から取る。** 信号の在る所を混ぜない。
+            # MAD からガウス相当の σ に直す（外れ値に強い）
+            outside = np.abs(np.concatenate([ch[:max(0, pred - half)],
+                                             ch[pred + half:]]).astype(np.float64))
+            noise = float(np.median(outside)) * 1.4826 if outside.size else 0.0
+            snr = 20 * np.log10(max(amp, 1e-9) / max(noise, 1e-9))
+            delay = meas - pred
+            results.append(delay)
+            flag = ""
+            if amp >= 32700:
+                flag = "  **飽和している。減衰器を足す**"
+            elif snr < 12.0:
+                flag = "  **SNR 不足。減衰器を減らす**"
+            elif abs(meas - pred) > 0.9 * half:
+                flag = "  **窓の端に張り付いた。--win-us を広げる**"
+            log(f"  [{t:2d}] 予測 {pred:8.0f} / 実測 {meas:9.2f} サンプル  "
+                f"差 {delay:+9.2f} = {delay * SAMP_NS:+9.2f} ns  "
+                f"ピーク {dbfs:6.1f} dBFS / SNR {snr:5.1f} dB{flag}")
+            if t == 0 and tag == 0 and args.save:
+                np.save(args.save, x)
+                log(f"      {args.save} に保存")
+        return results
+
+    # ---- エポックごとに測る ----
+    #
+    # **較正定数が装置の定数なのか、エポックごとの定数なのかを分ける。**
+    # 実行内のばらつきは 0.4 ns 級しかないので、1 回の測定では絶対に見えない。
+    # Overlay を焼き直すのではなく **MMCM の源のタイルを止めて新しいエポックを
+    # 作る**（pps.py --epoch-test と同じ手）。こうするとビットストリームは同一の
+    # まま原点だけが変わるので、**版の違いと原点の違いが混ざらない。**
+    per_epoch = []
+    for e in range(args.epochs):
+        if args.epochs > 1:
+            log(f"==== epoch {epoch0}（{e + 1} / {args.epochs}）====")
+        r = run_trials(epoch0, e)
+        if len(r) >= 2:
+            per_epoch.append((epoch0, np.array(r)))
+        else:
+            log(f"  **epoch {epoch0} は試行が {len(r)} 回しか成立しなかった**")
+        if e == args.epochs - 1:
+            break
+
+        # 次のエポックを作る
+        log("")
+        log(f"---- adc_tiles[{args.src_tile}] を止めて新しいエポックを作る ----")
+        tile = ol.rfdc.adc_tiles[args.src_tile]
+        tile.ShutDown()
+        time.sleep(0.5)
+        if pps.flags() & pps_mod.FLAG_LOCKED:
+            log("  **停止中も locked が立っている。** --src-tile が違う")
+            break
+        tile.StartUp()
+        t0 = time.time()
+        while not (pps.flags() & pps_mod.FLAG_LOCKED):
+            if time.time() - t0 > 10.0:
+                log("  **locked が戻らない。** ここで止める")
+                break
+            time.sleep(0.05)
+        blocks = ac.start_tiles(ol.rfdc, args.fs * 1e6, args.zone)
+        d_ready = pps_mod.wait_ready(pps, time.time(), label="タイル再起動")
+        epoch0 = d_ready["epoch"]
+        log("")
+
+    results = list(per_epoch[0][1]) if per_epoch else []
+
 
     log("")
+
+    # ---- エポックをまたいだ比較（--epochs > 1 のとき）----
+    if len(per_epoch) >= 2:
+        log("---- エポックごとの平均 ----")
+        log("  epoch   試行   平均 [ns]   実行内 σ [ns]")
+        log("  " + "-" * 44)
+        mus = []
+        sds = []
+        for ep, arr in per_epoch:
+            mu = arr.mean() * SAMP_NS
+            sd = arr.std() * SAMP_NS
+            mus.append(mu)
+            sds.append(sd)
+            log(f"  {ep:>5}   {len(arr):>4}   {mu:>9.2f}   {sd:>11.2f}")
+        mus = np.array(mus)
+        sds = np.array(sds)
+        within = float(sds.mean())
+        between = float(mus.std(ddof=1))
+        span = float(mus.max() - mus.min())
+        log("")
+        log(f"  実行内のばらつき（σ の平均）      : {within:.2f} ns")
+        log(f"  エポック間のばらつき（平均の σ）  : {between:.2f} ns")
+        log(f"  エポック間の幅                    : {span:.2f} ns")
+        log("")
+        # 各エポックの平均の標準誤差。これより十分大きければ本物
+        sem = within / np.sqrt(np.mean([len(a) for _, a in per_epoch]))
+        log(f"  平均の標準誤差（実行内から）      : {sem:.2f} ns")
+        if between > 3 * sem:
+            log("")
+            log("  → **較正定数はエポックごとである。** エポック間のばらつきが")
+            log("    実行内から予想される標準誤差より有意に大きい。")
+            log("    `L_adc − D_pps` は装置の定数ではなく、**原点を張り直すたびに")
+            log("    取り直さなければならない**。epoch はその印として使える")
+        else:
+            log("")
+            log("  → **エポック間に有意な差は出なかった。** 較正定数は")
+            log("    エポックに依らないと言える（この試行数の範囲で）。")
+            log("    rev1 と rev2 で 1.52 ns 動いた件は、**ビットストリームの")
+            log("    違いのほうを疑う**")
+        log("")
+
     if len(results) < 2:
         log("**測定が成立していない。** 上のメッセージを見る")
         return
