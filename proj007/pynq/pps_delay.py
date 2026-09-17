@@ -49,6 +49,32 @@ log = ac.log
 SAMP_NS = 1e9 / ac.FS_HZ            # = 0.8138 ns
 
 
+def beat_summary(a):
+    """**±1 ビートのディザを潰さずに要約する。**
+
+    PPS のエッジがビート境界の上に乗ったエポックでは、PL のスタンプが
+    ±1 ビート（8 サンプル）でばたつく。すると測定値は **2 つの山**になる。
+
+    **ここに算術平均を使うと、平均は山と山の間に落ちてどちらの山にも
+    対応しない値を返し、標準偏差は膨らんで「精度が悪い」ように見える。**
+    実際の精度は 0.2 サンプル級である。
+    proj006 で「位相の巻き戻る量に算術平均を使って誤判定を出しかけた」のと
+    **まったく同じ形**で、**壊れた統計が壊れたこと自体を隠す。**
+
+    中央値からのビート単位のずれで分類し、**多数派の山だけを返す。**
+    戻り値は (平均, 標準偏差, 多数派の数, ディザの内訳 dict)。
+    """
+    a = np.asarray(a, dtype=np.float64)
+    med = float(np.median(a))
+    key = np.round((a - med) / ac.SPW).astype(int)   # ビート単位のずれ
+    counts = {}
+    for k in key:
+        counts[int(k)] = counts.get(int(k), 0) + 1
+    main = max(counts, key=lambda k: counts[k])
+    sel = a[key == main]
+    return float(sel.mean()), float(sel.std()), int(sel.size), counts
+
+
 def find_edge(x, frac=0.5, center=None, half=None):
     """微分されたパルスの立ち上がり位置を返す（サンプル単位・小数）。
 
@@ -270,11 +296,13 @@ def main():
         mus = []
         sds = []
         for ep, arr in per_epoch:
-            mu = arr.mean() * SAMP_NS
-            sd = arr.std() * SAMP_NS
+            m, sd_s, n, counts = beat_summary(arr)
+            mu = m * SAMP_NS
+            sd = sd_s * SAMP_NS
             mus.append(mu)
             sds.append(sd)
-            log(f"  {ep:>5}   {len(arr):>4}   {mu:>9.2f}   {sd:>11.2f}")
+            dith = "" if len(counts) == 1 else f"   ±1 ビートのディザ {counts}"
+            log(f"  {ep:>5}   {n:>4}   {mu:>9.2f}   {sd:>11.2f}{dith}")
         mus = np.array(mus)
         sds = np.array(sds)
         within = float(sds.mean())
@@ -306,13 +334,23 @@ def main():
         log("**測定が成立していない。** 上のメッセージを見る")
         return
     a = np.array(results)
+    m_s, sd_s, n_main, counts = beat_summary(a)
+    if len(counts) > 1:
+        log("**±1 ビートのディザを検出した。**"
+            f" ビート単位の内訳 {counts}（中央値からのずれ: 個数）")
+        log("  PPS のエッジがこのエポックではビート境界の上に乗っている。")
+        log("  **算術平均は 2 つの山の間に落ちてどちらにも対応しない**ので、")
+        log(f"  以下は**多数派の山だけ**（{n_main} / {len(a)} 回）の値である。")
+        log("  境界から離れたエポックを引き直すか、この 1 ビートを不確かさに含める")
+        log("")
     if len(per_epoch) >= 2:
         log(f"（以下は epoch {per_epoch[0][0]} のぶんだけ。"
             f"エポックをまたいだ比較は上の表を見る）")
-    log(f"試行 {len(a)} 回")
-    log(f"遅延  平均 {a.mean() * SAMP_NS:+.2f} ns / 標準偏差 {a.std() * SAMP_NS:.2f} ns "
-        f"/ 幅 {(a.max() - a.min()) * SAMP_NS:.2f} ns")
-    log(f"      （サンプル単位: 平均 {a.mean():+.2f} / 標準偏差 {a.std():.2f}）")
+    log(f"試行 {len(a)} 回（うち多数派の山 {n_main} 回）")
+    log(f"遅延  平均 {m_s * SAMP_NS:+.2f} ns / 標準偏差 {sd_s * SAMP_NS:.2f} ns")
+    log(f"      （サンプル単位: 平均 {m_s:+.2f} / 標準偏差 {sd_s:.2f}）")
+    if len(counts) == 1:
+        log(f"      全 {len(a)} 回が同じビートに乗った（ディザなし）")
     log("")
     log("**符号の読み方。** delay = meas − pred。")
     log("  正 = **ADC のバッファ上でエッジが PL のスタンプより後ろに現れる**。")
@@ -336,7 +374,7 @@ def main():
     # 2026-09-17 の実測で、エポック間のばらつきは **ビートの整数倍**であり、
     # 小数部は 0.17 ns で揃うことが分かった。分けて出さないと、
     # 26 ns の幅が「ばらついている」としか見えない
-    _m = float(a.mean())
+    _m = m_s
     _frac = _m % ac.SPW
     _nb = int(round((_m - _frac) / ac.SPW))
     log(f"**整数ビートと小数部に分ける。** {_nb} ビート + {_frac:.2f} サンプル")
