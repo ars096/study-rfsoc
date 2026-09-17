@@ -261,6 +261,23 @@ def do_probe(p, t_ovl):
     log("  **これはリセットが解けている証拠にはならない。**"
         " rdata は ctrl_aclk 側でリセットを持たない")
     d = wait_epoch(p, t_ovl)
+
+    # ---- **PPS の判定はリセット解除から最低 2.5 秒待ってから行う** ----
+    #
+    # 2026-09-17、ここが無いまま「PPS が来ていない」と誤判定した。
+    # 時刻の原点は Overlay ではなく MMCM のロックで、旧版はその直後
+    # （beat_count = 2、つまり 13 ns 後）に判定していた。
+    # **1 Hz の信号なので、その時点では最初のエッジがまだ来ていない。**
+    # `t_age` はリセット時に MISS_BEATS で初期化されるので alive は 0 になり、
+    # **ケーブルを挿していないときと出力が一字一句同じになる。**
+    # 「来ていない」と「まだ来ていない」を区別できる形にしておくこと。
+    need = 2.5
+    age = d["beat"] * BEAT_NS / 1e9
+    if age < need:
+        log(f"  PPS の判定には原点から最低 {need} s 要る（1 Hz なので）。"
+            f"あと {need - age:.1f} s 待つ")
+        time.sleep(need - age)
+        d = p.snapshot()
     log(f"flags          : {fmt_flags(d['flags'])}")
     log(f"beat_count     : {d['beat']}  （Overlay ロードからの経過 = "
         f"{d['beat'] * BEAT_NS / 1e9:.3f} s）")
@@ -318,6 +335,19 @@ def do_level(p, settle=0.7):
     待ち時間はブランキング（0.5 秒）より長く取る。短いとグリッチ扱いで
     捨てられ、計数ではなく glitch のほうが進む。
     """
+    # **まず「pol を触るまでもなく動いていないか」を見る。**
+    # ピンが動いていれば pol の反転ぶんと本物のエッジが混ざり、
+    # 往復の計数が 1,0,1,0 にならず読めなくなる（2026-09-17 に踏んだ）。
+    a = p.snapshot()
+    time.sleep(1.5)
+    b = p.snapshot()
+    if b["count"] != a["count"] or b["cstamp"] != a["cstamp"]:
+        log("**ピンは動いている。** pol を触るまでもなく計数が進んでいる")
+        log(f"  1.5 s で t_count が {b['count'] - a['count']} 回進んだ"
+            f"（comp_stamp {'変化あり' if b['cstamp'] != a['cstamp'] else 'なし'}）")
+        log("  **--level は静止しているときの道具である。** --probe をやり直すこと")
+        return
+
     log("極性を往復させてピンの静止レベルを読む（再ビルド不要）")
     log(f"  各段 {settle} s 待つ（ブランキング 0.5 s より長く）")
     log("")
