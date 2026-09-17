@@ -860,45 +860,68 @@ foreach {kind label} {setup "setup（周期）" hold "hold（保持）"} {
 # ファブリックの経路が無いはずである。使っていないタイル / DAC の
 # ダミークロックも同じ。**前提を数えて確かめる。**
 # ここに経路が出たら、timing.xdc にその群を足すか、配線を見直す。
-# 2026-09-17 の 1 回目: RFADC0/1/3 と RFDAC0..3 に **起点 8 / 終点 0** が出た。
-# **proj006 で生じたものではない。**使わないタイルのダミークロック（10 ns）は
-# proj003 以降ずっとあり、proj005 でも同じ経路が解析されていたはずである。
-# 対処を決める前に **何の経路で、どれだけ余裕があるのか**を見る。
-# RFADC2_CLK は timing.xdc で宣言済みなので、**対照**として並べる
-# （宣言が効いていれば、乗り換えの経路は解析から外れて出てこない）。
+# ---- 乗り換えの分類は Vivado 自身に出させる ----
+#
+# **自作の経路数えは偽陽性を出した**（2026-09-17）。
+# `get_timing_paths -from <clock>` は **slack を持たない経路（= 解析対象外）も返す。**
+# RFADC0/1/3 と RFDAC0..3 に 8 本ずつ出たので制約漏れかと思ったが、
+# **timing.xdc で宣言済みの RFADC2_CLK も全く同じ 8 本を返した。**
+# 終点はいずれも `rfdc/inst/IP2Bus_Data_reg[*]/D` — RFDC IP の内部で、
+# タイルのステータスが AXI4-Lite の読み出しレジスタへ渡る経路であり、
+# **IP が自前の制約で処理済み**である（だから slack が空）。
+#
+# **対照（宣言済みのクロック）を並べていたから偽陽性と分かった。**
+# 片方しか見ない診断は、診断自体が嘘をつく。
+#
+# 以後は 2 段構えにする:
+#   1. report_cdc — 乗り換えを Vivado が分類する専用コマンド。**これを正とする**
+#   2. 自作の数えは **slack を持つ経路だけ**に絞る（対照も残す）
+if {![catch {report_cdc -details -file $outdir/cdc.rpt} cdc_err]} {
+    set fh [open $outdir/cdc.rpt r]; set txt [read $fh]; close $fh
+    puts ""
+    puts "---- 乗り換え（report_cdc）----"
+    set shown 0
+    foreach line [split $txt \n] {
+        if {[regexp {^\s*\|\s*(Critical|Warning|Info)\s*\|} $line]} {
+            puts "  [string trim $line]"
+            incr shown
+        }
+    }
+    if {$shown == 0} { puts "  （要約表を拾えなかった。中身を直接見る）" }
+    puts "  詳細: $outdir/cdc.rpt"
+} else {
+    puts ""
+    puts "WARNING: report_cdc が使えない: $cdc_err"
+}
+
 puts ""
-puts "---- タイルのクロックから出る経路 ----"
+puts "---- タイルのクロックから出る経路（**解析対象のものだけ**）----"
+puts "  対象外 = slack を持たない = IP の制約か clock group で既に除かれている"
 foreach cn {RFADC0_CLK RFADC1_CLK RFADC2_CLK RFADC3_CLK \
             RFDAC0_CLK RFDAC1_CLK RFDAC2_CLK RFDAC3_CLK} {
     set c [get_clocks -quiet $cn]
     if {[llength $c] == 0} { continue }
-    set mark [expr {$cn eq "RFADC2_CLK" ? "  (timing.xdc で宣言済み)" : ""}]
-    set paths [get_timing_paths -quiet -from $c -max_paths 40 -nworst 1 -setup]
-    if {[llength $paths] == 0} {
-        puts [format "  %-12s%s  経路なし" $cn $mark]
-        continue
-    }
-    # 終点のクロックごとに、本数と最悪 slack をまとめる
-    unset -nocomplain agg
-    set example ""
-    foreach pth $paths {
-        set ec [get_property ENDPOINT_CLOCK $pth]
-        if {$ec eq ""} { set ec "(制約なし)" }
+    set mark [expr {$cn eq "RFADC2_CLK" ? " (宣言済み・対照)" : ""}]
+    set timed 0
+    set untimed 0
+    set worst ""
+    set worst_ec ""
+    foreach pth [get_timing_paths -quiet -from $c -max_paths 40 -nworst 1 -setup] {
         set sl [get_property SLACK $pth]
-        if {![info exists agg($ec)]} { set agg($ec) [list 0 $sl] }
-        lassign $agg($ec) n w
-        incr n
-        if {$sl ne "" && ($w eq "" || $sl < $w)} { set w $sl }
-        set agg($ec) [list $n $w]
-        if {$example eq ""} { catch {set example [get_property ENDPOINT_PIN $pth]} }
+        if {$sl eq ""} { incr untimed; continue }
+        incr timed
+        if {$worst eq "" || $sl < $worst} {
+            set worst $sl
+            set worst_ec [get_property ENDPOINT_CLOCK $pth]
+        }
     }
-    puts [format "  %-12s%s" $cn $mark]
-    foreach ec [lsort [array names agg]] {
-        lassign $agg($ec) n w
-        puts [format "      → %-30s %3d 本  最悪 slack %s%s" $ec $n $w \
-              [expr {$ec eq $cn ? "" : "   ← 乗り換え"}]]
+    set detail ""
+    if {$timed > 0} {
+        set detail [format "  最悪 %+.3f → %s   **解析対象の経路がある。timing.xdc を見直す**" \
+                    $worst $worst_ec]
     }
-    if {$example ne ""} { puts "      終点の例: $example" }
+    puts [format "  %-12s%-18s 解析対象 %2d 本 / 対象外 %2d 本%s" \
+          $cn $mark $timed $untimed $detail]
 }
 
 set wns [get_property STATS.WNS [get_runs impl_1]]
