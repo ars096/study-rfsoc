@@ -20,8 +20,12 @@
    パルスの平坦部は垂れる。だがエッジは高周波成分なので通り、微分されて
    鋭いスパイクになる — タイミング測定にはかえって好都合である。
    「方形波が方形に見えない」で慌てないこと。
-2. **0 dBFS ≒ +5.8 dBm（≒ 1.23 Vpp）。** TTL レベルの 1PPS は減衰器なしだと飽和する。
-   10〜20 dB 入れる。**減衰量は必ず申告する**（proj005 で決めた規約）。
+2. **減衰器は入れすぎない。まず 0 dB から始める。**
+   「0 dBFS ≒ +5.8 dBm なので TTL は飽和する」は**平坦部の話で、ここには効かない**。
+   バランが低周波を落とすため ADC に届くのはエッジの微分だけで、その高さは
+   立ち上がりの速さで決まる。2026-09-17 の実測では 2.5 V / 立ち上がり 250 ns 級の
+   1PPS を 2 分配（−3 dB）＋ 20 dB で入れたところ **11 mV（−41 dBFS）** しか無く、
+   雑音に負けた。**減衰量は必ず申告する**（proj005 で決めた規約）。
 
 分解能について正直に書いておく。PL のタイムスタンプは 1 ビート = **6.51 ns 粒度**で、
 ADC 側は 0.814 ns である。すべてが同じ 10 MHz にロックしていると PPS のエッジは
@@ -41,18 +45,33 @@ log = ac.log
 SAMP_NS = 1e9 / ac.FS_HZ            # = 0.8138 ns
 
 
-def find_edge(x, frac=0.5):
+def find_edge(x, frac=0.5, center=None, half=None):
     """微分されたパルスの立ち上がり位置を返す（サンプル単位・小数）。
 
     **argmax をそのまま使わない。** ピークの位置は波形の形で動く。
     ピークまで遡って **振幅が frac を横切る点**を線形内挿で取る方が、
     信号源やケーブルを替えても意味が変わらない。
+
+    **探索は予測位置の周りに限る（center / half）。**
+    2026-09-17、窓全体の argmax を取っていたため、信号が小さいときに
+    雑音のピークを拾って実測位置が 65536 サンプルの窓じゅうに散らばった。
+    10 回のうち本物を引けたのは 1 回だけで、**それでも平均と標準偏差は
+    計算できてしまう**（平均 +4716 ns / 標準偏差 13324 ns）。
+    期待する遅延は 45 ns 級なので、±5 µs も見れば 100 倍以上の余裕がある。
+    **窓を絞ることで結果は偏らない。偏るとすれば窓が狭すぎるときだけで、
+    それは「窓の端に張り付く」という分かる形で出る。**
     """
     a = np.abs(x.astype(np.float64))
-    pk = int(np.argmax(a))
+    n = a.size
+    if center is None or half is None:
+        lo, hi = 0, n
+    else:
+        lo = max(0, int(center) - int(half))
+        hi = min(n, int(center) + int(half) + 1)
+    pk = lo + int(np.argmax(a[lo:hi]))
     th = a[pk] * frac
     i = pk
-    while i > 0 and a[i] > th:
+    while i > lo and a[i] > th:
         i -= 1
     if i == pk:
         return float(pk), pk, a[pk]
@@ -72,6 +91,9 @@ def main():
     p.add_argument("--nsamples", type=int, default=ac.MAX_BEATS * ac.SPW)
     p.add_argument("--k", type=int, default=2, help="何秒先の PPS を狙うか")
     p.add_argument("--frac", type=float, default=0.5, help="エッジ判定の振幅比")
+    p.add_argument("--win-us", type=float, default=5.0,
+                   help="予測位置の周り ±この時間だけを探す [us]。"
+                        "期待する遅延は 45 ns 級なので既定で 100 倍以上の余裕がある")
     p.add_argument("--atten-db", type=float, default=0.0,
                    help="ADC 入力までの減衰量 [dB]。**記録のために必ず申告する**")
     p.add_argument("--pol", type=int, default=0, choices=(0, 1))
@@ -130,17 +152,27 @@ def main():
         # PL が言う PPS の位置（取得窓の先頭からのサンプル数）
         pred = (pps_beat - snap["t_start"]) * ac.SPW
         ch = x[args.ch]
-        meas, pk, amp = find_edge(ch, args.frac)
+        half = int(round(args.win_us * 1e-6 * ac.FS_HZ))
+        meas, pk, amp = find_edge(ch, args.frac, center=pred, half=half)
         dbfs = 20 * np.log10(max(amp, 1e-9) / 32768.0)
+        # **雑音は窓の外から取る。** 信号の在る所を混ぜない。
+        # MAD からガウス相当の σ に直す（外れ値に強い）
+        outside = np.abs(np.concatenate([ch[:max(0, pred - half)],
+                                         ch[pred + half:]]).astype(np.float64))
+        noise = float(np.median(outside)) * 1.4826 if outside.size else 0.0
+        snr = 20 * np.log10(max(amp, 1e-9) / max(noise, 1e-9))
         delay = meas - pred
         results.append(delay)
         flag = ""
         if amp >= 32700:
             flag = "  **飽和している。減衰器を足す**"
-        elif dbfs < -40:
-            flag = "  **小さすぎる。エッジ判定が雑音に負ける**"
+        elif snr < 12.0:
+            flag = "  **SNR 不足。減衰器を減らす**"
+        elif abs(meas - pred) > 0.9 * half:
+            flag = "  **窓の端に張り付いた。--win-us を広げる**"
         log(f"  [{t:2d}] 予測 {pred:8.0f} / 実測 {meas:9.2f} サンプル  "
-            f"差 {delay:+9.2f} = {delay * SAMP_NS:+9.2f} ns  ピーク {dbfs:6.1f} dBFS{flag}")
+            f"差 {delay:+9.2f} = {delay * SAMP_NS:+9.2f} ns  "
+            f"ピーク {dbfs:6.1f} dBFS / SNR {snr:5.1f} dB{flag}")
         if t == 0 and args.save:
             np.save(args.save, x)
             log(f"      {args.save} に保存")
