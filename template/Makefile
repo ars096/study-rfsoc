@@ -25,7 +25,16 @@ else
   OUTDIR := build-$(patsubst xczu48dr-ffvg1517-%,%,$(PART))
 endif
 
-JOBS ?= 8
+# 同時に走らせる run の数（launch_runs -jobs）。
+# **効くのは IP の OOC 合成だけ。**impl_1 は単一の run なので、いくつにしても 1 つしか走らない。
+# 2026-09-17 の proj006 の実測: IP 合成 + synth = 3分43秒 / impl = 5分44秒。
+# つまり **-jobs が効くのは全体の 4 割**で、残りは general.maxThreads（既定 8）の領域。
+#
+# ビルドサーバの nproc = 32 に合わせてある。
+# **コア数やメモリの少ない機械では下げること** — run 1 個が独立した Vivado プロセスで
+# 数 GB 食うので、8 コアの機械で 30 にするとメモリを食い潰して逆に遅くなる。
+# `make JOBS=8` で上書きできる。
+JOBS ?= 30
 PROJ ?= projNNN
 
 export BOARD_REPO PART OUTDIR
