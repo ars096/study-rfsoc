@@ -39,10 +39,17 @@ PROJ ?= proj007
 
 export BOARD_REPO PART OUTDIR
 
-.PHONY: all sim sim-gate sim-pps prog id timing-check clean
+.PHONY: all build sim sim-gate sim-pps prog id timing-check clean
 
-all: $(OUTDIR)
+all:
+	@mkdir -p $(OUTDIR)
 	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(JOBS)
+
+# **`make build` を無効打にしない。**
+# 以前は `build` にマッチするのが下の `$(OUTDIR): mkdir -p` だけだったので、
+# ディレクトリが既にあると make は "'build' is up to date." と言って黙って終わった。
+# **成功と区別がつかない失敗**なので、明示的に all の別名にしてある。
+build: all
 
 # テストベンチ。**Vivado もライセンスも要らない**ので、
 # RTL を触ったらまずこれを通す。Mac 上でも走る。
@@ -55,11 +62,13 @@ all: $(OUTDIR)
 IVERILOG ?= iverilog
 sim: sim-gate sim-pps
 
-sim-gate: | $(OUTDIR)
+sim-gate:
+	@mkdir -p $(OUTDIR)
 	$(IVERILOG) -g2012 -o $(OUTDIR)/tb_capture_gate src/capture_gate.v sim/tb_capture_gate.v
 	$(OUTDIR)/tb_capture_gate
 
-sim-pps: | $(OUTDIR)
+sim-pps:
+	@mkdir -p $(OUTDIR)
 	$(IVERILOG) -g2012 -o $(OUTDIR)/tb_pps_capture \
 	    src/pps_capture.v src/capture_gate.v sim/tb_pps_capture.v
 	$(OUTDIR)/tb_pps_capture
@@ -74,9 +83,6 @@ id:
 # 速度グレード -1 で通るかを確かめる。成果物は build-1-e/ に出るので build/ は無傷。
 timing-check:
 	$(MAKE) PART=xczu48dr-ffvg1517-1-e
-
-$(OUTDIR):
-	mkdir -p $(OUTDIR)
 
 clean:
 	rm -rf build build-* .Xil *.jou *.log
