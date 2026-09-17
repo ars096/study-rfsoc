@@ -7,6 +7,8 @@
 直接 read/write する（pyvisa も AnaPico 純正ソフトも要らない）。
 
     python3 apsyn.py --probe                 # 何が繋がっているか。**まずこれ**
+    python3 apsyn.py --ref ext --ref-freq 10MHz   # **外部基準に切り替える（proj004）**
+    python3 apsyn.py --ref int               # 内部基準に戻す
     python3 apsyn.py --preset bin            # 100.0125 MHz（ビン中心）
     python3 apsyn.py --preset leak           # 100.000 MHz（ビン中心から外す）
     python3 apsyn.py --preset fold           # 800 MHz（第 2 ゾーン → 428.8 MHz）
@@ -38,6 +40,7 @@ import glob
 import os
 import re
 import sys
+import time
 
 # --------------------------------------------------------------- proj004 の固定値
 # adc_capture.py と一致させること。ここがズレると期待ビンの表示が嘘になる。
@@ -219,8 +222,29 @@ class APSYN:
         self.errors()          # 未対応なら溜まるので掃除する
         return lim
 
+    def set_reference(self, source, ext_freq_hz=10e6, settle=2.0):
+        """基準クロックを内部／外部に切り替える。
+
+        **順序が重要。** 先に外部基準の周波数を教えてから SOUR EXT にする。
+        逆にすると、機器は直前の設定（出荷時は 100 MHz）で 10 MHz を掴もうとして
+        ロックしない。「切り替えたのにロックしない」の大半はこれ。
+
+        切り替え後は ROSC:LOCK? を読んで確かめる。**設定できたことと、
+        そう動いていることは別。**
+        """
+        source = source.upper()
+        if source not in ("INT", "EXT"):
+            raise ValueError(source)
+        if source == "EXT":
+            self.write(f"ROSC:EXT:FREQ {ext_freq_hz:.0f} Hz")
+            self.raise_on_error("ROSC:EXT:FREQ の設定")
+        self.write(f"ROSC:SOUR {source}")
+        self.raise_on_error("ROSC:SOUR の設定")
+        self.settle()
+        time.sleep(settle)          # PLL が引き込むまで待つ
+
     def reference(self):
-        """基準クロックまわり（proj004 の下見。読むだけ）。"""
+        """基準クロックまわりを読む。"""
         out = {}
         for key, cmd in (("source", "ROSC:SOUR?"),
                          ("ext_freq", "ROSC:EXT:FREQ?"),
@@ -305,9 +329,10 @@ def do_probe(sg):
 
     ref = sg.reference()
     log("")
-    log("--- 基準クロック（proj004 の下見。読むだけ） ---")
+    log("--- 基準クロック ---")
     for k, v in ref.items():
         log(f"{k:<16}: {v if v is not None else '(読めない)'}")
+    report_reference(ref)
 
     errs = sg.errors()
     if errs:
@@ -315,6 +340,38 @@ def do_probe(sg):
         log("残っていたエラー:")
         for e in errs:
             log(f"  {e}")
+
+
+def report_reference(ref, want_ext_hz=None):
+    """基準クロックの状態を読んで、proj004 として成立しているかを言う。"""
+    src = (ref.get("source") or "").strip().upper()
+    locked = (ref.get("locked") or "").strip()
+    try:
+        ext = float(ref.get("ext_freq"))
+    except (TypeError, ValueError):
+        ext = None
+
+    log("")
+    if src.startswith("INT"):
+        log("**SG は内部基準（INT）で動いている。**")
+        log("  このままだと ppm は 0 に潰れない。ppm は SG とボードの周波数差なので、")
+        log("  ボードだけ外部基準にしても「SG 自身の確度」に置き換わるだけ。")
+        log("  → 外部基準に切り替える: python3 apsyn.py --ref ext --ref-freq 10MHz")
+        return False
+
+    ok = True
+    if ext is not None and want_ext_hz is not None and abs(ext - want_ext_hz) > 1.0:
+        log(f"**ext_freq が {ext / 1e6:g} MHz のまま。** 入れている基準と違う。")
+        log("  --ref-freq で実際に入れている周波数を指定すること")
+        ok = False
+    if locked not in ("1", "ON", "on"):
+        log(f"**ROSC:LOCK? = {locked}。外部基準にロックしていない。**")
+        log("  ケーブル・レベル・周波数（ext_freq）を疑う。この状態の測定は使えない")
+        ok = False
+    if ok:
+        log(f"外部基準にロックしている（{'' if ext is None else f'{ext / 1e6:g} MHz'}）。")
+        log("**ボード側も同じ基準に繋がっていれば、ppm は 0 付近に潰れるはず。**")
+    return ok
 
 
 # --------------------------------------------------------------------- main
@@ -326,6 +383,11 @@ def main():
                    help="/dev/usbtmcN を明示する（*IDN? の判定を飛ばす）")
     p.add_argument("--probe", action="store_true",
                    help="繋がっているものと現在の設定を出して終わる")
+    p.add_argument("--ref", choices=("int", "ext"), default=None,
+                   help="基準クロックを内部／外部に切り替える。"
+                        "**proj004 では ext にしてボードと同じ 10 MHz を入れる**")
+    p.add_argument("--ref-freq", type=parse_freq, default=10e6,
+                   help="外部基準の周波数（既定 10MHz）。--ref ext のとき先に設定される")
     p.add_argument("--preset", choices=sorted(PRESETS),
                    help="proj004 の成功条件に対応する設定を一発で出す")
     p.add_argument("--freq", type=parse_freq, default=None,
@@ -373,6 +435,22 @@ def main():
     with dev:
         sg = APSYN(dev, idn)
         sg.errors()                       # 前回の残りを掃除してから始める
+
+        if args.ref is not None:
+            log(f"*IDN?           : {sg.idn}")
+            log(f"基準クロックを {args.ref.upper()} に切り替える"
+                + (f"（外部 {args.ref_freq / 1e6:g} MHz）" if args.ref == "ext" else ""))
+            sg.set_reference(args.ref, args.ref_freq)
+            ref = sg.reference()
+            log("")
+            log("--- 読み返し ---")
+            for k, v in ref.items():
+                log(f"{k:<16}: {v if v is not None else '(読めない)'}")
+            ok = report_reference(ref, args.ref_freq if args.ref == "ext" else None)
+            if args.ref == "ext" and not ok:
+                sys.exit(1)
+            if args.freq is None and args.power is None and args.output is None:
+                return
 
         if args.probe or (args.freq is None and args.power is None
                           and args.output is None):

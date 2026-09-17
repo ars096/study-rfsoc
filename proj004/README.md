@@ -167,10 +167,19 @@ make timing-check  # 速度グレード -1 でも閉じるか（build-1-e/ に�
 
 ```bash
 # Vivado サーバ — 試験トーンの供給
-# **SG の 10 MHz 基準入力を観測所の基準に繋いでから。**
-python3 tools/apsyn.py --probe
-python3 tools/apsyn.py --preset bin     # 100.0125 MHz / -10 dBm
+# 観測所の 10 MHz を **SG とボードの両方** に分配してから（分配器か T 分岐）。
+python3 tools/apsyn.py --probe                      # source が INT か EXT か見る
+python3 tools/apsyn.py --ref ext --ref-freq 10MHz   # **外部基準に切り替える**
+python3 tools/apsyn.py --preset bin                 # 100.0125 MHz / -10 dBm
 ```
+
+**APSYN420 は `--ref ext` を明示しないと内部基準のまま。** しかも `ROSC:EXT:FREQ`
+の出荷時の値は 100 MHz で、10 MHz を入れても掴まない。`--ref ext` は
+**先に周波数を教えてから** `ROSC:SOUR EXT` にし、`ROSC:LOCK?` を読んで確かめる。
+ロックしなければ終了コードを非ゼロにして止まる。
+
+**SG が内部基準のままだと ppm は 0 に潰れない。** proj004 の判定条件そのものが
+崩れるので、測定の前に必ず `--probe` で `source : EXT` と `locked : 1` を確認する。
 
 ```bash
 # ボード（PYNQ v3.1.1）
