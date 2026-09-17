@@ -71,6 +71,29 @@ def cplx_at(x, fs_hz, f_hz):
     return np.sum(x.astype(np.float64) * w * np.exp(-2j * np.pi * f_hz * t / fs_hz))
 
 
+def circ_summary(d, period):
+    """**巻き戻し（wrap）に強い要約。**
+
+    位相差は period ごとに巻き戻るので、**そのまま平均や標準偏差を取ると壊れる。**
+    2026-09-17 に実際に踏んだ: -61.27 と +61.33 は物理的に同じずれ
+    （差が 122.60 = ちょうど 1 周期）なのに、
+    算術平均が -11.9、標準偏差が 59.5、幅が 122.6 に化けた。
+    **「起動ごとに変わる」という誤った判定を出しかけた。**
+
+    複素平面に乗せてから平均し、各試行をその平均のいちばん近くへ巻き戻す。
+
+    戻り値: (平均 [サンプル], 巻き戻した各試行, 集中度 R)
+      R は 0〜1。1 に近いほど揃っている。**R が高いのに幅が広ければ、
+      それは巻き戻しを疑う合図**（この関数を通していれば起きないが）。
+    """
+    d = np.asarray(d, dtype=float)
+    z = np.exp(2j * np.pi * d / period)
+    m = z.mean()
+    mean = np.angle(m) / (2 * np.pi) * period
+    unwrapped = mean + ((d - mean + period / 2) % period) - period / 2
+    return mean, unwrapped, float(np.abs(m))
+
+
 def estimate_tone(x, fs_hz, tone_hz):
     """サブビンでトーンの周波数を決める（基準 ch で 1 回だけ）。"""
     n = len(x)
@@ -191,27 +214,52 @@ def main():
     period = float(np.mean([r["period"] for r in rows]))
     log(f"トーンの周期 = {period:.2f} サンプル → **±{period / 2:.1f} サンプルまで一意**")
     log("")
-    log("  ch  tile/slice      平均        標準偏差     最小      最大     幅")
+    log("  ch  tile/slice   巻き戻し後の平均  標準偏差     幅    集中度R")
     verdict_stable = True
+    edge = []
     data = {}
     for i, (ti, si) in enumerate(ac.CHANS):
         d = np.array([r["off"][i] for r in rows])
-        data[i] = d
-        span = float(d.max() - d.min())
-        log(f"  {i}   {224 + ti}/{si}      {d.mean():>+9.3f}  {d.std():>10.3f}  "
-            f"{d.min():>+8.3f}  {d.max():>+8.3f}  {span:>7.3f}")
+        mean, unw, R = circ_summary(d, period)
+        data[i] = unw
+        span = float(unw.max() - unw.min())
+        log(f"  {i}   {224 + ti}/{si}      {mean:>+11.3f}  {unw.std():>9.3f}  "
+            f"{span:>7.3f}  {R:>7.3f}")
         if i != args.ref_ch and span > args.tol:
             verdict_stable = False
-        if abs(d.mean()) > period / 4:
-            log(f"      **ずれが周期の 1/4 を越えている。**曖昧性の縁に近い。"
-                f"もっと低い周波数で測り直すこと")
+        # **周期の半分の近くは曖昧性の縁。**ここに乗ると符号が試行ごとに飛ぶ。
+        if i != args.ref_ch and abs(abs(mean) - period / 2) < period * 0.05:
+            edge.append(i)
+
+    if edge:
+        log("")
+        log("**測定が曖昧性の縁に乗っている（ch "
+            + ", ".join(str(i) for i in edge) + "）。**")
+        log(f"  ずれが周期の半分（{period / 2:.2f} サンプル = 位相 180 度）のすぐ近くにある。")
+        log("  この位置では、わずかな揺らぎで符号が ± に飛ぶ。巻き戻しは上で処理したが、")
+        log("  **「反転」と「遅延」の区別がこの 1 周波数では付かない。**")
+        log("")
+        log("  - **極性の反転**なら、見かけのずれは常に「周期の半分」になる")
+        log("    （周波数を変えるとサンプル数が追随して変わる）")
+        log("  - **本物の遅延**なら、サンプル数は周波数を変えても変わらない")
+        log("    （位相の方が周波数に比例する）")
+        log("")
+        log("  **周波数を変えてもう一度測ること。基本波の整数倍は避ける** — ")
+        log("  整数倍だと遅延の側も同じ縁に落ちて、やはり区別が付かない。")
+        log(f"    例: --tone 13.0125  → 反転なら約 {1228.8 / 2 / 13.0125:+.1f}、")
+        log(f"       遅延 {abs(mean):.1f} サンプルなら別の値になる")
 
     if args.save:
         np.save(args.save, np.array([[r["off"][i] for i in range(ac.NCH)] for r in rows]))
         log(f"saved: {args.save}")
 
     log("")
-    if verdict_stable:
+    if edge:
+        log("**判定: 保留。** 測定が曖昧性の縁にあり、反転と遅延の区別が付いていない。")
+        log("  **上の「巻き戻し後の幅」だけは読んでよい**（巻き戻しは処理済み）。")
+        log("  幅が小さければ「起動ごとには変わらない」とは言える。")
+        log("  言えないのは**ずれの絶対値が何サンプルか**の方である")
+    elif verdict_stable:
         log(f"**判定: タイル間のずれは起動によらず一定**（幅 < {args.tol} サンプル / "
             f"{args.trials} 回）。")
         log("  → 定数として引ける。**MTS は要らない。**")
