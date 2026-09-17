@@ -282,8 +282,13 @@ def do_probe(p, t_ovl):
         log("  2. **信号が来ているか**をオシロかスペアナで測る")
         log("     （proj004 で SG の REF OUT が出ていなかった件と同じ順序。")
         log("      レジスタを疑う前に信号を測る）")
-        log("  3. 極性: --pol 1 でも試す")
-        log("  4. それでも駄目ならコンパレータの閾値。RefMan に記載が無く未確認")
+        log("  3. **極性ではない。** 1 Hz のパルス列なら極性がどちらでも")
+        log("     XOR 出力の立ち上がりは毎秒ちょうど 1 回ある。極性で変わるのは")
+        log("     タイムスタンプが立ち上がり側か立ち下がり側かだけ。")
+        log("     **glitch も 0 = ブランキング窓の中にすら遷移が無い**ので、")
+        log("     PL のピンがそもそも動いていない")
+        log("  4. `--level` でピンの静止レベルを読む（再ビルド不要）。")
+        log("     そこからコンパレータの閾値か結線かを切り分ける")
         return
     if not (d["flags"] & FLAG_CALIVE):
         log("**TRIG 経路だけが受かっていて、COMP 経路が動いていない。**")
@@ -295,6 +300,72 @@ def do_probe(p, t_ovl):
     log(f"COMP − TRIG    : {dc} ビート = {dc * BEAT_NS:.2f} ns")
     log("  **0 か ±1 ビートなら「シュミットトリガの遅延は 6.5 ns 未満」までしか言えない。**")
     log("  それが正常。大きく離れていたら波形が汚れている（glitch も見る）")
+
+
+def do_level(p, settle=0.7):
+    """**PL のピンが静止しているとき、その静止レベルを読む。**
+
+    `pps_capture` にピンの生の値を読むレジスタは無い。しかし極性 `pol` は
+    **同期器の手前で XOR されている**ので、`pol` を反転させると XOR 出力に
+    必ず 1 回だけ遷移が起きる。その遷移が立ち上がりになるのは
+
+        pol 0 → 1 のとき : ピンが L
+        pol 1 → 0 のとき : ピンが H
+
+    に限られる。**pol を往復させてどちらで計数が進むかを見れば、ピンの静止
+    レベルが分かる。** 再ビルドは要らない。
+
+    待ち時間はブランキング（0.5 秒）より長く取る。短いとグリッチ扱いで
+    捨てられ、計数ではなく glitch のほうが進む。
+    """
+    log("極性を往復させてピンの静止レベルを読む（再ビルド不要）")
+    log(f"  各段 {settle} s 待つ（ブランキング 0.5 s より長く）")
+    log("")
+    log("  遷移       t_count Δ   comp_stamp   t_glitch Δ")
+    log("  " + "-" * 48)
+
+    p.set_pol(0)
+    time.sleep(settle)
+    prev = p.snapshot()
+    obs = []
+    for pol in (1, 0, 1, 0):
+        p.set_pol(pol)
+        time.sleep(settle)
+        d = p.snapshot()
+        dt = d["count"] - prev["count"]
+        dc = 1 if d["cstamp"] != prev["cstamp"] else 0
+        dg = d["glitch_trig"] - prev["glitch_trig"]
+        log(f"  {1 - pol} → {pol}      {dt:>6}      "
+            f"{'変化あり' if dc else 'なし    '}     {dg:>6}")
+        obs.append((pol, dt, dc))
+        prev = d
+
+    log("")
+    for name, idx in (("TRIG (AH13)", 1), ("COMP (AJ13)", 2)):
+        up = sum(o[idx] for o in obs if o[0] == 1)   # 0 → 1 で計数 = ピンは L
+        dn = sum(o[idx] for o in obs if o[0] == 0)   # 1 → 0 で計数 = ピンは H
+        if up and not dn:
+            log(f"  {name}: **L で静止している**")
+        elif dn and not up:
+            log(f"  {name}: **H で静止している**")
+        elif up and dn:
+            log(f"  {name}: 両方で計数した。ピンは動いている"
+                f"（PPS が来ている。--probe をやり直す）")
+        else:
+            log(f"  {name}: **どちらでも計数しない。**"
+                f" pol（gpio_time_ctrl ch2 bit5）が PL に届いていないか、"
+                f" 入力経路が切れている")
+    log("")
+    log("読み方:")
+    log("  TRIG が L で静止 → シュミットトリガが一度も反転していない。")
+    log("    コンパレータが振れていない = 閾値に届いていないか、信号が")
+    log("    コンパレータまで来ていない。**SMA と基板側を疑う順序**")
+    log("  COMP が H で静止 → オープンドレインにプルアップが在って、")
+    log("    コンパレータが一度も引き落としていない（上と同じ結論）")
+    log("  COMP が L で静止 → プルアップが無くて浮いているか、常時引かれている。")
+    log("    src/pps.xdc の PULLUP を有効にして焼き直すと切り分けられる")
+    log("  **両方が同じ向きの結論になるはず**（同じコンパレータから出ている）。")
+    log("  食い違ったら、ピン割り当て（AH13 / AJ13）の前提から疑う")
 
 
 def do_watch(p, seconds, period):
@@ -396,6 +467,8 @@ def main():
     p.add_argument("--watch", type=float, default=None,
                    help="この秒数ぶん残差を積んで確度を出す")
     p.add_argument("--period", type=float, default=5.0, help="--watch の表示間隔 [s]")
+    p.add_argument("--level", action="store_true",
+                   help="ピンの静止レベルを読む（PPS が受からないときの切り分け）")
     p.add_argument("--pol-check", action="store_true", help="極性を判定する")
     p.add_argument("--width", type=float, default=0.020,
                    help="1PPS のパルス幅 [s]（--pol-check に使う）")
@@ -420,7 +493,9 @@ def main():
     if args.pol:
         time.sleep(2.5)     # 極性を変えた直後はブランキングが効く
 
-    if args.pol_check:
+    if args.level:
+        do_level(pps)
+    elif args.pol_check:
         do_pol_check(pps, args.width)
     elif args.watch:
         do_watch(pps, args.watch, args.period)
