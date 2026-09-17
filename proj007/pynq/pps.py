@@ -162,6 +162,52 @@ def fmt_flags(f):
 
 
 # ------------------------------------------------------------------- 表示
+def check_beat(p, dt=0.5):
+    """ビートカウンタが本当に走っているかを 2 回のスナップショットで確かめる。
+
+    **PPS の受信を語る前に必ずここを通す。** スナップショットが更新されて
+    いなければ beat も stamp も interval も全部が嘘になるが、値そのものは
+    「それらしく」見えるので気づけない。
+
+    2026-09-17 の初回の実機で `beat_count = 2` が出た。ack は立っていたので
+    スナップ機構は動いており、1 回読むだけでは正常と区別がつかなかった。
+    **「動いている証拠」は値の大きさではなく、進み方で取る。**
+    """
+    ta = time.time()
+    a = p.snapshot()
+    time.sleep(dt)
+    tb = time.time()
+    b = p.snapshot()
+    el = tb - ta
+    dbeat = b["beat"] - a["beat"]
+    exp = el * BEATS_PER_SEC
+    log(f"カウンタの確認 : {el * 1e3:.1f} ms で {dbeat:,} ビート進んだ"
+        f"（期待 {exp:,.0f}）")
+
+    if dbeat <= 0:
+        log("")
+        log("**スナップショットが更新されていない。上の値はすべて信用できない。**")
+        log("  beat も stamp も interval も、リセット直後の 1 回を読み続けている。")
+        log("  順に確かめる:")
+        log("    1. gpio_time_ctrl ch2 bit0（snap）が pps_capture に届いているか")
+        log("    2. aresetn が解除されたあとに snap が立ち上がっているか")
+        log("       （リセット解除の時点で snap が H だと、その 2〜3 クロック後に")
+        log("        一度だけ打たれ、以後 python が立てても立ち上がりにならない）")
+        log("    3. flags の ack は立つので、**ack はスナップの鮮度を保証しない**")
+        return False
+
+    err = (dbeat - exp) / exp
+    if abs(err) > 0.05:
+        log("")
+        log(f"**進み方が期待と {err * 100:+.1f} % ずれている。**")
+        log("  aclk が 153.6 MHz で回っていない疑い。")
+        log("  Clocking Wizard の出力と RFDC の Outclk_Freq を build のログで確かめる")
+        return False
+
+    log(f"  → カウンタは走っている（誤差 {err * 100:+.2f} %）。時刻の実体は生きている")
+    return True
+
+
 def do_probe(p):
     p.check_magic()
     log(f"MAGIC          : 0x{MAGIC:08x}  （GPIO の結線は正しい）")
@@ -175,6 +221,12 @@ def do_probe(p):
     log(f"comp_stamp(32) : {d['cstamp']}")
     log(f"glitch         : trig {d['glitch_trig']} / comp {d['glitch_comp']}")
     log("")
+
+    # **ここを通らなければ PPS の話をしない。** 上の値の意味が決まらない
+    if not check_beat(p):
+        return
+    log("")
+
     if not (d["flags"] & FLAG_ALIVE):
         log("**PPS が来ていない。** 順に確かめる:")
         log("  1. ケーブルが `PPS Clk` の SMA に挿さっているか（ADC_x や CLK_IN ではない）")
