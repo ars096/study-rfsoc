@@ -9,6 +9,8 @@
     python3 apsyn.py --probe                 # 何が繋がっているか。**まずこれ**
     python3 apsyn.py --ref ext --ref-freq 10MHz   # **外部基準に切り替える（proj004）**
     python3 apsyn.py --ref int               # 内部基準に戻す
+    python3 apsyn.py --ref-out on            # **REF OUT を出す（ボードの CLK_IN へ配る）**
+    python3 apsyn.py --raw-query 'SYST:HELP:HEAD?'   # 機器のコマンド一覧（対応機種のみ）
     python3 apsyn.py --preset bin            # 100.0125 MHz（ビン中心）
     python3 apsyn.py --preset leak           # 100.000 MHz（ビン中心から外す）
     python3 apsyn.py --preset fold           # 800 MHz（第 2 ゾーン → 428.8 MHz）
@@ -222,6 +224,57 @@ class APSYN:
         self.errors()          # 未対応なら溜まるので掃除する
         return lim
 
+    # REF OUT の綴りは機種・ファーム依存。**マニュアルが手に入らないので機器に聞く。**
+    # 書いたあと SYST:ERR? が空で、かつ読み返しが一致したものを採用する。
+    REF_OUT_FORMS = (
+        ("ROSC:OUTP:STAT", "ROSC:OUTP:STAT?"),
+        ("ROSC:OUTP:STATE", "ROSC:OUTP:STATE?"),
+        ("ROSC:OUTP", "ROSC:OUTP?"),
+        ("OUTP:ROSC:STAT", "OUTP:ROSC:STAT?"),
+    )
+
+    def set_ref_out(self, on, freq_hz=None):
+        """基準クロックの出力（REF OUT）を入／切する。
+
+        **APSYN420 の REF OUT は既定で出ていないことがある。** ボードの CLK_IN に
+        SG の REF OUT を配る構成では、これを入れないと何も出ない
+        （2026-09-17 にスペアナで無出力を確認して判明）。
+
+        戻り値は (採用した綴り, 読み返し, 一致したか, 試して駄目だった綴り)。
+        """
+        want = "ON" if on else "OFF"
+        tried = []
+
+        if freq_hz is not None:
+            self.errors()
+            self.write(f"ROSC:OUTP:FREQ {freq_hz:.0f} Hz")
+            errs = self.errors()
+            if errs:
+                tried.append(("ROSC:OUTP:FREQ", errs[0]))
+
+        for setc, getc in self.REF_OUT_FORMS:
+            self.errors()                      # 直前の残りを掃除してから試す
+            try:
+                self.write(f"{setc} {want}")
+            except OSError as e:
+                tried.append((setc, f"書けない: {e}"))
+                continue
+            errs = self.errors()
+            if errs:
+                tried.append((setc, errs[0]))
+                continue
+            try:
+                rb = self.query(getc).strip()
+            except OSError as e:
+                # 書けたがクエリが通らない綴りもある。書けた事実は残す。
+                self.errors()
+                return setc, None, None, tried
+            self.errors()
+            ok = (rb.upper() in ("1", "ON")) == bool(on)
+            return setc, rb, ok, tried
+
+        return None, None, None, tried
+
     def set_reference(self, source, ext_freq_hz=10e6, settle=2.0):
         """基準クロックを内部／外部に切り替える。
 
@@ -248,7 +301,9 @@ class APSYN:
         out = {}
         for key, cmd in (("source", "ROSC:SOUR?"),
                          ("ext_freq", "ROSC:EXT:FREQ?"),
-                         ("locked", "ROSC:LOCK?")):
+                         ("locked", "ROSC:LOCK?"),
+                         ("out_state", "ROSC:OUTP:STAT?"),
+                         ("out_freq", "ROSC:OUTP:FREQ?")):
             try:
                 out[key] = self.query(cmd)
             except OSError:
@@ -388,6 +443,15 @@ def main():
                         "**proj004 では ext にしてボードと同じ 10 MHz を入れる**")
     p.add_argument("--ref-freq", type=parse_freq, default=10e6,
                    help="外部基準の周波数（既定 10MHz）。--ref ext のとき先に設定される")
+    p.add_argument("--ref-out", choices=("on", "off"), default=None,
+                   help="**REF OUT（基準クロック出力）を入／切する。** "
+                        "ボードの CLK_IN に SG の REF OUT を配るなら on が要る")
+    p.add_argument("--ref-out-freq", type=parse_freq, default=None,
+                   help="REF OUT の周波数（機種が対応していれば）。既定は触らない")
+    p.add_argument("--raw", default=None,
+                   help="任意の SCPI を書く（応答を待たない）。機器を直接叩くための逃げ道")
+    p.add_argument("--raw-query", default=None,
+                   help="任意の SCPI を問い合わせて応答を出す（例: 'SYST:HELP:HEAD?'）")
     p.add_argument("--preset", choices=sorted(PRESETS),
                    help="proj004 の成功条件に対応する設定を一発で出す")
     p.add_argument("--freq", type=parse_freq, default=None,
@@ -435,6 +499,56 @@ def main():
     with dev:
         sg = APSYN(dev, idn)
         sg.errors()                       # 前回の残りを掃除してから始める
+
+        if args.raw is not None:
+            log(f"*IDN?           : {sg.idn}")
+            log(f"write           : {args.raw}")
+            sg.write(args.raw)
+            errs = sg.errors()
+            log("エラー          : " + (", ".join(errs) if errs else "なし"))
+            if args.raw_query is None:
+                return
+
+        if args.raw_query is not None:
+            log(f"query           : {args.raw_query}")
+            try:
+                log(f"応答            : {sg.query(args.raw_query)}")
+            except OSError as e:
+                log(f"応答            : (返ってこない: {e})")
+            errs = sg.errors()
+            log("エラー          : " + (", ".join(errs) if errs else "なし"))
+            return
+
+        if args.ref_out is not None:
+            on = args.ref_out == "on"
+            log(f"*IDN?           : {sg.idn}")
+            log(f"REF OUT を {'入' if on else '切'} にする"
+                + (f"（{args.ref_out_freq / 1e6:g} MHz）" if args.ref_out_freq else ""))
+            used, rb, ok, tried = sg.set_ref_out(on, args.ref_out_freq)
+            for form, why in tried:
+                log(f"  {form:<18} 不可: {why}")
+            if used is None:
+                log("")
+                log("ERROR: REF OUT を操作する綴りが見つからない。")
+                log("  `--raw-query 'SYST:HELP:HEAD?'` でコマンド一覧が出る機種もある。")
+                log("  出なければ前面パネルか AnaPico のプログラマーズマニュアルで確認する")
+                sys.exit(1)
+            log(f"  採用した綴り    : {used} {'ON' if on else 'OFF'}")
+            log(f"  読み返し        : {rb if rb is not None else '(クエリ非対応)'}")
+            if ok is False:
+                log("  **読み返しが一致しない。効いていない可能性がある**")
+            log("")
+            log("**スペアナか周波数カウンタで REF OUT に信号が出ていることを確かめる。**")
+            log("  書けたことと出ていることは別。ここを飛ばすと、ボード側で")
+            log("  「PLL1 がロックしない」を延々と追うことになる。")
+            if args.ref is None and args.freq is None and args.power is None \
+                    and args.output is None:
+                ref = sg.reference()
+                log("")
+                log("--- 基準クロック ---")
+                for k, v in ref.items():
+                    log(f"{k:<16}: {v if v is not None else '(読めない)'}")
+                return
 
         if args.ref is not None:
             log(f"*IDN?           : {sg.idn}")

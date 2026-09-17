@@ -170,8 +170,14 @@ make timing-check  # 速度グレード -1 でも閉じるか（build-1-e/ に�
 # 観測所の 10 MHz を **SG とボードの両方** に分配してから（分配器か T 分岐）。
 python3 tools/apsyn.py --probe                      # source が INT か EXT か見る
 python3 tools/apsyn.py --ref ext --ref-freq 10MHz   # **外部基準に切り替える**
+python3 tools/apsyn.py --ref-out on                 # **REF OUT を出す**（下記）
 python3 tools/apsyn.py --preset bin                 # 100.0125 MHz / -10 dBm
 ```
+
+**SG の REF OUT は既定で出ていないことがある。** ボードの CLK_IN に SG の REF OUT を
+配る構成では、`--ref-out on` を打たないと何も出ない（2026-09-17 にスペアナで無出力を
+確認して判明。それまで「PLL1 がロックしない」側を疑っていた）。
+**書けたことと出ていることは別なので、スペアナか周波数カウンタで必ず確かめる。**
 
 **APSYN420 は `--ref ext` を明示しないと内部基準のまま。** しかも `ROSC:EXT:FREQ`
 の出荷時の値は 100 MHz で、10 MHz を入れても掴まない。`--ref ext` は
@@ -225,6 +231,7 @@ PATH が置き換わって `ModuleNotFoundError: No module named 'pynq'` にな�
 | 症状 | 見るところ |
 |---|---|
 | どの条件でも ppm が減らない | **SG を同じ 10 MHz に同期させたか。** していなければ 0 にはならない |
+| CLK_IN に信号が来ていない | SG の REF OUT を配っているなら `--ref-out on`。**既定では出ない**。スペアナで確かめる |
 | `--clkin 0` で ppm が変わらない | CLK_IN は CLKin0 ではない。`--order stock,0,1,2` で全部試す |
 | PLL1 ロック LED が消える | その CLKin に基準が来ていない。ケーブル・レベル・波形 |
 | LED は点くが ppm が減らない | **CLKin の取り違え。** 別の（基板内の）入力にロックしている |
