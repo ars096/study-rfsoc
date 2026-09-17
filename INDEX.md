@@ -9,6 +9,7 @@
 | [proj002](proj002/) | 2026-09-15 | PS ↔ PL の疎通と PYNQ オーバーレイの流儀。Zynq MPSoC + AXI GPIO で LED を叩く。Vivado 2024.1 へ移行 | **成功**。PYNQ v3.1.1 からオーバーレイを読み込み LED を制御。board file / block design / `.hwh` の経路を実証 |
 | [proj003](proj003/) | 2026-09-16 | RF Data Converter を置き、ADC の生サンプルを AXI DMA で PS へ吸い上げる。既知の CW トーンで周波数・振幅・折返しを検証する | **成功**。WNS +1.014 ns。ADC_B の CW を PYNQ 経由で取得し、第 1 / 第 2 ゾーンで ppm が一致（+14.92 / +14.91）。fs = 1228.8 MSPS を確定。無入力で LMX / LMK の回り込みも検出|
 | [proj004](proj004/) | 2026-09-17 | 外部 10 MHz 基準クロック。LMK04828 の PLL1 の基準を基板の Si5395 から CLK_IN の SMA へ切り替え、proj003 の +14.9 ppm が消えることで裏を取る | **成功**。WNS +1.014 ns。**CLK_IN = CLKin0 を実測で確定**し、+14.912 → **−0.015 ppm**（約 1000 倍）。基準断のとき `PLLLockStatus` は 2 のまま 90 ppm ずれることも実証 |
+| [proj005](proj005/) | 2026-09-17 | 正弦波源（Agilent E8257D）に替えて、「信号源のもの」と「ADC のもの」を分離する。proj004 で残したノイズフロアの 1.3 dB と、proj003 の方形波の件を決着させる | **成功**（SFDR は持ち越し）。**ノイズフロアの悪化は APSYN420 由来**と確定。H3 が −9.3 → −70.8 dBc で方形波を直接確認。ADC の圧縮なし。**0 dBFS ≒ +5.8 dBm** を実測。SFDR は SG の H2（−51.5 dBc）が壁でフィルタ待ち |
 
 ## 凡例
 

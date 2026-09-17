@@ -26,6 +26,10 @@ build-*/
 *.lic
 .Xilinx/
 
+# ---- 取得データ（再取得できる。大きい）----
+*.npy
+proj*/data/
+
 # ---- OS / エディタ ----
 .DS_Store
 *~
