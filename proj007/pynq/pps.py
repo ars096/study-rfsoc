@@ -162,7 +162,7 @@ def fmt_flags(f):
 
 
 # ------------------------------------------------------------------- 表示
-def wait_epoch(p, t_ovl, timeout=10.0):
+def wait_epoch(p, t_ref, timeout=10.0, label="Overlay"):
     """**時刻の原点（aresetn の解除）がいつだったかを測る。**
 
     原点は Overlay のロードではない。`pps_capture/aresetn` は
@@ -198,8 +198,8 @@ def wait_epoch(p, t_ovl, timeout=10.0):
 
     now = time.time()
     age = d["beat"] * BEAT_NS / 1e9          # リセット解除からの経過 [s]
-    rel = (now - age) - t_ovl                # Overlay から解除までの時間 [s]
-    log(f"時刻の原点     : Overlay の {rel * 1e3:+.0f} ms 後に aresetn が解除された"
+    rel = (now - age) - t_ref                # 起点から解除までの時間 [s]
+    log(f"時刻の原点     : {label} の {rel * 1e3:+.0f} ms 後に aresetn が解除された"
         f"（現在 {age * 1e3:.0f} ms 経過）")
     if waited:
         log("  リセットが解けるまで待った（snap_ack が返らなかった）")
@@ -209,16 +209,21 @@ def wait_epoch(p, t_ovl, timeout=10.0):
     return d
 
 
-def wait_ready(p, t_ovl, need=2.5):
+def wait_ready(p, t_ref, need=2.5, label="Overlay"):
     """**リセットの解除を待ち、さらに PPS が 2 回来るまで待ってから返す。**
 
-    `--probe` `--watch` `--pol-check` は全部これを通す。
+    `--probe` `--watch` `--pol-check`、`pps_delay.py` は全部これを通す。
     時刻の原点は Overlay ではなく MMCM のロックなので、原点からの経過が
     1 秒に満たないうちに `alive` を見ると **必ず 0 になる**。
     2026-09-17、ここを通していなかった `--probe` が「PPS が来ていない」と
     誤判定し、`--watch` が同じ理由で例外を投げた。
+
+    **RFDC のタイルを起動したあとも必ずこれを通す。** タイルを起動すると
+    `clk_adc` が立ち上がり直して MMCM がロックを外し、`aresetn` が再アサート
+    される。**エポックはそこで 0 に戻る。** 2026-09-17、`pps_delay.py` が
+    `start_tiles()` の直後に `next_start()` を呼んで `alive = 0` で落ちた。
     """
-    d = wait_epoch(p, t_ovl)
+    d = wait_epoch(p, t_ref, label=label)
     age = d["beat"] * BEAT_NS / 1e9
     if age < need:
         log(f"  PPS の判定には原点から最低 {need} s 要る（1 Hz なので）。"

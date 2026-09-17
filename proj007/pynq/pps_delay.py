@@ -30,6 +30,7 @@ ADC 側は 0.814 ns である。すべてが同じ 10 MHz にロックしてい�
 """
 
 import argparse
+import time
 
 import numpy as np
 
@@ -88,10 +89,19 @@ def main():
     ol = Overlay(args.bitfile)
     log(f"Overlay: {args.bitfile}")
     blocks = ac.start_tiles(ol.rfdc, args.fs * 1e6, args.zone)
+    t_tiles = time.time()
 
     pps = pps_mod.PPS(ol)
     pps.check_magic()
     pps.set_pol(args.pol)
+
+    # **タイルの起動で aresetn が落ちている。**
+    # start_tiles() は clk_adc を立ち上げ直すので MMCM がロックを外し、
+    # rst_adc が aresetn を再アサートする。**エポックはそこで 0 に戻り、
+    # t_age も MISS_BEATS に初期化されるので alive は 0 になる。**
+    # ここを通さずに next_start() を呼ぶと「PPS が来ていない」で落ちる
+    # （2026-09-17 に踏んだ）。
+    pps_mod.wait_ready(pps, t_tiles, label="タイル起動")
 
     n_beats = args.nsamples // ac.SPW
     offset = -(n_beats // 2)        # PPS が取得窓の真ん中に来るようにする
