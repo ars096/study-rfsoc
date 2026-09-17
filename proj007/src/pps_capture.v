@@ -153,8 +153,24 @@ module pps_capture #(
         end
     end
 
-    wire t_alive = (t_age < MISS_BEATS);
-    wire c_alive = (c_age < MISS_BEATS);
+    // **比較器の出力を同期器へ直接渡さない。**
+    // `t_age` は毎クロック増えるので、32 bit の比較器は桁上がりの瞬間に
+    // 出力がグリッチしうる。ctrl_aclk は aclk と非同期に叩いているから、
+    // そのグリッチがそのまま `f_alive` の 1 段目に捕まる。すると
+    // **PPS は生きているのに flags 上で一瞬 dead に見える**。ソフトはこれを
+    // ポーリングで拾うので、存在しない「PPS 欠落」を報告することになる。
+    // aclk 側で 1 段受けてから渡す（report_cdc の CDC-10 もこれで消える）。
+    // リセット直後は t_age = MISS_BEATS なので 0 で初期化するのが正しい。
+    reg t_alive, c_alive;
+    always @(posedge aclk) begin
+        if (!aresetn) begin
+            t_alive <= 1'b0;
+            c_alive <= 1'b0;
+        end else begin
+            t_alive <= (t_age < MISS_BEATS);
+            c_alive <= (c_age < MISS_BEATS);
+        end
+    end
 
     // ---- 予約時刻での発火 ----
     //
