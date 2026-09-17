@@ -101,9 +101,10 @@ make timing-check  # -1 で通す → build-1-e/（build/ は無傷）
 
 | | 値 | 状態 |
 |---|---|---|
-| **ADC_B** | RF-ADC **Tile 226 / slice 0**（`adc_tiles[2].blocks[0]`）| **2026-09-16 に実信号で確定** |
-| ADC_A | RF-ADC Tile 226 / slice 2（推定）| ADC_B が slice 0 だったことからの推定。未確認 |
-| ADC_C / ADC_D | RF-ADC **Tile 224** | RefMan A6 記載。スライスの対応は未確認 |
+| **ADC_A** | RF-ADC **Tile 226 / slice 2**（`adc_tiles[2].blocks[1]`）| **2026-09-17 に proj006 で確定** |
+| **ADC_B** | RF-ADC **Tile 226 / slice 0**（`adc_tiles[2].blocks[0]`）| **2026-09-16 に実信号で確定**（proj006 で再確認）|
+| **ADC_C** | RF-ADC **Tile 224 / slice 2**（`adc_tiles[0].blocks[1]`）| **2026-09-17 に proj006 で確定** |
+| **ADC_D** | RF-ADC **Tile 224 / slice 0**（`adc_tiles[0].blocks[0]`）| **2026-09-17 に proj006 で確定** |
 | **PYNQ の `blocks[]` の添字** | Vivado の slice **0 / 2** → `blocks[`**`0`**`]` / `blocks[`**`1`**`]` | **2026-09-17 に proj006 で実測確定。**`xrfdc` は有効なスライスを 0 から詰めて並べる。`blocks[2]` / `blocks[3]` は `not available` で落ちる。**slice 0 しか使わない proj005 までは一致していて表に出なかった** |
 | 4ch 同時起動 | Tile 224 / 226 とも `PLLLockStatus = 2`・`SamplingFreq = 1.2288` | **2026-09-17 に proj006 で実測**（出荷時クロックでも 4 スライスとも起動する）|
 | DAC_A | RF-DAC Tile 230 | RefMan A6 記載 |
@@ -115,6 +116,32 @@ make timing-check  # -1 で通す → build-1-e/（build/ は無傷）
 | RF SYSREF | 7.68 MHz DIFF | |
 | 外部クロック入力 | **CLK_IN（SMA）** → LMK04828 | 実装済み。**基板改造は不要** |
 | 複数ボード同期 | SYNC_IN（SMA） | |
+
+### SMA のラベルとスライス番号は **完全に逆**
+
+```
+  ADC_A  →  Tile 226 / slice 2
+  ADC_B  →  Tile 226 / slice 0
+  ADC_C  →  Tile 224 / slice 2
+  ADC_D  →  Tile 224 / slice 0
+```
+
+**A → D の順にタイル番号もスライス番号も下がる。** proj003 で ADC_B が slice 0 だったのは
+この並びの一部で、例外ではなかった。**ラベルから推測しないこと。**
+
+2026-09-17 に proj006 の `pynq/slice_map.py` で、SMA を 1 本ずつ挿し替えて 4 本とも実測した
+（100.0125 MHz / 外部 10 MHz 基準）。**2 番目の ch との差は 59〜61 dB** で、
+取り違えようのない分離だった。
+
+`build.tcl` の `chans` の並び（`{0 0} {0 2} {2 0} {2 2}`）は Vivado 側の都合なので、
+**512 bit 語の ch 番号は SMA の逆順**になる。
+
+| ch（512bit 語の並び。ch0 が最下位）| SMA |
+|---|---|
+| 0 | ADC_D |
+| 1 | ADC_C |
+| 2 | ADC_B |
+| 3 | ADC_A |
 
 クロック生成は Si5395B（PL 用 100 MHz LVDS をファクトリプログラムで生成）と、
 LMK04828（ジッタクリーナ）＋ LMX2594 × 2（RF シンセ）の 2 系統に分かれる。
