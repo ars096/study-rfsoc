@@ -81,6 +81,7 @@ class PPS:
     """
 
     def __init__(self, ol):
+        self.ol = ol                  # --epoch-test で rfdc のタイルを叩くため
         self.c = ol.gpio_time_ctrl
         self.s = ol.gpio_time_stat
         for ch, d in ((self.c.channel1, "out"), (self.c.channel2, "out"),
@@ -476,6 +477,105 @@ def do_level(p, settle=0.7):
     log("  食い違ったら、ピン割り当て（AH13 / AJ13）の前提から疑う")
 
 
+def do_epoch_test(p, t_ovl, src_tile=2, ctl_tile=0, settle=2.0):
+    """**rev2 が働くところを実際に見る。**
+
+    `aresetn` を意図的に落とす。確実なのは **MMCM の源になっているタイルを
+    止めること**で、`build.tcl` の `wiz_src_tile` は 2（Tile 226 の `clk_adc2`）。
+
+    **対照を置く。** Tile 224（インデックス 0）は MMCM の源ではないので、
+    同じように止めても `epoch` は変わらないはずである。
+    片方だけ見ると「止めたら何か起きた」で終わるが、対照を並べれば
+    **「MMCM の源だから起きた」**まで言える。
+    proj006 で `get_timing_paths` の偽陽性を対照で切り分けたのと同じ型。
+
+    **注意: Overlay の読み直しはこの試験に使えない。** PL を焼き直すと
+    `rst_ctrl` も落ちて **epoch カウンタ自身が 0 に戻る**ので、
+    読み直しの前後でどちらも 1 に見える。**epoch は PL の再構成を検出できない。**
+    これは仕組み上の限界で、回避策は無い（検出したいなら PS 側で
+    Overlay のロード回数を数える）。
+    """
+    log("**この試験は意図的に aresetn を落とす。** 観測中に実行しないこと")
+    log("")
+    d0 = wait_ready(p, t_ovl)
+    log("")
+    log(f"起点 : epoch = {d0['epoch']} / beat_count = {d0['beat']:,} / "
+        f"{fmt_flags(d0['flags'])}")
+    log("")
+
+    def cycle(idx, what):
+        tile = p.ol.rfdc.adc_tiles[idx]
+        ep0 = p.epoch()
+        b0 = p.snapshot()["beat"]
+        log(f"---- {what}: adc_tiles[{idx}]（Tile {224 + idx}）----")
+        tile.ShutDown()
+        time.sleep(0.5)
+        f_down = p.flags()
+        log(f"  停止中      : {fmt_flags(f_down)}")
+        tile.StartUp()
+        # ロックが戻るのを待つ
+        t0 = time.time()
+        while not (p.flags() & FLAG_LOCKED):
+            if time.time() - t0 > 10.0:
+                log("  **locked が戻らない。** ここで止める")
+                return None
+            time.sleep(0.05)
+        time.sleep(settle)
+        ep1 = p.epoch()
+        b1 = p.snapshot()["beat"]
+        log(f"  再起動後    : epoch {ep0} → {ep1} / "
+            f"beat_count {b0:,} → {b1:,}")
+        log(f"                {fmt_flags(p.flags())}")
+        return {"ep0": ep0, "ep1": ep1, "b0": b0, "b1": b1, "down": f_down}
+
+    ctl = cycle(ctl_tile, "対照（MMCM の源ではないタイル）")
+    if ctl is None:
+        return
+    log("")
+    src = cycle(src_tile, "本番（MMCM の源のタイル）")
+    if src is None:
+        return
+
+    log("")
+    log("---- 判定 ----")
+    ok = True
+
+    if ctl["ep1"] == ctl["ep0"] and ctl["b1"] > ctl["b0"]:
+        log(f"  対照: epoch は {ctl['ep0']} のまま、beat_count も進み続けた。"
+            " **このタイルは MMCM の源ではない**")
+    else:
+        ok = False
+        log("  **対照でも epoch が動いた／beat が戻った。**")
+        log("    build.tcl の wiz_src_tile の前提が違う。どちらが源かを見直す")
+
+    if src["down"] & FLAG_LOCKED:
+        ok = False
+        log("  **停止中も locked が立っていた。** MMCM の源が別のタイルにある疑い")
+    else:
+        log("  本番: 停止中に locked が落ちた。**MMCM の源であることが直接見えた**")
+
+    if src["ep1"] == src["ep0"] + 1 and src["b1"] < src["b0"]:
+        log(f"  本番: **epoch が {src['ep0']} → {src['ep1']} に増え、"
+            f"beat_count は {src['b0']:,} → {src['b1']:,} に戻った**")
+    else:
+        ok = False
+        log(f"  **期待と違う**（epoch {src['ep0']} → {src['ep1']} / "
+            f"beat {src['b0']:,} → {src['b1']:,}）")
+
+    log("")
+    log("**epoch を見ていなかったら何が起きていたか。**")
+    stale = d0["stamp"]
+    now = p.snapshot()["beat"]
+    dt = (now - stale) * BEAT_NS / 1e9
+    log(f"  起点で読んだ pps_stamp = {stale:,} を、いまの beat_count = {now:,} と")
+    log(f"  同じ原点のものとして扱うと、経過時間は {dt:+.3f} s になる。")
+    log("  **実際には原点が張り直されているので、この数字に意味は無い。**")
+    log("  値は出る。エラーにもならない。**epoch を見ない限り区別できない**")
+
+    log("")
+    log("=== " + ("PASS" if ok else "FAIL") + " ===")
+
+
 def do_watch(p, t_ovl, seconds, period):
     """PPS の残差を積んで周波数確度を出す。
 
@@ -576,6 +676,13 @@ def main():
     p.add_argument("--watch", type=float, default=None,
                    help="この秒数ぶん残差を積んで確度を出す")
     p.add_argument("--period", type=float, default=5.0, help="--watch の表示間隔 [s]")
+    p.add_argument("--epoch-test", action="store_true",
+                   help="**意図的に aresetn を落として epoch が増えるのを見る。**"
+                        "観測中に実行しないこと")
+    p.add_argument("--src-tile", type=int, default=2,
+                   help="MMCM の源のタイル（build.tcl の wiz_src_tile）")
+    p.add_argument("--ctl-tile", type=int, default=0,
+                   help="対照に使うタイル（MMCM の源ではないほう）")
     p.add_argument("--level", action="store_true",
                    help="ピンの静止レベルを読む（PPS が受からないときの切り分け）")
     p.add_argument("--pol-check", action="store_true", help="極性を判定する")
@@ -602,7 +709,9 @@ def main():
     if args.pol:
         time.sleep(2.5)     # 極性を変えた直後はブランキングが効く
 
-    if args.level:
+    if args.epoch_test:
+        do_epoch_test(pps, t_ovl, args.src_tile, args.ctl_tile)
+    elif args.level:
         do_level(pps)
     elif args.pol_check:
         do_pol_check(pps, t_ovl, args.width)
