@@ -882,7 +882,9 @@ if {![catch {report_cdc -details -file $outdir/cdc.rpt} cdc_err]} {
     puts "---- 乗り換え（report_cdc）----"
     set shown 0
     foreach line [split $txt \n] {
-        if {[regexp {^\s*\|\s*(Critical|Warning|Info)\s*\|} $line]} {
+        # 要約表は罫線なしの固定幅（2026-09-17 に | で拾おうとして空振りした）:
+        #   CDC-1   Critical     26  1-bit unknown CDC circuitry
+        if {[regexp {^\s*CDC-\d+\s+(Critical|Warning|Info)\s+\d+} $line]} {
             puts "  [string trim $line]"
             incr shown
         }

@@ -186,6 +186,25 @@ DMA が間に合うかどうかを見積もる必要がなくなる。
   **見送った案**: `RFADC0_CLK` 等を timing.xdc の `set_clock_groups` に足す案。
   **存在しない問題に対する対処**になるうえ、`get_clocks` が空を返したときに
   制約が落ちる危険を持ち込むだけだった
+  **結果**: `report_cdc` の `Exception` 列が決着をつけた。同じ経路が
+  RFDC IP の `False Path` とこちらの `Asynch Clock Groups` で二重に処理されていた
+
+- **決定**: `capture_gate` の同期器 3 本に **`ASYNC_REG = "TRUE"` を足す**
+  **理由**: `report_cdc` の CDC-2。**proj005 から引き継いでいた漏れ。**
+  無くても動くし、タイミングも閉じるし、波形にも出ない。**MTBF だけが静かに落ちる。**
+  この種の欠陥は、動作確認では絶対に見つからない
+  **付随**: proj005 の `capture_gate.v` とはここで差分が出る。
+  リポジトリの方針（各 proj は自己完結・再現性 > DRY）どおり、proj005 には遡及しない
+
+- **決定**: `n_beats` の乗り換え（CDC-1 が 26 件）は **直さない**
+  **理由**: ソフトが「値を書く → 同じ値に arm だけ足して書く」順で叩くので、
+  arm の遷移時に `n_beats` のビットは**遷移しない**。乗り換えているのは
+  `arm` の 1 bit だけで、それは 3 段の同期器を通る。
+  **Vivado はソフト側の手順を見られないので、この構造は必ず Critical になる**
+  **見送った案**: `set_max_delay -datapath_only` を張って経路長を縛る案。
+  正攻法ではあるが、**proj006 の判定条件は「4ch が同時に取れること」**であって
+  RTL の堅牢化ではない。タイミング収束をいじる変更を今入れると、
+  失敗したときに何が原因か言えなくなる。**分光計本体を組むときに改めて向き合う**
 
 ## 成功の判定
 
@@ -302,6 +321,82 @@ hold の 4 ps は router が詰めた結果（route の途中で WHS = −0.040 
 
 **timing.xdc は変更しない。** 代わりに診断を 2 段構えにした（下記）。
 
+### report_cdc が出した答え（2026-09-17）
+
+```
+CDC-1   Critical     26  1-bit unknown CDC circuitry
+CDC-2   Warning       3  1-bit synchronized with missing ASYNC_REG property
+CDC-3   Info         15  1-bit synchronized with ASYNC_REG property
+CDC-11  Critical      2  Fan-out from launch flop to destination clock
+CDC-15  Warning      89  Clock enable controlled CDC structure detected
+```
+
+**まず、上の偽陽性の件に決着がついた。** `Exception` の列がそれを言っている。
+
+| 送り元 | Exception |
+|---|---|
+| `RFADC0/1/3_CLK`, `RFDAC0..3_CLK` → `clk_pl_0` | **`False Path`** — RFDC IP が自前で張っている |
+| `RFADC2_CLK` → `clk_pl_0` | `Asynch Clock Groups` — こちらの timing.xdc |
+
+**同じ経路が、IP の制約とこちらの制約という別々の手段で、どちらも処理されていた。**
+だから slack が空だった。timing.xdc に足す必要はやはり無い。
+
+残りを、**IP の中の話**と**こちらの RTL の話**に分ける。
+
+#### こちらの RTL（`capture_gate`）— CDC-2 が 3 件。**これは本物**
+
+```
+gpio_Data_Out_reg[0]/C  → capture_gate_0/inst/arm_sync_reg[0]/D
+capture_gate_0/inst/running_reg/C → capture_gate_0/inst/busy_sync_reg[0]/D
+capture_gate_0/inst/done_r_reg/C  → capture_gate_0/inst/done_sync_reg[0]/D
+```
+
+**同期器の 3 本すべてに `ASYNC_REG` が付いていなかった。**
+これが無いと、同期器の段が離れた場所に置かれうる。段の間の配線が延びたぶんだけ
+準安定の収束に使える時間が減り、MTBF が落ちる。**機能は変わらないので気づけない。**
+`report_cdc` が唯一の検出手段だった。
+
+**proj005 から引き継いでいた漏れである。** `capture_gate.v` に
+`(* ASYNC_REG = "TRUE" *)` を 3 箇所足した。
+
+#### こちらの RTL — CDC-1 が 26 件。**既知・許容**
+
+```
+gpio_Data_Out_reg[9]/C → capture_gate_0/inst/remain_reg[*]/CE, done_r_reg/D, running_reg/D
+```
+
+`n_beats`（24 bit）が同期器を通らずに `remain` のロードと状態遷移の条件
+（`n_beats != 0`）に入っている、という指摘。**これは proj005 で意図的にそうした箇所**で、
+`capture_gate.v` と `src/timing.xdc` の両方に理由を書いてある。
+
+根拠は取得側の手順にある。`pynq/adc_capture.py` は
+
+1. `n_beats` を書く（arm = 0）
+2. DMA を張る
+3. **同じ値の `n_beats` に arm ビットだけ足して**書く
+
+の順で叩く。3 の書き込みで `n_beats` のビットは**値が変わらないので遷移しない**。
+乗り換えているのは実質 `arm` の 1 bit だけで、それは 3 段の同期器を通る。
+`arm_rise` が立つ頃には `n_beats` は数 µs 以上静定している。
+
+**Vivado はソフト側の手順を見られないので、この構造は必ず Critical になる。**
+これは「データ＋ハンドシェイク」の宿命であって、直すべき欠陥ではない。
+
+#### IP の中 — CDC-11 が 2 件、CDC-15 の大半
+
+```
+rst_adc/.../FDRE_PER_N/C → rfdc/inst/cdc_adc0_clk_valid_i/syncstages_ff_reg[0]/D
+                         → rfdc/inst/cdc_adc2_clk_valid_i/syncstages_ff_reg[0]/D
+```
+
+`rst_adc` のリセットが RFDC IP の内部同期器に入っており、その送り元フロップが
+他にも扇を広げている、という指摘。**リセットは MMCM がロックした時点で一度
+解除されたきり静定する**ので、準安定の窓は起動時の一度だけで、その一度も
+IP 側の同期器が受けている。proj006 では触らない。
+
+CDC-15 の 89 件はほぼ全部が `INTERNAL_FBRC_MUX → IP2Bus_Data_reg[*]` で、
+上の表のとおり例外が張られている。
+
 ### クロック（実ビルドで確認）
 
 ```
@@ -338,10 +433,42 @@ hold の 4 ps は router が詰めた結果（route の途中で WHS = −0.040 
 
 ## 再現手順
 
+### ビルド（Vivado サーバ）
+
 ```bash
-make        # 合成〜ビットストリーム生成
-make prog   # JTAG 書き込み
+make            # 合成〜ビットストリーム生成（build/proj006.bit と .hwh）
+make sim        # capture_gate のテストベンチ。Vivado もライセンスも要らない
+make timing-check   # 速度グレード -1 で閉じるか（build-1-e/ に出る）
 ```
+
+### 実機（PYNQ v3.1.1）
+
+**`make prog`（JTAG 書き込み）は使わない。** proj003 以降は PYNQ の `Overlay()` で
+ロードする。理由は 2 つある。
+
+1. **PYNQ は `.hwh` を読んでドライバを生やす。** `ol.rfdc` / `ol.dma_adc` /
+   `ol.gpio_capture` はこれが無いと現れない。JTAG は `.bit` しか送らないので、
+   PL に何が入っているかを PYNQ 側が知らないままになる
+2. **`tile_offset.py --mode overlay` は「Overlay を読み直すとタイルが起動し直す」
+   ことに依存している**（proj003 で確認）。JTAG で焼いた状態から始めると、
+   測ろうとしている起動シーケンスそのものが変わる
+
+```bash
+scp build/proj006.bit build/proj006.hwh pynq/*.py xilinx@<board>:~/proj006/
+ssh xilinx@<board>
+cd ~/proj006
+
+sudo -E $(which python3) adc_capture.py --probe                     # まず構成を見る
+sudo -E $(which python3) slice_map.py   --tone 100.0125 --clkin 0   # SMA ↔ ch の対応
+sudo -E $(which python3) tile_offset.py --tone 10.0125  --clkin 0 --trials 10
+```
+
+**`--probe` で Tile 224 と Tile 226 の両方が `PLLLockStatus = 2` になっていること。**
+片方でも落ちていると `axis_combiner` が 1 ビートも出さず、
+「データが全く来ない」という症状になる（意図した失敗の仕方）。
+
+`make prog` と `make id` は残してある。**ケーブルとボードの生存確認**には使える
+（`make id` は合成ライセンスが要らない）。
 
 環境は [`../VERSIONS.md`](../VERSIONS.md)、詰まったときは
 [`../proj001/docs/runbook.md`](../proj001/docs/runbook.md)。

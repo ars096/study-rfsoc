@@ -56,6 +56,12 @@ module capture_gate #(
     // ---- arm の乗り換え（ctrl_aclk → aclk）と立ち上がり検出 ----
     // n_beats は arm より前にソフトが書き終えており、arm_rise の時点では
     // 十分に静定している。したがってバス自体の同期は取らない（データ＋ハンドシェイク）。
+    //
+    // **ASYNC_REG は必須。** 無いと同期器の段が離れた場所に置かれうる。
+    // 段の間の配線が延びたぶんだけ準安定の収束に使える時間が減り、MTBF が落ちる。
+    // 機能は変わらないので気づけない。report_cdc の CDC-2 が唯一の検出手段だった
+    // （2026-09-17 に proj006 で指摘され、proj005 から引き継いでいた漏れと判明）。
+    (* ASYNC_REG = "TRUE" *)
     reg [2:0] arm_sync;
     always @(posedge aclk) begin
         if (!aresetn) arm_sync <= 3'b000;
@@ -96,9 +102,9 @@ module capture_gate #(
     end
 
     // ---- status の乗り換え（aclk → ctrl_aclk）----
-    // ゆっくり変わる 1 bit の状態なので 2FF で足りる
-    reg [1:0] busy_sync = 2'b00;
-    reg [1:0] done_sync = 2'b00;
+    // ゆっくり変わる 1 bit の状態なので 2FF で足りる。**ASYNC_REG は上と同じ理由で必須。**
+    (* ASYNC_REG = "TRUE" *) reg [1:0] busy_sync = 2'b00;
+    (* ASYNC_REG = "TRUE" *) reg [1:0] done_sync = 2'b00;
     always @(posedge ctrl_aclk) begin
         busy_sync <= {busy_sync[0], running};
         done_sync <= {done_sync[0], done_r};
