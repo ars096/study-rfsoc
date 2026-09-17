@@ -451,7 +451,8 @@ foreach {k w} [list \
 }
 set act ""
 catch {set act [get_property CONFIG.CLKOUT1_ACTUAL_FREQ $clkw]}
-puts "CLK WIZ    : $outclk_mhz MHz → $fabric_mhz MHz （実際 $act）"
+# CLKOUT1_ACTUAL_FREQ はこの時点では空のことがある（validate 後に確定する）。
+puts "CLK WIZ    : $outclk_mhz MHz → $fabric_mhz MHz[expr {$act eq "" ? "" : " （実際 $act）"}]"
 if {$act ne "" && abs($act - $fabric_mhz) > 1e-3} {
     puts "ERROR: Clocking Wizard の実出力が要求と違う（$act MHz）。"
     puts "  AXIS クロックは fs / 8 きっかりでなければならない"
@@ -465,13 +466,12 @@ puts ""
 # どれかのタイルが起動していなければ 1 ビートも出ない。
 # **気づける失敗の仕方**になっており、これは意図した挙動である。
 #
-# CONFIG の名前は版で変わる。**候補を並べて全部投げ、効いたかどうかは
-# M_AXIS の語幅を読み返して判定する。**存在しない名前は害なく無視される。
+# CONFIG の名前は版で変わる。**Vivado 2024.1 では NUM_SI と TDATA_NUM_BYTES**
+# （2026-09-17 のビルドで確定。C_NUM_SI_SLOTS / C_AXIS_TDATA_WIDTH は存在しない）。
+# 名前が変わっても気づけるよう、**効いたかどうかは M_AXIS の語幅を読み返して判定する。**
 set comb [create_bd_cell -type ip -vlnv xilinx.com:ip:axis_combiner axis_comb]
 cfg_apply axis_comb [list \
-    CONFIG.C_NUM_SI_SLOTS      $nch \
     CONFIG.NUM_SI              $nch \
-    CONFIG.C_AXIS_TDATA_WIDTH  [expr {$spw * 16}] \
     CONFIG.TDATA_NUM_BYTES     [expr {$spw * 2}] \
     CONFIG.HAS_TLAST           {0} \
     CONFIG.HAS_TKEEP           {0} \
@@ -529,8 +529,12 @@ set_property -dict [list \
     CONFIG.c_s_axis_s2mm_tdata_width  $beat_bits \
     CONFIG.c_s2mm_burst_size          $burst \
     CONFIG.c_addr_width               {40} \
-    CONFIG.c_prmry_is_aclk_async      {1} \
 ] $dma
+# **c_prmry_is_aclk_async は設定しない。**読み出し専用で、
+# CRITICAL WARNING: [BD 41-737] が出るだけ（2026-09-17 に確認。proj005 も出していた）。
+# 非同期かどうかは、接続されたクロックから Vivado が導出する。
+# ここでは S_AXIS_S2MM が pl_clk1、M_AXI_S2MM も pl_clk1 で、
+# 乗り換えは上流の axis_data_fifo に閉じ込めてある。
 
 # ---- キャプチャ制御の GPIO ----
 #   ch1 出力 32bit: [23:0] n_beats / [31] arm
@@ -650,7 +654,10 @@ ic [get_bd_intf_pins smc_data/M00_AXI]   [get_bd_intf_pins zynq_ultra_ps_e_0/S_A
 set ext_done {}
 foreach ch $chans {
     lassign $ch t s
-    set pair [expr {$s < 2 ? "01" : "23"}]
+    # **expr に "01" を渡さないこと。**数値として評価され 1 になり、
+    # パターンが vin0_1 に化けて「見つからない」で止まる（2026-09-17 に踏んだ）。
+    # 文字列の分岐は if で書く。
+    if {$s < 2} { set pair "01" } else { set pair "23" }
     set pin [BI rfdc [list "vin${t}_${pair}" "vin${t}${s}"] \
                 "ADC アナログ入力 (tile $t slice $s)"]
     if {[lsearch -exact $ext_done $pin] >= 0} continue
