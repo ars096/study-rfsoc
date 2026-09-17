@@ -196,12 +196,13 @@ def main():
         weak = [i for i, d in enumerate(r["dbfs"]) if d < MIN_DBFS]
         log("")
         log(f"  トーン = {r['f_est'] / 1e6:.6f} MHz / 周期 = {r['period']:.2f} サンプル")
-        log("  ch  tile/slice   振幅[dBFS]   ずれ[サンプル]")
+        log("  ch  tile/slice   振幅[dBFS]   ずれ[サンプル]    位相[度]")
         for i, (ti, si) in enumerate(ac.CHANS):
             mark = "  ← 基準" if i == args.ref_ch else ""
             warn = "  **弱すぎる**" if i in weak else ""
+            deg = r["off"][i] / r["period"] * 360.0
             log(f"  {i}   {224 + ti}/{si}      {r['dbfs'][i]:>9.2f}  "
-                f"{r['off'][i]:>+14.3f}{mark}{warn}")
+                f"{r['off'][i]:>+14.3f}  {deg:>+9.2f}{mark}{warn}")
         if weak:
             log("  **信号が来ていない ch がある。**4 分配器とケーブルを確認すること。")
             log("  位相差は測れない（この試行は判定に使えない）")
@@ -214,7 +215,9 @@ def main():
     period = float(np.mean([r["period"] for r in rows]))
     log(f"トーンの周期 = {period:.2f} サンプル → **±{period / 2:.1f} サンプルまで一意**")
     log("")
-    log("  ch  tile/slice   巻き戻し後の平均  標準偏差     幅    集中度R")
+    # **位相の列を必ず出す。**「反転か遅延か」は度で見るといちばん早い。
+    # 遅延ならサンプル数が周波数によらず一定、反転なら位相が周波数によらず 180 度。
+    log("  ch  tile/slice   巻き戻し後の平均  位相[度]  標準偏差     幅    集中度R")
     verdict_stable = True
     edge = []
     data = {}
@@ -223,7 +226,8 @@ def main():
         mean, unw, R = circ_summary(d, period)
         data[i] = unw
         span = float(unw.max() - unw.min())
-        log(f"  {i}   {224 + ti}/{si}      {mean:>+11.3f}  {unw.std():>9.3f}  "
+        log(f"  {i}   {224 + ti}/{si}      {mean:>+11.3f}  "
+            f"{mean / period * 360.0:>+8.2f}  {unw.std():>9.3f}  "
             f"{span:>7.3f}  {R:>7.3f}")
         if i != args.ref_ch and span > args.tol:
             verdict_stable = False
@@ -239,9 +243,10 @@ def main():
         log("  この位置では、わずかな揺らぎで符号が ± に飛ぶ。巻き戻しは上で処理したが、")
         log("  **「反転」と「遅延」の区別がこの 1 周波数では付かない。**")
         log("")
-        log("  - **極性の反転**なら、見かけのずれは常に「周期の半分」になる")
-        log("    （周波数を変えるとサンプル数が追随して変わる）")
-        log("  - **本物の遅延**なら、サンプル数は周波数を変えても変わらない")
+        # **位相の列で見るのがいちばん早い。**
+        log("  - **極性の反転**なら、**位相が周波数によらず 180 度**のまま")
+        log("    （サンプル数の方が fs/(2f) に追随して変わる）")
+        log("  - **本物の遅延**なら、**サンプル数が周波数によらず一定**")
         log("    （位相の方が周波数に比例する）")
         log("")
         log("  **周波数を変えてもう一度測ること。基本波の整数倍は避ける** — ")
