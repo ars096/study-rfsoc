@@ -860,15 +860,45 @@ foreach {kind label} {setup "setup（周期）" hold "hold（保持）"} {
 # ファブリックの経路が無いはずである。使っていないタイル / DAC の
 # ダミークロックも同じ。**前提を数えて確かめる。**
 # ここに経路が出たら、timing.xdc にその群を足すか、配線を見直す。
+# 2026-09-17 の 1 回目: RFADC0/1/3 と RFDAC0..3 に **起点 8 / 終点 0** が出た。
+# **proj006 で生じたものではない。**使わないタイルのダミークロック（10 ns）は
+# proj003 以降ずっとあり、proj005 でも同じ経路が解析されていたはずである。
+# 対処を決める前に **何の経路で、どれだけ余裕があるのか**を見る。
+# RFADC2_CLK は timing.xdc で宣言済みなので、**対照**として並べる
+# （宣言が効いていれば、乗り換えの経路は解析から外れて出てこない）。
 puts ""
-puts "---- 宣言していないクロックの経路 ----"
-foreach cn {RFADC0_CLK RFADC1_CLK RFADC3_CLK RFDAC0_CLK RFDAC1_CLK RFDAC2_CLK RFDAC3_CLK} {
+puts "---- タイルのクロックから出る経路 ----"
+foreach cn {RFADC0_CLK RFADC1_CLK RFADC2_CLK RFADC3_CLK \
+            RFDAC0_CLK RFDAC1_CLK RFDAC2_CLK RFDAC3_CLK} {
     set c [get_clocks -quiet $cn]
     if {[llength $c] == 0} { continue }
-    set nf [llength [get_timing_paths -quiet -from $c -max_paths 20]]
-    set nt [llength [get_timing_paths -quiet -to   $c -max_paths 20]]
-    puts [format "  %-14s 起点 %3s / 終点 %3s%s" $cn $nf $nt \
-          [expr {($nf || $nt) ? "   **経路がある。timing.xdc の前提を見直す**" : ""}]]
+    set mark [expr {$cn eq "RFADC2_CLK" ? "  (timing.xdc で宣言済み)" : ""}]
+    set paths [get_timing_paths -quiet -from $c -max_paths 40 -nworst 1 -setup]
+    if {[llength $paths] == 0} {
+        puts [format "  %-12s%s  経路なし" $cn $mark]
+        continue
+    }
+    # 終点のクロックごとに、本数と最悪 slack をまとめる
+    unset -nocomplain agg
+    set example ""
+    foreach pth $paths {
+        set ec [get_property ENDPOINT_CLOCK $pth]
+        if {$ec eq ""} { set ec "(制約なし)" }
+        set sl [get_property SLACK $pth]
+        if {![info exists agg($ec)]} { set agg($ec) [list 0 $sl] }
+        lassign $agg($ec) n w
+        incr n
+        if {$sl ne "" && ($w eq "" || $sl < $w)} { set w $sl }
+        set agg($ec) [list $n $w]
+        if {$example eq ""} { catch {set example [get_property ENDPOINT_PIN $pth]} }
+    }
+    puts [format "  %-12s%s" $cn $mark]
+    foreach ec [lsort [array names agg]] {
+        lassign $agg($ec) n w
+        puts [format "      → %-30s %3d 本  最悪 slack %s%s" $ec $n $w \
+              [expr {$ec eq $cn ? "" : "   ← 乗り換え"}]]
+    }
+    if {$example ne ""} { puts "      終点の例: $example" }
 }
 
 set wns [get_property STATS.WNS [get_runs impl_1]]
