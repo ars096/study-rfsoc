@@ -253,6 +253,15 @@ def main():
         log("  整数倍だと遅延の側も同じ縁に落ちて、やはり区別が付かない。")
         log(f"    例: --tone 13.0125  → 反転なら約 {1228.8 / 2 / 13.0125:+.1f}、")
         log(f"       遅延 {abs(mean):.1f} サンプルなら別の値になる")
+        log("")
+        log("  **RFSoC 4x2 では Tile 224 と Tile 226 の入力極性が反転している**")
+        log("  （2026-09-17 に proj006 で確定。VERSIONS.md 参照）。")
+        log("  それを既知として 180 度を引いた残差:")
+        for i in edge:
+            m, _, _ = circ_summary(np.array([r["off"][i] for r in rows]), period)
+            resid = ((m + period / 2 + period / 2) % period) - period / 2
+            log(f"    ch{i}: {resid:+.3f} サンプル "
+                f"（{resid / period * 360.0:+.2f} 度）← これがケーブル長差などの実体")
 
     if args.save:
         np.save(args.save, np.array([[r["off"][i] for i in range(ac.NCH)] for r in rows]))

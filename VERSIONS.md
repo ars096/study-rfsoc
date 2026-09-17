@@ -106,6 +106,7 @@ make timing-check  # -1 で通す → build-1-e/（build/ は無傷）
 | **ADC_C** | RF-ADC **Tile 224 / slice 2**（`adc_tiles[0].blocks[1]`）| **2026-09-17 に proj006 で確定** |
 | **ADC_D** | RF-ADC **Tile 224 / slice 0**（`adc_tiles[0].blocks[0]`）| **2026-09-17 に proj006 で確定** |
 | **PYNQ の `blocks[]` の添字** | Vivado の slice **0 / 2** → `blocks[`**`0`**`]` / `blocks[`**`1`**`]` | **2026-09-17 に proj006 で実測確定。**`xrfdc` は有効なスライスを 0 から詰めて並べる。`blocks[2]` / `blocks[3]` は `not available` で落ちる。**slice 0 しか使わない proj005 までは一致していて表に出なかった** |
+| **Tile 224 と Tile 226 の入力極性** | **反転している**（厳密な 180°・周波数非依存）| **2026-09-17 に proj006 で確定。**同一分配器の 2 出力を別タイルへ入れても 180° が残り、別分配器の 2 出力を同一タイルへ入れると同相。**自己相関では見えない**が、相互相関・合成・位相を使う処理では符号を揃えること |
 | 4ch 同時起動 | Tile 224 / 226 とも `PLLLockStatus = 2`・`SamplingFreq = 1.2288` | **2026-09-17 に proj006 で実測**（出荷時クロックでも 4 スライスとも起動する）|
 | DAC_A | RF-DAC Tile 230 | RefMan A6 記載 |
 | DAC_B | RF-DAC Tile 228 | RefMan A6 記載 |
