@@ -123,12 +123,16 @@ def main():
     pps.check_magic()
     pps.set_pol(args.pol)
 
-    # **タイルの起動で aresetn が落ちている。**
-    # start_tiles() は clk_adc を立ち上げ直すので MMCM がロックを外し、
-    # rst_adc が aresetn を再アサートする。**エポックはそこで 0 に戻り、
-    # t_age も MISS_BEATS に初期化されるので alive は 0 になる。**
+    # **Overlay とタイル起動を終えても、まだ PPS は 1 回も来ていない。**
+    # リセット解除は Overlay の直後で、そこから start_tiles() の 177 ms しか
+    # 経っていない。1 Hz なので `alive` は 0 のままである。
     # ここを通さずに next_start() を呼ぶと「PPS が来ていない」で落ちる
     # （2026-09-17 に踏んだ）。
+    #
+    # **当初これを「start_tiles() がリセットを起こしてエポックが 0 に戻る」と
+    # 診断したが、誤りだった。** rev2 で epoch を読むと 1 のままで、
+    # タイル起動はリセットを起こしていない。**対策が動くことは、
+    # 診断が正しいことの証拠にならない。**
     d_ready = pps_mod.wait_ready(pps, t_tiles, label="タイル起動")
     epoch0 = d_ready["epoch"]
 
