@@ -687,6 +687,43 @@ set adc_rst [list capture_gate_0/aresetn pps_capture_0/aresetn \
 foreach t $adc_tiles { lappend adc_rst rfdc/m${t}_axis_aresetn }
 foreach p $adc_rst { nc rst_adc/peripheral_aresetn $p }
 
+# ---- **リセットとロックの出どころを読み返して確かめる（rev2）** ----
+#
+# エポックカウンタは `ctrl_aresetn` が **rst_ctrl 側**から来ていることに
+# 全面的に依存している。rst_adc 側に繋がっていても
+# **ビルドは通り、実機も動き、症状は出ない。**
+# ただ数えたいリセットでカウンタ自身も 0 に戻るので、
+# **epoch が常に同じ値に見えて「原点は変わっていない」と嘘をつく。**
+# 人の目視ではなくビルドに見張らせる。
+proc net_src {pin} {
+    set net [get_bd_nets -quiet -of_objects [BP $pin]]
+    if {$net eq ""} { return "" }
+    return [string trimleft [lindex [get_bd_pins -quiet -of_objects $net \
+                                        -filter {DIR == O}] 0] "/"]
+}
+puts ""
+puts "---- pps_capture のリセットとロックの出どころ ----"
+set rst_ng 0
+foreach {pin want} [list \
+        pps_capture_0/aresetn      rst_adc/peripheral_aresetn \
+        pps_capture_0/ctrl_aresetn rst_ctrl/peripheral_aresetn \
+        pps_capture_0/mmcm_locked  clk_wiz_adc/locked] {
+    set got [net_src $pin]
+    set ok  [expr {$got eq $want}]
+    puts [format "  %-28s <- %-32s %s" $pin $got \
+              [expr {$ok ? "OK" : "違う（期待 $want）"}]]
+    if {!$ok} { incr rst_ng }
+}
+if {$rst_ng > 0} {
+    puts ""
+    puts "ERROR: pps_capture のリセット／ロックの結線が期待と違う（$rst_ng 件）。"
+    puts "  **ctrl_aresetn が rst_adc 側だと、エポックカウンタは数えたい"
+    puts "  リセットで一緒に 0 に戻る。ビルドは通り、実機も動き、症状は出ない。**"
+    puts "  epoch が常に同じ値に見えて「原点は変わっていない」と嘘をつく"
+    exit 1
+}
+puts ""
+
 # キャプチャ制御
 nc gpio_capture/gpio_io_o  capture_gate_0/ctrl
 nc capture_gate_0/status   gpio_capture/gpio2_io_i
