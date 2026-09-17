@@ -209,6 +209,25 @@ def wait_epoch(p, t_ovl, timeout=10.0):
     return d
 
 
+def wait_ready(p, t_ovl, need=2.5):
+    """**リセットの解除を待ち、さらに PPS が 2 回来るまで待ってから返す。**
+
+    `--probe` `--watch` `--pol-check` は全部これを通す。
+    時刻の原点は Overlay ではなく MMCM のロックなので、原点からの経過が
+    1 秒に満たないうちに `alive` を見ると **必ず 0 になる**。
+    2026-09-17、ここを通していなかった `--probe` が「PPS が来ていない」と
+    誤判定し、`--watch` が同じ理由で例外を投げた。
+    """
+    d = wait_epoch(p, t_ovl)
+    age = d["beat"] * BEAT_NS / 1e9
+    if age < need:
+        log(f"  PPS の判定には原点から最低 {need} s 要る（1 Hz なので）。"
+            f"あと {need - age:.1f} s 待つ")
+        time.sleep(need - age)
+        d = p.snapshot()
+    return d
+
+
 def check_beat(p, dt=0.5):
     """ビートカウンタが本当に走っているかを 2 回のスナップショットで確かめる。
 
@@ -260,24 +279,7 @@ def do_probe(p, t_ovl):
     log(f"MAGIC          : 0x{MAGIC:08x}  （GPIO の結線は正しい）")
     log("  **これはリセットが解けている証拠にはならない。**"
         " rdata は ctrl_aclk 側でリセットを持たない")
-    d = wait_epoch(p, t_ovl)
-
-    # ---- **PPS の判定はリセット解除から最低 2.5 秒待ってから行う** ----
-    #
-    # 2026-09-17、ここが無いまま「PPS が来ていない」と誤判定した。
-    # 時刻の原点は Overlay ではなく MMCM のロックで、旧版はその直後
-    # （beat_count = 2、つまり 13 ns 後）に判定していた。
-    # **1 Hz の信号なので、その時点では最初のエッジがまだ来ていない。**
-    # `t_age` はリセット時に MISS_BEATS で初期化されるので alive は 0 になり、
-    # **ケーブルを挿していないときと出力が一字一句同じになる。**
-    # 「来ていない」と「まだ来ていない」を区別できる形にしておくこと。
-    need = 2.5
-    age = d["beat"] * BEAT_NS / 1e9
-    if age < need:
-        log(f"  PPS の判定には原点から最低 {need} s 要る（1 Hz なので）。"
-            f"あと {need - age:.1f} s 待つ")
-        time.sleep(need - age)
-        d = p.snapshot()
+    d = wait_ready(p, t_ovl)
     log(f"flags          : {fmt_flags(d['flags'])}")
     log(f"beat_count     : {d['beat']}  （Overlay ロードからの経過 = "
         f"{d['beat'] * BEAT_NS / 1e9:.3f} s）")
@@ -315,8 +317,20 @@ def do_probe(p, t_ovl):
     if dc > (1 << 31):
         dc -= 1 << 32
     log(f"COMP − TRIG    : {dc} ビート = {dc * BEAT_NS:.2f} ns")
-    log("  **0 か ±1 ビートなら「シュミットトリガの遅延は 6.5 ns 未満」までしか言えない。**")
-    log("  それが正常。大きく離れていたら波形が汚れている（glitch も見る）")
+    if d["glitch_trig"] or d["glitch_comp"]:
+        log("  **glitch が立っている。波形が汚れている疑い。**"
+            " 下の解釈より先にこちらを潰す")
+    elif abs(dc) <= 1:
+        log("  0 か ±1 ビート。**「差は 6.5 ns 未満」までしか言えない**が、それが正常")
+    elif dc > 0:
+        log("  **COMP が TRIG より遅れている。これは想定内で、原因は立ち上がりの鈍さ。**")
+        log("  IRIG_COMP_OUT はオープンドレインなので、L → H は基板のプルアップ抵抗と")
+        log("  容量の RC で決まる。シュミットトリガ側はプッシュプルなので速い。")
+        log("  **comp_alive が立っている時点で、基板にプルアップが在ることは確定している**")
+        log("  → 立ち上がりのタイムスタンプは TRIG 側を使う。COMP は波形の健全性の監視に回す")
+    else:
+        log("  **COMP が TRIG より進んでいる。** 想定と逆。ピン割り当て")
+        log("  （AH13 = TRIG / AJ13 = COMP）の前提から疑う")
 
 
 def do_level(p, settle=0.7):
@@ -398,14 +412,14 @@ def do_level(p, settle=0.7):
     log("  食い違ったら、ピン割り当て（AH13 / AJ13）の前提から疑う")
 
 
-def do_watch(p, seconds, period):
+def do_watch(p, t_ovl, seconds, period):
     """PPS の残差を積んで周波数確度を出す。
 
     **これが proj007 の本題のひとつ。** proj004 の CW + サブビン補間は
     53.3 µs のキャプチャが限界で 15 ppb だった。ここは時間を掛けるほど良くなる。
     """
     p.check_magic()
-    d0 = p.snapshot()
+    d0 = wait_ready(p, t_ovl)
     if not (d0["flags"] & FLAG_ALIVE):
         raise RuntimeError("PPS が来ていない。--probe で先に確かめる")
     log(f"基準: pps_count={d0['count']} stamp={d0['stamp']}")
@@ -449,7 +463,7 @@ def do_watch(p, seconds, period):
         log("  波形のリンギングか、終端の不整合を疑う")
 
 
-def do_pol_check(p, width_s):
+def do_pol_check(p, t_ovl, width_s):
     """極性を決める。**パルス幅が分かっていることが前提。**
 
     立ち上がりと立ち下がりの両方でスタンプを取り、その差を見る。
@@ -457,6 +471,7 @@ def do_pol_check(p, width_s):
     (1 秒 − パルス幅) になる。
     """
     p.check_magic()
+    wait_ready(p, t_ovl)
     out = {}
     for pol in (0, 1):
         p.set_pol(pol)
@@ -526,9 +541,9 @@ def main():
     if args.level:
         do_level(pps)
     elif args.pol_check:
-        do_pol_check(pps, args.width)
+        do_pol_check(pps, t_ovl, args.width)
     elif args.watch:
-        do_watch(pps, args.watch, args.period)
+        do_watch(pps, t_ovl, args.watch, args.period)
     else:
         do_probe(pps, t_ovl)
 
