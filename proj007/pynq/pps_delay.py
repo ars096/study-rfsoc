@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+"""proj007 — コンパレータ経路の遅延を ADC の時間軸で測る。
+
+**proj007 の機能で proj007 を較正する。**
+
+1PPS を 2 分配し、片方を `PPS Clk` の SMA へ、もう片方を減衰させて ADC 入力へ入れる。
+予約発火（`start_at`）で **次の PPS の少し前から** 取得を始めると、エッジが
+取得窓のど真ん中に入る。ADC は 0.814 ns 刻みなので、エッジの位置が直接読める。
+
+    PL のタイムスタンプ − ADC が見たエッジ = コンパレータ経路の遅延 ＋ ケーブル長差
+
+使い方（ボード上）:
+
+    sudo -E $(which python3) pps_delay.py --ch 0 --trials 10 --clkin 0 --atten-db 20
+
+**注意が 2 つある。**
+
+1. **バラン（MABA-011118）は 10 MHz〜10 GHz で DC 結合ではない。**
+   パルスの平坦部は垂れる。だがエッジは高周波成分なので通り、微分されて
+   鋭いスパイクになる — タイミング測定にはかえって好都合である。
+   「方形波が方形に見えない」で慌てないこと。
+2. **0 dBFS ≒ +5.8 dBm（≒ 1.23 Vpp）。** TTL レベルの 1PPS は減衰器なしだと飽和する。
+   10〜20 dB 入れる。**減衰量は必ず申告する**（proj005 で決めた規約）。
+
+分解能について正直に書いておく。PL のタイムスタンプは 1 ビート = **6.51 ns 粒度**で、
+ADC 側は 0.814 ns である。すべてが同じ 10 MHz にロックしていると PPS のエッジは
+ビート境界に対して毎回同じ位置に落ちるので、**この 6.51 ns の量子化誤差は
+回数を増やしても平均で消えない**。分光計にとっては 9 桁小さい量なので問題にならない。
+"""
+
+import argparse
+
+import numpy as np
+
+import adc_capture as ac
+import pps as pps_mod
+
+log = ac.log
+SAMP_NS = 1e9 / ac.FS_HZ            # = 0.8138 ns
+
+
+def find_edge(x, frac=0.5):
+    """微分されたパルスの立ち上がり位置を返す（サンプル単位・小数）。
+
+    **argmax をそのまま使わない。** ピークの位置は波形の形で動く。
+    ピークまで遡って **振幅が frac を横切る点**を線形内挿で取る方が、
+    信号源やケーブルを替えても意味が変わらない。
+    """
+    a = np.abs(x.astype(np.float64))
+    pk = int(np.argmax(a))
+    th = a[pk] * frac
+    i = pk
+    while i > 0 and a[i] > th:
+        i -= 1
+    if i == pk:
+        return float(pk), pk, a[pk]
+    # a[i] <= th < a[i+1]
+    d = a[i + 1] - a[i]
+    off = 0.0 if d == 0 else (th - a[i]) / d
+    return i + off, pk, a[pk]
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--bitfile", default=ac.BITFILE)
+    p.add_argument("--ch", type=int, default=0, choices=tuple(range(ac.NCH)),
+                   help="1PPS を入れた ch（512bit 語の並び。SMA の逆順）")
+    p.add_argument("--trials", type=int, default=10)
+    p.add_argument("--nsamples", type=int, default=ac.MAX_BEATS * ac.SPW)
+    p.add_argument("--k", type=int, default=2, help="何秒先の PPS を狙うか")
+    p.add_argument("--frac", type=float, default=0.5, help="エッジ判定の振幅比")
+    p.add_argument("--atten-db", type=float, default=0.0,
+                   help="ADC 入力までの減衰量 [dB]。**記録のために必ず申告する**")
+    p.add_argument("--pol", type=int, default=0, choices=(0, 1))
+    p.add_argument("--zone", type=int, default=1, choices=(1, 2))
+    p.add_argument("--fs", type=float, default=ac.FS_HZ / 1e6)
+    p.add_argument("--clkin", default="stock", choices=("stock", "0", "1", "2"))
+    p.add_argument("--ref", type=float, default=10.0)
+    p.add_argument("--save", default=None, help="1 回目の波形を .npy で残す")
+    args = p.parse_args()
+
+    from pynq import Overlay
+    import xrfdc                                   # noqa: F401
+
+    ac.setup_clocks(args.clkin, args.ref)
+    ol = Overlay(args.bitfile)
+    log(f"Overlay: {args.bitfile}")
+    blocks = ac.start_tiles(ol.rfdc, args.fs * 1e6, args.zone)
+
+    pps = pps_mod.PPS(ol)
+    pps.check_magic()
+    pps.set_pol(args.pol)
+
+    n_beats = args.nsamples // ac.SPW
+    offset = -(n_beats // 2)        # PPS が取得窓の真ん中に来るようにする
+    log("")
+    log(f"取得長 {args.nsamples} サンプル/ch = {n_beats} ビート "
+        f"({args.nsamples / ac.FS_HZ * 1e6:.1f} us)")
+    log(f"PPS は窓の中央（先頭から {-offset * pps_mod.BEAT_NS / 1e3:.1f} us）に来る予定")
+    log(f"減衰量 {args.atten_db:.1f} dB / ch{args.ch} / pol={args.pol}")
+    log("")
+
+    results = []
+    for t in range(args.trials):
+        start_at, d = pps.next_start(k=args.k, offset=offset)
+        # **予測する PPS のビートは 64 bit で持つ。**start_at は下位 32 bit だけ
+        pps_beat = d["stamp"] + args.k * pps_mod.BEATS_PER_SEC
+        x = ac.capture(ol, args.nsamples, blocks=None, start_at=start_at, pps=pps)
+        snap = pps.snapshot()
+        if (snap["t_start"] & 0xFFFFFFFF) != start_at:
+            log(f"  [{t}] **t_start が start_at と違う** "
+                f"({snap['t_start'] & 0xFFFFFFFF} != {start_at})。発火の設計が壊れている")
+            continue
+        if snap["flags"] & pps_mod.FLAG_LATE:
+            log(f"  [{t}] late。--k を増やす")
+            continue
+
+        # PL が言う PPS の位置（取得窓の先頭からのサンプル数）
+        pred = (pps_beat - snap["t_start"]) * ac.SPW
+        ch = x[args.ch]
+        meas, pk, amp = find_edge(ch, args.frac)
+        dbfs = 20 * np.log10(max(amp, 1e-9) / 32768.0)
+        delay = meas - pred
+        results.append(delay)
+        flag = ""
+        if amp >= 32700:
+            flag = "  **飽和している。減衰器を足す**"
+        elif dbfs < -40:
+            flag = "  **小さすぎる。エッジ判定が雑音に負ける**"
+        log(f"  [{t:2d}] 予測 {pred:8.0f} / 実測 {meas:9.2f} サンプル  "
+            f"差 {delay:+9.2f} = {delay * SAMP_NS:+9.2f} ns  ピーク {dbfs:6.1f} dBFS{flag}")
+        if t == 0 and args.save:
+            np.save(args.save, x)
+            log(f"      {args.save} に保存")
+
+    log("")
+    if len(results) < 2:
+        log("**測定が成立していない。** 上のメッセージを見る")
+        return
+    a = np.array(results)
+    log(f"試行 {len(a)} 回")
+    log(f"遅延  平均 {a.mean() * SAMP_NS:+.2f} ns / 標準偏差 {a.std() * SAMP_NS:.2f} ns "
+        f"/ 幅 {(a.max() - a.min()) * SAMP_NS:.2f} ns")
+    log(f"      （サンプル単位: 平均 {a.mean():+.2f} / 標準偏差 {a.std():.2f}）")
+    log("")
+    log("**符号の読み方。** 正 = PL のタイムスタンプが ADC の見たエッジより遅い")
+    log("  = コンパレータ＋シュミットトリガの伝搬遅延（＋ ケーブル長差）。")
+    log("  LMV7235 のデータシートは 45 ns 級（オーバドライブ依存）。")
+    log("")
+    log(f"**量子化の下限は 1 ビート = {pps_mod.BEAT_NS:.2f} ns。**")
+    log("  すべてが同じ 10 MHz にロックしていると、この誤差は回数を増やしても消えない。")
+    log("  標準偏差がこれより十分小さければ、測れているのは固定の遅延である。")
+    log("")
+    log(f"**ケーブル長差を引くこと。** 1 ns ≒ 20 cm ≒ {1.0 / SAMP_NS:.2f} サンプル。")
+    log(f"  減衰量 {args.atten_db:.1f} dB と経路の構成を README に残す（proj005 の規約）")
+
+
+if __name__ == "__main__":
+    main()
