@@ -7,10 +7,13 @@
 直接 read/write する（pyvisa も AnaPico 純正ソフトも要らない）。
 
     python3 apsyn.py --probe                 # 何が繋がっているか。**まずこれ**
-    python3 apsyn.py --preset bin            # 100.005 MHz（成功条件 3）
-    python3 apsyn.py --preset leak           # 100.000 MHz（成功条件 4）
-    python3 apsyn.py --preset fold           # 600 MHz（成功条件 5）
-    python3 apsyn.py --freq 100.005MHz --power -10 --on
+    python3 apsyn.py --preset bin            # 100.0125 MHz（ビン中心）
+    python3 apsyn.py --preset leak           # 100.000 MHz（ビン中心から外す）
+    python3 apsyn.py --preset fold           # 800 MHz（第 2 ゾーン → 428.8 MHz）
+    python3 apsyn.py --freq 100.0125MHz --power -10 --on
+
+**proj004 では SG の 10 MHz 基準入力を、ボードと同じ外部基準に繋ぐこと。**
+繋がなければ ppm は 0 に潰れない（SG 自身の確度に置き換わるだけ）。
     python3 apsyn.py --off
 
 **ADC を壊さないための約束**: 既定の出力は -10 dBm。RFSoC4x2 の ADC 入力の
@@ -38,18 +41,24 @@ import sys
 
 # --------------------------------------------------------------- proj004 の固定値
 # adc_capture.py と一致させること。ここがズレると期待ビンの表示が嘘になる。
-FS_HZ = 983.04e6            # サンプリング周波数
+# **proj003 の途中まで fs = 983.04 MSPS だったが、RFDC の Sampling Rate の
+# 有効範囲 (1.0, 5.0) GSPS に弾かれて 1228.8 MSPS になった。** apsyn.py だけが
+# 古い値のまま残っており、preset の周波数がビン中心から 0.6 ビンずれていた
+# （2026-09-17 に proj004 で発見）。ここは adc_capture.py の FS_HZ と必ず一致させる。
+FS_HZ = 1228.8e6            # サンプリング周波数（adc_capture.py と一致させること）
 N_FFT = 65536               # キャプチャ長
-RBW_HZ = FS_HZ / N_FFT      # ちょうど 15 kHz
+RBW_HZ = FS_HZ / N_FFT      # ちょうど 18.75 kHz
 
 DEFAULT_DBM = -10.0
 MAX_SAFE_DBM = 0.0          # これを超えるには --force
 
 # preset 名 -> (周波数 [Hz], ナイキストゾーン, 狙い)
+# **fs = 1228.8 MSPS では第 1 ゾーンが DC〜614.4 MHz。** 600 MHz は第 1 ゾーンに
+# 入ってしまうので、折返しを見るには 800 MHz（→ 428.8 MHz に折り返す）を使う。
 PRESETS = {
-    "bin":  (RBW_HZ * 6667, 1, "ビン中心の CW。成功条件 3 — fs の裏取りそのもの"),
-    "leak": (100.0e6,       1, "ビン中心から外す。成功条件 4 — リークと窓関数"),
-    "fold": (600.0e6,       2, "第 2 ナイキストゾーン。成功条件 5 — 折返し"),
+    "bin":  (RBW_HZ * 5334, 1, "ビン中心の CW（100.0125 MHz）。proj003 で実証した設定"),
+    "leak": (100.0e6,       1, "ビン中心から外す。リークと窓関数"),
+    "fold": (800.0e6,       2, "第 2 ナイキストゾーン（→ 428.8 MHz に折返し）"),
 }
 
 
