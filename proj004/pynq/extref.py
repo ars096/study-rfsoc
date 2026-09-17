@@ -113,6 +113,26 @@ unpack` で落ちる**。CASPER 系の検証済みファイルをそのまま置
 
 なお RFSoC 4x2 の PYNQ イメージは `xrfclk` にパッチが当たっており、
 `_read_tics_output()` が `set_ref_clks()` のたびに走る（出荷時の Xilinx 版は初回のみ）。
+
+
+`xrfclk` の私有関数に寄りかからない
+===================================
+
+**私有関数の名前は版で変わる。** 実際、ボードに載っている v3.1.1 には
+`_read_tics_output` が無かった（2026-09-17 に踏んだ）。GitHub の PYNQ の
+ソースを読んで書いたコードが、実機の版では動かない。
+
+そこで本スクリプトは **公開 API を 1 本だけ通してから**、必要最小限の私有関数を
+名前で探す。
+
+1. `set_ref_clks(245.76, 491.52)` を呼ぶ。**出荷時の設定が書かれ、デバイスの
+   探索とバインドもここで済む**（`_find_devices` を自分で呼ばない。版によっては
+   無いし、あっても append するだけなので 2 回呼ぶと SPI を 2 度書く）
+2. `_write_LMK_regs` を探して、差し替えた LMK のレジスタ列を書く
+3. `_write_LMX_regs` を探して、LMX を書き直す
+
+見つからなければ **推測で代用せず、`dir(xrfclk)` を添えて止まる**。
+実機で何があるかは `--api` で出せる。
 """
 
 import argparse
@@ -276,18 +296,49 @@ def _set_ref_clks(xrfclk):
 
     v3.1.1 は `set_ref_clks`、旧版は `set_ref_clk`。
     """
-    for name in ("set_ref_clks", "set_ref_clk"):
-        fn = getattr(xrfclk, name, None)
-        if fn is not None:
-            fn(lmk_freq=LMK_FREQ, lmx_freq=LMX_FREQ)
-            return name
-    raise RuntimeError(
-        "xrfclk に set_ref_clks / set_ref_clk のどちらも無い。"
-        f"使える名前: {api_names(xrfclk)}")
+    fn, where = _lookup(xrfclk, ("set_ref_clks", "set_ref_clk"))
+    if fn is None:
+        raise RuntimeError(
+            "set_ref_clks / set_ref_clk のどちらも無い。"
+            f"使える名前: {api_names(xrfclk)}")
+    fn(lmk_freq=LMK_FREQ, lmx_freq=LMX_FREQ)
+    return where
+
+
+def namespaces(xrfclk):
+    """`xrfclk` と、その中の実装モジュール `xrfclk.xrfclk` を順に返す。
+
+    **`xrfclk` はパッケージで、`__init__.py` が `from .xrfclk import *` している。**
+    `import *` は `_` で始まる名前を運ばないので、`_write_LMK_regs` のような
+    私有関数はパッケージの直下には現れず、**一段下の実装モジュールに居る**
+    （2026-09-17 に `--api` で判明）。公開名（`set_ref_clks` / `lmk_devices`）は
+    どちらからも見えるが、同じオブジェクトを指している。
+
+    `lmk_devices` は `_find_devices()` が append で埋めるので、
+    パッケージ直下の別名からも中身が見える。
+    """
+    ns = [("xrfclk", xrfclk)]
+    sub = getattr(xrfclk, "xrfclk", None)
+    if sub is not None and sub is not xrfclk:
+        ns.append(("xrfclk.xrfclk", sub))
+    return ns
 
 
 def api_names(xrfclk):
-    return sorted(n for n in dir(xrfclk) if not n.startswith("__"))
+    out = []
+    for label, mod in namespaces(xrfclk):
+        out += [f"{label}.{n}" for n in dir(mod) if not n.startswith("__")]
+    return sorted(set(out))
+
+
+def _lookup(xrfclk, names):
+    """名前空間を順に探して、最初に見つかったものを返す。"""
+    for label, mod in namespaces(xrfclk):
+        for n in names:
+            v = getattr(mod, n, None)
+            if v is not None:
+                return v, f"{label}.{n}"
+    return None, None
 
 
 def _devices(xrfclk, kind):
@@ -297,21 +348,18 @@ def _devices(xrfclk, kind):
     存在しても append するだけなので 2 回呼ぶとデバイスが重複して SPI を 2 度書く。
     公開 API（`set_ref_clks`）を先に通しておけば、その副作用で埋まっている。
     """
-    devs = getattr(xrfclk, f"{kind}_devices", None)
-    if not devs:
-        raise RuntimeError(
-            f"xrfclk.{kind}_devices が空。set_ref_clks() が通っていないか、"
-            f"この版は別の持ち方をしている。使える名前: {api_names(xrfclk)}")
-    return devs
+    for _, mod in namespaces(xrfclk):
+        devs = getattr(mod, f"{kind}_devices", None)
+        if devs:
+            return devs
+    raise RuntimeError(
+        f"{kind}_devices がどちらの名前空間でも空。set_ref_clks() が通っていないか、"
+        f"この版は別の持ち方をしている。使える名前: {api_names(xrfclk)}")
 
 
 def _writer(xrfclk, kind):
-    """レジスタ列を直接書く関数を探す。無ければ名前一覧を添えて止まる。"""
-    for name in (f"_write_{kind}_regs", f"write_{kind}_regs"):
-        fn = getattr(xrfclk, name, None)
-        if fn is not None:
-            return fn, name
-    return None, None
+    """レジスタ列を直接書く関数を探す。"""
+    return _lookup(xrfclk, (f"_write_{kind}_regs", f"write_{kind}_regs"))
 
 
 def set_clocks(clkin=None, ref_mhz=10.0, settle=2.0, verbose=True):
@@ -408,26 +456,25 @@ def show_api():
     d = os.path.dirname(os.path.realpath(xrfclk.__file__))
     log(f"xrfclk    : {xrfclk.__file__}")
     log(f"version   : {getattr(xrfclk, '__version__', '(無し)')}")
-    log("")
-    log("--- 使える名前 ---")
-    for n in api_names(xrfclk):
-        v = getattr(xrfclk, n, None)
-        kind = "関数" if callable(v) else type(v).__name__
-        extra = ""
-        if isinstance(v, (list, dict)):
-            extra = f"  （要素 {len(v)} 個）"
-        log(f"  {n:<24} {kind}{extra}")
+    for label, mod in namespaces(xrfclk):
+        log("")
+        log(f"--- {label} の中身 ---")
+        for n in sorted(x for x in dir(mod) if not x.startswith("__")):
+            v = getattr(mod, n, None)
+            kind = "関数" if callable(v) else type(v).__name__
+            extra = f"  （要素 {len(v)} 個）" if isinstance(v, (list, dict)) else ""
+            log(f"  {n:<24} {kind}{extra}")
     log("")
     log("--- パッケージ内のレジスタファイル ---")
     for f in sorted(glob.glob(os.path.join(d, "*.txt"))):
         log(f"  {os.path.basename(f)}")
     log("")
-    log("proj004 が使うもの:")
+    log("proj004 が使うもの（両方の名前空間を探す）:")
     for want in ("set_ref_clks / set_ref_clk", "lmk_devices", "lmx_devices",
                  "_write_LMK_regs", "_write_LMX_regs"):
         names = [w.strip() for w in want.split("/")]
-        ok = any(getattr(xrfclk, n, None) is not None for n in names)
-        log(f"  {'OK  ' if ok else '無い'} {want}")
+        _, where = _lookup(xrfclk, names)
+        log(f"  {'OK  ' if where else '無い'} {want:<26} {where or ''}")
 
 
 def show(path=None):
