@@ -105,6 +105,10 @@ def main():
     p.add_argument("--pol", type=int, default=0, choices=(0, 1))
     p.add_argument("--zone", type=int, default=1, choices=(1, 2))
     p.add_argument("--fs", type=float, default=ac.FS_HZ / 1e6)
+    p.add_argument("--no-clk", action="store_true",
+                   help="**xrfclk を触らない。** LMK/LMX の設定は PL と独立なので、"
+                        "一度 --clkin 0 で書けば以後は残る。"
+                        "「クロックの位相はそのまま、Overlay だけ焼き直し」を作るため")
     p.add_argument("--clkin", default="stock", choices=("stock", "0", "1", "2"))
     p.add_argument("--ref", type=float, default=10.0)
     p.add_argument("--epochs", type=int, default=1,
@@ -119,7 +123,16 @@ def main():
     from pynq import Overlay
     import xrfdc                                   # noqa: F401
 
-    ac.setup_clocks(args.clkin, args.ref)
+    if args.no_clk:
+        # **小数部が「起動ごと」に引き直される原因の切り分けに使う。**
+        # 起動ごとに変わるものは xrfclk の LMK/LMX 再設定（491.52 MHz の
+        # 10 MHz に対する位相が引き直される）と Overlay の焼き直しの 2 つ。
+        # ここを飛ばせば後者だけを変えられる。
+        log("**xrfclk を触らない（--no-clk）。** 直前の --clkin 0 の設定が残っている前提")
+        log("  残っていなければ基準は出荷時（内部 Si5395）のままになる。")
+        log("  **判定は ppm で行う** — pps.py --watch で確かめられる")
+    else:
+        ac.setup_clocks(args.clkin, args.ref)
     ol = Overlay(args.bitfile)
     log(f"Overlay: {args.bitfile}")
     blocks = ac.start_tiles(ol.rfdc, args.fs * 1e6, args.zone)
