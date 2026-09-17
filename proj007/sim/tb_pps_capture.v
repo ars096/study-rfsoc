@@ -23,6 +23,9 @@ module tb;
   localparam integer MISS  = 1500;
 
   reg aclk = 0, aresetn = 0, ctrl_aclk = 0;
+  // **ctrl 側のリセットと MMCM のロックは ADC 側とは別系統。**
+  // rev2 のエポック番号は、この別系統であることに全面的に依存している
+  reg ctrl_aresetn = 0, mmcm_locked = 0;
   always #3.255 aclk      = ~aclk;   // 153.6 MHz
   always #5.000 ctrl_aclk = ~ctrl_aclk;
 
@@ -59,6 +62,7 @@ module tb;
 
   pps_capture #(.BEATS_PER_SEC(BPS), .BLANK_BEATS(BLANK), .MISS_BEATS(MISS)) pps (
     .aclk(aclk), .aresetn(aresetn), .ctrl_aclk(ctrl_aclk),
+    .ctrl_aresetn(ctrl_aresetn), .mmcm_locked(mmcm_locked),
     .pps_trig_i(pps_t), .pps_comp_i(pps_c),
     .start_at(tstart), .ctrl(tctrl), .rdata(trdata), .flags(tflags),
     .arm_pulse(arm_pulse), .trig_mode(trig_mode), .started(started), .trig(trig));
@@ -131,13 +135,50 @@ module tb;
   initial begin
     fails = 0; got = 0; lasts = 0;
     repeat (10) @(posedge aclk);
+    // **ctrl 側を先に解除する。** 実機でもこの順序（rst_ctrl は MMCM の
+    // ロックに依存せず、rst_adc だけが dcm_locked を待つ）
+    ctrl_aresetn = 1;
+    repeat (20) @(posedge ctrl_aclk);
+
+    // ---- 0. 識別子。**リセット解除前でも読めることを確かめる** ----
+    // rdata は ctrl_aclk 側でリセットを持たないので、ADC ドメインが
+    // リセット中でも MAGIC は読める。**これは仕様であって不具合ではない。**
+    // 2026-09-17 の実機で「MAGIC が読めたからリセットは解けている」と
+    // 読み違えた（beat_count = 2 の件）。その性質をここで固定しておく。
+    rd(4'd15);
+    $display("MAGIC = %08x（aresetn 解除前）", v);
+    check(v === 32'h0007_0002, "MAGIC が読めない（GPIO の配線かセレクタ）");
+
+    // ---- 0a. **リセット中は snap_ack が返らないこと** ----
+    // pps.py の wait_epoch はこの性質に依存している（snapshot() の例外を
+    // リセットの観測に使う）。ここが崩れると、あの検出が黙って効かなくなる
+    tctrl[0] = 1'b1;
+    repeat (50) @(posedge ctrl_aclk);
+    check(tflags[3] === 1'b0, "リセット中なのに snap_ack が返る");
+    tctrl[0] = 1'b0;
+    repeat (5) @(posedge ctrl_aclk);
+    $display("  → MAGIC は読めるが snap_ack は返らない（リセット解除の判定に MAGIC を使わない）");
+
+    // ---- 0b. **リセット解除前は epoch = 0 であること** ----
+    // 0 は「まだ一度も解除されていない」= beat_count は動いていない、の意。
+    // ここが 0 でない実装は、原点を持たないまま時刻を返してしまう
+    rd(4'd10);
+    $display("epoch（aresetn 解除前）= %0d / flags = %02x", v, tflags);
+    check(v === 32'd0,      "解除前なのに epoch が 0 でない");
+    check(tflags[5] === 1'b0, "解除前なのに ADC ドメインが解除済みに見える");
+    check(tflags[6] === 1'b0, "locked していないのに flags[6] が立っている");
+
+    mmcm_locked = 1;
+    repeat (5) @(posedge ctrl_aclk);
     aresetn = 1;
     repeat (20) @(posedge aclk);
+    repeat (10) @(posedge ctrl_aclk);
 
-    // ---- 0. 識別子 ----
-    snap_take; rd(4'd15); snap_release;
-    $display("MAGIC = %08x", v);
-    check(v === 32'h0007_0001, "MAGIC が読めない（GPIO の配線かセレクタ）");
+    rd(4'd10);
+    $display("epoch（解除後）= %0d / flags = %02x", v, tflags);
+    check(v === 32'd1,        "aresetn を解除したのに epoch が 1 にならない");
+    check(tflags[5] === 1'b1, "解除したのに flags[5] が立たない");
+    check(tflags[6] === 1'b1, "locked なのに flags[6] が立たない");
 
     // ---- 1. PPS が無い状態 ----
     check(tflags[0] === 1'b0, "PPS が無いのに alive が立っている");
@@ -202,6 +243,33 @@ module tb;
     check(got === 16,   "即時モードでビート数が違う");
     check(lasts === 1,  "即時モードで TLAST が 1 回でない");
     gctrl = 0;
+
+    // ---- 7. **MMCM がロックを外すと epoch が増えること** ----
+    // これが rev2 の本題である。実機で start_tiles() が踏んだ経路そのもので、
+    // rev1 では beat_count が黙って 0 に戻り、ソフトから区別がつかなかった。
+    snap_take; rd(4'd0); cnt0 = v; snap_release;
+    rd(4'd10); iv = v;                     // 落とす前の epoch
+
+    mmcm_locked = 0;                       // MMCM がロックを外し…
+    aresetn     = 0;                       // …rst_adc が aresetn を再アサート
+    repeat (20) @(posedge aclk);
+    repeat (10) @(posedge ctrl_aclk);
+    rd(4'd10);
+    check(v === iv,           "リセット中に epoch が増えている（解除で数えること）");
+    check(tflags[5] === 1'b0, "リセット中なのに flags[5] が立っている");
+
+    mmcm_locked = 1;
+    repeat (5) @(posedge ctrl_aclk);
+    aresetn = 1;
+    repeat (30) @(posedge aclk);
+    repeat (10) @(posedge ctrl_aclk);
+
+    rd(4'd10); gl = v;
+    snap_take; rd(4'd0); cnt1 = v; snap_release;
+    $display("ロック外れ: epoch %0d -> %0d / beat_count %0d -> %0d", iv, gl, cnt0, cnt1);
+    check(gl === iv + 1,  "リセットが入ったのに epoch が増えない");
+    check(cnt1 < cnt0,    "beat_count が 0 に戻っていない（試験の前提が崩れている）");
+    $display("  → **beat_count は 0 に戻るが、epoch が増えるのでソフトから分かる**");
 
     if (fails == 0) begin
       $display("=== ALL PASS ===");

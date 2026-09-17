@@ -48,7 +48,13 @@ module pps_capture #(
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
     input  wire        aresetn,
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 ctrl_aclk CLK" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_RESET ctrl_aresetn" *)
     input  wire        ctrl_aclk,     // PS の pl_clk0（制御系）
+    (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 ctrl_aresetn RST" *)
+    (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
+    input  wire        ctrl_aresetn,  // rst_ctrl 側。**aresetn とは別系統**
+    // clk_wiz_adc の locked。**非同期。** ctrl_aclk 側で同期器に入れる
+    input  wire        mmcm_locked,
 
     // ---- 基板の PPS 入力（非同期。パッド直結）----
     input  wire        pps_trig_i,    // IRIG_TRIG_OUT (AH13) シュミットトリガ側
@@ -69,7 +75,7 @@ module pps_capture #(
 );
 
     // ---- 識別子。GPIO の配線が正しいかを実機で 1 回で確かめるため ----
-    localparam [31:0] MAGIC = 32'h0007_0001;   // proj007 / rev 1
+    localparam [31:0] MAGIC = 32'h0007_0002;   // proj007 / rev 2（epoch と locked を追加）
 
     // ---- 制御ビット ----
     wire        snap_i   = ctrl[0];
@@ -265,6 +271,44 @@ module pps_capture #(
 
     // ============================================================ ctrl_aclk 側
 
+    // ---- エポック番号 ----
+    //
+    // **beat_count の原点がいつだったかを、ソフトから見えるようにする。**
+    //
+    // `aresetn` は `rst_adc`（proc_sys_reset）が出しており、その `dcm_locked` は
+    // `clk_wiz_adc/locked`、さらにその入力は RFDC の `clk_adc2` である。
+    // **タイルを起動し直したり MMCM がロックを外したりすると `aresetn` が
+    // 再アサートされ、`beat_count` は 0 に戻る。**
+    //
+    // rev1 ではこれがソフトから区別できなかった。絶対時刻だけが静かにずれ、
+    // データも波形もフラグも正常に見える。2026-09-17 の実機で
+    // `pps_delay.py` が `start_tiles()` の直後に落ちたのがこれで、
+    // **今回はたまたま alive が 0 になって表に出たが、PPS が来ていれば
+    // 何事も無かったように動き続けていた。**
+    //
+    // **数える側は ctrl_aclk 側に置く。** `rst_ctrl` は `rst_adc` とは別系統で
+    // MMCM のロックに依存しないので、ADC ドメインが落ちても生き残る。
+    // ここを aclk 側に置くと、数えたいリセットで自分も消えて意味を成さない。
+    //
+    // 0 = **まだ一度も解除されていない**（= beat_count は動いていない）。
+    // ソフトはスナップショットの前後で epoch を読み、変わっていればその
+    // スナップショットを捨てる。
+    (* ASYNC_REG = "TRUE" *) reg [2:0] rstn_s = 3'b000;
+    (* ASYNC_REG = "TRUE" *) reg [1:0] lock_s = 2'b00;
+    reg [31:0] epoch;
+    always @(posedge ctrl_aclk) begin
+        if (!ctrl_aresetn) begin
+            rstn_s <= 3'b000;
+            lock_s <= 2'b00;
+            epoch  <= 32'd0;
+        end else begin
+            rstn_s <= {rstn_s[1:0], aresetn};
+            lock_s <= {lock_s[0],   mmcm_locked};
+            if (rstn_s[1] & ~rstn_s[2]) epoch <= epoch + 32'd1;
+        end
+    end
+
+
     // 影レジスタは snap と snap_ack の間でしか変わらないので、ここは静定した値を
     // 読んでいる（データ＋ハンドシェイク）。1 段だけ登録して終点を定める。
     always @(posedge ctrl_aclk) begin
@@ -279,6 +323,11 @@ module pps_capture #(
             4'd7:  rdata <= s_tstart[63:32];
             4'd8:  rdata <= s_cstamp;
             4'd9:  rdata <= s_glitch;
+            // **epoch は影レジスタを通さない。** ctrl_aclk 側で自走しており、
+            // スナップショットと同じ瞬間の値である必要が無い。むしろ
+            // 「スナップの前後で変わっていないこと」を見るために使うので、
+            // 常に最新の値が読めるほうが正しい
+            4'd10: rdata <= epoch;
             4'd15: rdata <= MAGIC;
             // **未使用の sel はそれと分かる値を返す。** 0 を返すと
             // 「配線が死んでいる」と区別がつかない
@@ -297,7 +346,9 @@ module pps_capture #(
         f_arm    <= {f_arm[0],    pending};
         f_ack    <= {f_ack[0],    snap_done};
         f_calive <= {f_calive[0], c_alive};
-        flags    <= {27'd0, f_calive[1], f_ack[1], f_arm[1], f_late[1], f_alive[1]};
+        // [6] MMCM のロック / [5] ADC ドメインがリセット解除済み
+        flags    <= {25'd0, lock_s[1], rstn_s[2],
+                     f_calive[1], f_ack[1], f_arm[1], f_late[1], f_alive[1]};
     end
 
 endmodule

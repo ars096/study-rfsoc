@@ -129,7 +129,8 @@ def main():
     # t_age も MISS_BEATS に初期化されるので alive は 0 になる。**
     # ここを通さずに next_start() を呼ぶと「PPS が来ていない」で落ちる
     # （2026-09-17 に踏んだ）。
-    pps_mod.wait_ready(pps, t_tiles, label="タイル起動")
+    d_ready = pps_mod.wait_ready(pps, t_tiles, label="タイル起動")
+    epoch0 = d_ready["epoch"]
 
     n_beats = args.nsamples // ac.SPW
     offset = -(n_beats // 2)        # PPS が取得窓の真ん中に来るようにする
@@ -147,6 +148,13 @@ def main():
         pps_beat = d["stamp"] + args.k * pps_mod.BEATS_PER_SEC
         x = ac.capture(ol, args.nsamples, blocks=None, start_at=start_at, pps=pps)
         snap = pps.snapshot()
+        # **試行をまたいで原点が変わっていないこと。**
+        # 変わっていれば pps_beat の予測が別の原点の値になり、
+        # **遅延ではなく原点の差を測ってしまう**（しかも値は出る）
+        if snap["epoch"] != epoch0:
+            log(f"  [{t}] **時刻の原点が変わった（epoch {epoch0} → {snap['epoch']}）。**")
+            log("       この試行以降は無効。RFDC のタイルか MMCM を疑う")
+            break
         if (snap["t_start"] & 0xFFFFFFFF) != start_at:
             log(f"  [{t}] **t_start が start_at と違う** "
                 f"({snap['t_start'] & 0xFFFFFFFF} != {start_at})。発火の設計が壊れている")

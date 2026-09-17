@@ -202,6 +202,8 @@ start_at を書く → DMA を張る → arm
 | 2 | `armed`（予約を待っている）|
 | 3 | `snap_ack` |
 | 4 | `comp_alive` |
+| **5** | **`adc_rstn`（ADC ドメインが `aresetn` 解除済み）** — rev2 |
+| **6** | **`mmcm_locked`（`clk_wiz_adc` がロックしている）** — rev2 |
 
 `gpio_capture` ch2 の `status` にも `armed`（bit 2）を足した。
 bit 0 = busy / bit 1 = done は proj006 と同じ。
@@ -217,13 +219,20 @@ bit 0 = busy / bit 1 = done は proj006 と同じ。
 | 6 / 7 | `t_start[31:0]` / `[63:32]` |
 | 8 | `pps_stamp_comp[31:0]`（COMP 経路）|
 | 9 | `{comp_glitch[15:0], trig_glitch[15:0]}` |
-| 15 | **`0x0007_0001`（識別子）** |
+| **10** | **`epoch[31:0]`（時刻の原点の通し番号）** — rev2 |
+| 15 | **`0x0007_0002`（識別子）** |
 
 **識別子を 1 語置いてある。** GPIO の結線とビットストリームの版が合っているかを
 実機で 1 回の読み出しで確かめられる。**未使用の `sel` は `0xBAD0000n` を返す** —
 0 を返すと「配線が死んでいる」と区別がつかない。
 
 `flags`（`gpio_time_stat` ch2）: `pps_alive` / `late` / `armed` / `snap_ack` / `comp_alive`
+/ `adc_rstn` / `mmcm_locked`
+
+**`epoch` だけは影レジスタを通さない。** `ctrl_aclk` 側で自走しており、
+スナップショットと同じ瞬間の値である必要が無い。むしろ
+**「スナップの前後で変わっていないこと」を見るために使う**ので、
+常に最新の値が読めるほうが正しい。
 
 ### 5. PS 側で UTC の整数秒を貼る
 
@@ -358,6 +367,16 @@ LMV7235 の伝搬遅延はデータシート上 45 ns 級で、しかも**オー
   - **`make sim` は ALL PASS**（`tb_capture_gate` = proj006 の回帰 /
     `tb_pps_capture` = 結合）。`tb_pps_capture` は失敗すると `$fatal` で
     非ゼロ終了するので `make` が止まる
+
+- **2026-09-17**: rev2。エポック番号と MMCM のロックを追加。
+  - `src/pps_capture.v`: `ctrl_aresetn` / `mmcm_locked` のポート、`epoch` カウンタ、
+    `flags[6:5]`、`sel = 10`、`MAGIC` を `0x0007_0002` へ
+  - `build.tcl`: `clk_wiz_adc/locked` を `pps_capture_0/mmcm_locked` へ分岐、
+    `pps_capture_0/ctrl_aresetn` を **`rst_ctrl` 側**から取る
+  - `pynq/pps.py`: `EpochChanged` 例外、`snapshot()` の前後検査、
+    `check_beat` のまたぎ検査。`pynq/pps_delay.py`: 試行ごとの照合
+  - `sim/tb_pps_capture.v`: 「リセット中は `MAGIC` が読めても `snap_ack` は返らない」と
+    「ロック外れで `beat_count` は 0 に戻るが `epoch` は増える」を追加。**ALL PASS**
 
 - **2026-09-17**: ビルド。**成功**（WNS +0.285 ns）。
   - `build.tcl` が **`src/pps_capture.v` を `add_files` していなかった**。
@@ -575,6 +594,46 @@ LMV7235 はオープンドレインなので反転していてもおかしくな
 落ち、量子化誤差は「ばらつき」ではなく「固定のバイアス」として出る。**
 判定 2 で残差が ±1 ビートすらディザしなかったことと同じ現象で、
 ここで二度目の裏が取れた。0.32 ns はエッジ判定そのものの雑音である。
+
+#### rev2 — エポック番号と MMCM のロック（2026-09-17）
+
+**判定 1〜5 を通したあとに入れた。** 判定 4 の途中で実害を踏んだため。
+
+`pps_delay.py` が `start_tiles()` の直後に `alive = 0` で落ちた。
+原因は **RFDC のタイルを起動すると `clk_adc` が立ち上がり直して MMCM が
+ロックを外し、`rst_adc` が `aresetn` を再アサートする**こと。
+`beat_count` は 0 に戻り、`t_age` も `MISS_BEATS` に初期化される。
+
+**このとき表に出たのは偶然である。** PPS が来ていれば `alive` は 1 のままで、
+データも波形もフラグも正常に見えたまま、**絶対時刻だけが静かにずれる。**
+rev1 にはこれをソフトから区別する手段が無かった。
+
+| 追加 | |
+|---|---|
+| `epoch[31:0]`（`sel = 10`）| `aresetn` の**解除ごとに +1**。0 = まだ一度も解除されていない |
+| `flags[5]` `adc_rstn` | ADC ドメインが解除済みか（ライブ）|
+| `flags[6]` `mmcm_locked` | `clk_wiz_adc` のロック（ライブ）|
+| `MAGIC` → `0x0007_0002` | 版を名乗らせる |
+
+**エポックを数える側は `ctrl_aclk` 側に置く。これが設計の肝である。**
+`pps_capture/ctrl_aresetn` は `rst_ctrl/peripheral_aresetn` から取る。
+`rst_ctrl` は `dcm_locked` を見ないので、ADC ドメインが落ちても生き残る。
+**`aclk` 側に置くと、数えたいリセットで自分も 0 に戻り、何も分からなくなる。**
+
+ソフト側は `snapshot()` が**前後で `epoch` を読み、変わっていれば `EpochChanged`
+例外を投げる**。`check_beat` は 2 回のスナップショットを**またいだ**変化も見る
+（単体の検査は「読んでいる最中」しか見ない）。`pps_delay.py` は試行ごとに
+起点の `epoch` と比べる。**原点が変われば遅延ではなく原点の差を測ってしまい、
+しかも値は出る。**
+
+`sim/tb_pps_capture.v` に 2 つ足した。
+
+- **リセット解除前でも `MAGIC` は読めるが `snap_ack` は返らない。**
+  `rdata` が `ctrl_aclk` 側でリセットを持たないため。
+  `pps.py` の `wait_epoch` はこの性質に依存している（`snapshot()` の例外を
+  リセットの観測に使う）ので、**崩れたら黙って効かなくなる**箇所を固定した
+- **MMCM がロックを外すと `beat_count` は 0 に戻るが `epoch` が +1 される。**
+  rev2 の本題そのもの
 
 #### 判定 4 の対照実験 — ケーブルを入れ替える（**外れた予言が答えだった**）
 

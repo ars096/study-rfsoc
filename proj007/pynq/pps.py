@@ -34,7 +34,7 @@ SPW = ac.SPW
 FS_HZ = ac.FS_HZ
 BEATS_PER_SEC = int(round(FS_HZ / SPW))        # = 153,600,000
 BEAT_NS = 1e9 / (FS_HZ / SPW)                  # = 6.5104 ns
-MAGIC = 0x00070001
+MAGIC = 0x00070002        # rev2（epoch と locked を追加）
 
 # gpio_time_ctrl ch2 の制御ビット
 CTRL_SNAP = 1 << 0
@@ -47,6 +47,8 @@ FLAG_LATE = 1 << 1         # arm した時点で start_at が過去だった
 FLAG_ARMED = 1 << 2        # 予約を待っている
 FLAG_ACK = 1 << 3          # スナップショットが取れた
 FLAG_CALIVE = 1 << 4       # COMP 経路にも PPS が来ている
+FLAG_ADCRSTN = 1 << 5      # ADC ドメインが aresetn 解除済み（rev2）
+FLAG_LOCKED = 1 << 6       # clk_wiz_adc がロックしている（rev2）
 
 # セレクタ
 SEL = {
@@ -55,8 +57,19 @@ SEL = {
     "count": 4, "interval": 5,
     "tstart_lo": 6, "tstart_hi": 7,
     "cstamp": 8, "glitch": 9,
+    "epoch": 10,
     "magic": 15,
 }
+
+
+class EpochChanged(RuntimeError):
+    """**時刻の原点が変わった**（rev2）。
+
+    `aresetn` が入り直すと `beat_count` は 0 に戻り、それ以前に読んだ
+    `beat_count` / `stamp` / `t_start` との繋がりが切れる。
+    **そのとき値そのものは正常に見える**ので、例外で止めないと
+    絶対時刻だけが静かにずれた観測ができあがる。
+    """
 
 
 class PPS:
@@ -106,6 +119,16 @@ class PPS:
         """予約する発火ビート（下位 32 bit）。**arm より前に書く。**"""
         self.c.channel1.write(int(beat) & 0xFFFFFFFF, 0xFFFFFFFF)
 
+    def epoch(self):
+        """**beat_count の原点の通し番号**（rev2）。
+
+        0 = まだ一度も `aresetn` が解除されていない（beat_count は動いていない）。
+        MMCM がロックを外す・RFDC のタイルを起動し直す、のいずれでも +1 される。
+        **変わったら、それ以前に読んだ beat_count / stamp / t_start は
+        別の原点の値なので捨てる。**
+        """
+        return self._sel("epoch")
+
     def check_magic(self):
         got = self._sel("magic")
         if got != MAGIC:
@@ -114,8 +137,13 @@ class PPS:
                 " GPIO の結線かビットストリームが proj007 でない")
         return got
 
-    def snapshot(self, timeout=0.2):
+    def snapshot(self, timeout=0.2, check_epoch=True):
         """全カウンタを一括ラッチして読む。戻り値は dict。"""
+        # **原点が変わっていないことを前後で確かめる（rev2）。**
+        # スナップショット自体は一瞬で整合するが、その前に読んだ値との
+        # 繋がりは原点が変わると切れる。**壊れた時刻は正常な時刻に見える**ので、
+        # 気づく口をここに置く。
+        ep0 = self._sel("epoch") if check_epoch else None
         self._w2(self._ctrl2 | CTRL_SNAP)
         t0 = time.time()
         while not (self.flags() & FLAG_ACK):
@@ -140,6 +168,19 @@ class PPS:
         while self.flags() & FLAG_ACK:
             if time.time() - t0 > timeout:
                 break
+
+        if check_epoch:
+            ep1 = self._sel("epoch")
+            d["epoch"] = ep1
+            if ep1 != ep0:
+                raise EpochChanged(
+                    f"読んでいる最中に時刻の原点が変わった（epoch {ep0} → {ep1}）。"
+                    "beat_count は 0 に戻っている。MMCM がロックを外したか、"
+                    "RFDC のタイルを起動し直した")
+            if ep1 == 0:
+                raise EpochChanged(
+                    "aresetn がまだ一度も解除されていない（epoch = 0）。"
+                    "beat_count は動いていない")
         return d
 
     def next_start(self, k=2, offset=0):
@@ -156,7 +197,8 @@ class PPS:
 
 def fmt_flags(f):
     names = [(FLAG_ALIVE, "alive"), (FLAG_LATE, "late"), (FLAG_ARMED, "armed"),
-             (FLAG_ACK, "ack"), (FLAG_CALIVE, "comp_alive")]
+             (FLAG_ACK, "ack"), (FLAG_CALIVE, "comp_alive"),
+             (FLAG_ADCRSTN, "adc_rstn"), (FLAG_LOCKED, "locked")]
     on = [n for b, n in names if f & b]
     return f"0x{f:02x} [{' '.join(on) if on else '-'}]"
 
@@ -201,6 +243,11 @@ def wait_epoch(p, t_ref, timeout=10.0, label="Overlay"):
     rel = (now - age) - t_ref                # 起点から解除までの時間 [s]
     log(f"時刻の原点     : {label} の {rel * 1e3:+.0f} ms 後に aresetn が解除された"
         f"（現在 {age * 1e3:.0f} ms 経過）")
+    log(f"  epoch = {d['epoch']} / {fmt_flags(d['flags'])}")
+    if d["epoch"] > 1:
+        log(f"  **原点は既に {d['epoch']} 回張り直されている。**"
+            " RFDC のタイル起動か MMCM のロック外れ。")
+        log("  これ自体は異常ではないが、**この epoch より前に読んだ時刻は無効**")
     if waited:
         log("  リセットが解けるまで待った（snap_ack が返らなかった）")
     if age < 0.010:
@@ -250,6 +297,17 @@ def check_beat(p, dt=0.5):
     tb = time.time()
     b = p.snapshot()
     el = tb - ta
+
+    # **2 つのスナップショットの間で原点が変わっていないこと。**
+    # snapshot() 単体の検査は「読んでいる最中」しか見ない。**またいだ変化は
+    # ここでしか捕まらない**（差分が負や巨大な値になって「カウンタが止まった」
+    # と誤診する）
+    if a["epoch"] != b["epoch"]:
+        log(f"**2 回のスナップショットの間で原点が変わった"
+            f"（epoch {a['epoch']} → {b['epoch']}）。**")
+        log("  beat_count は 0 に戻っている。進み方の比較は成立しない")
+        return False
+
     dbeat = b["beat"] - a["beat"]
     exp = el * BEATS_PER_SEC
     log(f"カウンタの確認 : {el * 1e3:.1f} ms で {dbeat:,} ビート進んだ"
@@ -288,6 +346,7 @@ def do_probe(p, t_ovl):
     log(f"flags          : {fmt_flags(d['flags'])}")
     log(f"beat_count     : {d['beat']}  （Overlay ロードからの経過 = "
         f"{d['beat'] * BEAT_NS / 1e9:.3f} s）")
+    log(f"epoch          : {d['epoch']}  （時刻の原点の通し番号）")
     log(f"pps_count      : {d['count']}")
     log(f"pps_stamp      : {d['stamp']}")
     log(f"pps_interval   : {d['interval']}  （期待 {BEATS_PER_SEC}）")

@@ -664,11 +664,21 @@ foreach p $adc_dom { nc $adc_fabric $p }
 # **clk_adcN はタイルが起動して初めて出る**ので、ロックも起動後になる。
 nc clk_wiz_adc/locked rst_adc/dcm_locked
 
+# **同じ locked を pps_capture へも配る（proj007 rev2）。**
+# ロックが外れると rst_adc が aresetn を再アサートし、beat_count が 0 に戻る。
+# rev1 ではそれがソフトから見えず、絶対時刻だけが静かにずれる状態だった。
+nc clk_wiz_adc/locked pps_capture_0/mmcm_locked
+
 # リセット
 foreach r {rst_ctrl rst_data rst_adc} { nc $ps_rstn $r/ext_reset_in }
+# **pps_capture/ctrl_aresetn を rst_ctrl 側から取るのが rev2 の肝である。**
+# エポックを数える側が rst_adc で消えてしまうと、数えたいリセットで
+# カウンタ自身も 0 に戻り、何も分からなくなる。rst_ctrl は dcm_locked を
+# 見ないので、ADC ドメインが落ちても生き残る。
 foreach p [list smc_ctrl/aresetn rfdc/s_axi_aresetn \
                 dma_adc/axi_resetn gpio_capture/s_axi_aresetn \
-                gpio_time_ctrl/s_axi_aresetn gpio_time_stat/s_axi_aresetn] {
+                gpio_time_ctrl/s_axi_aresetn gpio_time_stat/s_axi_aresetn \
+                pps_capture_0/ctrl_aresetn] {
     nc rst_ctrl/peripheral_aresetn $p
 }
 nc rst_data/peripheral_aresetn smc_data/aresetn
