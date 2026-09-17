@@ -4,6 +4,7 @@
 
 使い方（ボード上で sudo が要る）:
 
+    sudo python3 extref.py --api             # ボードの xrfclk が実際に持っている名前
     sudo python3 extref.py --show            # 出荷時の設定を読み出して意味を表示する
     sudo python3 extref.py --set stock       # 出荷時に戻す（CLKin1 = 基板の Si5395）
     sudo python3 extref.py --set 0           # CLKin0 を PLL1 の基準にする
@@ -171,6 +172,17 @@ def find_stock_lmk_file():
     return want if want in hits else hits[0]
 
 
+def find_stock_lmx_file():
+    """LMX2594 のレジスタファイル。見つからなければ None（致命ではない）。"""
+    xrfclk = _import_xrfclk()
+    d = os.path.dirname(os.path.realpath(xrfclk.__file__))
+    want = os.path.join(d, f"LMX2594_{LMX_FREQ}.txt")
+    if os.path.exists(want):
+        return want
+    hits = sorted(glob.glob(os.path.join(d, "LMX2594_*.txt")))
+    return hits[0] if hits else None
+
+
 def read_tics(path):
     """TICS Pro の出力（1 行 1 レジスタ）を 24bit 整数の **並び順のまま** 返す。
 
@@ -250,17 +262,56 @@ def patch_regs(regs, clkin, ref_mhz=10.0):
 
 
 # --------------------------------------------------------------- 書き込み
-def _xrfclk_devices():
-    """xrfclk にデバイスを見つけさせる。**2 回呼ばない。**
-
-    `_find_devices()` はグローバルのリストに append するだけなので、2 回呼ぶと
-    同じデバイスが 2 つ並び、SPI を 2 度書く。
-    """
-    import xrfclk
-    if not xrfclk.lmk_devices or not xrfclk.lmx_devices:
-        xrfclk._find_devices()
-    xrfclk._read_tics_output()
+def _import_xrfclk():
+    try:
+        import xrfclk
+    except ImportError:
+        raise RuntimeError(
+            "xrfclk が import できない。**ボード上で** sudo -E $(which python3) で実行すること")
     return xrfclk
+
+
+def _set_ref_clks(xrfclk):
+    """出荷時の設定を公開 API で書く。**版で関数名が変わる。**
+
+    v3.1.1 は `set_ref_clks`、旧版は `set_ref_clk`。
+    """
+    for name in ("set_ref_clks", "set_ref_clk"):
+        fn = getattr(xrfclk, name, None)
+        if fn is not None:
+            fn(lmk_freq=LMK_FREQ, lmx_freq=LMX_FREQ)
+            return name
+    raise RuntimeError(
+        "xrfclk に set_ref_clks / set_ref_clk のどちらも無い。"
+        f"使える名前: {api_names(xrfclk)}")
+
+
+def api_names(xrfclk):
+    return sorted(n for n in dir(xrfclk) if not n.startswith("__"))
+
+
+def _devices(xrfclk, kind):
+    """lmk_devices / lmx_devices を取り出す。
+
+    **`_find_devices()` を自分で呼ばない。** 版によっては存在しないし、
+    存在しても append するだけなので 2 回呼ぶとデバイスが重複して SPI を 2 度書く。
+    公開 API（`set_ref_clks`）を先に通しておけば、その副作用で埋まっている。
+    """
+    devs = getattr(xrfclk, f"{kind}_devices", None)
+    if not devs:
+        raise RuntimeError(
+            f"xrfclk.{kind}_devices が空。set_ref_clks() が通っていないか、"
+            f"この版は別の持ち方をしている。使える名前: {api_names(xrfclk)}")
+    return devs
+
+
+def _writer(xrfclk, kind):
+    """レジスタ列を直接書く関数を探す。無ければ名前一覧を添えて止まる。"""
+    for name in (f"_write_{kind}_regs", f"write_{kind}_regs"):
+        fn = getattr(xrfclk, name, None)
+        if fn is not None:
+            return fn, name
+    return None, None
 
 
 def set_clocks(clkin=None, ref_mhz=10.0, settle=2.0, verbose=True):
@@ -274,43 +325,71 @@ def set_clocks(clkin=None, ref_mhz=10.0, settle=2.0, verbose=True):
     ロードした時点で起動し、そのとき LMX の 491.52 MHz を掴む（proj003 で確認）。
     先にクロックを確定させておけば、タイルに触る必要がない。
     """
-    xrfclk = _xrfclk_devices()
+    xrfclk = _import_xrfclk()
+
+    # **まず必ず出荷時の設定を公開 API で通す。**
+    # デバイスの探索とバインドはここで済み、LMK も LMX もロックした状態になる。
+    # 私有関数の名前は版で変わるが、この 1 本だけはどの版にもある。
+    used = _set_ref_clks(xrfclk)
+    if verbose:
+        log(f"xrfclk.{used}(lmk_freq={LMK_FREQ}, lmx_freq={LMX_FREQ})   ← 出荷時の設定")
+
+    if clkin is None:
+        if verbose:
+            log(f"クロック源 : **出荷時のまま**（{SOURCE_NAME[STOCK_CLKIN]}）")
+        return None
+
     stock_path = find_stock_lmk_file()
     regs = read_tics(stock_path)
-
     if verbose:
         log(f"LMK のレジスタファイル : {stock_path}  ({len(regs)} 語)")
         log(f"  出荷時 0x0147 = 0x{get_reg(regs, REG_CLKIN_SEL):02X}"
             f"  → CLKin_SEL_MODE = {(get_reg(regs, REG_CLKIN_SEL) >> 4) & 0x7}")
 
-    if clkin is None:
-        if verbose:
-            log("クロック源 : **出荷時のまま**"
-                f"（{SOURCE_NAME[STOCK_CLKIN]}）")
-    else:
-        regs, changed, r_div = patch_regs(regs, clkin, ref_mhz)
-        if verbose:
-            log(f"クロック源 : {SOURCE_NAME[clkin]}")
-            log(f"  基準 {ref_mhz} MHz / R = {r_div} / 位相比較 {PLL1_PD_MHZ * 1e3:.0f} kHz "
-                f"/ PLL1_N = {PLL1_N} → VCXO {VCXO_MHZ} MHz")
-            if changed:
-                log("  差し替えたレジスタ:")
-                for addr, old, new in changed:
-                    log(f"    0x{addr:04X}  0x{old:02X} → 0x{new:02X}")
-            else:
-                log("  差し替え無し（出荷時と同じ値）")
-
-    for lmk in xrfclk.lmk_devices:
-        xrfclk._write_LMK_regs(regs, lmk)
+    regs, changed, r_div = patch_regs(regs, clkin, ref_mhz)
     if verbose:
-        log(f"LMK04828 に {len(regs)} 語を書いた（{len(xrfclk.lmk_devices)} 個）")
+        log(f"クロック源 : {SOURCE_NAME[clkin]}")
+        log(f"  基準 {ref_mhz} MHz / R = {r_div} / 位相比較 {PLL1_PD_MHZ * 1e3:.0f} kHz "
+            f"/ PLL1_N = {PLL1_N} → VCXO {VCXO_MHZ} MHz")
+        if changed:
+            log("  差し替えたレジスタ:")
+            for addr, old, new in changed:
+                log(f"    0x{addr:04X}  0x{old:02X} → 0x{new:02X}")
+        else:
+            log("  差し替え無し（出荷時と同じ値）")
+
+    write_lmk, lmk_fn = _writer(xrfclk, "LMK")
+    if write_lmk is None:
+        raise RuntimeError(
+            "xrfclk にレジスタ列を直接書く関数が無い（_write_LMK_regs / write_LMK_regs）。"
+            f"使える名前: {api_names(xrfclk)}")
+    lmks = _devices(xrfclk, "lmk")
+    for lmk in lmks:
+        write_lmk(regs, lmk)
+    if verbose:
+        log(f"LMK04828 に {len(regs)} 語を書いた（xrfclk.{lmk_fn} × {len(lmks)} 個）")
         log(f"  PLL1 のロックを待つ: {settle} s")
     time.sleep(settle)
 
-    for lmx in xrfclk.lmx_devices:
-        xrfclk._set_LMX_clks(LMX_FREQ, lmx)
+    # LMX2594 を書き直す。
+    # **LMK を書き換えると出力が一度乱れ、下流の LMX はロックを失う。**
+    # 基準周波数（245.76 MHz）は変わらないので自力で復帰しうるが、
+    # 「たまに立ち上がらない」を避けるために明示的に書き直す。
+    write_lmx, lmx_fn = _writer(xrfclk, "LMX")
+    lmx_path = find_stock_lmx_file()
+    if write_lmx is not None and lmx_path:
+        lmx_regs = read_tics(lmx_path)
+        lmxs = _devices(xrfclk, "lmx")
+        for lmx in lmxs:
+            write_lmx(lmx_regs, lmx)
+        if verbose:
+            log(f"LMX2594 に {len(lmx_regs)} 語を書き直した"
+                f"（xrfclk.{lmx_fn} × {len(lmxs)} 個 / {os.path.basename(lmx_path)}）")
+    elif verbose:
+        log("WARNING: LMX を書き直す関数かレジスタファイルが見つからない。")
+        log("  基準周波数は変わらないので自力で再ロックするはずだが、"
+            "タイル PLL がロックしない場合はここを疑う")
     if verbose:
-        log(f"LMX2594 に {LMX_FREQ} MHz の設定を書いた（{len(xrfclk.lmx_devices)} 個）")
         log("")
         log("**ボードの PLL1 ロック LED を見ること。**")
         log("  消えていれば基準が来ていない（ケーブル・レベル・CLKin の取り違え）。")
@@ -319,6 +398,38 @@ def set_clocks(clkin=None, ref_mhz=10.0, settle=2.0, verbose=True):
 
 
 # --------------------------------------------------------------------- CLI
+def show_api():
+    """ボードの xrfclk が実際に持っているものを出す。
+
+    **私有関数の名前は版で変わる。** 想定と違って落ちたら、まずここを見て
+    このスクリプトの側を合わせる。推測で書き換えない。
+    """
+    xrfclk = _import_xrfclk()
+    d = os.path.dirname(os.path.realpath(xrfclk.__file__))
+    log(f"xrfclk    : {xrfclk.__file__}")
+    log(f"version   : {getattr(xrfclk, '__version__', '(無し)')}")
+    log("")
+    log("--- 使える名前 ---")
+    for n in api_names(xrfclk):
+        v = getattr(xrfclk, n, None)
+        kind = "関数" if callable(v) else type(v).__name__
+        extra = ""
+        if isinstance(v, (list, dict)):
+            extra = f"  （要素 {len(v)} 個）"
+        log(f"  {n:<24} {kind}{extra}")
+    log("")
+    log("--- パッケージ内のレジスタファイル ---")
+    for f in sorted(glob.glob(os.path.join(d, "*.txt"))):
+        log(f"  {os.path.basename(f)}")
+    log("")
+    log("proj004 が使うもの:")
+    for want in ("set_ref_clks / set_ref_clk", "lmk_devices", "lmx_devices",
+                 "_write_LMK_regs", "_write_LMX_regs"):
+        names = [w.strip() for w in want.split("/")]
+        ok = any(getattr(xrfclk, n, None) is not None for n in names)
+        log(f"  {'OK  ' if ok else '無い'} {want}")
+
+
 def show(path=None):
     """出荷時のファイルを読んで、関係するレジスタの意味を表示する。
 
@@ -365,14 +476,24 @@ def main():
                    help="出荷時のレジスタファイルを読んで意味を表示する（書き込まない）")
     g.add_argument("--set", dest="src", choices=("stock", "0", "1", "2"),
                    help="PLL1 の基準入力を選んで書き込む")
+    g.add_argument("--api", action="store_true",
+                   help="ボードの xrfclk が実際に持っている名前を出す（書き込まない）。"
+                        "**版が違って落ちたときは、まずこれ**")
     p.add_argument("--ref", type=float, default=10.0,
                    help="外部基準の周波数 [MHz]（既定 10.0）")
     p.add_argument("--settle", type=float, default=2.0,
                    help="LMK を書いてから LMX を書くまでの待ち [s]")
+    p.add_argument("--file", default=None,
+                   help="--show で読むレジスタファイル。手元で中身を見るとき用"
+                        "（例: ../clocks/LMK04828_245.76_stock.txt）")
     args = p.parse_args()
 
+    if args.api:
+        show_api()
+        return
+
     if args.show:
-        show()
+        show(args.file)
         return
 
     clkin = None if args.src == "stock" else int(args.src)

@@ -233,7 +233,8 @@ PATH が置き換わって `ModuleNotFoundError: No module named 'pynq'` にな�
 | `ValueError: too many values to unpack` | xrfclk のディレクトリに `_` を 2 つ以上含む `.txt` を置いた |
 | `ModuleNotFoundError: No module named 'pynq'` | `sudo -E $(which python3)` で実行する |
 | `extref.py` が LMK のファイルを見つけられない | `xrfclk` のパッケージの場所。`--show` が探した先を表示する |
-| SPI を 2 度書いてしまう | `_find_devices()` を 2 回呼ぶとデバイスが重複する。`extref.py` は 1 回に抑えている |
+| `AttributeError: module 'xrfclk' has no attribute ...` | **私有関数の名前は版で変わる。** `extref.py --api` で実機に何があるか出して、推測で書き換えずに合わせる |
+| SPI を 2 度書いてしまう | `_find_devices()` は append するだけなので 2 回呼ぶとデバイスが重複する。`extref.py` は自分で呼ばず、`set_ref_clks()` の副作用に任せている |
 | ppm は 0 になったがノイズフロアが上がった | 外部基準の位相雑音。**分光計としてはここから先が本題**。proj005 以降 |
 
 ## 範囲外（送り先）
