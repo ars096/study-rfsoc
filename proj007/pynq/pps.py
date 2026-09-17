@@ -162,6 +162,53 @@ def fmt_flags(f):
 
 
 # ------------------------------------------------------------------- 表示
+def wait_epoch(p, t_ovl, timeout=10.0):
+    """**時刻の原点（aresetn の解除）がいつだったかを測る。**
+
+    原点は Overlay のロードではない。`pps_capture/aresetn` は
+    `rst_adc/peripheral_aresetn` で、その `dcm_locked` は `clk_wiz_adc/locked`、
+    さらにその入力は RFDC の `clk_adc2` である。
+    **RFDC のタイル 2 が立ち上がって MMCM がロックするまでリセットは解けない。**
+    `pps.py` は `adc_capture.py` と違ってタイルに触らないので、起動は
+    Overlay のあと非同期に進む。
+
+    2026-09-17 の実機で `beat_count = 2` が出たのがこれ。python が snap を
+    立てて ack を待っている最中にリセットが解除され、snap が既に H だったため
+    同期器の 3 クロック目に一度だけスナップが打たれた。
+    `MAGIC` が読めていたのは `rdata` が ctrl_aclk 側でリセットを持たないためで、
+    **「MAGIC が読める」はリセットが解けている証拠にならない。**
+
+    リセット中は `snap_ack` が返らないので `snapshot()` が例外を投げる。
+    **それをリセットの観測に使う。**
+    """
+    t0 = time.time()
+    waited = False
+    while True:
+        try:
+            d = p.snapshot(timeout=0.05)
+            break
+        except RuntimeError:
+            waited = True
+            if time.time() - t0 > timeout:
+                raise RuntimeError(
+                    "aresetn が解除されない。clk_wiz_adc の locked（= RFDC の "
+                    "clk_adc2）を疑う。adc_capture.py --probe でタイルの "
+                    "PLLLockStatus を先に確かめること")
+            time.sleep(0.01)
+
+    now = time.time()
+    age = d["beat"] * BEAT_NS / 1e9          # リセット解除からの経過 [s]
+    rel = (now - age) - t_ovl                # Overlay から解除までの時間 [s]
+    log(f"時刻の原点     : Overlay の {rel * 1e3:+.0f} ms 後に aresetn が解除された"
+        f"（現在 {age * 1e3:.0f} ms 経過）")
+    if waited:
+        log("  リセットが解けるまで待った（snap_ack が返らなかった）")
+    if age < 0.010:
+        log("  **原点が今この瞬間である。** 以後の beat_count はここからの相対値。")
+        log("  `beat_count` を絶対時刻に直すときの基準は Overlay ではなくこの時刻")
+    return d
+
+
 def check_beat(p, dt=0.5):
     """ビートカウンタが本当に走っているかを 2 回のスナップショットで確かめる。
 
@@ -208,10 +255,12 @@ def check_beat(p, dt=0.5):
     return True
 
 
-def do_probe(p):
+def do_probe(p, t_ovl):
     p.check_magic()
     log(f"MAGIC          : 0x{MAGIC:08x}  （GPIO の結線は正しい）")
-    d = p.snapshot()
+    log("  **これはリセットが解けている証拠にはならない。**"
+        " rdata は ctrl_aclk 側でリセットを持たない")
+    d = wait_epoch(p, t_ovl)
     log(f"flags          : {fmt_flags(d['flags'])}")
     log(f"beat_count     : {d['beat']}  （Overlay ロードからの経過 = "
         f"{d['beat'] * BEAT_NS / 1e9:.3f} s）")
@@ -363,6 +412,7 @@ def main():
     if not args.no_clk:
         ac.setup_clocks(args.clkin, args.ref)
     ol = Overlay(args.bitfile)
+    t_ovl = time.time()
     log(f"Overlay: {args.bitfile}")
 
     pps = PPS(ol)
@@ -375,7 +425,7 @@ def main():
     elif args.watch:
         do_watch(pps, args.watch, args.period)
     else:
-        do_probe(pps)
+        do_probe(pps, t_ovl)
 
 
 if __name__ == "__main__":
