@@ -834,19 +834,44 @@ foreach line [split [exec cat $outdir/utilization.rpt] \n] {
         || [string match "*URAM*" $line]} { puts "  [string trim $line]" }
 }
 
-set wns [get_property STATS.WNS [get_runs impl_1]]
-if {$wns ne "" && $wns < 0} {
+# ---- 一番きつい経路のクロック対を **必ず** 出す ----
+# **WNS が正でも出す。**通ったかどうかだけ見ていると、
+# 「宣言し忘れた乗り換えが、たまたま間に合っていただけ」を見逃す。
+# 起点と終点のクロックが違うのに残っていたら、timing.xdc の非同期宣言の漏れを疑う。
+# 同じなら単に設計が重い（語幅を広げた、段数が増えた）。
+foreach {kind label} {setup "setup（周期）" hold "hold（保持）"} {
     puts ""
-    puts "---- 違反している経路（上位 10、起点と終点のクロック）----"
-    puts "  クロック対が違っていれば乗り換えの制約漏れ。同じなら設計が重い。"
-    foreach pth [get_timing_paths -quiet -max_paths 10 -nworst 1 -setup \
-                 -slack_lesser_than 0] {
-        puts [format "  slack %9.3f  %-28s → %s" \
-              [get_property SLACK $pth] \
-              [get_property STARTPOINT_CLOCK $pth] \
-              [get_property ENDPOINT_CLOCK $pth]]
+    puts "---- 一番きつい経路 上位 5  $label ----"
+    set n 0
+    foreach pth [get_timing_paths -quiet -max_paths 5 -nworst 1 -$kind] {
+        set sc [get_property STARTPOINT_CLOCK $pth]
+        set ec [get_property ENDPOINT_CLOCK $pth]
+        puts [format "  slack %9.3f  %-30s → %-30s%s" \
+              [get_property SLACK $pth] $sc $ec \
+              [expr {$sc eq $ec ? "" : "   ← 乗り換え"}]]
+        incr n
     }
+    if {$n == 0} { puts "  （経路なし）" }
 }
+
+# ---- 宣言していないクロックに経路が残っていないか ----
+# timing.xdc が非同期と宣言しているのは clk_pl_0 / clk_pl_1 / RFADC2_CLK の 3 群だけ。
+# proj006 は **clk_adc0 をどこにも繋いでいない**ので、RFADC0_CLK には
+# ファブリックの経路が無いはずである。使っていないタイル / DAC の
+# ダミークロックも同じ。**前提を数えて確かめる。**
+# ここに経路が出たら、timing.xdc にその群を足すか、配線を見直す。
+puts ""
+puts "---- 宣言していないクロックの経路 ----"
+foreach cn {RFADC0_CLK RFADC1_CLK RFADC3_CLK RFDAC0_CLK RFDAC1_CLK RFDAC2_CLK RFDAC3_CLK} {
+    set c [get_clocks -quiet $cn]
+    if {[llength $c] == 0} { continue }
+    set nf [llength [get_timing_paths -quiet -from $c -max_paths 20]]
+    set nt [llength [get_timing_paths -quiet -to   $c -max_paths 20]]
+    puts [format "  %-14s 起点 %3s / 終点 %3s%s" $cn $nf $nt \
+          [expr {($nf || $nt) ? "   **経路がある。timing.xdc の前提を見直す**" : ""}]]
+}
+
+set wns [get_property STATS.WNS [get_runs impl_1]]
 
 } diag_err]} {
     puts ""
