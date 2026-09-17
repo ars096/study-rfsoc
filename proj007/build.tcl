@@ -249,6 +249,7 @@ if {$use_board} {
 }
 
 add_files -norecurse ./src/capture_gate.v
+add_files -norecurse ./src/pps_capture.v
 update_compile_order -fileset sources_1
 
 # ------------------------------------------------------------------ block design
