@@ -438,16 +438,50 @@ def main():
         else:
             targets = ([args.src_tile] if args.epoch_mode == "src"
                        else sorted(set(t for t, _ in ac.CHANS)))
+            others = [t for t in targets if t != args.src_tile]
+            has_src = args.src_tile in targets
             log(f"---- adc_tiles{targets} を止めて新しいエポックを作る "
                 f"（--epoch-mode {args.epoch_mode}）----")
-            for t in targets:
+
+            # **順序に依存がある。**（2026-09-18 に踏んだ）
+            # build.tcl は **両タイルの `m*_axis_aclk` を MMCM の出力**に繋いでおり、
+            # その MMCM の源は `--src-tile` のタイルの `clk_adc<n>` である。
+            # したがって **源のタイルが止まっていると、他のタイルは AXIS クロックを
+            # 失う。** その状態で `StartUp()` を呼ぶとタイルの状態機械が進めず、
+            #   RuntimeError: ADC 0 timed out at state 14 in XRFdc_WaitForRestartClr
+            # で落ちる。**止めるときは源を最後に、起動するときは源を最初に。**
+            for t in others:
                 ol.rfdc.adc_tiles[t].ShutDown()
+            if has_src:
+                ol.rfdc.adc_tiles[args.src_tile].ShutDown()
             time.sleep(0.5)
             if pps.flags() & pps_mod.FLAG_LOCKED:
                 log("  **停止中も locked が立っている。** --src-tile が違う")
                 break
-            for t in targets:
-                ol.rfdc.adc_tiles[t].StartUp()
+
+            def _startup(t, why):
+                try:
+                    ol.rfdc.adc_tiles[t].StartUp()
+                except RuntimeError as e:
+                    log(f"  **adc_tiles[{t}] の StartUp が失敗した（{why}）。**")
+                    log(f"    {e}")
+                    log("    **AXIS クロックが来ていない可能性が高い。**")
+                    log(f"    build.tcl は全タイルの m*_axis_aclk を MMCM に繋いでおり、")
+                    log(f"    その源は adc_tiles[{args.src_tile}] である。"
+                        "源を先に起動すること")
+                    raise SystemExit(1)
+
+            if has_src:
+                _startup(args.src_tile, "MMCM の源")
+                t0 = time.time()
+                while not (pps.flags() & pps_mod.FLAG_LOCKED):
+                    if time.time() - t0 > 10.0:
+                        log("  **locked が戻らない。** ここで止める")
+                        break
+                    time.sleep(0.05)
+                log(f"  adc_tiles[{args.src_tile}]（源）が起動し MMCM がロックした")
+            for t in others:
+                _startup(t, "源の起動と MMCM ロックの後")
             t0 = time.time()
             while not (pps.flags() & pps_mod.FLAG_LOCKED):
                 if time.time() - t0 > 10.0:

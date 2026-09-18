@@ -207,6 +207,29 @@ Tile 226 の slice 0 だけを有効にしてビットストリームを作り�
 実信号でどのスライスに乗るかを確かめること。** 間違えても
 「DMA は完走するのに中身がノイズだけ」になるだけで、原因が遠い。
 
+### RFDC タイルの起動には順序の依存がある（proj008 で踏んだ）
+
+**AXIS クロックの源になっているタイルを先に起動する。**
+
+`proj003` 以降のブロックデザインは、**全タイルの `m<n>_axis_aclk` を Clocking Wizard の
+出力**に繋いでおり、その Wizard の入力は**特定の 1 タイルの `clk_adc<n>`**である
+（`build.tcl` の `wiz_src_tile`）。したがって:
+
+- **源のタイルが止まっていると、他のタイルは AXIS クロックを失う**
+- その状態で `StartUp()` を呼ぶとタイルの状態機械が進まず、こう落ちる
+
+```
+RuntimeError: Function XRFdc_StartUp call failed
+stdout: metal: error:
+ ADC 0 timed out at state 14 in XRFdc_WaitForRestartClr
+```
+
+**止めるときは源を最後に、起動するときは源を最初に。**
+源を起動して `clk_wiz_adc/locked` が立つのを待ってから、残りのタイルを起動する。
+
+2026-09-18、proj008 で両タイルを同時に止めて `adc_tiles[0]` から起動しようとして踏んだ。
+**1 タイルだけを扱っている限り表に出ない**ので、複数タイルを止める操作を書くときだけ効く。
+
 ### ADC のデータ形式
 
 14 bit を 16 bit の **上位に寄せている**（下位 2 bit は常に 0）。
