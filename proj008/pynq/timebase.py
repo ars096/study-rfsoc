@@ -107,6 +107,28 @@ def utc_second_of_last_pps(t_host):
     return math.floor(t_host)
 
 
+def offset_from_second_ns(t_ns, frac_samples=0.0):
+    """整数秒からのずれを ns で返す。**整数のまま modulo を取る。**
+
+    **float64 に落とすと死ぬ。**（2026-09-18 に踏んだ）
+    UTC の ns は 1.79×10^18 で、float64 の刻みは **256 ns** である。
+    `float(t_ns) - round(float(t_ns)/1e9)*1e9` と書くと、**引き算より前に
+    値が 256 ns 単位へ丸められる。** 結果は「きれいに 0.00 ns」になり、
+    **測定が完璧に見える。** 実際は何も測れていない。
+
+    このファイルの冒頭に「秒を float で返さないこと」と書いておきながら、
+    検査スクリプトの側で破った。**警告を書いた本人が、別のファイルで踏む。**
+    だから計算はここに置き、`sim/test_timebase.py` で固定する。
+
+    `frac_samples` はサンプル未満の端数（エッジ位置の小数部）。
+    **こちらは小さい数なので float のままでよい。**
+    """
+    sec, rem = divmod(int(t_ns), 10**9)
+    if rem >= 5 * 10**8:                 # 負側へ折り返す
+        rem -= 10**9
+    return rem + float(frac_samples) * (10**9 / FS_HZ)
+
+
 def require_mid_second(t_host, lo=0.25, hi=0.75):
     """**秒の真ん中で読んだか。** 違えば例外。
 

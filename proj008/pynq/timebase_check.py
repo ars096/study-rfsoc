@@ -52,7 +52,7 @@ SUSPECT_NS = 1000.0
 def classify(off_ns):
     a = abs(off_ns)
     if a < 20.0:
-        return "OK", "期待どおり（エポック残差の範囲）"
+        return "OK", "期待どおり（エポック残差 3.3 ns の範囲）"
     if a < PASS_NS:
         return "OK", "通るが大きい。較正定数を見直す価値がある"
     if a < SUSPECT_NS:
@@ -138,6 +138,7 @@ def main():
     offset = -(n_beats // 2)
     half = int(round(args.win_us * 1e-6 * ac.FS_HZ))
     offs = []
+    edge_positions = []
     for t in range(args.trials):
         start_at, d = pps.next_start(k=args.k, offset=offset)
         pps_beat = d["stamp"] + args.k * pps_mod.BEATS_PER_SEC
@@ -148,6 +149,7 @@ def main():
             continue
         pred = (pps_beat - snap["t_start"]) * ac.SPW
         meas, pk, amp = pd.find_edge(x[args.ch], args.frac, center=pred, half=half)
+        edge_positions.append(meas)
         i0 = int(math.floor(meas))
         fr = meas - i0
         try:
@@ -155,12 +157,17 @@ def main():
         except tbm.TimebaseError as e:
             log(f"  [{t}] **時刻を返さなかった**: {e}")
             continue
-        t_exact = t_ns + fr * SAMP_NS
-        off = t_exact - round(t_exact / 1e9) * 1e9
+        # **整数のまま modulo を取る。**（2026-09-18 に踏んだ）
+        # ここを `float(t_ns) - round(float(t_ns)/1e9)*1e9` と書いていた。
+        # UTC の ns は 1.79e18 で float64 の刻みは **256 ns** なので、
+        # **引き算より前に値が丸められ、5 回とも「+0.00 ns」と出た。**
+        # 測定が完璧に見えて、実際は何も測れていない。
+        off = tbm.offset_from_second_ns(t_ns, fr)
         offs.append(off)
+        sec, rem = divmod(t_ns, 10**9)
         verdict, why = classify(off)
         log(f"  [{t}] エッジ {meas:9.2f} サンプル → UTC "
-            f"{t_exact / 1e9:.9f} s   整数秒からのずれ **{off:+9.2f} ns**  [{verdict}] {why}")
+            f"{sec}.{rem:09d} s   整数秒からのずれ **{off:+9.3f} ns**  [{verdict}] {why}")
 
     log("")
     if not offs:
@@ -168,8 +175,19 @@ def main():
         results["C"] = False
     else:
         arr = np.array(offs)
-        m, sd = float(arr.mean()), float(arr.std(ddof=1)) if arr.size >= 2 else 0.0
-        log(f"  平均 {m:+.2f} ns / 標準偏差 {sd:.2f} ns（{arr.size} 回）")
+        m = float(arr.mean())
+        sd = float(arr.std(ddof=1)) if arr.size >= 2 else 0.0
+        log(f"  平均 {m:+.3f} ns / 標準偏差 {sd:.3f} ns（{arr.size} 回）")
+        # **σ = 0 は疑う。**エッジ位置がばらついているのに算出時刻が動かないなら、
+        # どこかで分解能が失われている（2026-09-18 は float64 の 256 ns がそれだった）
+        spread_sa = float(np.ptp(np.array(edge_positions))) if edge_positions else 0.0
+        if arr.size >= 3 and sd == 0.0 and spread_sa > 0.05:
+            log("")
+            log(f"  **σ = 0 なのにエッジ位置は {spread_sa:.2f} サンプル "
+                f"（{spread_sa * SAMP_NS:.2f} ns）ばらついている。**")
+            log("    **測定として出来すぎである。** どこかで分解能が失われている疑い。")
+            log("    この結果は信用しない")
+            results["C"] = False
         verdict, why = classify(m)
         results["C"] = (verdict == "OK")
         log(f"  → **{verdict}** {why}")

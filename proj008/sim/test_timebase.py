@@ -125,6 +125,26 @@ def expect_refusal(fn, name, detail=""):
         check(False, name, f"**拒否しなかった** {detail}")
 
 
+print("offset_from_second_ns — **float に落とさないこと**")
+T = 1789702989 * 10**9                      # 実機で出た UTC。float64 の刻みは 256 ns
+check(tb.offset_from_second_ns(T) == 0.0, "ちょうど整数秒なら 0")
+check(tb.offset_from_second_ns(T + 5) == 5.0, "+5 ns を +5 ns と返す",
+      str(tb.offset_from_second_ns(T + 5)))
+check(tb.offset_from_second_ns(T - 5) == -5.0, "-5 ns を -5 ns と返す（負へ折り返す）",
+      str(tb.offset_from_second_ns(T - 5)))
+check(tb.offset_from_second_ns(T + 426) == 426.0,
+      "**符号反転の目印 426 ns を潰さない**")
+check(abs(tb.offset_from_second_ns(T, 0.5) - 0.5 * (1e9 / tb.FS_HZ)) < 1e-9,
+      "サンプル未満の端数を足せる")
+# **同じ計算を float でやると潰れることを見せる。**この行が壊れた実装の記録である。
+_f = float(T + 5)
+_bad = _f - round(_f / 1e9) * 1e9
+check(_bad != 5.0,
+      "**float64 でやると +5 ns が消える**（実機で 5 回とも +0.00 ns と出た正体）",
+      f"float 版は {_bad} を返す")
+check(tb.offset_from_second_ns(T + 5) != _bad,
+      "整数版と float 版は一致しない —— **この差が 2026-09-18 のバグ**")
+
 print("require_mid_second")
 check(abs(tb.require_mid_second(1000.5) - 0.5) < 1e-9, "x.5 は通る")
 expect_refusal(lambda: tb.require_mid_second(1000.02), "x.0 の近くは拒否する")
