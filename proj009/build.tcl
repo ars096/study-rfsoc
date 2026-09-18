@@ -340,15 +340,28 @@ cfg_apply rfdc $off 0
 #    Decimation_Mode 1 = 1x（デシメーションなし）
 #    Mixer_Type      1 = Bypassed。**有効値は Data_Type と Decimation_Mode に依存して
 #                    絞られ、Real / 1x では 1 しか許されない**
-foreach ch $chans {
-    lassign $ch t s
-    set S "${t}${s}"
-    cfg_apply rfdc [list \
-        CONFIG.ADC_Data_Type${S}        {0} \
-        CONFIG.ADC_Data_Width${S}       $spw_adc \
-        CONFIG.ADC_Decimation_Mode${S}  {1} \
-        CONFIG.ADC_Mixer_Type${S}       {1} \
-    ] 0
+#
+#    **Data_Width は同じタイルのスライスどうしで揃っていなければならない。**
+#    1 つずつ変えると「片方だけ 12・もう片方は 8」の中間状態が不正になって弾かれ、
+#    どちらも既定の 8 から動けない（2026-09-18、4ch 版で 4 スライスとも 8 のまま止まった。
+#    1ch 版はタイルにスライスが 1 本なので表に出なかった。proj006 は spw = 8 = 既定値で、変える必要がなかった）。
+#    **タイルごとに全スライスをまとめて 1 回の set_property で設定する。**
+foreach t $adc_tiles {
+    set d {}
+    foreach ch $chans {
+        lassign $ch tt s
+        if {$tt != $t} continue
+        set S "${t}${s}"
+        lappend d CONFIG.ADC_Data_Type${S}       {0} \
+                  CONFIG.ADC_Data_Width${S}      $spw_adc \
+                  CONFIG.ADC_Decimation_Mode${S} {1} \
+                  CONFIG.ADC_Mixer_Type${S}      {1}
+    }
+    if {[catch {set_property -dict $d $rfdc} msg]} {
+        # 失敗しても止めない。下の読み返しで判定する（有効値はログの IP_Flow 19-3461 の行）
+        lappend ::cfg_fail [list "Tile [expr {224 + $t}] のスライス設定（まとめて）" $d \
+                                 [string map {"\n" " "} $msg] 0]
+    }
 }
 
 # 4) タイルの設定。**この順序を崩さないこと**
