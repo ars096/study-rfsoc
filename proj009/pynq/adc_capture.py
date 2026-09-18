@@ -458,8 +458,10 @@ def lane_check(mag, freqs, k, fs_hz, rbw, spw=SPW):
     **f ± m·fs/spw（m = 1..spw−1）にイメージ**が立つ。取り違えの程度によっては
     トーンと同じ桁になる。それでもピークは正しい位置に立つので、ピークだけ見ていると気づけない。
 
-    **奇数の m（fs/16 の奇数倍）は並び順の誤りでしか説明がつかない。**偶数の m は
-    ADC 自身のインタリーブ（副 ADC の不整合）でも立ちうるので、別の列に出す。
+    **奇数の m（fs/16 の奇数倍）に −20 dBc 級で立てば並び順の誤り。**偶数の m は
+    ADC 自身の 8 並列インタリーブ（副 ADC の不整合）で立つので、別の列に出す。
+    実機（2026-09-18）では偶数 m が −55〜−65 dBc、奇数 m は −63〜−69 dBc
+    （奇数 m にも他のスプリアスが偶然重なるので、0 にはならない）。
     戻り値は (奇数 m の最悪 dBc, 偶数 m の最悪 dBc)。
     """
     f0 = freqs[k]
@@ -479,7 +481,8 @@ def lane_check(mag, freqs, k, fs_hz, rbw, spw=SPW):
             rows.append((m, sgn, kk, dbc))
             worst[m % 2] = max(worst[m % 2], dbc)
     log("")
-    log(f"並び順の検査（f ± m·fs/{spw} のイメージ。**奇数 m は並び順の誤りでしか立たない**）:")
+    log(f"並び順の検査（f ± m·fs/{spw} のイメージ。**並び順の誤りは奇数 m に −20 dBc 級で立つ**。"
+        "偶数 m は ADC の 8 並列インタリーブ）:")
     for m, sgn, kk, dbc in sorted(rows, key=lambda r: -r[3])[:6]:
         log(f"  m={m:>2}{'+' if sgn > 0 else '-'}  bin {kk:>6}  {freqs[kk] / 1e6:>11.5f} MHz  {dbc:>8.2f} dBc"
             f"{'' if m % 2 == 0 else '   ← 奇数'}")
