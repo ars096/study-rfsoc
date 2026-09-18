@@ -194,14 +194,35 @@ def probe(sp):
     log(f"ID = {ident:08x}（期待 {ID_EXPECT:08x}） / PARAM = {prm:08x}"
         f"（log2 N = {prm & 0xFF} / log2 レーン = {prm >> 8 & 0xFF} / QW = {prm >> 16 & 0xFF} / IW = {prm >> 24}）")
     ok = ident == ID_EXPECT
-    fin0, fout0, t0 = sp.rd64(R_FIN_LO, R_FIN_HI), sp.rd64(R_FOUT_LO, R_FOUT_HI), time.time()
+    fin0, t0 = sp.rd64(R_FIN_LO, R_FIN_HI), time.time()
     time.sleep(1.0)
-    fin1, fout1, t1 = sp.rd64(R_FIN_LO, R_FIN_HI), sp.rd64(R_FOUT_LO, R_FOUT_HI), time.time()
+    fin1, t1 = sp.rd64(R_FIN_LO, R_FIN_HI), time.time()
     rate = (fin1 - fin0) / (t1 - t0)
     log(f"FIN  {fin0} → {fin1}（{rate:,.0f} フレーム/s、期待 {1 / T_FRAME:,.0f}。PS 側の時計で測るので ±0.1 % 程度）")
-    log(f"FIN − FOUT = {fin0 - fout0} → {fin1 - fout1}（**一定であること** = IP がフレームを落としていない）")
     ok &= abs(rate * T_FRAME - 1) < 5e-3
-    ok &= abs((fin1 - fout1) - (fin0 - fout0)) <= 1
+
+    # **FIN と FOUT は別々の AXI4-Lite 読み出しで、間に数十 µs（= 十数フレーム）空く。**
+    # 1 回ずつ読んで差を取ると、パイプラインの深さではなく「読み出しの間隔」を測ってしまう
+    # （2026-09-19 の初回: FIN − FOUT = −9 → −11。負になるのは FOUT を後で読んでいるため）。
+    # FIN → FOUT → FIN と挟んで読めば、FOUT を読んだ瞬間の FIN は前後の 2 つの間にある。
+    # 何度も挟んで区間を狭め、深さ L を [下限, 上限] で出す。**時間をおいて 2 回測り、区間が重なれば一定**。
+    def depth(n=300):
+        lo, hi = -10**9, 10**9
+        for _ in range(n):
+            a = sp.rd64(R_FIN_LO, R_FIN_HI)
+            o = sp.rd64(R_FOUT_LO, R_FOUT_HI)
+            b = sp.rd64(R_FIN_LO, R_FIN_HI)
+            lo, hi = max(lo, a - o), min(hi, b - o)
+        return lo, hi
+    d0 = depth()
+    time.sleep(5.0)
+    d1 = depth()
+    log(f"パイプラインの深さ FIN − FOUT（挟み読みの区間）: [{d0[0]}, {d0[1]}] → 5 s 後 [{d1[0]}, {d1[1]}] フレーム")
+    cons = d0[0] <= d0[1] and d1[0] <= d1[1]
+    same = cons and max(d0[0], d1[0]) <= min(d0[1], d1[1])
+    log(f"  区間が成り立つ（下限 ≦ 上限）: {'OK' if cons else '**NG**（カウンタの読み方か意味が想定と違う）'} / "
+        f"2 回が重なる = 一定: {'OK' if same else '**NG**（IP がフレームを落としたか、足した）'}")
+    ok &= same
     f = sp.flags()
     log(f"FLAGS = {f:02x}（{flag_text(f)}）")
     ok &= f == 0
@@ -210,6 +231,7 @@ def probe(sp):
     b = Spec(sp.m, slow=True).block(SPEC_BASE, 64)
     log(f"一括読み出しと 1 語ずつの読み出し: {'一致' if np.array_equal(a, b) else '**不一致**（--slow-read を使う）'}")
     ok &= np.array_equal(a, b)
+    log(f"判定 0: {'OK' if ok else '**NG**'}")
     return ok
 
 
@@ -238,11 +260,16 @@ def golden(sp, shift, tone):
     k1 = np.arange(NCH_OUT) % 512
     gmax = np.maximum(grp[k1], grp[(512 - k1) % 512])
     d = np.abs(np.sqrt(hw) - np.sqrt(ref))[good]
-    tol = (2.0 + 3e-5 * gmax)[good]
-    w = int(np.argmax(d / tol))
-    log(f"振幅の差（SHIFT 後の LSB）: 差/許容 の最大 {(d / tol)[w]:.2f}（差 {d[w]:.2f} LSB）/ 平均の差 {d.mean():.3f} LSB"
-        f"（{good.sum()} ch。sim では 0.74 / 0.46〜0.48。**IP の係数の量子化ぶん大きくてよいが、桁が違えば別物**）")
-    ok &= bool(np.all(d < 2 * tol))
+    # **FFT IP の内部の丸め**（unscaled でも各段のひねり係数の積を入力の LSB で丸める）は、後段の変換で
+    # √(残りの点数) 倍に増幅され、**入力の大きさに依らない絶対量**として出る。512 点の基数 2 を各段で丸める
+    # 模型（2026-09-19）では、|X| の差の平均 ≒ 8 LSB・最大（4096 ch 中）≒ 45〜65 LSB（SHIFT 0 のとき）。
+    # 初回の実機は 9.5 / 61 で、模型と合った。sim のモデルは倍精度の FFT で丸めないので、この項が無かった。
+    fl_mean, fl_max = 8.0 / 2 ** shift, 65.0 / 2 ** shift
+    tol_max = 2.0 * fl_max + 2.0 + 3e-5 * gmax[good]
+    w = int(np.argmax(d / tol_max))
+    log(f"振幅の差（SHIFT 後の LSB）: 平均 {d.mean():.2f}（IP の丸めの模型 {fl_mean:.2f}）/ "
+        f"最大 {d.max():.2f}（模型 {fl_max:.1f}）/ 差/許容 の最大 {(d / tol_max)[w]:.2f}（{good.sum()} ch）")
+    ok &= bool(d.mean() < 2.0 * fl_mean + 1.0) and bool(np.all(d < tol_max))
     xs = x.std()
     log(f"スナップショット: std {xs:.1f}（14 bit の LSB）/ max|x| {np.abs(x).max():.0f}")
     if tone is not None:
