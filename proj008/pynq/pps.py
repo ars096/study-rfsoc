@@ -577,49 +577,169 @@ def do_epoch_test(p, t_ovl, src_tile=2, ctl_tile=0, settle=2.0):
 
 
 def do_watch(p, t_ovl, seconds, period):
-    """PPS の残差を積んで周波数確度を出す。
+    """PPS の残差を積んで周波数確度を出し、**長時間の持続性を見張る。**
 
     **これが proj007 の本題のひとつ。** proj004 の CW + サブビン補間は
     53.3 µs のキャプチャが限界で 15 ppb だった。ここは時間を掛けるほど良くなる。
+
+    **proj008 の判定 6 はこれを数時間〜一晩まわす。** そのために足したもの:
+
+    - **`epoch` を毎回見る。** 判定 6 の本題は「原点が勝手に変わらないか」である。
+      変われば `stamp` が 0 に戻り、残差は巨大な数字になる。**それを「残差が悪い」と
+      読むと、原因がまるで違うほうへ行く。** 原点が変わったら**そう言って**基準を打ち直す
+    - **`flags` の遷移を記録する。** `alive` / `locked` / `comp_alive` が落ちた瞬間が
+      分かれば、あとで他の事象と突き合わせられる
+    - **壁時計を出す。** 一晩の記録は、他の出来事と時刻で突き合わせるためにある
+    - **最悪値を溜める。** 8640 行を目で追わないで済むように、末尾でまとめる
+
+    長時間走らせるときは `--period 60` にしてファイルへ落とす:
+
+        sudo -E $(which python3) pps.py --watch 43200 --period 60 --clkin 0 \
+             2>&1 | tee watch_$(date +%Y%m%d_%H%M).log
     """
     p.check_magic()
     d0 = wait_ready(p, t_ovl)
     if not (d0["flags"] & FLAG_ALIVE):
         raise RuntimeError("PPS が来ていない。--probe で先に確かめる")
-    log(f"基準: pps_count={d0['count']} stamp={d0['stamp']}")
+
+    def _stamp():
+        return time.strftime("%H:%M:%S")
+
+    # 残差の基準。**原点が変わったら打ち直す**（打ち直した事実は記録する）
+    base = dict(count=d0["count"], stamp=d0["stamp"], epoch=d0["epoch"],
+                t=time.time())
+    log(f"基準: pps_count={base['count']} stamp={base['stamp']} "
+        f"epoch={base['epoch']}  [{_stamp()}]")
     log("")
-    log("  経過[s]  受信数  interval[beat]   残差[beat]   確度[ppb]  glitch")
-    log("  " + "-" * 62)
+    log("  時刻      経過[s]  受信数  interval[beat]  残差[beat]  確度[ppb]  ep  glitch")
+    log("  " + "-" * 76)
+
     t0 = time.time()
     last = None
+    prev_flags = d0["flags"]
+    events = []                 # (壁時計, 種別, 説明)
+    worst = dict(resid=0, ppb=0.0)
+    seg_best = []               # エポック区間ごとの (秒数, 残差, ppb)
+    n_epoch_changes = 0
+    n_read_errors = 0
+    g0 = (d0.get("glitch_trig", 0), d0.get("glitch_comp", 0))
+
     while time.time() - t0 < seconds:
         time.sleep(period)
-        d = p.snapshot()
-        n = d["count"] - d0["count"]
+        try:
+            d = p.snapshot()
+        except EpochChanged as e:
+            # **読んでいる最中に変わった。**これ自体が判定 6 の観測対象なので、
+            # 例外で落とさずに事象として記録して続ける
+            n_read_errors += 1
+            events.append((_stamp(), "epoch", f"読み出し中に原点が変わった: {e}"))
+            log(f"  [{_stamp()}] **読み出し中に原点が変わった。** 基準を打ち直す")
+            time.sleep(2.5)
+            try:
+                d = p.snapshot()
+            except EpochChanged:
+                log(f"  [{_stamp()}] **連続して変わっている。** MMCM を疑う")
+                continue
+            base = dict(count=d["count"], stamp=d["stamp"], epoch=d["epoch"],
+                        t=time.time())
+            n_epoch_changes += 1
+            continue
+
+        # ---- flags の遷移 ----
+        if d["flags"] != prev_flags:
+            gone = [n for b, n in ((FLAG_ALIVE, "alive"), (FLAG_CALIVE, "comp_alive"),
+                                   (FLAG_LOCKED, "locked"), (FLAG_ADCRSTN, "adc_rstn"))
+                    if (prev_flags & b) and not (d["flags"] & b)]
+            came = [n for b, n in ((FLAG_ALIVE, "alive"), (FLAG_CALIVE, "comp_alive"),
+                                   (FLAG_LOCKED, "locked"), (FLAG_ADCRSTN, "adc_rstn"))
+                    if not (prev_flags & b) and (d["flags"] & b)]
+            if gone or came:
+                msg = ("落ちた: " + ",".join(gone) if gone else "") + \
+                      ("  戻った: " + ",".join(came) if came else "")
+                events.append((_stamp(), "flags", msg))
+                log(f"  [{_stamp()}] **flags が変わった** {fmt_flags(d['flags'])}  {msg}")
+            prev_flags = d["flags"]
+
+        # ---- 原点が変わっていないか（**判定 6 の本題**）----
+        if d["epoch"] != base["epoch"]:
+            n_epoch_changes += 1
+            events.append((_stamp(), "epoch",
+                           f"{base['epoch']} → {d['epoch']}（{time.time() - base['t']:.0f} 秒もった）"))
+            log(f"  [{_stamp()}] **時刻の原点が変わった（epoch {base['epoch']} "
+                f"→ {d['epoch']}）。**")
+            log(f"       それまで {time.time() - base['t']:.0f} 秒もっていた。"
+                "**この時点より前の絶対時刻は無効。** 基準を打ち直す")
+            if last:
+                seg_best.append(last[:3])
+            base = dict(count=d["count"], stamp=d["stamp"], epoch=d["epoch"],
+                        t=time.time())
+            last = None
+            continue
+
+        n = d["count"] - base["count"]
         if n <= 0:
             continue
         # **スタンプの差で測る。** 秒数はホスト時計ではなく PPS の数で数える
-        # （ホスト時計の誤差が混ざると、測っているものが変わってしまう）
-        db = d["stamp"] - d0["stamp"]
+        db = d["stamp"] - base["stamp"]
         resid = db - n * BEATS_PER_SEC
         ppb = resid / (n * BEATS_PER_SEC) * 1e9
-        log(f"  {n:7d}  {d['count']:6d}  {d['interval']:14d}  {resid:11d}  "
-            f"{ppb:10.4f}  {d['glitch_trig']}/{d['glitch_comp']}")
+        if abs(resid) > abs(worst["resid"]):
+            worst = dict(resid=resid, ppb=ppb)
+        gt = d["glitch_trig"] - g0[0]
+        gc = d["glitch_comp"] - g0[1]
+        log(f"  {_stamp()}  {n:7d}  {d['count']:6d}  {d['interval']:14d}  "
+            f"{resid:10d}  {ppb:9.4f}  {d['epoch']:2d}  {gt}/{gc}")
         last = (n, resid, ppb, d)
+
     log("")
+    if last:
+        seg_best.append(last[:3])
+
+    # ---- まとめ（**8640 行を目で追わないで済むように**）----
+    log("=" * 60)
+    log(f"**まとめ**  {seconds / 3600:.2f} 時間ぶん  [{_stamp()} まで]")
+    log("=" * 60)
+    log(f"  時刻の原点が変わった回数 : **{n_epoch_changes}**"
+        + ("   ← **0 なら判定 6 は通っている**" if n_epoch_changes == 0 else ""))
+    log(f"  読み出し中の原点変化     : {n_read_errors}")
+    log(f"  最悪の残差               : {worst['resid']} ビート "
+        f"= {worst['resid'] * BEAT_NS:.1f} ns（{worst['ppb']:+.4f} ppb）")
+    if last:
+        n, resid, ppb, d = last
+        log(f"  最終区間                 : {n} 秒 / 残差 {resid} ビート "
+            f"= {resid * BEAT_NS:.1f} ns / {ppb:+.4f} ppb")
+        log(f"  グリッチ（累積）         : trig {d['glitch_trig'] - g0[0]} "
+            f"/ comp {d['glitch_comp'] - g0[1]}")
+    if len(seg_best) > 1:
+        log(f"  区間の数                 : {len(seg_best)}（原点が変わるたびに切れる）")
+    log("")
+    if events:
+        log("**事象（壁時計つき。他の出来事と突き合わせるためにある）**")
+        for ts, kind, msg in events:
+            log(f"  [{ts}] {kind}: {msg}")
+        log("")
+    else:
+        log("**事象なし。** 原点も flags も一度も動かなかった")
+        log("")
+
     if last is None:
         log("**PPS が 1 発も増えなかった。** 配線か極性を疑う")
         return
     n, resid, ppb, d = last
-    log(f"確定: {n} 秒ぶん / 残差 {resid} ビート = {resid * BEAT_NS:.1f} ns")
-    log(f"      確度 {ppb:+.4f} ppb  （分解能 = 1 ビート / {n} 秒 "
-        f"= {BEAT_NS / n:.4f} ppb）")
-    log("")
+
     log("**読み方。** 45m の 1PPS と 10 MHz が同じ標準から出ているなら、")
     log("残差は積んでも増えないはず。**フラットであること自体が検証**になる。")
     log("ドリフトするなら、どちらかが思っているものと違う")
     log("（proj004: 外部基準を挿さずに CLKin0 を選ぶと +90.68 ppm ずれた。")
     log(" そのとき PLLLockStatus は 2 のまま、DMA も波形も正常だった）。")
+    log("")
+    log("**判定 6（proj008）の読み方。**")
+    log("  原点が変わった回数が **0** なら、絶対時刻は最初の錨のまま通っている。")
+    log("  1 回でもあれば、**その時点で絶対時刻は無効になっている** —— 大きさの")
+    log("  問題ではなく、**秒単位でずれる**。timebase.py はこれを例外で返す。")
+    log("  **要求 100 µs に対する余裕は、ホールドオーバの質で決まる**")
+    log(f"  （外部 10 MHz で {abs(ppb):.4f} ppb なら "
+        f"{abs(ppb) * 86400 / 1e9 * 1e6:.1f} µs/日）。")
     if d["glitch_trig"] or d["glitch_comp"]:
         log("")
         log(f"**グリッチがある（trig {d['glitch_trig']} / comp {d['glitch_comp']}）。**")
