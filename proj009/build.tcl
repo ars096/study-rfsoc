@@ -490,7 +490,8 @@ foreach {k w kind} $want {
 if {$ng > 0} {
     puts ""
     puts "ERROR: RFDC の設定が $ng 件反映されていない。"
-    puts "  上の「CONFIG の設定に失敗した項目」に有効値が出ている。"
+    puts "  理由と有効値はログの ERROR: [IP_Flow 19-34xx] の行にある（catch で拾えるのは"
+    puts "  「Common 17-39 failed due to earlier errors」だけ）。"
     puts "  全 CONFIG と現在値は $outdir/rfdc_params.rpt。"
     puts "  fs / refclk / VCO の関係は build.tcl 冒頭の計算を見直すこと"
     exit 1
