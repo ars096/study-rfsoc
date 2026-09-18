@@ -311,7 +311,14 @@ def main():
                         "タイル間の差がエポックごとに変わるかはここでしか分からない")
     p.add_argument("--src-tile", type=int, default=2,
                    help="MMCM の源のタイル（build.tcl の wiz_src_tile）。"
-                        "--epochs > 1 のとき、これを止めて新しいエポックを作る")
+                        "--epoch-mode src のとき、これを止めて新しいエポックを作る")
+    p.add_argument("--epoch-mode", default="both", choices=("src", "both", "overlay"),
+                   help="**エポックの作り方。測っている量がこれで変わる。** "
+                        "src = 源のタイルだけ止める（proj007 の --epoch-test と同じ）。"
+                        "**止めなかったタイルだけが動く非対称な操作**なので、"
+                        "タイル間差を測る用途には使えない（2026-09-18 に踏んだ）。 "
+                        "both = 両方のタイルを止めて起動し直す（既定）。 "
+                        "overlay = Overlay を焼き直す。**実運用のエポック変化に最も近い**")
     p.add_argument("--save", default=None, help="1 回目の波形を .npy で残す")
     args = p.parse_args()
 
@@ -412,24 +419,43 @@ def main():
         if e == args.epochs - 1:
             break
 
-        # 次のエポックを作る
+        # ---- 次のエポックを作る ----
+        #
+        # **どう作るかで、測っている量が変わる。**
+        # 2026-09-18、`src`（源のタイルだけ止める）で測ったところ、
+        # **止めなかった Tile 224 が 4 ビート動き、止めた Tile 226 は 1 ビート未満**
+        # だった。エポックの作り方が非対称なので、タイル間差の変動がそのまま
+        # 「片方だけ触った」ことの反映になる。**タイル間差を測る用途には使えない。**
         log("")
-        log(f"---- adc_tiles[{args.src_tile}] を止めて新しいエポックを作る ----")
-        tile = ol.rfdc.adc_tiles[args.src_tile]
-        tile.ShutDown()
-        time.sleep(0.5)
-        if pps.flags() & pps_mod.FLAG_LOCKED:
-            log("  **停止中も locked が立っている。** --src-tile が違う")
-            break
-        tile.StartUp()
-        t0 = time.time()
-        while not (pps.flags() & pps_mod.FLAG_LOCKED):
-            if time.time() - t0 > 10.0:
-                log("  **locked が戻らない。** ここで止める")
+        if args.epoch_mode == "overlay":
+            log("---- Overlay を焼き直して新しいエポックを作る ----")
+            ol = Overlay(args.bitfile)
+            blocks = ac.start_tiles(ol.rfdc, args.fs * 1e6, args.zone)
+            pps = pps_mod.PPS(ol)
+            pps.check_magic()
+            pps.set_pol(args.pol)
+            d_ready = pps_mod.wait_ready(pps, time.time(), label="Overlay 焼き直し")
+        else:
+            targets = ([args.src_tile] if args.epoch_mode == "src"
+                       else sorted(set(t for t, _ in ac.CHANS)))
+            log(f"---- adc_tiles{targets} を止めて新しいエポックを作る "
+                f"（--epoch-mode {args.epoch_mode}）----")
+            for t in targets:
+                ol.rfdc.adc_tiles[t].ShutDown()
+            time.sleep(0.5)
+            if pps.flags() & pps_mod.FLAG_LOCKED:
+                log("  **停止中も locked が立っている。** --src-tile が違う")
                 break
-            time.sleep(0.05)
-        blocks = ac.start_tiles(ol.rfdc, args.fs * 1e6, args.zone)
-        d_ready = pps_mod.wait_ready(pps, time.time(), label="タイル再起動")
+            for t in targets:
+                ol.rfdc.adc_tiles[t].StartUp()
+            t0 = time.time()
+            while not (pps.flags() & pps_mod.FLAG_LOCKED):
+                if time.time() - t0 > 10.0:
+                    log("  **locked が戻らない。** ここで止める")
+                    break
+                time.sleep(0.05)
+            blocks = ac.start_tiles(ol.rfdc, args.fs * 1e6, args.zone)
+            d_ready = pps_mod.wait_ready(pps, time.time(), label="タイル再起動")
         epoch0 = d_ready["epoch"]
         log("")
 
@@ -582,6 +608,35 @@ def main():
             log(f"  {ep:>5} " + "".join(f"{x:>22}" for x in cells) + f"  {cx_s}")
         log("")
         log("  **N は整数ビート。** エポック間で動くのはここだけのはず（proj007 の実測）。")
+        log("")
+        # **タイルごとの変動を別々に出す。**
+        # タイル間差だけを見ていると「片方のタイルだけが動いている」ことに気づけない。
+        # 2026-09-18、`--epoch-mode src` で止めなかったタイルだけが 4 ビート動いた。
+        log("  ---- タイルごとのエポック間変動（**非対称なら測定方法を疑う**）----")
+        per_tile_means = {}
+        for t, cs in sorted(tiles.items()):
+            ms = [float(np.mean([beat_summary(arrs[c])[0] for c in cs]))
+                  for ep, arrs in per_epoch]
+            per_tile_means[t] = ms
+            a = np.asarray(ms)
+            sd_t = float(a.std(ddof=1)) if a.size >= 2 else 0.0
+            span_t = float(a.max() - a.min()) if a.size else 0.0
+            log(f"    Tile {t}: σ {sd_t:7.3f} サンプル / 幅 {span_t:7.3f} サンプル "
+                f"({span_t / ac.SPW:.2f} ビート)")
+        if len(per_tile_means) >= 2:
+            spans = {t: (max(m) - min(m)) for t, m in per_tile_means.items()}
+            big = max(spans, key=lambda k: spans[k])
+            small = min(spans, key=lambda k: spans[k])
+            if spans[big] > 3.0 * max(spans[small], 1e-9):
+                log("")
+                log(f"    → **Tile {big} だけが Tile {small} の "
+                    f"{spans[big] / max(spans[small], 1e-9):.1f} 倍動いている。**")
+                log("      タイルが対称に扱われていない。**エポックの作り方を疑う。**")
+                if args.epoch_mode == "src":
+                    log(f"      `--epoch-mode src` は adc_tiles[{args.src_tile}] しか止めない。")
+                    log("      **`--epoch-mode both` か `overlay` で測り直すこと。**")
+                    log("      この状態のタイル間差は、装置の性質ではなく")
+                    log("      **操作の非対称性**を測っている")
         log("  **タイル間差は対にして取っている**ので、ビート量子化とディザは消えている。")
         log("")
         if len(cx_means) >= 2:
