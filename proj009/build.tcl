@@ -369,16 +369,20 @@ if {$probe} {
         puts [format "  %-34s = %s" $k $v]
     }
     # 1) 有効値の一覧を引き出す（不正値を投げる）
+    # **有効値は catch で拾えるメッセージには入らない。**拾えるのは最後の
+    # 「Common 17-39 'set_property' failed due to earlier errors」だけで、
+    # "Valid values are - ..." はその前に Vivado がログへ直接出す（2026-09-18 に確認）。
+    # したがって一覧はログ（直上の ERROR: [IP_Flow 19-3461] の行）を見る。
     foreach {k bogus} [list CONFIG.ADC_Data_Width${S} 99 CONFIG.ADC${t}_Outclk_Freq 1.234] {
         set ::cfg_fail {}
         cfg_apply rfdc [list $k $bogus] 0
-        set why "（エラーにならなかった）"
-        if {[llength $::cfg_fail] > 0} { set why [lindex [lindex $::cfg_fail 0] 2] }
-        puts "  $k の有効値: $why"
+        puts "  ↑ $k の有効値は直上の IP_Flow 19-3461 の行"
     }
     # 2) spw の候補を 1 つずつ試し、Fabric_Freq を読み返す
     puts ""
-    puts "  spw  可否  Data_Width  Fabric_Freq [MHz]  判定"
+    # **"..." の中の [ ] はコマンド置換になる。**単位の角括弧を書かないこと
+    # （2026-09-18、"[MHz]" と書いて invalid command name "MHz" で落ちた）。
+    puts "  spw  可否  Data_Width  Fabric_Freq/MHz  判定"
     foreach cand {16 12 10 8 6 4} {
         set ::cfg_fail {}
         cfg_apply rfdc [list CONFIG.ADC_Data_Width${S} $cand] 0
