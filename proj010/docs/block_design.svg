@@ -1,0 +1,244 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900" width="1440" height="900"
+     font-family="'Hiragino Sans','Noto Sans CJK JP','Yu Gothic',sans-serif" xmlns:c2pa="http://c2pa.org/manifest"><metadata><c2pa:manifest>AAAWgmp1bWIAAAAeanVtZGMycGEAEQAQgAAAqgA4m3EDYzJwYQAAABZcanVtYgAAAEdqdW1kYzJtYQARABCAAACqADibcQN1cm46YzJwYTpmOTZiMDY1Ny1hYTZlLTRlMzUtOWYyYy01OWM1YzRmNWVjNTUAAAADl2p1bWIAAAApanVtZGMyYXMAEQAQgAAAqgA4m3EDYzJwYS5hc3NlcnRpb25zAAAAALxqdW1iAAAARGp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuaW5ncmVkaWVudC52MwAAAAAYYzJzaLBqmm3IlwcdDBy+wn5RnmwAAABwY2JvcqNpZGM6Zm9ybWF0bWltYWdlL3N2Zyt4bWxqaW5zdGFuY2VJRHgseG1wOmlpZDpmMWUxZWZjZC1mZWExLTQ1MWUtOWM1Zi1jMGY0MWQ4M2Y3OWVscmVsYXRpb25zaGlwaHBhcmVudE9mAAAB4mp1bWIAAABBanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5hY3Rpb25zLnYyAAAAABhjMnNoi4JZ/zUY9UlVxLZdFbmrBwAAAZljYm9yomdhY3Rpb25zgqJmYWN0aW9ua2MycGEub3BlbmVkanBhcmFtZXRlcnOha2luZ3JlZGllbnRzgaJjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFggLbTJ/+bQNl0adcEjyfXuJoiTYBFwTN8pFSuJALHaVOqkZmFjdGlvbngdY29tLmFudGhyb3BpYy5jbGF1ZGUucHJvdmlkZWRqcGFyYW1ldGVyc6F4H2NvbS5hbnRocm9waWMub3JpZ2luLWNvbmZpZGVuY2VndW5rbm93bmtkZXNjcmlwdGlvbnhmQ2xhdWRlIHByb3ZpZGVkIHRoaXMgZmlsZSBhdCB0aGUgcmVxdWVzdCBvZiBhIHVzZXIgYW5kIG1heSBoYXZlIGNyZWF0ZWQgb3IgbW9kaWZpZWQgdGhlIGZpbGUgY29udGVudHMubXNvZnR3YXJlQWdlbnShZG5hbWVmQ2xhdWRlcmFsbEFjdGlvbnNJbmNsdWRlZPUAAADIanVtYgAAAEBqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmhhc2guZGF0YQAAAAAYYzJzaIqECouzxlne+Fo9nEM5m9AAAACAY2JvcqVjYWxnZnNoYTI1NmNwYWRNAAAAAAAAAAAAAAAAAGRoYXNoWCCEjyySq7rInxjh/kgzNAK2NrD1fRhoeghHeEKdZ/xSGGRuYW1lbmp1bWJmIG1hbmlmZXN0amV4Y2x1c2lvbnOBomVzdGFydBjlZmxlbmd0aBkeBAAAAj5qdW1iAAAAJ2p1bWRjMmNsABEAEIAAAKoAOJtxA2MycGEuY2xhaW0udjIAAAACD2Nib3KlY2FsZ2ZzaGEyNTZpc2lnbmF0dXJleE1zZWxmI2p1bWJmPS9jMnBhL3VybjpjMnBhOmY5NmIwNjU3LWFhNmUtNGUzNS05ZjJjLTU5YzVjNGY1ZWM1NS9jMnBhLnNpZ25hdHVyZWppbnN0YW5jZUlEeCx4bXA6aWlkOmYwYzczMjIyLWZiYmMtNDA5MS1iMmExLTM1ZTYwNGJlZTk1ZHJjcmVhdGVkX2Fzc2VydGlvbnODomN1cmx4LXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaW5ncmVkaWVudC52M2RoYXNoWCAttMn/5tA2XRp1wSPJ9e4miJNgEXBM3ykVK4kAsdpU6qJjdXJseCpzZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmFjdGlvbnMudjJkaGFzaFggrFwejc6ZOZBTW4TkatV9S/qgoZO4+j/1s5I2jnOgAZSiY3VybHgpc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5oYXNoLmRhdGFkaGFzaFggKy/9FImKRhs5I8tmF6+HVYWrba+G0M37JPpeW3u8ZsV0Y2xhaW1fZ2VuZXJhdG9yX2luZm+jZG5hbWVvQW50aHJvcGljIEZpbGVzZ3ZlcnNpb25lMS4wLjBrc3BlY1ZlcnNpb25lMi40LjAAABA4anVtYgAAAChqdW1kYzJjcwARABCAAACqADibcQNjMnBhLnNpZ25hdHVyZQAAABAIY2JvctKEWQISogEmGCFZAgowggIGMIIBjaADAgECAhRA5aAK7sI50L64g/oGQgU9Z1UTADAKBggqhkjOPQQDAzBJMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEuMCwGA1UEAxMlQW50aHJvcGljIENvbnRlbnQgQ3JlZGVudGlhbHMgUm9vdCBDQTAeFw0yNjA4MDcxODQzNTZaFw0yODA4MDYxOTQzNTZaMEQxFzAVBgNVBAoTDkFudGhyb3BpYywgUEJDMSkwJwYDVQQDEyBBbnRocm9waWMgQ2xhdWRlIENvbnRlbnQgU2lnbmluZzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJh6CmvLUBgFFNU0vUKlOVtE6djd17L5SuwX0LemFisBM3dkd/3cyjxFA3Qo5S46fX0/ihY0VZ7mfb9KF703t5OjWDBWMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUEDjAMBgorBgEEAYPoXgIBMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAUzlHiBIFOZFsj+OPEz5o+nMHXXMIwCgYIKoZIzj0EAwMDZwAwZAIwMXMdFJ4BetLLVY7ORuE9noqbbAZOZn/aArXyTwFAZfKrPzxF2vPoJNf1+UCdg1XGAjBwX1zd9WGqYkqmL5SFqw1QySjr1zJfpJM9+1rdDwSPLMOPOjKuiXjoU/pUUeG9RwmhY3BhZFkNngAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPZYQKUZOHloIG27ys/WUjRG1nrQGcZVr4LVkvOpwlN/CsjJfrsZX9zY9tfuR9bNYhEWfJgSTizxy+mvWpKfSsayGMA=</c2pa:manifest></metadata>
+  <!-- SPDX-License-Identifier: BSD-3-Clause -->
+  <!-- proj010 のブロックデザイン（build.tcl が組む配線）。手描き。build.tcl を変えたらここも直す -->
+  <defs>
+    <marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fb5"/></marker>
+    <marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d9822b"/></marker>
+    <marker id="aG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2e8b57"/></marker>
+    <marker id="aK" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
+    <style>
+      .blk  { fill:#f8f8f8; stroke:#333; stroke-width:1.5; }
+      .sub  { fill:#ffffff; stroke:#2e8b57; stroke-width:1.2; }
+      .ext  { fill:#eeeeee; stroke:#777; stroke-width:1.2; stroke-dasharray:4 3; }
+      .t    { font-size:14px; font-weight:bold; fill:#111; }
+      .s    { font-size:11.5px; fill:#333; }
+      .xs   { font-size:10.5px; fill:#555; }
+      .wB   { stroke:#2f6fb5; stroke-width:2.2; fill:none; marker-end:url(#aB); }
+      .wO   { stroke:#d9822b; stroke-width:2.6; fill:none; marker-end:url(#aO); }
+      .wG   { stroke:#2e8b57; stroke-width:2.6; fill:none; marker-end:url(#aG); }
+      .wGt  { stroke:#2e8b57; stroke-width:1.4; fill:none; marker-end:url(#aG); }
+      .wK   { stroke:#555; stroke-width:1.6; fill:none; marker-end:url(#aK); }
+      .wKd  { stroke:#555; stroke-width:1.2; fill:none; stroke-dasharray:4 3; marker-end:url(#aK); }
+      .lb   { font-size:11px; fill:#333; }
+      .lbB  { font-size:11px; fill:#2f6fb5; }
+      .lbO  { font-size:11px; fill:#b8661a; }
+      .lbG  { font-size:11px; fill:#236b43; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1440" height="900" fill="#ffffff"/>
+  <text x="20" y="28" style="font-size:17px;font-weight:bold;fill:#111">proj010 ブロックデザイン（build.tcl の配線）</text>
+  <text x="20" y="48" class="s">ADC_B 1 本 → ギアボックス（proj009 と同一）→ spec_core（8192 点 FFT → 電力 → 積分）→ AXI4-Lite → PS。DMA・HP ポート・pl_clk1 は使わない</text>
+
+  <!-- ================= PS ================= -->
+  <rect class="blk" x="40" y="70" width="240" height="130" style="stroke:#2f6fb5"/>
+  <text x="52" y="92" class="t">zynq_ultra_ps_e_0</text>
+  <text x="52" y="110" class="s">PS（PYNQ v3.1.1 / Linux）</text>
+  <text x="272" y="136" class="xs" text-anchor="end">M_AXI_HPM0_FPD ▶</text>
+  <text x="272" y="162" class="xs" text-anchor="end">pl_clk0 100 MHz ▶</text>
+  <text x="272" y="186" class="xs" text-anchor="end">pl_resetn0 ▶</text>
+
+  <!-- ================= SmartConnect ================= -->
+  <rect class="blk" x="420" y="70" width="210" height="130" style="stroke:#2f6fb5"/>
+  <text x="432" y="92" class="t">smc_ctrl</text>
+  <text x="432" y="110" class="s">SmartConnect（NUM_MI 2）</text>
+  <text x="432" y="128" class="s">NUM_CLKS 2：</text>
+  <text x="432" y="145" class="xs">aclk = pl_clk0 / aclk1 = 256 MHz</text>
+  <text x="432" y="162" class="xs">乗り換えを内部に持つ</text>
+  <text x="436" y="190" class="xs">◀ S00</text>
+  <text x="624" y="136" class="xs" text-anchor="end">M00 ▶</text>
+  <text x="624" y="186" class="xs" text-anchor="end">M01 ▶</text>
+
+  <path class="wB" d="M280,131 L418,131"/>
+  <text x="290" y="124" class="lbB">AXI（制御）</text>
+
+  <!-- M00 → rfdc/s_axi -->
+  <path class="wB" d="M630,131 L660,131 L660,262 L330,262 L330,318"/>
+  <text x="668" y="228" class="lbB">M00 → rfdc/s_axi（pl_clk0）</text>
+
+  <!-- M01 → spec_core/s_axi -->
+  <path class="wG" d="M630,181 L1400,181 L1400,288"/>
+  <text x="720" y="173" class="lbG">M01 → spec_core_0/s_axi：AXI4-Lite・64 KiB の窓・aclk1 = 256 MHz（DSP ドメイン）</text>
+
+  <!-- ================= 外部ポート ================= -->
+  <rect class="ext" x="20" y="340" width="150" height="44"/>
+  <text x="30" y="358" class="s">ADC_B（SMA）</text>
+  <text x="30" y="375" class="xs">IF 2048〜4096 MHz</text>
+  <rect class="ext" x="20" y="400" width="150" height="44"/>
+  <text x="30" y="418" class="s">LMX2594</text>
+  <text x="30" y="435" class="xs">491.52 MHz（10 MHz 基準）</text>
+  <rect class="ext" x="20" y="460" width="150" height="44"/>
+  <text x="30" y="478" class="s">SYSREF（LMK04828）</text>
+  <text x="30" y="495" class="xs">7.68 MHz</text>
+
+  <path class="wK" d="M170,362 L208,362"/>
+  <path class="wK" d="M170,422 L208,422"/>
+  <path class="wK" d="M170,482 L208,482"/>
+
+  <!-- ================= RFDC ================= -->
+  <rect class="blk" x="210" y="320" width="180" height="210"/>
+  <text x="222" y="342" class="t">rfdc</text>
+  <text x="222" y="360" class="s">RF Data Converter</text>
+  <text x="222" y="382" class="xs">Tile 226 / slice 0</text>
+  <text x="222" y="398" class="xs">fs 4096 MSPS（R1 N25 M3）</text>
+  <text x="222" y="414" class="xs">ゾーン 2（PYNQ から設定）</text>
+  <text x="222" y="430" class="xs">Real・デシメーション 1</text>
+  <text x="222" y="446" class="xs">Data_Width 12</text>
+  <text x="222" y="474" class="xs">vin2_01 / adc2_clk / sysref_in</text>
+  <text x="222" y="490" class="xs">＝専用ピン（XDC 不要）</text>
+  <text x="384" y="382" class="xs" text-anchor="end">m20_axis ▶</text>
+  <text x="300" y="524" class="xs" text-anchor="middle">clk_adc2 ▼</text>
+
+  <!-- ================= ギアボックス ================= -->
+  <rect x="440" y="310" width="480" height="140" fill="none" stroke="#999" stroke-dasharray="6 4" rx="6"/>
+  <text x="450" y="304" class="s">ギアボックス（proj009 と同一）：12 サンプル / 341 MHz → 16 サンプル / 256 MHz</text>
+
+  <path class="wO" d="M390,376 L458,376"/>
+  <text x="394" y="400" class="lbO">192 bit</text>
+  <text x="394" y="414" class="lbO">341.33 MHz</text>
+
+  <rect class="blk" x="460" y="340" width="120" height="76" style="stroke:#d9822b"/>
+  <text x="472" y="362" class="t">gb_up_0</text>
+  <text x="472" y="380" class="xs">dwidth_converter</text>
+  <text x="472" y="396" class="xs">12 → 48 smp（×4）</text>
+
+  <path class="wO" d="M580,376 L618,376"/>
+  <text x="586" y="368" class="lbO">768</text>
+
+  <rect class="blk" x="620" y="340" width="140" height="76"/>
+  <line x1="620" y1="340" x2="620" y2="416" stroke="#d9822b" stroke-width="5"/>
+  <line x1="760" y1="340" x2="760" y2="416" stroke="#2e8b57" stroke-width="5"/>
+  <text x="632" y="362" class="t">gb_fifo_0</text>
+  <text x="632" y="380" class="xs">非同期 FIFO</text>
+  <text x="632" y="396" class="xs">768 bit × 32</text>
+  <text x="632" y="440" class="lbO">341 MHz</text>
+  <text x="700" y="440" class="lbG">→ 256 MHz</text>
+
+  <path class="wG" d="M760,376 L788,376"/>
+
+  <rect class="blk" x="790" y="340" width="120" height="76" style="stroke:#2e8b57"/>
+  <text x="802" y="362" class="t">gb_dn_0</text>
+  <text x="802" y="380" class="xs">dwidth_converter</text>
+  <text x="802" y="396" class="xs">48 → 16 smp（÷3）</text>
+
+  <path class="wG" d="M910,376 L978,376"/>
+  <text x="916" y="368" class="lbG">256 bit</text>
+  <text x="916" y="398" class="lbG">256 MHz</text>
+  <text x="916" y="412" class="lbG">tready = 1</text>
+
+  <!-- ================= spec_core ================= -->
+  <rect class="blk" x="980" y="290" width="440" height="430" style="stroke:#2e8b57;stroke-width:2.2"/>
+  <text x="992" y="312" class="t">spec_core_0（自作 RTL・module reference）</text>
+  <text x="992" y="329" class="xs">全体が 256 MHz。16 サンプル/クロック、1 フレーム = 512 クロック = 2 µs</text>
+  
+  <text x="1394" y="306" class="xs" text-anchor="end">s_axi</text>
+
+  <!-- 列 A：データ経路 -->
+  <path class="wGt" d="M1034,376 L1034,368"/>
+  <rect class="sub" x="1000" y="350" width="180" height="42"/>
+  <text x="1008" y="367" class="s">lane_fft × 16</text>
+  <text x="1008" y="384" class="xs">FFT IP 512 点・unscaled</text>
+  <path class="wGt" d="M1090,392 L1090,408"/>
+
+  <rect class="sub" x="1000" y="410" width="180" height="42"/>
+  <text x="1008" y="427" class="s">tw_rom ＋ cmul × 16</text>
+  <text x="1008" y="444" class="xs">ひねり係数 W8192^(p·k1)</text>
+  <path class="wGt" d="M1090,452 L1090,468"/>
+
+  <rect class="sub" x="1000" y="470" width="180" height="42"/>
+  <text x="1008" y="487" class="s">dft16</text>
+  <text x="1008" y="504" class="xs">レーンをまたぐ 16 点 → k2 = 0..7</text>
+  <path class="wGt" d="M1090,512 L1090,528"/>
+
+  <rect class="sub" x="1000" y="530" width="180" height="42"/>
+  <text x="1008" y="547" class="s">SHIFT → 18 bit 飽和</text>
+  <text x="1008" y="564" class="xs">丸めはここだけ・飽和を数える</text>
+  <path class="wGt" d="M1090,572 L1090,588"/>
+
+  <rect class="sub" x="1000" y="590" width="180" height="42"/>
+  <text x="1008" y="607" class="s">電力 re² ＋ im²</text>
+  <text x="1008" y="624" class="xs">37 bit・8 ch / クロック</text>
+  <path class="wGt" d="M1090,632 L1090,648"/>
+
+  <rect class="sub" x="1000" y="650" width="180" height="50"/>
+  <text x="1008" y="667" class="s">積分 64 bit × 二面</text>
+  <text x="1008" y="683" class="xs">4096 ch・デッドタイム 0</text>
+  <text x="1008" y="696" class="xs">BRAM36 × 16</text>
+
+  <!-- 入力から列 A と スナップショットへ -->
+  <path class="wGt" d="M980,376 L998,376" style="marker-end:none"/>
+  <path class="wGt" d="M990,376 L990,340 L1290,340 L1290,352"/>
+
+  <!-- 列 B：スナップショット・レジスタ・制御 -->
+  <rect class="sub" x="1210" y="354" width="180" height="42"/>
+  <text x="1218" y="371" class="s">スナップショット × 二面</text>
+  <text x="1218" y="388" class="xs">ダンプ先頭フレームの生サンプル</text>
+  <path class="wGt" d="M1290,396 L1290,418"/>
+
+  <rect class="sub" x="1210" y="420" width="180" height="96"/>
+  <text x="1218" y="438" class="s">レジスタ・読み出し窓</text>
+  <text x="1218" y="456" class="xs">0x0000 レジスタ</text>
+  <text x="1218" y="471" class="xs">0x4000 スナップショット</text>
+  <text x="1218" y="486" class="xs">0x8000 スペクトル（凍った面）</text>
+  <text x="1218" y="504" class="xs">SEQ で seqlock</text>
+
+  <!-- 積分 → 読み出し窓 -->
+  <path class="wGt" d="M1180,675 L1196,675 L1196,468 L1208,468"/>
+  <!-- 読み出し窓 → s_axi -->
+  <path class="wGt" d="M1390,450 L1400,450 L1400,292" style="marker-end:none"/>
+
+  <rect class="sub" x="1210" y="570" width="180" height="90" style="stroke-dasharray:4 3"/>
+  <text x="1218" y="588" class="s">フレーム番号と予約</text>
+  <text x="1218" y="606" class="xs">fin / fout（入力側・出力側）</text>
+  <text x="1218" y="621" class="xs">RUN → 開始フレーム F0</text>
+  <text x="1218" y="636" class="xs">N_ACC / N_DUMP / 面の切替を</text>
+  <text x="1218" y="651" class="xs">タグとして各段へ運ぶ</text>
+  <path class="wKd" d="M1300,516 L1300,568"/>
+  <text x="1306" y="548" class="xs">RUN・N_ACC・SHIFT</text>
+  <path class="wKd" d="M1210,640 L1184,640"/>
+
+  <!-- ================= クロックとリセット ================= -->
+  <path class="wK" d="M300,530 L300,588"/>
+  <text x="306" y="566" class="lb">256 MHz（fs/16）</text>
+
+  <rect class="blk" x="210" y="590" width="200" height="130"/>
+  <text x="222" y="612" class="t">clk_wiz_adc（MMCM）</text>
+  <text x="222" y="630" class="xs">入力 256 MHz（clk_adc2）</text>
+  <text x="222" y="652" class="lbO">clk_out1 341.333 MHz → ADC</text>
+  <text x="222" y="670" class="lbG">clk_out2 256.000 MHz → DSP</text>
+  <text x="222" y="688" class="xs">4 : 3 は同じ MMCM から出るので厳密</text>
+  <text x="404" y="712" class="xs" text-anchor="end">locked ▶</text>
+
+  <rect class="blk" x="440" y="600" width="150" height="56" style="stroke:#2f6fb5"/>
+  <text x="450" y="622" class="t">rst_ctrl</text>
+  <text x="450" y="642" class="xs">pl_clk0：smc・rfdc 制御</text>
+
+  <rect class="blk" x="605" y="600" width="160" height="56" style="stroke:#d9822b"/>
+  <text x="615" y="622" class="t">rst_adc</text>
+  <text x="615" y="642" class="xs">rfdc AXIS・gb_up・FIFO 書込</text>
+
+  <rect class="blk" x="780" y="600" width="165" height="56" style="stroke:#2e8b57"/>
+  <text x="790" y="622" class="t">rst_dsp</text>
+  <text x="790" y="642" class="xs">FIFO 読出・gb_dn・spec_core</text>
+
+  <path class="wK" d="M410,708 L685,708 L685,658"/>
+  <path class="wK" d="M680,708 L862,708 L862,658"/>
+  <text x="460" y="740" class="xs">3 つとも ext_reset_in = pl_resetn0。ADC・DSP 側は MMCM の locked まで保持</text>
+  <text x="460" y="756" class="xs">（clk_adc2 はタイルが起動して初めて出る → ロックも起動後）</text>
+
+  <!-- ================= 凡例 ================= -->
+  <rect x="20" y="780" width="1400" height="104" fill="#fafafa" stroke="#ccc"/>
+  <text x="32" y="800" class="s" style="font-weight:bold">クロックドメイン（timing.xdc の 3 群。互いに非同期）</text>
+  <line x1="32" y1="820" x2="72" y2="820" stroke="#2f6fb5" stroke-width="3"/>
+  <text x="80" y="824" class="s">pl_clk0 100 MHz：PS の制御・SmartConnect（aclk）・RFDC の AXI4-Lite</text>
+  <line x1="32" y1="842" x2="72" y2="842" stroke="#d9822b" stroke-width="3"/>
+  <text x="80" y="846" class="s">ADC ドメイン 341.333 MHz（clk_out1）：RFDC の AXIS・gb_up_0・gb_fifo_0 の書き込み</text>
+  <line x1="32" y1="864" x2="72" y2="864" stroke="#2e8b57" stroke-width="3"/>
+  <text x="80" y="868" class="s">DSP ドメイン 256.000 MHz（clk_out2）：gb_fifo_0 の読み出し・gb_dn_0・spec_core_0・SmartConnect（aclk1）</text>
+
+  <line x1="760" y1="820" x2="800" y2="820" stroke="#555" stroke-width="2"/>
+  <text x="808" y="824" class="s">RF と専用クロック（タイルの専用ピン）</text>
+  <text x="760" y="846" class="s">乗り換えは 2 か所だけ：gb_fifo_0（ADC → DSP）と SmartConnect の内部（pl_clk0 ↔ DSP）</text>
+  <text x="760" y="868" class="s">自作 RTL は乗り換えを持たない → report_cdc の Critical が 0（proj009 は 26）</text>
+</svg>
