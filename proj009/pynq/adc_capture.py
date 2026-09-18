@@ -127,8 +127,12 @@ STATUS_BUSY = 1 << 0
 STATUS_DONE = 1 << 1
 
 
+QUIET = False     # --repeat の途中は analyse() の詳細を出さない
+
+
 def log(*a):
-    print(*a, flush=True)
+    if not QUIET:
+        print(*a, flush=True)
 
 
 # --------------------------------------------------------------------- 起動
@@ -163,7 +167,8 @@ def setup_clocks(clkin="stock", ref_mhz=10.0):
     fn(lmk_freq=LMK_FREQ, lmx_freq=LMX_FREQ)
 
 
-def start_tile(rfdc, fs_hz, zone, ti=None, si=None, restart=False, pll_config=False):
+def start_tile(rfdc, fs_hz, zone, ti=None, si=None, restart=False, pll_config=False,
+               cal_mode=None):
     """タイルの状態を確かめる。**すでに動いていれば触らない。**
 
     ビットストリームをロードした時点でタイルは起動し、PLL もロックしている
@@ -236,10 +241,23 @@ def start_tile(rfdc, fs_hz, zone, ti=None, si=None, restart=False, pll_config=Fa
     if got_zone != zone:
         log(f"ERROR: NyquistZone が {got_zone} のまま。要求 {zone} が効いていない")
         sys.exit(1)
+
+    # **較正モードは毎回表示する。**PG269: Mode 1 は観測周波数（折り返し後）が
+    # 0.4 fs〜fs/2、Mode 2 は 0〜0.4 fs に最適化されている。
+    # IF 2.1〜4.0 GHz は折り返すと 96〜1996 MHz = 0.02〜0.49 fs で、**両方にまたがる。**
+    # インタリーブのイメージ（f ± m·fs/8）の強さはこれで変わりうる（proj009 で調査中）。
+    if cal_mode is not None:
+        try:
+            block.CalibrationMode = cal_mode
+        except Exception as e:                  # noqa: BLE001
+            log(f"ERROR: CalibrationMode を設定できない: {e}")
+            sys.exit(1)
+    log(f"CalibrationMode = {_try(block, 'CalibrationMode')}"
+        f"{'' if cal_mode is None else f'（要求 {cal_mode}）'} / CalFreeze = {_try(block, 'CalFreeze')}")
     return tile, block
 
 
-def start_tiles(rfdc, fs_hz, zone, restart=False, pll_config=False):
+def start_tiles(rfdc, fs_hz, zone, restart=False, pll_config=False, cal_mode=None):
     """CHANS の全チャネルぶん確かめる。
 
     **どれか 1 つでも起動していなければ axis_combiner は 1 ビートも出さない。**
@@ -254,7 +272,8 @@ def start_tiles(rfdc, fs_hz, zone, restart=False, pll_config=False):
         first = ti not in touched
         _, b = start_tile(rfdc, fs_hz, zone, ti, si,
                           restart=(restart and first),
-                          pll_config=(pll_config and first))
+                          pll_config=(pll_config and first),
+                          cal_mode=cal_mode)
         touched.add(ti)
         blocks.append(b)
     return blocks
@@ -643,6 +662,11 @@ def main():
                    help="解析するチャネル。省略すると全チャネルを解析する")
     p.add_argument("--sg-dbm", type=float, default=None,
                    help="信号発生器の出力設定 [dBm]。**経路の減衰量とあわせて記録するため**")
+    p.add_argument("--cal-mode", type=int, default=None, choices=(1, 2),
+                   help="RF-ADC の較正モード。省略すると触らない（現在値は必ず表示する）")
+    p.add_argument("--repeat", type=int, default=1,
+                   help="同じ条件で N 回取り、1 行ずつ出す（較正の収束・再現性を見る）")
+    p.add_argument("--interval", type=float, default=5.0, help="--repeat の間隔 [s]")
     p.add_argument("--atten-db", type=float, default=0.0,
                    help="SG と ADC の間の減衰量 [dB]（正の値）。アッテネータ・分配器の損失の合計")
     p.add_argument("--clkin", default="stock", choices=("stock", "0", "1", "2"),
@@ -655,6 +679,13 @@ def main():
     p.add_argument("--pll-config", action="store_true",
                    help="DynamicPLLConfig でタイル PLL を設定し直す（既定は触らない）")
     args = p.parse_args()
+
+    # **減衰量は正の値で書く。**2026-09-18 に -10 と書いて ADC 入力を 20 dB 高く
+    # 見積もった（SG -10 dBm − (−10 dB) = 0 dBm）。黙って通すと帳簿が狂う。
+    if args.atten_db < 0:
+        log(f"ERROR: --atten-db {args.atten_db} は負。減衰量は正の値で書くこと"
+            f"（10 dB の減衰なら --atten-db 10）")
+        sys.exit(2)
 
     # 保存したデータの解析だけなら、ボードにも PYNQ にも触らない。
     # **取り直さずに解析を変えられる**ので、窓関数や期待周波数を変えて
@@ -710,9 +741,34 @@ def main():
 
     fs_hz = args.fs * 1e6
     blocks = start_tiles(rfdc, fs_hz, args.zone,
-                         restart=args.restart, pll_config=args.pll_config)
+                         restart=args.restart, pll_config=args.pll_config,
+                         cal_mode=args.cal_mode)
 
-    xs = capture(ol, args.nsamples, blocks)
+    # ---- 繰り返し（1 行ずつ）----
+    # **較正が収束していくか、条件を変えたときに何が動くかを並べて見るため。**
+    # 最後の 1 回だけを下で詳しく解析する。
+    if args.repeat > 1:
+        global QUIET
+        log("")
+        log(f"=== {args.repeat} 回くり返す（間隔 {args.interval} s）===")
+        print("   #   経過[s]  peak[dBFS]  奇数m[dBc]  偶数m[dBc]    ppm      FIFO", flush=True)
+        t_start = time.time()
+        for k in range(args.repeat):
+            if k:
+                time.sleep(args.interval)
+            QUIET = True
+            try:
+                xs = capture(ol, args.nsamples, blocks)
+                rr = analyse(xs[0 if args.ch is None else args.ch], fs_hz,
+                             args.tone * 1e6 if args.tone else None, args.window) or {}
+            finally:
+                QUIET = False
+            fl = fifo_flags(blocks[0])
+            print(f"  {k:>2}  {time.time() - t_start:>7.1f}  {rr.get('peak_dbfs', float('nan')):>10.2f}"
+                  f"  {rr.get('lane_odd_dbc', float('nan')):>10.1f}  {rr.get('lane_even_dbc', float('nan')):>10.1f}"
+                  f"  {rr.get('ppm') if rr.get('ppm') is not None else float('nan'):>+7.3f}  {fl}", flush=True)
+    else:
+        xs = capture(ol, args.nsamples, blocks)
 
     if args.save:
         np.save(args.save, xs)
@@ -761,7 +817,9 @@ def main():
         log(f"RESULT  ch={main_ch}  clkin={args.clkin}  tone={args.tone} MHz  "
             f"f_est={r['f_est_hz'] / 1e6:.6f} MHz  "
             f"ppm={r['ppm']:+.3f}  peak={r['peak_dbfs']:.2f} dBFS  "
-            f"lane_odd={r.get('lane_odd_dbc', float('nan')):.1f}dBc{lvl}")
+            f"lane_odd={r.get('lane_odd_dbc', float('nan')):.1f}dBc  "
+            f"lane_even={r.get('lane_even_dbc', float('nan')):.1f}dBc  "
+            f"cal_mode={_try(blocks[0], 'CalibrationMode')}{lvl}")
 
 
 if __name__ == "__main__":
