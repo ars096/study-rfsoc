@@ -163,7 +163,14 @@ proc cfg_report {stage} {
 # IP の CONFIG と、列挙なら許される値を書き出す。版がズレたときの唯一の手がかり。
 proc dump_ip_params {obj path} {
     set fh [open $path w]
-    puts $fh "# [get_property VLNV $obj]"
+    # **BD のセルは VLNV、プロジェクトの IP（create_ip）は IPDEF に版を持つ。**
+    # 片方しか無いので、在る方を読む（2026-09-18、IP に VLNV を聞いて落ちた）
+    set props [list_property $obj]
+    set vlnv "?"
+    foreach k {VLNV IPDEF} {
+        if {[lsearch -exact $props $k] >= 0} { set vlnv [get_property $k $obj]; break }
+    }
+    puts $fh "# $vlnv"
     foreach k [lsort [list_property $obj]] {
         if {![string match CONFIG.* $k]} continue
         set v ""       ; catch {set v [get_property $k $obj]}
