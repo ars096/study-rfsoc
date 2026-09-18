@@ -312,13 +312,15 @@ def main():
     p.add_argument("--src-tile", type=int, default=2,
                    help="MMCM の源のタイル（build.tcl の wiz_src_tile）。"
                         "--epoch-mode src のとき、これを止めて新しいエポックを作る")
-    p.add_argument("--epoch-mode", default="both", choices=("src", "both", "overlay"),
+    p.add_argument("--epoch-mode", default="overlay", choices=("src", "both", "overlay"),
                    help="**エポックの作り方。測っている量がこれで変わる。** "
+                        "overlay = Overlay を焼き直す（**既定**）。ShutDown() を使わず、"
+                        "全タイルを同時に立ち上げ直す。**実運用のエポック変化に最も近い**。 "
                         "src = 源のタイルだけ止める（proj007 の --epoch-test と同じ）。"
                         "**止めなかったタイルだけが動く非対称な操作**なので、"
                         "タイル間差を測る用途には使えない（2026-09-18 に踏んだ）。 "
-                        "both = 両方のタイルを止めて起動し直す（既定）。 "
-                        "overlay = Overlay を焼き直す。**実運用のエポック変化に最も近い**")
+                        "both = 両タイルを止めて起動し直す。**このボード / ドライバでは成立しない**"
+                        "（同上。下のコメントを見る）")
     p.add_argument("--save", default=None, help="1 回目の波形を .npy で残す")
     args = p.parse_args()
 
@@ -443,7 +445,21 @@ def main():
             log(f"---- adc_tiles{targets} を止めて新しいエポックを作る "
                 f"（--epoch-mode {args.epoch_mode}）----")
 
-            # **順序に依存がある。**（2026-09-18 に踏んだ）
+            # **`both` はこのボード / ドライバでは成立しない。**（2026-09-18）
+            #
+            # 複数タイルに `ShutDown()` を掛けると、そのあとどの順で `StartUp()` しても
+            # タイルの状態機械が進まない。**順序の問題ではない。**
+            #
+            #   起動順 0 → 2 : ADC 0 timed out at **state 14**（AXIS クロックが無い）
+            #   起動順 2 → 0 : ADC 2 timed out at **state 3**（クロック検出で止まる）
+            #
+            # 源を単独で止めて起動する `src` は 5 エポック通るので、**「もう片方も
+            # 止めた」こと自体**が効いている。深追いはしない —— **`overlay` は
+            # `ShutDown()` を使わずに同じ目的を果たし、しかも実運用に近い。**
+            #
+            # 以下の順序（止めるときは源を最後、起動するときは源を最初）は
+            # `state 14` の側だけは説明できるので残してある。
+            # **順序に依存がある**のは事実である（VERSIONS.md）。
             # build.tcl は **両タイルの `m*_axis_aclk` を MMCM の出力**に繋いでおり、
             # その MMCM の源は `--src-tile` のタイルの `clk_adc<n>` である。
             # したがって **源のタイルが止まっていると、他のタイルは AXIS クロックを
@@ -467,8 +483,13 @@ def main():
                     log(f"    {e}")
                     log("    **AXIS クロックが来ていない可能性が高い。**")
                     log(f"    build.tcl は全タイルの m*_axis_aclk を MMCM に繋いでおり、")
-                    log(f"    その源は adc_tiles[{args.src_tile}] である。"
-                        "源を先に起動すること")
+                    log(f"    その源は adc_tiles[{args.src_tile}] である。")
+                    log("")
+                    log("  **`--epoch-mode both` はこのボード / ドライバでは成立しない。**")
+                    log("    複数タイルに ShutDown() を掛けると、どの順で StartUp() しても")
+                    log("    状態機械が進まない（state 14 / state 3）。**順序の問題ではない。**")
+                    log("    **`--epoch-mode overlay` を使うこと** — ShutDown() を使わず、")
+                    log("    実運用のエポック変化にも近い")
                     raise SystemExit(1)
 
             if has_src:
