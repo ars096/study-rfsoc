@@ -92,6 +92,101 @@ for magic, c in tb.CAL.items():
         check(k in c, f"0x{magic:08x} に {k} がある")
     check(c["source"].strip() != "", f"0x{magic:08x} の出どころが書いてある")
 
+# ---------------------------------------------------------------- 拒否の経路
+# **「答えを返さない」は、一度も走らなければ働かない。**
+# 偽の PPS で全分岐を通す。実機では起こしにくい状態（locked が落ちる等）ほど、
+# ここで通しておく価値が高い。
+FLAGS_OK = 0x01 | 0x20 | 0x40          # alive | adc_rstn | locked
+
+
+class FakePPS:
+    def __init__(self, magic=0x00080001, **over):
+        self._magic = magic
+        self.d = dict(epoch=1, count=100, stamp=1000,
+                      flags=FLAGS_OK, beat=1000, interval=tb.BEATS_PER_SEC,
+                      t_start=1000, cstamp=0, glitch_trig=0, glitch_comp=0)
+        self.d.update(over)
+
+    def check_magic(self):
+        return self._magic
+
+    def snapshot(self):
+        return dict(self.d)
+
+
+def expect_refusal(fn, name, detail=""):
+    try:
+        fn()
+    except tb.TimebaseError:
+        check(True, name)
+    except Exception as e:                       # noqa: BLE001
+        check(False, name, f"TimebaseError 以外が出た: {type(e).__name__} {e}")
+    else:
+        check(False, name, f"**拒否しなかった** {detail}")
+
+
+print("require_mid_second")
+check(abs(tb.require_mid_second(1000.5) - 0.5) < 1e-9, "x.5 は通る")
+expect_refusal(lambda: tb.require_mid_second(1000.02), "x.0 の近くは拒否する")
+expect_refusal(lambda: tb.require_mid_second(1000.98), "x+1 の近くは拒否する")
+
+print("Timebase — 拒否の経路")
+expect_refusal(lambda: tb.Timebase(FakePPS(magic=0x00070002)),
+               "**知らない MAGIC のビットストリームには時刻を貼らない**")
+
+tbi = tb.Timebase(FakePPS())
+expect_refusal(lambda: tbi.time_of_ns(1000, 0),
+               "錨が無ければ答えない")
+
+def _mk(**over):
+    o = tb.Timebase(FakePPS(**over))
+    o._anchor = dict(epoch=1, count=100, stamp=1000, utc_sec=1000)
+    return o
+
+ok = _mk()
+check(ok.time_of_ns(1000, 0) == 1000 * 10**9 - 213,
+      "健全なら答える（較正 213 ns を引いた値）", str(ok.time_of_ns(1000, 0)))
+
+expect_refusal(lambda: _mk(epoch=2).time_of_ns(1000, 0),
+               "**原点が変わったら答えない**（錨より前のビートは別の原点）")
+expect_refusal(lambda: _mk(flags=FLAGS_OK & ~0x40).time_of_ns(1000, 0),
+               "**MMCM がロックしていなければ答えない**")
+expect_refusal(lambda: _mk(flags=FLAGS_OK & ~0x01).time_of_ns(1000, 0),
+               "**PPS が来ていなければ答えない**（黙って外挿しない）")
+expect_refusal(lambda: _mk(flags=FLAGS_OK & ~0x20).time_of_ns(1000, 0),
+               "ADC ドメインのリセットが解除されていなければ答えない")
+
+# PPS 数とビート差の不整合。count は 5 増えたのに stamp は 4 秒ぶんしか進んでいない
+expect_refusal(
+    lambda: _mk(count=105, stamp=1000 + 4 * tb.BEATS_PER_SEC).time_of_ns(1000, 0),
+    "**PPS を取りこぼしたら答えない**（1 ビートでも合わなければ拒否）")
+# 1 ビートだけずれている場合も拒否すること
+expect_refusal(
+    lambda: _mk(count=105, stamp=1000 + 5 * tb.BEATS_PER_SEC + 1).time_of_ns(1000, 0),
+    "**1 ビートのずれでも拒否する**（『だいたい合っている』を許さない）")
+# 整合していれば答える
+okc = _mk(count=105, stamp=1000 + 5 * tb.BEATS_PER_SEC)
+check(okc.time_of_ns(1000, 0) == 1000 * 10**9 - 213,
+      "整合していれば答える（PPS が 5 発進んでも錨は同じ）")
+
+class BoomPPS(FakePPS):
+    """snapshot が **このモジュールの知らない例外**を投げる（pps.EpochChanged 相当）。"""
+    def snapshot(self):
+        raise RuntimeError("読んでいる最中に時刻の原点が変わった")
+
+
+boom = tb.Timebase(BoomPPS())
+boom._anchor = dict(epoch=1, count=100, stamp=1000, utc_sec=1000)
+expect_refusal(lambda: boom.time_of_ns(1000, 0),
+               "**知らない型の例外も TimebaseError に変えて拒否する**"
+               "（呼ぶ側の except をすり抜けさせない）")
+
+print("accuracy_ns")
+a = tb.Timebase(FakePPS()).accuracy_ns()
+check(a["applied_ns"] == 213.16, "適用した値を返す")
+check(a["total_ns"] > a["applied_unc_ns"], "補正し残した量の合計を返す")
+check("proj007" in a["source"] and "proj008" in a["source"], "出どころを返す")
+
 print("")
 if FAILED:
     print(f"**{len(FAILED)} 件 FAIL**: {', '.join(FAILED)}")

@@ -107,6 +107,21 @@ def utc_second_of_last_pps(t_host):
     return math.floor(t_host)
 
 
+def require_mid_second(t_host, lo=0.25, hi=0.75):
+    """**秒の真ん中で読んだか。** 違えば例外。
+
+    整数秒は `floor(t)` で決めるので、**秒境界の近くで読むと 1 秒ずれる。**
+    1 秒のずれは「小さな誤差」ではなく、**要求 100 µs の 1 万倍**である。
+    黙って通さない。
+    """
+    frac = float(t_host) % 1.0
+    if not (lo < frac < hi):
+        raise TimebaseError(
+            f"秒の真ん中で読めなかった（frac = {frac:.3f}、要求 {lo}〜{hi}）。"
+            "**秒境界の近くで読むと整数秒が 1 秒ずれる。** やり直す")
+    return frac
+
+
 def sample_time_ns(anchor_utc_sec, anchor_stamp_beat, beat, i, cal_ns):
     """バッファの添字 i のサンプルの UTC を **整数 ns** で返す。
 
@@ -161,11 +176,7 @@ class Timebase:
         time.sleep(((0.5 - (now % 1.0)) % 1.0) + settle)
         d = self.pps.snapshot()
         t = time.time()
-        frac = t % 1.0
-        if not (0.25 < frac < 0.75):
-            raise TimebaseError(
-                f"秒の真ん中で読めなかった（frac = {frac:.3f}）。"
-                "**秒境界の近くで読むと整数秒が 1 秒ずれる。** やり直す")
+        require_mid_second(t)
         self._require_healthy(d)
         self._anchor = dict(epoch=d["epoch"], count=d["count"],
                             stamp=d["stamp"], utc_sec=utc_second_of_last_pps(t))
@@ -179,7 +190,21 @@ class Timebase:
         """
         if self._anchor is None:
             raise TimebaseError("錨が無い。先に anchor() を呼ぶ")
-        d = self.pps.snapshot() if snap is None else snap
+        if snap is None:
+            # **例外の型でも契約を守る。**`pps.snapshot()` は EpochChanged
+            # （このモジュールが知らない型）を投げうる。そのまま漏らすと、
+            # 呼ぶ側の `except TimebaseError` をすり抜けて**別の扱いになる**。
+            # 確かめられなかったのだから、答えない —— それが唯一の契約である。
+            try:
+                d = self.pps.snapshot()
+            except TimebaseError:
+                raise
+            except Exception as e:                       # noqa: BLE001
+                raise TimebaseError(
+                    "スナップショットが取れないので時刻を答えられない: "
+                    f"{type(e).__name__}: {e}") from e
+        else:
+            d = snap
         self._require_healthy(d)
         a = self._anchor
         if d["epoch"] != a["epoch"]:
