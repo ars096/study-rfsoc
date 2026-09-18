@@ -18,6 +18,11 @@ N_ACC フレームごとに 1 ダンプ（4096 ch × 64 bit）を閉じる。PS 
     sudo python3 spectrometer.py --clkin 0 --radiometer --nacc 5000,50000,500000 --ndump 30
     sudo python3 spectrometer.py --clkin 0 --ndump 100 --save run.npz   # 記録
 
+1PPS が ADC に入ったまま（SG なし）でできるもの:
+
+    sudo python3 spectrometer.py --clkin 0 --tick 60                     # 判定 7: PPS の縁で積分の連続性を見る
+    sudo python3 spectrometer.py --clkin 0 --nacc 500000 --ndump 60 --peaks 30   # 判定 8: 固定の線（60 s 積分）
+
 **トーンを 0.5 MHz の倍数に置くと ch の中心に立つ**（3000.0 MHz → ch 2192）。
 0.25 MHz ずらすと ch の境目に落ち、矩形窓の落ち込み（−3.92 dB）が見える。
 
@@ -292,12 +297,23 @@ def radiometer(sp, nacc_list, ndump, shift):
             seq = m["seq"]
             specs.append(spec.astype(float))
         a = np.array(specs)
-        mu = a.mean(axis=0)
-        d = np.diff(a, axis=0)
         # 両端（直流付近と ch 4095 側）と強い線を除く
         sel = np.zeros(NCH_OUT, bool)
         sel[50:NCH_OUT - 50] = True
-        sel &= mu < np.median(mu) * 3
+        sel &= a.mean(axis=0) < np.median(a.mean(axis=0)) * 3
+        # **1PPS が ADC に入っているときの対策。**PPS の縁（毎秒 2 回、広帯域）を含むダンプだけ全 ch が
+        # 持ち上がる。そのダンプと、それを含む差を外す。τ ≧ 1 s ならどのダンプも同じ数の縁を含むので外れない
+        tot = a[:, sel].sum(axis=1)
+        bad = _outliers(tot)
+        if bad.any():
+            log(f"  NOTE: 全 ch の和が外れたダンプを {bad.sum()} / {len(bad)} 個外した（PPS の縁と見る）")
+        keep = ~bad
+        mu = a[keep].mean(axis=0)
+        pair = keep[1:] & keep[:-1]
+        d = np.diff(a, axis=0)[pair]
+        if len(d) < 2:
+            log("ERROR: 外れを除いたら差が 2 個未満になった。--ndump を増やす")
+            return False
         r = (d[:, sel].std(axis=0) / mu[sel] / np.sqrt(2))
         got = float(np.median(r))
         want = 1 / np.sqrt(DF_HZ * tau)
@@ -306,6 +322,112 @@ def radiometer(sp, nacc_list, ndump, shift):
             f"{m['sat']:>5}  {m['flags']:02x}")
         ok &= abs(ratio - 1) < 0.1 and m["flags"] == 0
     return ok
+
+
+def _outliers(x, nsig=8.0):
+    """中央値と MAD から外れ（上側だけ）を出す。雑音の揺れに対して nsig 倍を越えたもの"""
+    med = np.median(x)
+    sig = 1.4826 * np.median(np.abs(x - med))
+    if sig == 0:
+        return np.zeros(len(x), bool)
+    return (x - med) > nsig * sig
+
+
+def tick(sp, nacc, seconds, shift):
+    """判定 7: ADC に入っている 1PPS の縁を分光計で見て、**積分が外部の時計と整合して途切れないか**を確かめる。
+
+    PPS（100 µs 幅）の縁は広帯域なので、縁を含むダンプだけ全 ch の和が持ち上がる。ダンプは隙間なく並ぶので、
+    **持ち上がるダンプの間隔は 1 s / τ ダンプちょうど**（N_ACC = 50000 なら 10 ダンプ）で、秒の中の位置
+    （フレーム番号 mod 500,000）も動かない。フレームを 1 つでも落とせば、秒内の位置がずれる。
+    読み出しが追いつかずにダンプを飛ばした場合は、DUMP_K の飛びとして出る（判定から外す）。
+    """
+    tau = nacc * T_FRAME
+    ndump = int(round(seconds / tau))
+    fps = int(round(1 / T_FRAME))                   # 500,000 フレーム/s
+    seq = sp.run(nacc, 0, shift)
+    rows = []                                       # (k, f0, 全 ch の和)
+    t0 = time.time()
+    while len(rows) < ndump:
+        s = sp.wait_dump(seq, tau * 3 + 1.0)
+        if s is None:
+            log("ERROR: ダンプが閉じない")
+            return False
+        m, spec, _ = sp.read_dump()
+        seq = m["seq"]
+        rows.append((m["k"], m["f0"], float(spec[50:NCH_OUT - 50].astype(float).sum()), m["flags"]))
+    sp.stop()
+    k = np.array([r[0] for r in rows])
+    f0 = np.array([r[1] for r in rows], dtype=np.int64)
+    tot = np.array([r[2] for r in rows])
+    flags = [r[3] for r in rows]
+    gaps = int(np.sum(np.diff(k) != 1))
+    log(f"τ = {tau * 1e3:.1f} ms × {len(rows)} ダンプ（{time.time() - t0:.1f} s）/ 読み落とし {gaps} 箇所"
+        f"（DUMP_K の飛び。読み出しが遅いだけで、積分の連続性とは別）")
+    if np.any(np.diff(f0) != np.diff(k) * nacc):
+        log("**NG: DUMP_F0 の間隔が DUMP_K × N_ACC と合わない**（ダンプの帳簿が壊れている）")
+        return False
+    bad = _outliers(tot)
+    med = np.median(tot)
+    sig = 1.4826 * np.median(np.abs(tot - med))
+    # 隣り合う外れは 1 つの事象（縁がダンプの境目にかかった）として先頭を取る
+    ev = [i for i in np.where(bad)[0] if i == 0 or not bad[i - 1]]
+    log(f"全 ch の和: 中央値 {med:.4e} / 揺れ（MAD 換算の σ）{sig / med:.2e}（期待 1/√(2 GHz·τ) = "
+        f"{1 / np.sqrt(FS_HZ / 2 * tau):.2e}）")
+    log(f"外れたダンプ: {int(bad.sum())} 個 → 事象 {len(ev)} 個（期待 約 {len(rows) * tau:.0f} 個 = 1 秒に 1 回）")
+    if len(ev) < 2:
+        log("**PPS の縁が見えない。**ADC_B に 1PPS が来ているか、縁が雑音に埋もれているか（減衰が大きすぎる）")
+        return False
+    for i in ev[:12]:
+        log(f"  k {k[i]:>7}  F0 {f0[i]:>12}  秒内の位置 {f0[i] % fps:>7} フレーム  "
+            f"超過 {(tot[i] - med) / med * 100:+.3f} %（{(tot[i] - med) / sig:.0f} σ）")
+    phase = np.array([f0[i] % fps for i in ev])
+    # 秒内の位置は 1 ダンプ（nacc フレーム）の粒度で決まる。縁が境目をまたげば 1 ダンプ揺れうる
+    spread = int(phase.max() - phase.min())
+    dd = np.diff([k[i] for i in ev])
+    per = 1 / tau
+    log(f"事象の間隔（ダンプ数）: {sorted(set(dd.tolist()))}（期待 {per:g}）")
+    log(f"秒内の位置の広がり: {spread} フレーム（期待 0。縁が境目にかかれば {nacc} まで）")
+    ok = spread <= nacc and all(f == 0 for f in flags)
+    if abs(per - round(per)) < 1e-9:
+        ok &= all(d % int(round(per)) == 0 for d in dd)
+    log(f"FLAGS: {'すべて 0' if all(f == 0 for f in flags) else '**0 でないダンプがある**'}")
+    return ok
+
+
+# ボード内のクロック（proj009 の adc_capture.py の表から）。無入力で立つ線の出どころを当てる
+KNOWN_CLOCKS = [
+    ("LMX2594 → RFDC 基準", 491.52e6), ("LMK04828 → LMX 基準", 245.76e6), ("LMK04828 → PL 基準", 122.88e6),
+    ("DSP / clk_adc2 = fs/16", 256.0e6), ("ADC ドメイン = fs/12", FS_HZ / 12), ("MMCM の VCO", 1024.0e6),
+    ("インタリーブ fs/8", 512.0e6), ("PS pl_clk0", 100.0e6), ("LMK の VCXO", 160.0e6), ("RF SYSREF", 7.68e6),
+]
+
+
+def identify(k, tol_ch=1.0):
+    """ch k（第 1 ゾーンに折り返した 0〜2048 MHz の位置）に落ちるクロックの高調波を探す。次数の低いものを優先"""
+    best = None
+    for name, f in KNOWN_CLOCKS:
+        for h in range(1, 33):
+            fa = (f * h) % FS_HZ
+            fa = min(fa, FS_HZ - fa)
+            kk = fa / DF_HZ
+            if abs(kk - k) <= tol_ch and (best is None or h < best[0]):
+                best = (h, f"{name}{' × %d' % h if h > 1 else ''}（ch {kk:.2f}）")
+    return best[1] if best else ""
+
+
+def peaks(spec, n, m):
+    """細い線（周りの床から飛び出した ch）を大きい順に出す。**何も入れていないのに立つ線 = 固定のバーディー**"""
+    p = spec.astype(float) / max(m["n"], 1)
+    half = 16
+    pad = np.pad(p, half, mode="edge")
+    base = np.array([np.median(pad[i:i + 2 * half + 1]) for i in range(NCH_OUT)])
+    r = p / np.maximum(base, 1e-30)
+    order = [i for i in np.argsort(r)[::-1] if 2 <= i < NCH_OUT - 2][:n]
+    log("")
+    log(f"細い線（床比の大きい順・上位 {n}）")
+    log("    ch     IF[MHz]   床比[dB]   候補")
+    for i in order:
+        log(f"  {i:>5}  {if_of_ch(i):>9.2f}  {10 * np.log10(r[i]):>8.2f}   {identify(i)}")
 
 
 # --------------------------------------------------------------------- main
@@ -326,6 +448,9 @@ def main():
     p.add_argument("--probe", action="store_true")
     p.add_argument("--golden", action="store_true")
     p.add_argument("--radiometer", action="store_true")
+    p.add_argument("--tick", type=float, default=None, metavar="SEC",
+                   help="判定 7: ADC に入っている 1PPS の縁を SEC 秒ぶん見る（--nacc の最初の値を使う）")
+    p.add_argument("--peaks", type=int, default=0, help="通常の測定の後、細い線を上位 N 個出す")
     p.add_argument("--save", default=None, help="スペクトルとメタデータを .npz で残す")
     p.add_argument("--slow-read", action="store_true", help="MMIO を 1 語ずつ読む")
     args = p.parse_args()
@@ -370,6 +495,8 @@ def main():
         ok &= golden(sp, shift, args.tone)
     elif args.radiometer:
         ok &= radiometer(sp, [int(v) for v in args.nacc.split(",")], max(args.ndump, 3), shift)
+    elif args.tick is not None:
+        ok &= tick(sp, int(args.nacc.split(",")[0]), args.tick, shift)
     else:
         nacc = int(args.nacc.split(",")[0])
         seq = sp.run(nacc, args.ndump, shift)
@@ -383,6 +510,11 @@ def main():
             keep.append((m, spec))
         m, spec = keep[-1]
         spectrum_report(spec, m, args.tone, args.sg_dbm, args.atten_db, shift)
+        if args.peaks > 0:
+            # 何ダンプも取ったなら全部を足して床を下げてから探す
+            tot = np.sum([sp_.astype(np.float64) for _, sp_ in keep], axis=0)
+            mm = dict(m, n=sum(x["n"] for x, _ in keep))
+            peaks(tot, args.peaks, mm)
         ok &= m["flags"] == 0
         if args.save:
             np.savez(args.save, spec=np.array([s for _, s in keep]),
