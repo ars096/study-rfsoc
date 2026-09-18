@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# projNNN — JTAG 書き込み
+# proj009 — JTAG 書き込み
 #
 # 段階ごとに「見えているもの」を出力する。素の open_hw_target は target が 0 個のとき
 # "There is no current hw_target" という原因を示さないエラーになるため。
@@ -10,7 +10,7 @@
 set id_only [expr {[llength $argv] > 0 && [lindex $argv 0] eq "id"}]
 set outdir ./build
 if {[info exists ::env(OUTDIR)] && $::env(OUTDIR) ne ""} { set outdir ./$::env(OUTDIR) }
-set bitfile $outdir/projNNN.bit
+set bitfile $outdir/proj009.bit
 
 open_hw_manager
 connect_hw_server -url localhost:3121   ;# 別機なら <host>:3121

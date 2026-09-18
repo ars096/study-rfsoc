@@ -120,7 +120,36 @@ LMX を分数分周にするとスプリアスを抱える。作れてもガー�
 
 ## やったこと
 
--
+### 2026-09-18: 土台の準備（ビルド前）
+
+**proj006 から自己完結でコピー**し、次を変えた。RTL（`capture_gate.v`）は proj006 と同一。
+
+| ファイル | 変更 |
+|---|---|
+| `build.tcl` | fs 4.096 GSPS、spw 16（環境変数 `SPW` で上書き可）、outclk = fs/16 = 256 MHz（Clocking Wizard 1:1）、`chans = {{2 0}}`（ADC_B）、**nch = 1 では axis_combiner を置かず直結**、FIFO 8192 語（256 bit）、DMA バースト 128 |
+| `build.tcl` | **probe モード**（`PROBE=1`）: RFDC だけ組んで、Data_Width / Outclk の有効値と、spw 候補ごとの Fabric_Freq を表で出して終わる |
+| `Makefile` | `make probe` を追加（成果物は `build-probe/`、合成ライセンス不要） |
+| `src/timing.xdc` | 制約は変えず、クロック周期のコメントだけ更新（名前が変わっていないかはビルドで確かめる） |
+| `pynq/adc_capture.py` | fs / SPW / CHANS / 既知クロックの表を更新、**`--zone` の既定を 2 にし、読み返して違えば止める**、**並び順の検査 `lane_check()` を追加**（判定 4） |
+| `pynq/extref_test.py` | `--zone` の既定を 2 に（判定 5） |
+
+`slice_map.py` / `tile_offset.py` は 4ch 用なので持ってきていない（4ch に進むときに戻す）。
+
+**机上で確かめたこと（実機・Vivado なし）**
+
+- `build.tcl` / `program.tcl` が Tcl として閉じている（`info complete`）
+- `adc_capture.analyse()` に合成データ（4096 MSPS で 3000.0625 MHz を標本化、14 bit 上位寄せ）を入れ、
+  **1095.9375 MHz（= 4096 − 3000.0625）に −0.00 ppm で立つ**こと、2 次高調波が **1904.125 MHz** に出ること
+  （判定 3 の予言どおり）を確認
+- **並び順を 1 か所（語内の 7 と 8）入れ替えると、奇数 m のイメージが −13 dBc で立ち、`lane_check` が検出する**。
+  正しい並びでは −100 dBc
+
+### 最大の未知数: spw = 16 が IP に通るか
+
+**1 語 16 サンプルを RFDC IP が許すかは確かめていない。**許すのが 8 までなら AXIS は 512 MHz になり、
+PL では閉じない。12 なら 341.33 MHz で重いうえに **1 秒が整数ビートにならない**（時刻層の前提が崩れる）。
+その場合は fs の選び直し（例: 3932.16 MSPS / 12 = 327.68 MHz）まで戻る可能性がある。
+**だから `make` の前に `make probe` を通す。**合成に入らないので数分で終わる。
 
 ## 結果
 
@@ -128,7 +157,10 @@ LMX を分数分周にするとスプリアスを抱える。作れてもガー�
 
 ## 結論・次にやること
 
--
+- [ ] **Vivado サーバで `make probe`**。出力の表で spw = 16 が OK か、Fabric_Freq = 256 MHz かを見る
+  - OK なら `make` → `make timing-check`
+  - NG なら表を見て spw と fs を選び直す（この README の「なぜ 4096 MSPS か」に戻る）
+- [ ] 実機: `adc_capture.py --probe` → `--clkin 0 --tone 3000.0625 --sg-dbm … --atten-db …`
 
 ## 出典
 

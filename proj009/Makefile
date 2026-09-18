@@ -39,10 +39,25 @@ PROJ ?= proj009
 
 export BOARD_REPO PART OUTDIR
 
-.PHONY: all prog id timing-check clean
+.PHONY: all probe sim prog id timing-check clean
 
 all: $(OUTDIR)
 	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(JOBS)
+
+# **合成に入らず、RFDC が許す設定だけを調べる。**合成ライセンスは要らず数分で終わる。
+# fs = 4096 MSPS で 1 語あたりのサンプル数（spw）に何が許されるか、そのとき AXIS が
+# 何 MHz になるかを表で出す。**`make` の前に必ず一度通すこと**（proj009 の最大の未知数）。
+# 成果物は build-probe/ に出るので build/ は無傷。
+probe:
+	mkdir -p build-probe
+	PROBE=1 OUTDIR=build-probe $(VIVADO) -mode batch -nojournal -log build-probe/vivado.log -source build.tcl -tclargs $(JOBS)
+
+# capture_gate のテストベンチ。**Vivado もライセンスも要らない**ので、
+# RTL を触ったらまずこれを通す。Mac 上でも走る。
+IVERILOG ?= iverilog
+sim: | $(OUTDIR)
+	$(IVERILOG) -g2012 -o $(OUTDIR)/tb_capture_gate src/capture_gate.v sim/tb_capture_gate.v
+	$(OUTDIR)/tb_capture_gate
 
 prog:
 	$(VIVADO) -mode batch -nojournal -nolog -source program.tcl
