@@ -711,6 +711,9 @@ def main():
     p.add_argument("--repeat", type=int, default=1,
                    help="同じ条件で N 回取り、1 行ずつ出す（較正の収束・再現性を見る）")
     p.add_argument("--interval", type=float, default=5.0, help="--repeat の間隔 [s]")
+    p.add_argument("--settle", type=float, default=5.0,
+                   help="Overlay を読んでから最初の取得までの待ち [s]。**RF-ADC の背景較正の収束待ち**。"
+                        "2026-09-18: 0.1 s 後の 1 回目だけ偶数 m のイメージが −33〜−39 dBc、5 s 後以降は −53〜−66 dBc")
     p.add_argument("--atten-db", type=float, default=0.0,
                    help="SG と ADC の間の減衰量 [dB]（正の値）。アッテネータ・分配器の損失の合計")
     p.add_argument("--clkin", default="stock", choices=("stock", "0", "1", "2"),
@@ -792,6 +795,13 @@ def main():
     blocks = start_tiles(rfdc, fs_hz, args.zone,
                          restart=args.restart, pll_config=args.pll_config,
                          cal_mode=args.cal_mode)
+
+    # **背景較正の収束を待つ。**Overlay を読んだ直後（0.1 s）の取得では、8 並列インタリーブの
+    # イメージが −33〜−39 dBc と大きく出ることがある（収束していない）。5 s 後には −53〜−66 dBc。
+    # 待たずに測ると「ADC が悪い」ように見える。0 を指定すれば待たない（収束の過程を見たいとき）。
+    if args.settle > 0:
+        log(f"背景較正の収束を待つ: {args.settle} s（--settle）")
+        time.sleep(args.settle)
 
     # ---- 繰り返し（1 行ずつ）----
     # **較正が収束していくか、条件を変えたときに何が動くかを並べて見るため。**
