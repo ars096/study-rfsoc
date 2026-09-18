@@ -160,7 +160,7 @@ Vivado 2024.1 で実際に弾かれて判明した値。**GUI を開かずに Tc
 | ADC Refclk Freq の有効値 | **VCO / FeedbackDiv の離散リスト**。fs を先に決めないと選択肢が出ない |
 | PLL の VCO | 8.5〜13.2 GHz |
 | ADC Outclk Freq の有効値 | fs / 16, /32, /64。**これが出力ピン `clk_adcX` の周波数**。AXIS のクロックではない。**fs 4096 MSPS では 32 / 64 / 128 / 256 MHz**（= fs/128〜fs/16。2026-09-18 に proj009 の `make probe` で確認）|
-| **ADC Data Width（1 語のサンプル数）の有効値** | **fs 4096 MSPS・Real・デシメーション 1 で 7〜12**（2026-09-18 に proj009 の `make probe` で確認）。**16 は通らない**。範囲外を指定すると IP は黙って前の値（8）に戻し、`Fabric_Freq` が 512 MHz になる。**読み返さないと気づけない** |
+| **ADC Data Width（1 語のサンプル数）の有効値** | **fs 4096 MSPS・Real・デシメーション 1 で 7〜12**（2026-09-18 に proj009 の `make probe` で確認）。**16 は通らない**。範囲外を指定すると IP は**黙って直前の有効値に戻す**（初回なら既定の 8 → `Fabric_Freq` 512 MHz。12 を設定済みなら 12 のまま）。エラーは出るが `set_property` の戻りからは有効値が取れず、**読み返さないと何が効いたか分からない** |
 | AXIS のクロック | `Fabric_Freq` = fs / Data_Width（派生値）。**IP からは出ない**ので Clocking Wizard で `clk_adcX` から逓倍して作る |
 | Mixer Type | Data Type と Decimation Mode に依存。**Real / デシメーション 1 では 1（Bypassed）のみ** |
 | デュアルタイルのスライス番号 | **0 と 2**（1 と 3 は disabled parameter） |
