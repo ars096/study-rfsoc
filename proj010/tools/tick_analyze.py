@@ -12,6 +12,9 @@
      全 ch が一緒に動いている（利得・較正・広帯域の干渉）
   4. どの ch が揺れているか: 隣との差で見た σ/μ を ch ごとに出し、期待 1/√(Δν·τ) との比が大きい順
   5. 帯域ごと: 8 分割した帯域の和の揺れ
+  6. 静かな ch だけで 1〜3 をやり直す: 揺れの大きい ch（期待比 > 1.5）と電力の高い ch（中央値の 2 倍超）を外す。
+     初回（2026-09-19）は ch 間の相関が 2.1 しかなく、**和の揺れは少数の ch（fs/8 の倍数と 45〜100 MHz の折り返し）が
+     作っていた**ので、それを外せば PPS の縁が見えるはず、という予言を確かめる
 """
 import sys
 import numpy as np
@@ -80,6 +83,32 @@ def main(path):
         w = 1 / np.sqrt(DF * (b - a) * tau)
         v = np.diff(t).std() / t.mean() / np.sqrt(2)
         print(f"   ch {a + 50:>4}–{b + 49:>4}: {v:.2e}（期待 {w:.2e}、{v / w:6.1f} 倍）")
+
+    # ---- 6. 静かな ch だけで ----
+    quiet = (ratio < 1.5) & (mu < 2 * np.median(mu))
+    q = s[:, quiet]
+    qt = q.sum(axis=1)
+    w = 1 / np.sqrt(DF * quiet.sum() * tau)
+    v = np.diff(qt).std() / qt.mean() / np.sqrt(2)
+    print(f"\n6. 静かな ch だけ（{quiet.sum()} / {len(quiet)} ch）: 和の揺れ（隣との差）{v:.2e}（期待 {w:.2e}、{v / w:.1f} 倍）")
+    print(f"   ch ごとの揺れの分布（期待比）: 10 % {np.percentile(ratio[quiet], 10):.2f} / 50 % "
+          f"{np.median(ratio[quiet]):.2f} / 90 % {np.percentile(ratio[quiet], 90):.2f}")
+    fq = qt[:ncyc * per].reshape(ncyc, per)
+    fq = fq / np.median(fq)
+    pq = fq.mean(axis=0) - 1
+    eq = fq.std(axis=0).mean() / np.sqrt(ncyc)
+    print(f"   1 秒で畳んだ平均（1 点の誤差 {eq:.1e}）")
+    for i, val in enumerate(pq):
+        bar = "#" * int(min(60, max(0, val / eq * 2)))
+        print(f"   位相 {i:>2}: {val:+.2e}（{val / eq:+5.1f} σ）{bar}")
+    # 各ダンプを前後の中央値で割った残りの外れ（PPS の縁は 1 ダンプだけ持ち上げる）
+    base = np.array([np.median(qt[max(0, i - 5):i + 6]) for i in range(nd)])
+    res = qt / base - 1
+    sig = 1.4826 * np.median(np.abs(res - np.median(res)))
+    big = np.argsort(res)[::-1][:12]
+    print(f"   前後の中央値からの超過が大きいダンプ（σ {sig:.1e}）: " +
+          ", ".join(f"{i}({i % per}) {res[i] / sig:+.0f}σ" for i in sorted(big)))
+    print("   （括弧は 1 秒の中の位相。PPS の縁なら位相がそろい、10 ダンプおきに並ぶ）")
 
 
 if __name__ == "__main__":

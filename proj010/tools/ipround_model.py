@@ -1,3 +1,15 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+"""FFT IP の内部の丸めが、最終の 8192 点スペクトルにどれだけ出るかの模型（2026-09-19）。
+
+    python3 tools/ipround_model.py
+
+512 点の基数 2 を各段で丸める（unscaled なので LSB は入力の LSB のまま）レーン FFT を 16 本作り、
+ひねり係数と 16 点 DFT は厳密に計算して、numpy の 8192 点 FFT と |X| を比べる。
+**差は入力の大きさ（σ 5.8 / 58 / 580 LSB）に依らず、平均 ≒ 8 LSB・最大 ≒ 45〜65 LSB**。
+実機の --golden 初回（σ 5.8）は平均 9.5 / 最大 61 で、この模型と合った。
+IP の実際の構成（基数 4 の段を含むか等）は確かめていないので、係数は桁の見積もりとして使う。
+"""
 import numpy as np
 rng=np.random.default_rng(0)
 N=8192; P=16; M=512
