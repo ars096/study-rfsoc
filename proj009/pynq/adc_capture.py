@@ -52,7 +52,12 @@ BITFILE = "proj009.bit"
 # nch > 1 なら axis_combiner の S00 が語の最下位に来るので、ch0 が最初の SPW サンプル。
 # SMA との対応は VERSIONS.md（proj006 で実測）: (2, 0) = Tile 226 / slice 0 = **ADC_B**。
 # 4ch に戻すときは [(0, 0), (0, 2), (2, 0), (2, 2)]（build.tcl の chans と同じ順）。
-CHANS = [(2, 0)]                             # (tile index, slice)
+CHANS_BY_NCH = {
+    1: [(2, 0)],                                 # proj009.bit     : ADC_B のみ
+    4: [(0, 0), (0, 2), (2, 0), (2, 2)],         # proj009_4ch.bit : ch0..3 = ADC_D, C, B, A
+}
+SMA = {(2, 0): "ADC_B", (2, 2): "ADC_A", (0, 0): "ADC_D", (0, 2): "ADC_C"}   # VERSIONS.md（proj006 で実測）
+CHANS = CHANS_BY_NCH[1]                          # (tile index, slice)。set_layout() が書き換える
 NCH = len(CHANS)
 
 # build.tcl の fifo_depth。**越えると FIFO が溢れて記録が不連続になる。**
@@ -61,6 +66,39 @@ MAX_BEATS = 8192
 
 # probe の注目先の既定値としてだけ使う。
 TILE, SLICE = CHANS[0]
+
+
+def set_layout(ol, nch_override=None):
+    """**チャネル数をビットストリームから読む。**
+
+    1ch 版（proj009.bit）と 4ch 版（proj009_4ch.bit）で語の並びが違う。ソフト側の定数で
+    持つと、ビットストリームを取り違えたときに**それらしいが間違った ch 分けの波形**が出る。
+    DMA の語幅（.hwh）÷（SPW × 16 bit）がチャネル数そのものなので、そこから決める。
+    """
+    global CHANS, NCH, TILE, SLICE, BLOCK
+    nch = None
+    try:
+        prm = ol.ip_dict["dma_adc"]["parameters"]
+        for k in ("C_S_AXIS_S2MM_TDATA_WIDTH", "c_s_axis_s2mm_tdata_width"):
+            if k in prm:
+                nch = int(prm[k]) // (SPW * 16)
+                break
+    except Exception as e:                      # noqa: BLE001
+        log(f"WARNING: .hwh から DMA の語幅が読めない: {e}")
+    if nch_override is not None:
+        if nch is not None and nch != nch_override:
+            log(f"ERROR: --nch {nch_override} だが、ビットストリームは {nch} ch（DMA の語幅から）")
+            sys.exit(1)
+        nch = nch_override
+    if nch not in CHANS_BY_NCH:
+        log(f"ERROR: チャネル数が決まらない（{nch}）。--nch 1 か 4 を指定すること")
+        sys.exit(1)
+    CHANS = CHANS_BY_NCH[nch]
+    NCH = len(CHANS)
+    TILE, SLICE = CHANS[2] if NCH == 4 else CHANS[0]     # probe の注目先は ADC_B
+    BLOCK = block_index(SLICE)
+    log(f"チャネル構成 : {NCH} ch（" + " / ".join(
+        f"ch{i}={SMA[c]}" for i, c in enumerate(CHANS)) + "）")
 
 
 def block_index(slice_no):
@@ -661,8 +699,11 @@ def main():
     p.add_argument("--load", default=None,
                    help="保存した .npy を読んで解析するだけ（ボードを触らない）")
     p.add_argument("--probe", action="store_true", help="構成を出して終わる")
-    p.add_argument("--ch", type=int, default=None, choices=tuple(range(NCH)),
-                   help="解析するチャネル。省略すると全チャネルを解析する")
+    p.add_argument("--ch", type=int, default=None, choices=(0, 1, 2, 3),
+                   help="解析するチャネル。省略すると全チャネルを解析する"
+                        "（4ch 版の並び: ch0=ADC_D / ch1=ADC_C / ch2=ADC_B / ch3=ADC_A）")
+    p.add_argument("--nch", type=int, default=None, choices=(1, 4),
+                   help="チャネル数。省略するとビットストリーム（DMA の語幅）から読む")
     p.add_argument("--sg-dbm", type=float, default=None,
                    help="信号発生器の出力設定 [dBm]。**経路の減衰量とあわせて記録するため**")
     p.add_argument("--cal-mode", type=int, default=None, choices=(1, 2),
@@ -738,6 +779,11 @@ def main():
         if not args.probe:
             sys.exit(1)
 
+    set_layout(ol, args.nch)
+    if args.ch is not None and args.ch >= NCH:
+        log(f"ERROR: --ch {args.ch} はこのビットストリーム（{NCH} ch）に無い")
+        sys.exit(2)
+
     if args.probe:
         probe(ol, rfdc)
         return
@@ -762,7 +808,8 @@ def main():
             QUIET = True
             try:
                 xs = capture(ol, args.nsamples, blocks)
-                rr = analyse(xs[0 if args.ch is None else args.ch], fs_hz,
+                sel = args.ch if args.ch is not None else int(np.argmax([np.std(c) for c in xs]))
+                rr = analyse(xs[sel], fs_hz,
                              args.tone * 1e6 if args.tone else None, args.window) or {}
             finally:
                 QUIET = False
@@ -781,18 +828,19 @@ def main():
     # FFT を見るまでもなく max|x| と std で分かる。
     log("")
     log("=== チャネルの要約 ===")
-    log("  ch  tile/slice    max|x|       std")
+    log("  ch  SMA    tile/slice    max|x|       std")
     for i, (ti, si) in enumerate(CHANS):
-        log(f"  {i}   {224 + ti}/{si}       "
+        log(f"  {i}   {SMA[(ti, si)]}  {224 + ti}/{si}       "
             f"{int(np.max(np.abs(xs[i]))):>7}  {np.std(xs[i]):>9.1f}")
 
-    main_ch = 0 if args.ch is None else args.ch
+    # 省略時は**信号が一番大きい ch** を RESULT 行の主役にする（トーンを入れた SMA）
+    main_ch = int(np.argmax([np.std(c) for c in xs])) if args.ch is None else args.ch
     targets = range(NCH) if args.ch is None else [args.ch]
     r = None
     for i in targets:
         ti, si = CHANS[i]
         log("")
-        log(f"================ ch{i}  (Tile {224 + ti} / slice {si}) ================")
+        log(f"================ ch{i} = {SMA[(ti, si)]}  (Tile {224 + ti} / slice {si}) ================")
         ri = analyse(xs[i], fs_hz, args.tone * 1e6 if args.tone else None, args.window)
         if i == main_ch:
             r = ri
@@ -817,7 +865,7 @@ def main():
             lvl = (f"  sg={args.sg_dbm:+.1f}dBm  atten={args.atten_db:.1f}dB"
                    f"  adc_in={args.sg_dbm - args.atten_db:+.1f}dBm")
         log("")
-        log(f"RESULT  ch={main_ch}  clkin={args.clkin}  tone={args.tone} MHz  "
+        log(f"RESULT  ch={main_ch}({SMA[CHANS[main_ch]]})  clkin={args.clkin}  tone={args.tone} MHz  "
             f"f_est={r['f_est_hz'] / 1e6:.6f} MHz  "
             f"ppm={r['ppm']:+.3f}  peak={r['peak_dbfs']:.2f} dBFS  "
             f"lane_odd={r.get('lane_odd_dbc', float('nan')):.1f}dBc  "

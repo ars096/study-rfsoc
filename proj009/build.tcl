@@ -52,8 +52,21 @@ if {[info exists ::env(OUTDIR)] && $::env(OUTDIR) ne ""} { set outdir ./$::env(O
 #   ADC_B = Tile 226 / slice 0 = {2 0}
 # 4ch に戻すときは chans = {{0 0} {0 2} {2 0} {2 2}}、adc_tiles = {0 2}
 # （語は 1024 bit / 256 MHz になる。タイミングはその時点で見直す）。
-set chans      {{2 0}}
-set adc_tiles  {2}
+# 環境変数 NCH（Makefile の `make NCH=4`）で切り替える。**1ch と 4ch で成果物の名前を変える**
+# （proj009.bit / proj009_4ch.bit）。PYNQ 側は DMA の語幅からチャネル数を読むので取り違えない。
+set nch_req 1
+if {[info exists ::env(NCH)] && $::env(NCH) ne ""} { set nch_req $::env(NCH) }
+if {$nch_req == 1} {
+    set chans      {{2 0}}
+    set adc_tiles  {2}
+} elseif {$nch_req == 4} {
+    set chans      {{0 0} {0 2} {2 0} {2 2}}
+    set adc_tiles  {0 2}
+    set proj       proj009_4ch
+} else {
+    puts "ERROR: NCH = $nch_req は未対応（1 か 4）"
+    exit 1
+}
 set nch        [llength $chans]
 
 set fs_gsps    4.096      ;# サンプリング周波数 [GSPS]。IP の有効範囲は (1.0, 5.0)
@@ -82,7 +95,8 @@ set use_gb [expr {$spw_adc != $spw}]
 
 # **FIFO の深さが取得長の上限を決める。**ここを増やすと BRAM を食う。
 #   256 bit × 8192 語 = 256 KiB = BRAM36 で約 64 個（ZU48DR は 1080 個）
-#   → 1ch で 8192 × 16 = 131072 サンプル（32 us、FFT 分解能 31.25 kHz）
+#   → 1ch あたり 8192 × 16 = 131072 サンプル（32 us、FFT 分解能 31.25 kHz）
+#   4ch: 1024 bit × 8192 語 = 1 MiB = BRAM36 で約 256 個
 #   既定の取得長は 65536 サンプル（16 us、62.5 kHz ちょうど）
 set fifo_depth 8192
 

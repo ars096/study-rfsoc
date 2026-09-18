@@ -72,6 +72,10 @@ def run_one(clkin, args):
     from pynq import Overlay
     ol = Overlay(args.bitfile)
     log(f"Overlay を読み直した: {args.bitfile}")
+    ac.set_layout(ol)                     # チャネル数はビットストリームから読む
+    if args.ch >= ac.NCH:
+        log(f"ERROR: --ch {args.ch} はこのビットストリーム（{ac.NCH} ch）に無い")
+        sys.exit(2)
 
     fs_hz = args.fs * 1e6
     try:
@@ -101,7 +105,7 @@ def main():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--bitfile", default=ac.BITFILE)
-    p.add_argument("--ch", type=int, default=0, choices=tuple(range(ac.NCH)),
+    p.add_argument("--ch", type=int, default=0, choices=(0, 1, 2, 3),
                    help="ppm を見るチャネル。外部基準の判定は 1 本で足りる")
     p.add_argument("--tone", type=float, required=True,
                    help="入力している CW の周波数 [MHz]。**SG も同じ 10 MHz に同期させること**")

@@ -18,11 +18,21 @@ BOARD_REPO ?= $(HOME)/src/RFSoC4x2-BSP/board_files
 PART_DEFAULT := xczu48dr-ffvg1517-2-e
 PART         ?= $(PART_DEFAULT)
 
+# チャネル数。1 = ADC_B のみ（proj009 の最初の構成）/ 4 = ADC_A〜D。
+# **1ch の成果物を上書きしないよう、4ch は別ディレクトリ・別名に出す**
+# （build-4ch/proj009_4ch.bit）。`make NCH=4` / `make NCH=4 timing-check` / `make NCH=4 prog`。
+NCH ?= 1
+ifeq ($(NCH),1)
+  CHSUF :=
+else
+  CHSUF := -$(NCH)ch
+endif
+
 # 既定以外の part は別ディレクトリに出し、検証済みの成果物を上書きしない。
 ifeq ($(PART),$(PART_DEFAULT))
-  OUTDIR := build
+  OUTDIR := build$(CHSUF)
 else
-  OUTDIR := build-$(patsubst xczu48dr-ffvg1517-%,%,$(PART))
+  OUTDIR := build-$(patsubst xczu48dr-ffvg1517-%,%,$(PART))$(CHSUF)
 endif
 
 # 同時に走らせる run の数（launch_runs -jobs）。
@@ -37,7 +47,7 @@ endif
 JOBS ?= 30
 PROJ ?= proj009
 
-export BOARD_REPO PART OUTDIR
+export BOARD_REPO PART OUTDIR NCH
 
 .PHONY: all probe sim prog id timing-check clean
 

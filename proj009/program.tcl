@@ -10,7 +10,9 @@
 set id_only [expr {[llength $argv] > 0 && [lindex $argv 0] eq "id"}]
 set outdir ./build
 if {[info exists ::env(OUTDIR)] && $::env(OUTDIR) ne ""} { set outdir ./$::env(OUTDIR) }
-set bitfile $outdir/proj009.bit
+set bitname proj009
+if {[info exists ::env(NCH)] && $::env(NCH) eq "4"} { set bitname proj009_4ch }
+set bitfile $outdir/$bitname.bit
 
 open_hw_manager
 connect_hw_server -url localhost:3121   ;# 別機なら <host>:3121
