@@ -87,6 +87,7 @@ sim-pps:
 PYTHON ?= python3
 sim-analysis:
 	$(PYTHON) sim/test_analysis.py
+	$(PYTHON) sim/test_timebase.py
 
 # sim の最後に、解析側が含まれていないことを明示する。
 # **黙って含めないと「make sim が通った」が解析側まで含むと誤解される。**
