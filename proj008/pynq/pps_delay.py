@@ -77,8 +77,22 @@ SMA_OF_CH = {0: "ADC_D", 1: "ADC_C", 2: "ADC_B", 3: "ADC_A"}
 TILE_NO = {0: 224, 2: 226}          # ac.CHANS のタイル添字 → RFDC のタイル番号
 
 # proj006 の実測値。**予言として使い、外れたら測定系を疑う。**
-PRED_WITHIN_TILE_SAMPLES = 0.02     # 同一タイル内は 0.02 サンプル以内で不変
-PRED_CROSS_TILE_SAMPLES = 1.5       # タイル間は 1〜1.5 サンプル RMS・起動ごとに変わる
+#
+# **量の種類を取り違えないこと（2026-09-18 に取り違えた）。**
+# proj006 がタイル間について測ったのは **CW の位相を巻き戻した「起動ごとのばらつき」**
+# であって、**あるエポックでの平均オフセットではない**。
+#
+#   | | 10.0125 MHz | 13.0125 MHz |
+#   |---|---|---|
+#   | タイル間の幅（巻き戻し後）| 2.64 サンプル | 5.30 サンプル |
+#   | 同 標準偏差               | 0.93         | 1.50         |
+#
+# したがって **1 エポックの平均オフセットを 1.5 と比べても意味が無い。**
+# 比べてよいのは **エポックをまたいだ平均の σ** である（--epochs で出る）。
+PRED_WITHIN_TILE_SIGMA = 0.02       # 同一タイル内: σ 0.018 →「0.02 サンプル以内」
+PRED_WITHIN_TILE_SPAN = 0.054       # 同 幅
+PRED_CROSS_TILE_RMS = (0.93, 1.50)  # タイル間: **起動ごとの σ**（平均オフセットではない）
+PRED_CROSS_TILE_SPAN = (2.64, 5.30) # 同 幅
 
 
 def check_chan_map():
@@ -476,7 +490,7 @@ def main():
         tiles.setdefault(tile_of(c), []).append(c)
 
     log("---- 判定 3: タイル内の差 ----")
-    log(f"  **予言（proj006）: 同一タイル内は {PRED_WITHIN_TILE_SAMPLES} サンプル以内で不変。**")
+    log(f"  **予言（proj006）: 同一タイル内は {PRED_WITHIN_TILE_SIGMA} サンプル以内で不変。**")
     log("  proj006 は CW トーンの位相で測った。ここは PPS のエッジで測る。")
     log("  **まったく違う方法で同じ量を測るので、一致すれば両方信用できる。**")
     within_ok = []
@@ -489,7 +503,7 @@ def main():
         mu = float(d.mean())
         sd = float(d.std(ddof=1)) if d.size >= 2 else 0.0
         sem = sd / np.sqrt(max(1, d.size))
-        good = abs(mu) <= PRED_WITHIN_TILE_SAMPLES
+        good = abs(mu) <= PRED_WITHIN_TILE_SIGMA
         verdict = "予言と整合" if good else (
             "予言より大きいが測定の誤差の範囲内" if abs(mu) <= 3 * sem
             else "**予言と食い違う**")
@@ -503,8 +517,12 @@ def main():
     log("")
 
     log("---- 判定 4: タイル間の差 ----")
-    log(f"  **予言（proj006）: タイル間は 1〜{PRED_CROSS_TILE_SAMPLES} サンプル RMS で、"
-        "起動ごとに変わる。**")
+    log("  **proj006 に直接比べられる数字は無い。ここで当たり外れを言わない。**")
+    log(f"  proj006 が測ったのは CW の位相を巻き戻した**起動ごとのばらつき**"
+        f"（σ {PRED_CROSS_TILE_RMS[0]}〜{PRED_CROSS_TILE_RMS[1]} サンプル / "
+        f"幅 {PRED_CROSS_TILE_SPAN[0]}〜{PRED_CROSS_TILE_SPAN[1]} サンプル）であって、")
+    log("  **あるエポックでの平均オフセットではない。** ここで出るのは後者である。")
+    log("  **平均と RMS を比べない**（2026-09-18 に取り違えた）。")
     d, t_lo, t_hi = tile_diff_series(ch0_arrays, tiles)
     if d is None:
         log("  タイルが 1 つしか測れていないので判定できない")
@@ -512,18 +530,21 @@ def main():
         mu = float(d.mean())
         sd = float(d.std(ddof=1)) if d.size >= 2 else 0.0
         sem = sd / np.sqrt(max(1, d.size))
+        log("")
         log(f"  Tile {t_hi} − Tile {t_lo} = {mu:+.3f} ± {sem:.3f} サンプル "
             f"({mu * SAMP_NS:+.3f} ns)  [実行内 σ {sd * SAMP_NS:.3f} ns]")
         log(f"  （8 サンプル = 1 ビート = {pps_mod.BEAT_NS:.2f} ns。"
             f"この差は {abs(mu) / ac.SPW:.2f} ビート）")
-        if abs(mu) <= PRED_CROSS_TILE_SAMPLES:
-            log("  → proj006 の 1〜1.5 サンプルと同じ桁。**別の方法で再現した。**")
+        lo, hi = PRED_CROSS_TILE_SPAN
+        if lo <= abs(mu) <= hi:
+            log(f"  参考: proj006 が起動ごとに見た幅 {lo}〜{hi} サンプルの**中に入っている**。")
+            log("        同じ現象を見ている見込みは高いが、**これは整合の確認であって判定ではない。**")
         else:
-            log("  → **proj006 の予言より大きい。** どちらが正しいかはこの 1 回では決まらない。")
-            log("    ケーブルを巡回させた対照で、測定系の寄与を切り離す")
+            log(f"  参考: proj006 が起動ごとに見た幅 {lo}〜{hi} サンプルの**外にある**。")
     log("")
     log("  **この差は「その瞬間の値」でしかない。**")
-    log("  較正の設計を決めるのは、**エポックをまたいで一定かどうか**である（下）。")
+    log("  較正の設計を決めるのも、proj006 と比べられる量になるのも、")
+    log("  **エポックをまたいだときのばらつき**である（下）。")
     log("")
 
     # ---- 判定 5 の材料: エポックをまたいだ比較 ----
@@ -571,6 +592,10 @@ def main():
                 f"({span * SAMP_NS:.3f} ns)")
             log(f"  実行内から予想される標準誤差 : {sem:.3f} サンプル "
                 f"({sem * SAMP_NS:.3f} ns)")
+            log("")
+            lo, hi = PRED_CROSS_TILE_RMS
+            log(f"  （proj006 の起動ごとの σ は {lo}〜{hi} サンプル。"
+                "**ここで初めて同じ量どうしを比べられる**）")
             log("")
             if varies:
                 log("  → **タイル間の差はエポックごとに変わる。**")
