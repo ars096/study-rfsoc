@@ -19,11 +19,17 @@
 #   RFADC2_CLK                     13.021 ns   RFDC の clk_adc2（76.8 MHz）
 #   clk_out1_system_clk_wiz_adc_0   6.510 ns   MMCM 出力（153.6 MHz、AXIS）
 #
-# **proj009 では周期が変わる（名前は変わらない見込み）。**
-#   RFADC2_CLK                      3.906 ns   clk_adc2 = fs/16 = 256 MHz
-#   clk_out1_system_clk_wiz_adc_0   3.906 ns   MMCM 出力（256 MHz、AXIS。spw = 16 で 1:1）
-# 名前が変わっていれば set_clock_groups が空振りする。build.tcl の「クロック」一覧と
-# 「asynchronous を含む箇所」の件数で確かめること。
+# **proj009 では周期が変わり、MMCM の出力が 2 本になる。**
+#   RFADC2_CLK                      3.906 ns   clk_adc2 = fs/16 = 256 MHz（MMCM の入力だけ）
+#   clk_out1_system_clk_wiz_adc_0   2.930 ns   341.333 MHz  ADC ドメイン（RFDC の AXIS・ギアボックス入口）
+#   clk_out2_system_clk_wiz_adc_0   3.906 ns   256.000 MHz  DSP ドメイン（ギアボックス出口以降）
+# clk_out1 / clk_out2 の名前は proj006 の実名から類推したもので、**まだビルドで確かめていない。**
+# 名前が違えば get_clocks が空を返して set_clock_groups が落ちる（それで気づける）。
+#
+# **clk_out1 と clk_out2 は同じ MMCM から出るが、非同期として扱う。**
+# 両者の乗り換えはギアボックスの非同期 FIFO（gb_fifo_*）だけにしてある。
+# 同期として解析させると、4:3 の比から最小のエッジ間隔（約 1 ns）で
+# FIFO のポインタ経路が解析され、実在しない違反が出る。
 #
 # clk_out1_... は RFADC2_CLK から派生した生成クロックなので
 # -include_generated_clocks で一緒に入る。
@@ -57,4 +63,5 @@
 set_clock_groups -asynchronous \
     -group [get_clocks -include_generated_clocks clk_pl_0] \
     -group [get_clocks -include_generated_clocks clk_pl_1] \
-    -group [get_clocks -include_generated_clocks RFADC2_CLK]
+    -group [get_clocks {RFADC2_CLK clk_out1_system_clk_wiz_adc_0}] \
+    -group [get_clocks clk_out2_system_clk_wiz_adc_0]

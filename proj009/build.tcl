@@ -11,8 +11,11 @@
 #   1. **fs を 1228.8 → 4096.0 MSPS に上げる。**タイル PLL の出力分周を M = 8 → 3、
 #      帰還分周を N = 20 → 25 にする（VCO 9830.4 → 12288.0 MHz）。LMX の 491.52 MHz と
 #      外部 10 MHz 系統（proj004）は変えない
-#   2. **1 語あたり 16 サンプル**（spw = 16）で AXIS を 256 MHz に収める。
-#      **spw = 16 が IP に通るかはまだ確かめていない。**`make probe` で先に確かめる
+#   2. **RFDC は 1 語 12 サンプル / 341.33 MHz で受け、入口のギアボックスで
+#      1 語 16 サンプル / 256 MHz に詰め替える。**RFDC の Data_Width の有効値は
+#      fs 4096 MSPS で 7〜12 しかなく、16 は通らない（2026-09-18 に `make probe` で確定）。
+#      8 では 512 MHz で PL が閉じない。12 のままでは 12 並列（2 のべき乗でない）で、
+#      1 秒も整数ビートにならない。**341.33 MHz で動くのは入口の薄い部分だけ**にする
 #   3. **まず 1ch（ADC_B = Tile 226 / slice 0）。**nch = 1 のときは axis_combiner を
 #      置かずに RFDC → capture_gate へ直結する。4ch へは chans / adc_tiles を戻すだけ
 #   4. 取得長は proj006 と同じく **FIFO の深さで上限する**（1ch で 8.192 GB/s。HP ポートでは受けきれない）
@@ -55,14 +58,27 @@ set nch        [llength $chans]
 
 set fs_gsps    4.096      ;# サンプリング周波数 [GSPS]。IP の有効範囲は (1.0, 5.0)
 set refclk_mhz 491.520    ;# LMX2594 → RFDC タイル
-# 1ch あたり AXI4-Stream 1 語のサンプル数。AXIS クロック = fs / spw。
-#   spw = 16 → 256 MHz（本命）/ spw = 8 → 512 MHz（PL では閉じない）
-# **IP が 16 を許すかは未確認。**`make probe` が候補ごとの可否を出す。
-# 環境変数 SPW で上書きできる（probe の結果を試すため）。
+# 1 語あたりのサンプル数は **2 つある。**
+#   spw_adc: RFDC の出力。AXIS クロック = fs / spw_adc。有効値は 7〜12（probe で確定）
+#            12 → 341.333 MHz（ADC ドメイン。入口のギアボックスだけがここで動く）
+#   spw    : ギアボックスの後。DSP ドメイン = fs / spw = 256 MHz。以降すべてこちら
+# 環境変数 SPW で spw_adc を上書きできる（probe で候補を試すため）。
+set spw_adc    12
+if {[info exists ::env(SPW)] && $::env(SPW) ne ""} { set spw_adc $::env(SPW) }
 set spw        16
-if {[info exists ::env(SPW)] && $::env(SPW) ne ""} { set spw $::env(SPW) }
-set beat_bits  [expr {$nch * $spw * 16}]   ;# 束ねた後の語幅（1ch・spw 16 で 256 bit）
+set beat_bits  [expr {$nch * $spw * 16}]   ;# 束ねた後の語幅（1ch で 256 bit）
 set beat_bytes [expr {$beat_bits / 8}]
+
+# ---- ギアボックスの比 ----
+# spw_adc サンプルの語を up 個まとめ、dn 個に割る。中間の語 = lcm(spw_adc, spw) サンプル。
+#   12 → 48 → 16: up = 4 / dn = 3。中間語 = 768 bit（1ch）
+# **流入と流出の速度は厳密に等しい**（fs/spw_adc/up = fs/spw/dn = 85.33 M 語/s）。
+# 同じ MMCM から出た 2 クロックなので、間の FIFO は浅くてよい。
+proc gcd {a b} { while {$b} { set t $b; set b [expr {$a % $b}]; set a $t }; return $a }
+set gb_mid [expr {$spw_adc * $spw / [gcd $spw_adc $spw]}]
+set gb_up  [expr {$gb_mid / $spw_adc}]
+set gb_dn  [expr {$gb_mid / $spw}]
+set use_gb [expr {$spw_adc != $spw}]
 
 # **FIFO の深さが取得長の上限を決める。**ここを増やすと BRAM を食う。
 #   256 bit × 8192 語 = 256 KiB = BRAM36 で約 64 個（ZU48DR は 1080 個）
@@ -78,7 +94,8 @@ set wiz_src_tile 2        ;# clk_adc2 を Clocking Wizard の入力にする（t
 set ctrl_mhz   100        ;# pl_clk0: AXI4-Lite 制御系
 set data_mhz   200        ;# pl_clk1: DMA の MM 側と HP ポート
 
-set fabric_mhz [format %.3f [expr {$fs_gsps * 1000.0 / $spw}]]
+set fabric_mhz [format %.3f [expr {$fs_gsps * 1000.0 / $spw_adc}]]   ;# RFDC の AXIS（ADC ドメイン）
+set dsp_mhz    [format %.3f [expr {$fs_gsps * 1000.0 / $spw}]]       ;# ギアボックスの後（DSP ドメイン）
 set fs_mhz     [format %.3f [expr {$fs_gsps * 1000.0}]]
 
 # probe モード: RFDC を組んで spw の候補ごとの可否を調べ、合成に入らず終わる（make probe）
@@ -91,7 +108,8 @@ foreach ch $chans {
     lassign $ch t s
     puts "            Tile [expr {224 + $t}] / slice $s"
 }
-puts "fs        : $fs_mhz MSPS （AXIS $fabric_mhz MHz × $spw sample/word/ch）"
+puts "fs        : $fs_mhz MSPS （RFDC $fabric_mhz MHz × $spw_adc → DSP $dsp_mhz MHz × $spw sample/word/ch）"
+if {$use_gb} { puts "GEARBOX   : $spw_adc → $gb_mid → $spw サンプル（×$gb_up / ÷$gb_dn）" }
 puts "BEAT      : $beat_bits bit = $beat_bytes B"
 
 set projdir $outdir/vivado
@@ -313,7 +331,7 @@ foreach ch $chans {
     set S "${t}${s}"
     cfg_apply rfdc [list \
         CONFIG.ADC_Data_Type${S}        {0} \
-        CONFIG.ADC_Data_Width${S}       $spw \
+        CONFIG.ADC_Data_Width${S}       $spw_adc \
         CONFIG.ADC_Decimation_Mode${S}  {1} \
         CONFIG.ADC_Mixer_Type${S}       {1} \
     ] 0
@@ -426,7 +444,7 @@ foreach ch $chans {
     lassign $ch t s
     set S "${t}${s}"
     lappend want CONFIG.ADC_Data_Type${S}       0    int
-    lappend want CONFIG.ADC_Data_Width${S}      $spw int
+    lappend want CONFIG.ADC_Data_Width${S}      $spw_adc int
     lappend want CONFIG.ADC_Decimation_Mode${S} 1    int
     lappend want CONFIG.ADC_Mixer_Type${S}      1    int
 }
@@ -488,8 +506,12 @@ puts ""
 # **1 個だけ置いて、両タイルの m*_axis_aclk に配る。**両タイルは同じ LMX2594 の
 # 491.52 MHz から同じ fs を作っているので、Fabric_Freq は上の読み返しで同一を確認済み。
 # 2 個置くと MMCM 2 個ぶんの位相不定が入るだけで、得るものがない。
+# **出力は 2 本。**同じ MMCM から出すので周波数比 4:3 は厳密に保たれる。
+#   clk_out1 = fs / spw_adc = 341.333 MHz  RFDC の AXIS とギアボックスの入口（ADC ドメイン）
+#   clk_out2 = fs / spw     = 256.000 MHz  ギアボックスの出口以降（DSP ドメイン）
+# 入力 256 MHz から VCO 1024 MHz（×4）を作れば、÷3 と ÷4 で両方がちょうど出る。
 set clkw [create_bd_cell -type ip -vlnv xilinx.com:ip:clk_wiz clk_wiz_adc]
-cfg_apply clk_wiz_adc [list \
+set wiz_cfg [list \
     CONFIG.PRIM_SOURCE                  {No_buffer} \
     CONFIG.PRIM_IN_FREQ                 $outclk_mhz \
     CONFIG.CLKOUT1_REQUESTED_OUT_FREQ   $fabric_mhz \
@@ -497,28 +519,96 @@ cfg_apply clk_wiz_adc [list \
     CONFIG.USE_RESET                    {true} \
     CONFIG.RESET_TYPE                   {ACTIVE_LOW} \
     CONFIG.RESET_PORT                   {resetn} \
-] 0
+]
+if {$use_gb} {
+    lappend wiz_cfg CONFIG.CLKOUT2_USED {true} CONFIG.CLKOUT2_REQUESTED_OUT_FREQ $dsp_mhz
+}
+cfg_apply clk_wiz_adc $wiz_cfg 0
 cfg_report "Clocking Wizard の設定"
 
-foreach {k w} [list \
-        CONFIG.PRIM_IN_FREQ               $outclk_mhz \
-        CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $fabric_mhz] {
+set wiz_want [list CONFIG.PRIM_IN_FREQ $outclk_mhz CONFIG.CLKOUT1_REQUESTED_OUT_FREQ $fabric_mhz]
+if {$use_gb} { lappend wiz_want CONFIG.CLKOUT2_REQUESTED_OUT_FREQ $dsp_mhz }
+foreach {k w} $wiz_want {
     set got [get_property $k $clkw]
     if {abs($got - $w) > 1e-6} {
         puts "ERROR: Clocking Wizard が設定を丸めた: $k  要求 $w / 実際 $got"
         exit 1
     }
 }
-set act ""
-catch {set act [get_property CONFIG.CLKOUT1_ACTUAL_FREQ $clkw]}
-# CLKOUT1_ACTUAL_FREQ はこの時点では空のことがある（validate 後に確定する）。
-puts "CLK WIZ    : $outclk_mhz MHz → $fabric_mhz MHz[expr {$act eq "" ? "" : " （実際 $act）"}]"
-if {$act ne "" && abs($act - $fabric_mhz) > 1e-3} {
-    puts "ERROR: Clocking Wizard の実出力が要求と違う（$act MHz）。"
-    puts "  AXIS クロックは fs / spw きっかりでなければならない"
-    exit 1
+# CLKOUTn_ACTUAL_FREQ はこの時点では空のことがある（validate 後に確定する）。
+# **validate 後にもう一度読む**（下の「Clocking Wizard の実出力」）。
+proc wiz_actual_check {clkw pairs stage} {
+    foreach {n want} $pairs {
+        set act ""
+        catch {set act [get_property CONFIG.CLKOUT${n}_ACTUAL_FREQ $clkw]}
+        puts [format "  clk_out%d  要求 %s MHz → 実際 %s MHz（%s）" $n $want \
+              [expr {$act eq "" ? "未確定" : $act}] $stage]
+        if {$act ne "" && abs($act - $want) > 1e-3} {
+            puts "ERROR: Clocking Wizard の clk_out$n が要求と違う（$act MHz）。"
+            puts "  AXIS クロックは fs / spw きっかりでなければならない。ずれると FIFO が溢れるか枯れる"
+            exit 1
+        }
+    }
 }
+set wiz_pairs [list 1 $fabric_mhz]
+if {$use_gb} { lappend wiz_pairs 2 $dsp_mhz }
+puts "CLK WIZ    : 入力 $outclk_mhz MHz"
+wiz_actual_check $clkw $wiz_pairs "設定直後"
 puts ""
+
+# ---- ギアボックス（ch ごと。spw_adc → spw の詰め替え）----
+# RFDC ─(spw_adc×16 bit @ fabric)─▶ gb_up（×gb_up）─▶ gb_fifo（非同期）─▶ gb_dn（÷gb_dn）─(spw×16 bit @ dsp)─▶
+#
+# **サンプルの順序は保たれる。**axis_dwidth_converter は、まとめるときは先に来た語を
+# 下位に置き、割るときは下位から先に出す。RFDC の語も下位が先のサンプルなので、
+# 12 → 48 → 16 のどの段でも「下位ほど古い」が崩れない。崩れていれば
+# adc_capture.py の lane_check（f ± m·fs/16 のイメージ）が立つ。
+#
+# **上流に backpressure をかけてはいけない**（RFDC がサンプルを落とす）。流入と流出の
+# 速度は厳密に等しく、下流（capture_gate）は待機中も常に受け取るので、gb_fifo は浅くてよい。
+if {$use_gb} {
+    set i 0
+    foreach ch $chans {
+        create_bd_cell -type ip -vlnv xilinx.com:ip:axis_dwidth_converter gb_up_$i
+        cfg_apply gb_up_$i [list \
+            CONFIG.S_TDATA_NUM_BYTES [expr {$spw_adc * 2}] \
+            CONFIG.M_TDATA_NUM_BYTES [expr {$gb_mid * 2}] \
+            CONFIG.HAS_TLAST {0} CONFIG.HAS_TKEEP {0} CONFIG.HAS_TSTRB {0} \
+        ] 0
+        create_bd_cell -type ip -vlnv xilinx.com:ip:axis_data_fifo gb_fifo_$i
+        cfg_apply gb_fifo_$i [list \
+            CONFIG.TDATA_NUM_BYTES  [expr {$gb_mid * 2}] \
+            CONFIG.FIFO_DEPTH       {32} \
+            CONFIG.IS_ACLK_ASYNC    {1} \
+            CONFIG.HAS_TLAST {0} CONFIG.HAS_TKEEP {0} CONFIG.HAS_TSTRB {0} \
+        ] 0
+        create_bd_cell -type ip -vlnv xilinx.com:ip:axis_dwidth_converter gb_dn_$i
+        cfg_apply gb_dn_$i [list \
+            CONFIG.S_TDATA_NUM_BYTES [expr {$gb_mid * 2}] \
+            CONFIG.M_TDATA_NUM_BYTES [expr {$spw * 2}] \
+            CONFIG.HAS_TLAST {0} CONFIG.HAS_TKEEP {0} CONFIG.HAS_TSTRB {0} \
+        ] 0
+        incr i
+    }
+    cfg_report "ギアボックスの設定（読み返しで検証するので、ここでは止めない）"
+    # **読み返しで判定する。**語幅が 1 段でも違えば、サンプルの並びが崩れる。
+    set i 0
+    foreach ch $chans {
+        foreach {cell pin want} [list \
+                gb_up_$i   M_AXIS [expr {$gb_mid * 2}] \
+                gb_fifo_$i M_AXIS [expr {$gb_mid * 2}] \
+                gb_dn_$i   M_AXIS [expr {$spw * 2}]] {
+            set nb ""
+            catch {set nb [get_property CONFIG.TDATA_NUM_BYTES [get_bd_intf_pins $cell/$pin]]}
+            puts [format "GEARBOX    : %-10s %s = %s B（期待 %s）" $cell $pin $nb $want]
+            if {$nb eq "" || $nb != $want} {
+                puts "ERROR: ギアボックスの語幅が期待と違う（$cell）。CONFIG の名前が版で変わっている可能性"
+                exit 1
+            }
+        }
+        incr i
+    }
+}
 
 # ---- 複数 ch を 1 本に束ねる（nch > 1 のときだけ）----
 # **nch = 1 では置かない。**axis_combiner は NUM_SI = 1 を想定しておらず、
@@ -614,10 +704,11 @@ set_property -dict [list \
     CONFIG.C_ALL_INPUTS_2 {1} \
 ] $gpio
 
-# ---- リセット生成（3 ドメインぶん）----
+# ---- リセット生成（4 ドメインぶん）----
 set rst_ctrl [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst_ctrl]
 set rst_data [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst_data]
 set rst_adc  [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst_adc]
+set rst_dsp  [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst_dsp]
 
 # ---- 相互接続 ----
 set smc_ctrl [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect smc_ctrl]
@@ -632,9 +723,11 @@ set ps_clk1  zynq_ultra_ps_e_0/pl_clk1
 set ps_rstn  zynq_ultra_ps_e_0/pl_resetn0
 
 set adc_outclk rfdc/clk_adc${wiz_src_tile}  ;# fs/16 = 256 MHz。Clocking Wizard の入力
-set adc_fabric clk_wiz_adc/clk_out1         ;# fs/spw = 256 MHz。AXIS ドメイン
+set adc_fabric clk_wiz_adc/clk_out1         ;# fs/spw_adc = 341.333 MHz。ADC ドメイン（RFDC の AXIS）
+set dsp_fabric [expr {$use_gb ? "clk_wiz_adc/clk_out2" : "clk_wiz_adc/clk_out1"}]  ;# fs/spw = 256 MHz。DSP ドメイン
 BP $adc_outclk
 BP $adc_fabric
+BP $dsp_fabric
 nc $adc_outclk clk_wiz_adc/clk_in1
 nc zynq_ultra_ps_e_0/pl_resetn0 clk_wiz_adc/resetn
 
@@ -652,33 +745,51 @@ foreach p [list \
         zynq_ultra_ps_e_0/saxihp0_fpd_aclk] {
     nc $ps_clk1 $p
 }
-# **AXIS ドメインは 1 個の MMCM 出力で統一する。**両タイルの m*_axis_aclk を含む。
-set adc_dom [list rst_adc/slowest_sync_clk capture_gate_0/aclk axis_fifo/s_axis_aclk]
-if {$nch > 1} { lappend adc_dom axis_comb/aclk }
+# **ADC ドメイン（341.333 MHz）には RFDC の AXIS とギアボックスの入口だけを置く。**
+# それ以外はすべて DSP ドメイン（256 MHz）。どちらも 1 個の MMCM から出す。
+set adc_dom [list rst_adc/slowest_sync_clk]
 foreach t $adc_tiles { lappend adc_dom rfdc/m${t}_axis_aclk }
+set dsp_dom [list rst_dsp/slowest_sync_clk capture_gate_0/aclk axis_fifo/s_axis_aclk]
+if {$nch > 1} { lappend dsp_dom axis_comb/aclk }
+if {$use_gb} {
+    for {set i 0} {$i < $nch} {incr i} {
+        lappend adc_dom gb_up_$i/aclk gb_fifo_$i/s_axis_aclk
+        lappend dsp_dom gb_fifo_$i/m_axis_aclk gb_dn_$i/aclk
+    }
+}
 foreach p $adc_dom { nc $adc_fabric $p }
+foreach p $dsp_dom { nc $dsp_fabric $p }
 
-# MMCM がロックするまで ADC ドメインをリセットに保つ。
+# MMCM がロックするまで両ドメインをリセットに保つ。
 # **clk_adcN はタイルが起動して初めて出る**ので、ロックも起動後になる。
 nc clk_wiz_adc/locked rst_adc/dcm_locked
+nc clk_wiz_adc/locked rst_dsp/dcm_locked
 
 # リセット
-foreach r {rst_ctrl rst_data rst_adc} { nc $ps_rstn $r/ext_reset_in }
+foreach r {rst_ctrl rst_data rst_adc rst_dsp} { nc $ps_rstn $r/ext_reset_in }
 foreach p [list smc_ctrl/aresetn rfdc/s_axi_aresetn \
                 dma_adc/axi_resetn gpio_capture/s_axi_aresetn] {
     nc rst_ctrl/peripheral_aresetn $p
 }
 nc rst_data/peripheral_aresetn smc_data/aresetn
-set adc_rst [list capture_gate_0/aresetn axis_fifo/s_axis_aresetn]
-if {$nch > 1} { lappend adc_rst axis_comb/aresetn }
+set adc_rst {}
 foreach t $adc_tiles { lappend adc_rst rfdc/m${t}_axis_aresetn }
+set dsp_rst [list capture_gate_0/aresetn axis_fifo/s_axis_aresetn]
+if {$nch > 1} { lappend dsp_rst axis_comb/aresetn }
+if {$use_gb} {
+    for {set i 0} {$i < $nch} {incr i} {
+        lappend adc_rst gb_up_$i/aresetn gb_fifo_$i/s_axis_aresetn
+        lappend dsp_rst gb_dn_$i/aresetn
+    }
+}
 foreach p $adc_rst { nc rst_adc/peripheral_aresetn $p }
+foreach p $dsp_rst { nc rst_dsp/peripheral_aresetn $p }
 
 # キャプチャ制御
 nc gpio_capture/gpio_io_o  capture_gate_0/ctrl
 nc capture_gate_0/status   gpio_capture/gpio2_io_i
 
-# ---- データ経路: RFDC → (combiner) → gate → FIFO → DMA ----
+# ---- データ経路: RFDC → ギアボックス → (combiner) → gate → FIFO → DMA ----
 # nch > 1: chans の順に S00, S01, ... へ入れ、S00 が語の最下位になる
 #          （PYNQ 側の deinterleave がこれに依存する）。
 # nch = 1: RFDC の出力を capture_gate へ直結する。
@@ -689,8 +800,8 @@ foreach ch $chans {
     # **語幅で Real / I/Q を判定する。** ミキサの設定が通っていても、出力が I/Q に
     # なっていれば 1 語あたりのバイト数が変わる。実機に持ち込む前にここで気づける。
     if {![catch {set nb [get_property CONFIG.TDATA_NUM_BYTES $src]}] && $nb ne ""} {
-        if {$nb != $spw * 2} {
-            puts "ERROR: m${t}${s}_axis の語幅が $nb B。期待 [expr {$spw * 2}] B。"
+        if {$nb != $spw_adc * 2} {
+            puts "ERROR: m${t}${s}_axis の語幅が $nb B。期待 [expr {$spw_adc * 2}] B。"
             puts "  Real のつもりが I/Q になっている可能性がある"
             exit 1
         }
@@ -700,9 +811,18 @@ foreach ch $chans {
     } else {
         set dst [get_bd_intf_pins capture_gate_0/s_axis]
     }
-    ic $src $dst
-    puts [format "  ch%d  <- Tile %d slice %d  (%s -> %s)" \
-          $i [expr {224 + $t}] $s [file tail $src] [file tail $dst]]
+    if {$use_gb} {
+        ic $src [get_bd_intf_pins gb_up_$i/S_AXIS]
+        ic [get_bd_intf_pins gb_up_$i/M_AXIS]   [get_bd_intf_pins gb_fifo_$i/S_AXIS]
+        ic [get_bd_intf_pins gb_fifo_$i/M_AXIS] [get_bd_intf_pins gb_dn_$i/S_AXIS]
+        ic [get_bd_intf_pins gb_dn_$i/M_AXIS]   $dst
+        set via " via gb_up_$i / gb_fifo_$i / gb_dn_$i"
+    } else {
+        ic $src $dst
+        set via ""
+    }
+    puts [format "  ch%d  <- Tile %d slice %d  (%s -> %s%s)" \
+          $i [expr {224 + $t}] $s [file tail $src] [file tail $dst] $via]
     incr i
 }
 if {$nch > 1} {
@@ -751,6 +871,10 @@ puts "EXTERNAL: $pin （SYSREF 入力）"
 assign_bd_address
 validate_bd_design
 save_bd_design
+
+puts ""
+puts "---- Clocking Wizard の実出力（validate 後）----"
+wiz_actual_check $clkw $wiz_pairs "validate 後"
 
 # ---- PS の PL クロックの実周波数を確かめる ----
 # **要求した値がそのまま出るとは限らない。**PS の PLL の刻みで下がる
