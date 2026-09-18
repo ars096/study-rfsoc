@@ -39,7 +39,7 @@ PROJ ?= proj008
 
 export BOARD_REPO PART OUTDIR
 
-.PHONY: all build sim sim-gate sim-pps sim-analysis prog id timing-check clean
+.PHONY: all build sim sim-gate sim-pps sim-analysis sim-note prog id timing-check clean
 
 all:
 	@mkdir -p $(OUTDIR)
@@ -60,7 +60,7 @@ build: all
 #
 # tb_pps_capture は失敗すると $fatal で **非ゼロ終了する**ので、make が止まる。
 IVERILOG ?= iverilog
-sim: sim-gate sim-pps sim-analysis
+sim: sim-gate sim-pps sim-note
 
 sim-gate:
 	@mkdir -p $(OUTDIR)
@@ -76,10 +76,27 @@ sim-pps:
 # **解析側のテスト。**proj008 の結論（PPS 1 本で足りるか、タイルごとに 1 本要るか）を
 # 出すのは pps_delay.py の epoch_verdict の分岐である。この分岐は実機でしか通らないので、
 # 放っておくと **一度も走ったことのないコードが結論を印字する**。
-# numpy 以外の依存は無く、Mac 上でも走る。失敗すると非ゼロ終了して make が止まる。
+#
+# **sim には含めない。**numpy が要るが、Vivado サーバはビルド専用の機械で
+# numpy は無いし、入れる筋合いも無い。**走らせるのは編集した機械（Mac）か
+# ボード上**で、どちらにも numpy が在る。
+#
+# **「numpy が無いので skip」にはしない。**通らなかったものを成功として
+# 報告する形は、このリポジトリで踏んだ穴そのものである（make build の空振り）。
+# numpy が無ければ、どこで走らせるかを言って非ゼロで落ちる。
 PYTHON ?= python3
 sim-analysis:
 	$(PYTHON) sim/test_analysis.py
+
+# sim の最後に、解析側が含まれていないことを明示する。
+# **黙って含めないと「make sim が通った」が解析側まで含むと誤解される。**
+sim-note:
+	@echo ""
+	@echo "  注意: 解析側のテスト（sim/test_analysis.py）は上に含まれていない。"
+	@echo "        numpy が要るので、編集した機械（Mac）かボード上で:"
+	@echo ""
+	@echo "            make sim-analysis"
+	@echo ""
 
 prog:
 	$(VIVADO) -mode batch -nojournal -nolog -source program.tcl

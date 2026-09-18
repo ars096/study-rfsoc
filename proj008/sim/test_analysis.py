@@ -14,7 +14,14 @@ proj007 で踏んだ穴はすべて「動いているように見える」形だ
 import os
 import sys
 
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    # **skip して成功を返さない。** 通らなかったものを成功として報告する形は、
+    # このリポジトリで踏んだ穴そのもの（make build の空振り）。
+    sys.exit("**numpy が無いのでこのテストは走らない。**\n"
+             "  Vivado サーバはビルド専用の機械なので、それで正しい。\n"
+             "  編集した機械（Mac）かボード上で `make sim-analysis` を走らせること。")
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pynq"))
 

@@ -194,6 +194,11 @@ t(i) = t_epoch_base + (beat_start × 8 + i) × T_sample + (L_adc − D_pps)
   proj007 で踏んだ 8 件はすべて「動いているように見える」形だった
   **効いた**: 書いた直後のテストで、`epoch_verdict` が numpy の `bool_` を返していて
   `is True` に一致しない件が出た。**値は正しいので実機では気づけない種類の誤り**である
+  **訂正（2026-09-18）**: 当初 `sim` に含めたが、**Vivado サーバに numpy が無くて
+  `make sim` が落ちた**。ビルド専用の機械に numpy を入れる筋合いは無いので `sim` から外し、
+  代わりに `sim` の末尾で「解析側は含まれていない」を毎回明示することにした。
+  **「numpy が無いので skip」は採らない** — 通らなかったものを成功として報告する形は、
+  `make build` の空振りと同じ穴である
 
 ## 成功の判定
 
@@ -250,18 +255,28 @@ t(i) = t_epoch_base + (beat_start × 8 + i) × T_sample + (L_adc − D_pps)
 | `pynq/adc_capture.py` | proj007 から `BITFILE` のみ変更 |
 | `sim/test_analysis.py` | **新規。** 解析側を実機なしで検証する。`make sim` から呼ばれる |
 | `sim/tb_*.v` | proj007 から変更なし |
-| `Makefile` | `sim-analysis` を足し、`sim` に含めた |
+| `Makefile` | `sim-analysis` と `sim-note` を足した。**`sim-analysis` は `sim` に含めない**（Vivado サーバに numpy が無いため。`sim` の末尾でその旨を毎回出す）|
 
 ## 再現手順
 
 ### ビルド（Vivado サーバ）
 
 ```bash
-make sim        # tb 2 本 + 解析側のテスト。**Vivado もライセンスも要らない**
-make sim-analysis   # 解析側だけ。**Mac 上でも走る**（numpy だけ）
+make sim        # tb 2 本。**Vivado もライセンスも要らない。**先にこれを通す
 make            # 合成〜ビットストリーム（build/proj008.bit と .hwh）
 make timing-check   # 速度グレード -1 で閉じるか（build-1-e/ に出る）
 ```
+
+**解析側のテストは `make sim` に含まれていない。** numpy が要るが、Vivado サーバは
+ビルド専用の機械で numpy は無い。**編集した機械（Mac）かボード上**で走らせる。
+
+```bash
+make sim-analysis   # numpy だけ。Mac でもボードでも走る
+```
+
+**「numpy が無いので skip」にはしていない。** 通らなかったものを成功として報告する形は、
+このリポジトリで踏んだ穴そのものである（`make build` の空振り）。
+`make sim` は末尾で、解析側が含まれていないことを毎回明示する。
 
 **RTL は proj007 rev2 と同一なので、ビルドの結果も同じになるはず。**
 WNS が proj007 の +0.235 ns から動いたら、それ自体が異常の印である。
