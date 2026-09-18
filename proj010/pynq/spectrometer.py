@@ -360,7 +360,7 @@ def _outliers(x, nsig=8.0):
     return (x - med) > nsig * sig
 
 
-def tick(sp, nacc, seconds, shift):
+def tick(sp, nacc, seconds, shift, save=None):
     """判定 7: ADC に入っている 1PPS の縁を分光計で見て、**積分が外部の時計と整合して途切れないか**を確かめる。
 
     PPS（100 µs 幅）の縁は広帯域なので、縁を含むダンプだけ全 ch の和が持ち上がる。ダンプは隙間なく並ぶので、
@@ -373,6 +373,7 @@ def tick(sp, nacc, seconds, shift):
     fps = int(round(1 / T_FRAME))                   # 500,000 フレーム/s
     seq = sp.run(nacc, 0, shift)
     rows = []                                       # (k, f0, 全 ch の和)
+    specs = []
     t0 = time.time()
     while len(rows) < ndump:
         s = sp.wait_dump(seq, tau * 3 + 1.0)
@@ -382,6 +383,8 @@ def tick(sp, nacc, seconds, shift):
         m, spec, _ = sp.read_dump()
         seq = m["seq"]
         rows.append((m["k"], m["f0"], float(spec[50:NCH_OUT - 50].astype(float).sum()), m["flags"]))
+        if save:
+            specs.append(spec.astype(np.float32))
     sp.stop()
     k = np.array([r[0] for r in rows])
     f0 = np.array([r[1] for r in rows], dtype=np.int64)
@@ -393,20 +396,33 @@ def tick(sp, nacc, seconds, shift):
     if np.any(np.diff(f0) != np.diff(k) * nacc):
         log("**NG: DUMP_F0 の間隔が DUMP_K × N_ACC と合わない**（ダンプの帳簿が壊れている）")
         return False
-    bad = _outliers(tot)
+    if save:
+        np.savez(save, k=k, f0=f0, tot=tot, spec=np.array(specs), nacc=nacc, shift=shift)
+        log(f"saved: {save}")
+    # **全 ch の和の揺れ方を先に見る。**雑音だけなら揺れは 1/√(帯域·τ) で、隣り合うダンプは無相関
+    # （差の揺れ = √2 × 揺れ）。ゆっくり動く（利得・較正・外来の干渉）なら差の揺れのほうがずっと小さい。
+    # 2026-09-19 の初回は揺れが期待の 110 倍で、縁が外れとして立たなかった
+    med0 = np.median(tot)
+    sd = tot.std() / med0
+    sdd = np.diff(tot).std() / med0 / np.sqrt(2)
+    log(f"全 ch の和の揺れ: σ {sd:.2e} / 隣との差から見た σ {sdd:.2e}（比 {sdd / sd:.2f}。1 なら白い揺れ、"
+        f"小さければゆっくり動いている）/ 期待 {1 / np.sqrt(FS_HZ / 2 * tau):.2e}")
+    # ゆっくりした動きを除いてから縁を探す（前後 5 ダンプの中央値を引く）
+    base = np.array([np.median(tot[max(0, i - 5):i + 6]) for i in range(len(tot))])
+    res = tot - base
+    bad = _outliers(res)
     med = np.median(tot)
-    sig = 1.4826 * np.median(np.abs(tot - med))
+    sig = 1.4826 * np.median(np.abs(res - np.median(res)))
     # 隣り合う外れは 1 つの事象（縁がダンプの境目にかかった）として先頭を取る
     ev = [i for i in np.where(bad)[0] if i == 0 or not bad[i - 1]]
-    log(f"全 ch の和: 中央値 {med:.4e} / 揺れ（MAD 換算の σ）{sig / med:.2e}（期待 1/√(2 GHz·τ) = "
-        f"{1 / np.sqrt(FS_HZ / 2 * tau):.2e}）")
+    log(f"全 ch の和: 中央値 {med:.4e} / ゆっくりした動きを除いた揺れ（MAD 換算）{sig / med:.2e}")
     log(f"外れたダンプ: {int(bad.sum())} 個 → 事象 {len(ev)} 個（期待 約 {len(rows) * tau:.0f} 個 = 1 秒に 1 回）")
     if len(ev) < 2:
         log("**PPS の縁が見えない。**ADC_B に 1PPS が来ているか、縁が雑音に埋もれているか（減衰が大きすぎる）")
         return False
     for i in ev[:12]:
         log(f"  k {k[i]:>7}  F0 {f0[i]:>12}  秒内の位置 {f0[i] % fps:>7} フレーム  "
-            f"超過 {(tot[i] - med) / med * 100:+.3f} %（{(tot[i] - med) / sig:.0f} σ）")
+            f"超過 {res[i] / med * 100:+.3f} %（{res[i] / sig:.0f} σ）")
     phase = np.array([f0[i] % fps for i in ev])
     # 秒内の位置は 1 ダンプ（nacc フレーム）の粒度で決まる。縁が境目をまたげば 1 ダンプ揺れうる
     spread = int(phase.max() - phase.min())
@@ -523,7 +539,7 @@ def main():
     elif args.radiometer:
         ok &= radiometer(sp, [int(v) for v in args.nacc.split(",")], max(args.ndump, 3), shift)
     elif args.tick is not None:
-        ok &= tick(sp, int(args.nacc.split(",")[0]), args.tick, shift)
+        ok &= tick(sp, int(args.nacc.split(",")[0]), args.tick, shift, args.save)
     else:
         nacc = int(args.nacc.split(",")[0])
         seq = sp.run(nacc, args.ndump, shift)
