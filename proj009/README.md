@@ -174,12 +174,36 @@ RFDC ─192 bit @341.33─▶ gb_up（×4）─768 bit─▶ gb_fifo（非同期
 
 ## 結果
 
--
+### ビルド（2026-09-18、ギアボックス入り・1ch）
+
+| | 値 |
+|---|---|
+| WNS / WHS | **+0.348 ns / +0.013 ns**。CRITICAL WARNING なし |
+| 最悪経路（setup） | 上位 5 本とも `clk_out1`（341.33 MHz・ADC ドメイン）内。周期 2.93 ns に対し余裕 12 % |
+| クロック名 | `clk_out1_system_clk_wiz_adc_0` / `clk_out2_system_clk_wiz_adc_0`（`timing.xdc` の類推どおり）。asynchronous を含む箇所 11 |
+| BRAM | 66 個（RAMB36）。取得用 FIFO 256 bit × 8192 語 ≒ 64 個 |
+
+クロック一覧の 256.016 / 341.413 MHz は、Vivado が周期を ps 単位（3.906 / 2.929 ns）で持つことによる
+表示上の丸めで、周波数のずれではない。
+
+**CDC は proj006 との差分で読む**（件数ではなく分類の移動）:
+
+| | proj006（4ch・ギアボックスなし）| proj009（1ch・ギアボックスあり）| 読み |
+|---|---|---|---|
+| CDC-1 Critical | 26 | **26** | `n_beats` のデータ＋ハンドシェイク。既知・許容（proj006 と同一）|
+| CDC-11 Critical | 2 | **0** | |
+| CDC-3 Info（ASYNC_REG あり）| 18 | **20** | CDC-11 + CDC-3 の合計は 20 で一致 |
+| CDC-15 Warning | 89 | **857** | **+768 = gb_fifo の語幅 768 bit ちょうど** |
+
+**ギアボックスの乗り換え（341.33 → 256 MHz）は、768 bit ぶんがそっくり CDC-15（RAM を介した
+clock enable 制御の構造 = 非同期 FIFO の正しい形）に入った。**Critical は増えていない。
+CDC-11 → CDC-3 の移動の内訳は `build/cdc.rpt` で未確認。
 
 ## 結論・次にやること
 
 - [x] `make probe` → spw 16 は通らない（有効値 7〜12）。ギアボックスを入れた
-- [ ] **`make`**（ギアボックス入り）→ `make timing-check`
+- [x] `make`（ギアボックス入り）: WNS +0.348 / WHS +0.013 ns
+- [ ] `make timing-check`（速度グレード −1。341.33 MHz の入口が −1 でも閉じるか）
 - [ ] 実機: `adc_capture.py --probe` → `--clkin 0 --tone 3000.0625 --sg-dbm … --atten-db …`
 
 ## 出典
