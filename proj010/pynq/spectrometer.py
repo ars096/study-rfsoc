@@ -308,7 +308,7 @@ def radiometer(sp, nacc_list, ndump, shift):
     """
     ok = True
     log("")
-    log("   N_ACC      τ[ms]   期待 σ/μ     実測 σ/μ（中央値）  比     SAT   FLAGS")
+    log("   N_ACC      τ[ms]   期待 σ/μ     実測 σ/μ（中央値）  比     共通利得を除いた比  SAT   FLAGS")
     for nacc in nacc_list:
         tau = nacc * T_FRAME
         seq = sp.run(nacc, ndump, shift)
@@ -345,9 +345,17 @@ def radiometer(sp, nacc_list, ndump, shift):
         got = float(np.median(r))
         want = 1 / np.sqrt(DF_HZ * tau)
         ratio = got / want
-        log(f"  {nacc:>8}  {tau * 1e3:>8.1f}   {want:.3e}    {got:.3e}           {ratio:5.3f}  "
-            f"{m['sat']:>5}  {m['flags']:02x}")
-        ok &= abs(ratio - 1) < 0.1 and m["flags"] == 0
+        # **全 ch に共通の利得の揺れを除いた比。**2026-09-24、50 Ω 終端でも全 ch が一緒に 0.25 % 揺れ（ADC 側）、
+        # ch ごとの比が一様に 1.17 倍になった。各ダンプを静かな ch の和で割ると 1.03 倍に戻った（tick_analyze の 7）。
+        # 判定はこちらで行う: 分光計の積分（デッドタイム・二度積み）を見る試験で、アナログの利得の揺れは別の項目
+        g = tot / tot[keep].mean()
+        an = a / g[:, None]
+        mun = an[keep].mean(axis=0)
+        dn = np.diff(an, axis=0)[pair]
+        ratio_n = float(np.median(dn[:, sel].std(axis=0) / mun[sel] / np.sqrt(2))) / want
+        log(f"  {nacc:>8}  {tau * 1e3:>8.1f}   {want:.3e}    {got:.3e}           {ratio:5.3f}  {ratio_n:5.3f}"
+            f"              {m['sat']:>5}  {m['flags']:02x}")
+        ok &= abs(ratio_n - 1) < 0.1 and m["flags"] == 0
     return ok
 
 
