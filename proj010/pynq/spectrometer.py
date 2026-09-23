@@ -347,8 +347,10 @@ def radiometer(sp, nacc_list, ndump, shift):
         ratio = got / want
         # **全 ch に共通の利得の揺れを除いた比。**2026-09-24、50 Ω 終端でも全 ch が一緒に 0.25 % 揺れ（ADC 側）、
         # ch ごとの比が一様に 1.17 倍になった。各ダンプを静かな ch の和で割ると 1.03 倍に戻った（tick_analyze の 7）。
-        # 判定はこちらで行う: 分光計の積分（デッドタイム・二度積み）を見る試験で、アナログの利得の揺れは別の項目
-        g = tot / tot[keep].mean()
+        # 判定はこちらで行う: 分光計の積分（デッドタイム・二度積み）を見る試験で、アナログの利得の揺れは別の項目。
+        # **利得は ch ごとの比の中央値で取る（和ではなく）。**和で取ると、間欠的な混信（2026-09-24 の 823 MHz）が
+        # 載る ch の揺れが利得に入り、割ると全 ch に配られる（1 s で 1.63 → 1.86 と悪化した）
+        g = np.median(a[:, sel] / a[keep][:, sel].mean(axis=0), axis=1)
         an = a / g[:, None]
         mun = an[keep].mean(axis=0)
         dn = np.diff(an, axis=0)[pair]
@@ -390,7 +392,7 @@ def tick(sp, nacc, seconds, shift, save=None):
             return False
         m, spec, _ = sp.read_dump()
         seq = m["seq"]
-        rows.append((m["k"], m["f0"], float(spec[50:NCH_OUT - 50].astype(float).sum()), m["flags"]))
+        rows.append((m["k"], m["f0"], float(spec[50:NCH_OUT - 50].astype(float).sum()), m["flags"], m["sat"]))
         if save:
             specs.append(spec.astype(np.float32))
     sp.stop()
@@ -398,6 +400,7 @@ def tick(sp, nacc, seconds, shift, save=None):
     f0 = np.array([r[1] for r in rows], dtype=np.int64)
     tot = np.array([r[2] for r in rows])
     flags = [r[3] for r in rows]
+    sat = np.array([r[4] for r in rows], dtype=np.int64)
     gaps = int(np.sum(np.diff(k) != 1))
     log(f"τ = {tau * 1e3:.1f} ms × {len(rows)} ダンプ（{time.time() - t0:.1f} s）/ 読み落とし {gaps} 箇所"
         f"（DUMP_K の飛び。読み出しが遅いだけで、積分の連続性とは別）")
@@ -405,7 +408,7 @@ def tick(sp, nacc, seconds, shift, save=None):
         log("**NG: DUMP_F0 の間隔が DUMP_K × N_ACC と合わない**（ダンプの帳簿が壊れている）")
         return False
     if save:
-        np.savez(save, k=k, f0=f0, tot=tot, spec=np.array(specs), nacc=nacc, shift=shift)
+        np.savez(save, k=k, f0=f0, tot=tot, sat=sat, spec=np.array(specs), nacc=nacc, shift=shift)
         log(f"saved: {save}")
     # **全 ch の和の揺れ方を先に見る。**雑音だけなら揺れは 1/√(帯域·τ) で、隣り合うダンプは無相関
     # （差の揺れ = √2 × 揺れ）。ゆっくり動く（利得・較正・外来の干渉）なら差の揺れのほうがずっと小さい。
@@ -450,6 +453,9 @@ KNOWN_CLOCKS = [
     ("LMX2594 → RFDC 基準", 491.52e6), ("LMK04828 → LMX 基準", 245.76e6), ("LMK04828 → PL 基準", 122.88e6),
     ("DSP / clk_adc2 = fs/16", 256.0e6), ("ADC ドメイン = fs/12", FS_HZ / 12), ("MMCM の VCO", 1024.0e6),
     ("インタリーブ fs/8", 512.0e6), ("PS pl_clk0", 100.0e6), ("LMK の VCXO", 160.0e6), ("RF SYSREF", 7.68e6),
+    # 2026-09-24 の判定 8 で ch 60・120・140・160・220・240・260・280（第 1 ゾーンで 30〜140 MHz の 10 MHz おき）に
+    # 線が並んだ。外部基準（CLK_IN の 10 MHz）の高調波の回り込みと見る（--clkin stock との比較で確かめる）
+    ("外部基準 10 MHz", 10.0e6),
 ]
 
 

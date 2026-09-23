@@ -146,6 +146,11 @@ def main(path):
     print(f"\n8. 外れたダンプの超過の中身（全 ch の和で 5 σ 超、大きい順に最大 8 個。σ {st:.1e}）")
     if not ev:
         print("   なし")
+    if "sat" in d.files:
+        sat = d["sat"]
+        ns = int((sat > 0).sum())
+        print(f"   SAT（18 bit に飽和した ch × フレーム）> 0 のダンプ: {ns} / {nd} 個、合計 {int(sat.sum())}。"
+              f"うち上の事象: {int(sum(sat[i] > 0 for i in ev))} / {len(ev)} 個")
     exs = []
     for i in ev:
         lo, hi = max(0, i - 5), min(nd, i + 6)
@@ -156,7 +161,8 @@ def main(path):
         o = np.argsort(ex)[::-1]
         c90 = np.searchsorted(np.cumsum(ex[o]) / tot_ex, 0.9) + 1
         band = [ex[a:b].sum() / tot_ex for a, b in zip(edges[:-1], edges[1:])]
-        print(f"   ダンプ {i}（{rt[i] / st:+.0f} σ, +{rt[i] * 100:.1f} %）: 超過の 90 % が {c90} ch に集中 / "
+        sat_i = f" / SAT {int(d['sat'][i])}" if "sat" in d.files else ""
+        print(f"   ダンプ {i}（{rt[i] / st:+.0f} σ, +{rt[i] * 100:.1f} %{sat_i}）: 超過の 90 % が {c90} ch に集中 / "
               "8 帯域の割合 " + " ".join(f"{b * 100:3.0f}" for b in band))
     if exs:
         m = np.mean(exs, axis=0)
