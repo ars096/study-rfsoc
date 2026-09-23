@@ -15,6 +15,8 @@
   6. 静かな ch だけで 1〜3 をやり直す: 揺れの大きい ch（期待比 > 1.5）と電力の高い ch（中央値の 2 倍超）を外す。
      初回（2026-09-19）は ch 間の相関が 2.1 しかなく、**和の揺れは少数の ch（fs/8 の倍数と 45〜100 MHz の折り返し）が
      作っていた**ので、それを外せば PPS の縁が見えるはず、という予言を確かめる
+  7. 共通の利得の揺れ: 静かな ch の和の揺れ c が全 ch 共通なら、ch ごとの揺れは √(期待² + c²)。
+     各ダンプを静かな ch の和で割ると ch ごとの揺れが期待（1.0 倍）に戻るかを見る
 """
 import sys
 import numpy as np
@@ -109,6 +111,28 @@ def main(path):
     print(f"   前後の中央値からの超過が大きいダンプ（σ {sig:.1e}）: " +
           ", ".join(f"{i}({i % per}) {res[i] / sig:+.0f}σ" for i in sorted(big)))
     print("   （括弧は 1 秒の中の位相。PPS の縁なら位相がそろい、10 ダンプおきに並ぶ）")
+
+    # ---- 7. 共通の利得の揺れを除く ----
+    # 2026-09-19 の 2 回目: 静かな ch の和が期待の 36.6 倍揺れ、ch ごとは一様に 1.20 倍だった。
+    # 和の揺れ c（相対）が全 ch 共通の利得の揺れなら、ch ごとの揺れは √(want² + c²) になり、
+    # 各ダンプを静かな ch の和で割れば ch ごとの揺れは期待どおり（1.0 倍）に戻るはず
+    c = v
+    print(f"\n7. 共通の利得の揺れ c = {c:.2e}（静かな ch の和の隣との差）")
+    print(f"   c から予言する ch ごとの揺れ: √(1 + (c/期待)²) = {np.sqrt(1 + (c / want) ** 2):.3f} 倍"
+          f"（実測の中央値 {np.median(ratio[quiet]):.3f} 倍）")
+    g = qt / qt.mean()
+    n = q / g[:, None]
+    dn = np.diff(n, axis=0)
+    rn = dn.std(axis=0) / n.mean(axis=0) / np.sqrt(2) / want
+    print(f"   各ダンプを静かな ch の和で割った後の ch ごとの揺れ（期待比）: 10 % {np.percentile(rn, 10):.3f} / "
+          f"50 % {np.median(rn):.3f} / 90 % {np.percentile(rn, 90):.3f}")
+    xq = g - 1
+    xq = xq - np.polyval(np.polyfit(np.arange(nd), xq, 1), np.arange(nd))
+    pq2 = np.abs(np.fft.rfft(xq)) ** 2
+    topq = np.argsort(pq2[1:])[::-1][:6] + 1
+    print("   共通の利得の揺れの周波数（強い順）: " +
+          ", ".join(f"{f[i]:.3f} Hz ×{pq2[i] / pq2[1:].mean():.1f}" for i in topq))
+    print(f"   共通の利得の揺れの幅: 全体の σ {g.std():.2e} / 最大−最小 {g.max() - g.min():.2e}")
 
 
 if __name__ == "__main__":
