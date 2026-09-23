@@ -17,6 +17,8 @@
      作っていた**ので、それを外せば PPS の縁が見えるはず、という予言を確かめる
   7. 共通の利得の揺れ: 静かな ch の和の揺れ c が全 ch 共通なら、ch ごとの揺れは √(期待² + c²)。
      各ダンプを静かな ch の和で割ると ch ごとの揺れが期待（1.0 倍）に戻るかを見る
+  8. 外れたダンプの中身: 全 ch の和が跳ねたダンプで、超過が全 ch に薄く広がるか（利得・較正）、
+     特定の帯域に固まるか（電波の混入）。帯域はゾーン 2 の IF とゾーン 1 に置いたときの周波数の両方で出す
 """
 import sys
 import numpy as np
@@ -133,6 +135,51 @@ def main(path):
     print("   共通の利得の揺れの周波数（強い順）: " +
           ", ".join(f"{f[i]:.3f} Hz ×{pq2[i] / pq2[1:].mean():.1f}" for i in topq))
     print(f"   共通の利得の揺れの幅: 全体の σ {g.std():.2e} / 最大−最小 {g.max() - g.min():.2e}")
+
+    # ---- 8. 外れたダンプはどの ch が持ち上げたか ----
+    # 2026-09-24、ADC_B を 50 Ω 終端にしたら全 ch の和が 1 ダンプで +4〜13 % 跳ねる事象が 4 秒に固まって出た。
+    # 広帯域（利得・較正）なら超過は全 ch に薄く広がり、電波の混入なら特定の帯域に固まる
+    base_t = np.array([np.median(tot[max(0, i - 5):i + 6]) for i in range(nd)])
+    rt = tot / base_t - 1
+    st = 1.4826 * np.median(np.abs(rt - np.median(rt)))
+    ev = [i for i in np.argsort(rt)[::-1][:8] if rt[i] > 5 * st]
+    print(f"\n8. 外れたダンプの超過の中身（全 ch の和で 5 σ 超、大きい順に最大 8 個。σ {st:.1e}）")
+    if not ev:
+        print("   なし")
+    exs = []
+    for i in ev:
+        lo, hi = max(0, i - 5), min(nd, i + 6)
+        ref = np.median(s[lo:hi], axis=0)
+        ex = s[i] - ref                               # 超過の電力 [ch]
+        exs.append(ex)
+        tot_ex = ex.sum()
+        o = np.argsort(ex)[::-1]
+        c90 = np.searchsorted(np.cumsum(ex[o]) / tot_ex, 0.9) + 1
+        band = [ex[a:b].sum() / tot_ex for a, b in zip(edges[:-1], edges[1:])]
+        print(f"   ダンプ {i}（{rt[i] / st:+.0f} σ, +{rt[i] * 100:.1f} %）: 超過の 90 % が {c90} ch に集中 / "
+              "8 帯域の割合 " + " ".join(f"{b * 100:3.0f}" for b in band))
+    if exs:
+        m = np.mean(exs, axis=0)
+        mu_ref = np.median(s, axis=0)
+        o = np.argsort(m)[::-1][:12]
+        print("   事象を平均した超過の上位 ch（ゾーン 2 の IF / ゾーン 1 に置いたときの周波数 / 超過÷平時の電力）:")
+        for j in sorted(o):
+            k = j + 50
+            print(f"     ch {k:>4}  IF {FS / 1e6 - k * DF / 1e6:8.2f} MHz / {k * DF / 1e6:7.2f} MHz  {m[j] / mu_ref[j]:7.3f}")
+        # 超過が連続した ch の塊（上位 12 ch が 1 本の線か、帯域を持つか）
+        hot = m > 0.2 * m.max()
+        runs, a = [], None
+        for j, h in enumerate(np.append(hot, False)):
+            if h and a is None:
+                a = j
+            elif not h and a is not None:
+                runs.append((a, j - 1)); a = None
+        runs.sort(key=lambda r: -m[r[0]:r[1] + 1].sum())
+        print("   超過の塊（最大値の 20 % 超が続く範囲、超過の多い順に 6 個）:")
+        for a, b in runs[:6]:
+            ka, kb = a + 50, b + 50
+            print(f"     ch {ka:>4}–{kb:>4}（{kb - ka + 1:>3} ch）IF {FS / 1e6 - kb * DF / 1e6:8.2f}–{FS / 1e6 - ka * DF / 1e6:8.2f} MHz"
+                  f" / {ka * DF / 1e6:7.2f}–{kb * DF / 1e6:7.2f} MHz  超過の {m[a:b + 1].sum() / m.sum() * 100:4.1f} %")
 
 
 if __name__ == "__main__":
