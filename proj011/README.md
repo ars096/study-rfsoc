@@ -189,6 +189,27 @@ CRITICAL WARNING なし。**WNS +0.159 ns / WHS +0.009 ns。**
   res の `-1` は **−0.2 ns 前後で閉じない**。段階 2 の予言「res の `-1` は +0.081 より大きい」は外れる見込みが高い。
   予言は書き換えず、`make timing-check` の結果で判定する
 
+### ビルド（3 回目、2026-09-24、`-2`・perf）と最悪経路
+
+CRITICAL WARNING なし。**WNS +0.264 ns / WHS +0.010 ns。**
+
+| | proj010（nrt・perf） | perf（rt・perf） | res（rt・res） |
+|---|---|---|---|
+| DSP48E2 | 944 | **944**（予言どおり） | 480 |
+| lane_fft 1 個の LUT / FF（配置配線後） | — | 1458 / 3450（OOC 1529 / 3521 の −4.6 % / −2.0 %） | 2204 / 4628 |
+| CDC | 0 / 20 / 833 | **同じ** | 同じ |
+| WNS `-2` | +0.474 | **+0.264** | +0.159 |
+| 上位 5 本の setup | 5 本とも FFT IP の nonrealtime の CE | +0.264 / 0.329 / 0.338 / 0.355 / 0.361（全部 `clk_out2`） | +0.159 / 0.387 × 4（全部 `clk_out2`） |
+
+- **perf の予言（+0.45〜+0.50）は外れた。**realtime にしただけで WNS は 0.21 ns **減った**
+- res の最悪経路の起点は **`spec_core_0/inst/cur_k_reg[1]`**（自作の RTL。ダンプの番号）。**FFT IP の中ではない。**
+  終点はまだ見ていない（awk の出力が 20 行で切れた）
+- 341 MHz 側（ギアボックス、`gb_fifo`）の最悪は +0.521（proj010 +0.483）で、限界ではない
+- 見立て（未確認）: `cur_k` はフレーム頭（`fs`）の 1 クロックで「`cur_k + 1 == run_ndump`（32 bit の加算と比較）→
+  `d_stop` / `d_act` → `d_k` の選択 → `t_bank`（積分の面）」を通す組み合わせ回路の起点。
+  この経路は proj010 にもあったが、上位 5 本（CE、+0.474）より余裕があって見えていなかった。
+  **CE が消えて次の限界が見えた**のか、**IP の回りの配置が変わって同じ経路が遅くなった**のかは、終点と経路の内訳を見て分ける
+
 ### シミュレーション（2026-09-24、SHIFT 7）
 
 **全部通過。数字は proj010 と同じ**: t1 の B は差/許容の最大 0.66・平均の差 0.476 LSB、A は 3 試験とも不一致 0 ch、ID = 0x0011_0100（sim の既定 FFT_CFG = 0）。
@@ -203,8 +224,9 @@ survey・ビルド・実機は未実施。
 - [x] `make survey` → 段階 1 の予言と突き合わせ（DSP は全部当たり、LUT・FF の 2 つが外れ）、段階 2 の空欄を埋めた
 - [x] ビルド 1 回目: ポートの照合の誤り（component 宣言を読んでいた）で停止 → entity だけを読むよう修正
 - [x] `make`（res、`-2`）: DSP 480・BRAM・CDC が予言どおり。WNS +0.159（1 本だけ飛び出す）
-- [ ] res の最悪経路を `build/timing.rpt` で特定する
-- [ ] `make FFT_OPT=perf` / `make timing-check` / `make timing-check FFT_OPT=perf`
+- [x] `make FFT_OPT=perf`（`-2`）: DSP 944・CDC は予言どおり。**WNS +0.264 で予言（+0.45〜+0.50）は外れ**
+- [ ] res・perf の最悪経路の終点と内訳を `timing.rpt` で見る（起点は res で `spec_core` の `cur_k`）
+- [ ] `make timing-check` / `make timing-check FFT_OPT=perf`
 - [ ] 実機 判定 0・2・1・3、realtime の危険
 - [ ] 4ch・窓の切り出しの資源の見積もりを、この proj の数字で書き直す
 
