@@ -487,6 +487,65 @@ def peaks(spec, n, m):
         log(f"  {i:>5}  {if_of_ch(i):>9.2f}  {10 * np.log10(r[i]):>8.2f}   {identify(i)}")
 
 
+def image_report(spec, tone, zone=2):
+    """判定 5: トーンに対するインタリーブのイメージ（±f + k·fs/8）と高調波の位置で、線の強さを dBc で出す。
+
+    上位 N の線の一覧には床比 4 dB 程度より強いものしか入らないので、**予言した位置を名指しで読む**。
+    床は ±16 ch の中央値、床の揺れは同じ範囲の MAD。線が床の揺れの 3 倍に届かなければ上限を出す。
+    ch が小数（境目）なら両隣の 2 ch の和で読む（トーン側も同じ扱い）。
+    """
+    p = spec.astype(float)
+    half = 16
+    pad = np.pad(p, half, mode="edge")
+    base = np.array([np.median(pad[i:i + 2 * half + 1]) for i in range(NCH_OUT)])
+    rel = p / base - 1
+
+    def chs(c):
+        lo, hi = int(np.floor(c + 1e-9)), int(np.ceil(c - 1e-9))
+        return sorted({x for x in (lo, hi) if 0 <= x < NCH_OUT})
+
+    def excess(c):
+        ks = chs(c)
+        e = sum(p[k] - base[k] for k in ks)
+        nb = np.r_[max(0, ks[0] - half):max(0, ks[0] - 2), min(NCH_OUT, ks[-1] + 3):min(NCH_OUT, ks[-1] + half + 1)]
+        sig = 1.4826 * np.median(np.abs(rel[nb] - np.median(rel[nb])))
+        lim = 3 * sig * np.sqrt(sum(base[k] ** 2 for k in ks))
+        return e, lim, ks
+
+    kt = ch_of_if(tone, zone)
+    et, _, kts = excess(kt)
+    b = kt * DF_HZ / 1e6                                   # トーンの第 1 ゾーン換算 [MHz]
+    fsm = FS_HZ / 1e6
+    cand = []
+    for k in range(1, 8):
+        for sgn in (1, -1):
+            x = (sgn * b + k * fsm / 8) % fsm
+            x = min(x, fsm - x)
+            cand.append((f"イメージ {'+' if sgn > 0 else '−'}f + {k}·fs/8", x))
+    for h in (2, 3):
+        x = (h * tone) % fsm
+        x = min(x, fsm - x)
+        cand.append((f"高調波 H{h}（{h * tone:.0f} MHz）", x))
+    seen, rows = set(), []
+    for name, x in cand:
+        c = x / (DF_HZ / 1e6)
+        key = round(c, 2)
+        if abs(c - kt) < 1 or key in seen:
+            continue
+        seen.add(key)
+        rows.append((c, name))
+    log("")
+    log(f"判定 5: トーン {tone} MHz（ch {kt:.2f}、読んだ ch {kts}）に対するイメージと高調波（dBc = 超過の電力の比）")
+    log("       ch    IF[MHz]   dBc       名前")
+    for c, name in sorted(rows):
+        e, lim, ks = excess(c)
+        if e > lim:
+            txt = f"{10 * np.log10(e / et):7.1f}"
+        else:
+            txt = f"< {10 * np.log10(max(lim, 1e-30) / et):5.1f}"
+        log(f"  {c:>8.2f}  {if_of_ch(c, zone):>8.2f}  {txt:>8}   {name}")
+
+
 # --------------------------------------------------------------------- main
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -572,6 +631,8 @@ def main():
             tot = np.sum([sp_.astype(np.float64) for _, sp_ in keep], axis=0)
             mm = dict(m, n=sum(x["n"] for x, _ in keep))
             peaks(tot, args.peaks, mm)
+            if args.tone is not None:
+                image_report(tot, args.tone, args.zone)
         ok &= m["flags"] == 0
         if args.save:
             np.savez(args.save, spec=np.array([s for _, s in keep]),
