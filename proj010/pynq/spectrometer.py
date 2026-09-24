@@ -292,10 +292,21 @@ def spectrum_report(spec, m, tone, sg_dbm, atten_db, shift):
     log(f"  線の振幅 ≒ {amp14:.1f} LSB（14 bit）= {dbfs:.2f} dBFS（ch の中心に乗っている場合。境目なら最大 −3.92 dB）")
     if tone is not None:
         kt = ch_of_if(tone)
-        log(f"  トーン {tone} MHz の期待 ch = {kt:.2f} → 実際 {k}（{'OK' if abs(k - kt) <= 0.5 else '**違う**'}）")
+        hit = abs(k - kt) <= 0.5
+        log(f"  トーン {tone} MHz の期待 ch = {kt:.2f} → 実際 {k}（{'OK' if hit else '**違う**'}）")
+        if not hit:
+            log("  **トーンが見えていない。**SG の RF ON・周波数・レベル・ケーブルを確かめる（入力 std が雑音だけの値なら来ていない）")
+            return k
+        # 矩形窓の落ち込み: ch の中心から δ ずれたトーンは sinc²(δ) だけ低く読める（δ = 0.5 で −3.92 dB）。
+        # 2026-09-24、3000.25 MHz で帳簿が +9.84 dBm と出た（落ち込みぶんを引いていなかった）
+        d = k - kt
+        sc = 20 * np.log10(abs(np.sinc(d)))
+        dbfs_c = dbfs - sc
+        if abs(d) > 1e-6:
+            log(f"  ch の中心から {d:+.2f} ch ずれ → 矩形窓の落ち込み {sc:.2f} dB を戻して {dbfs_c:.2f} dBFS")
         if sg_dbm is not None:
-            log(f"  レベルの帳簿: SG {sg_dbm:+.2f} dBm − 減衰 {atten_db:.1f} dB = ADC 入力 {sg_dbm - atten_db:+.2f} dBm"
-                f" → 0 dBFS 換算 {sg_dbm - atten_db - dbfs:+.2f} dBm（VERSIONS.md: +5.8 dBm）")
+            log(f"  レベルの帳簿: SG {sg_dbm:+.2f} dBm − 減衰 {atten_db:.2f} dB = ADC 入力 {sg_dbm - atten_db:+.2f} dBm"
+                f" → 0 dBFS 換算 {sg_dbm - atten_db - dbfs_c:+.2f} dBm（VERSIONS.md: +5.8 dBm @ 100 MHz）")
     return k
 
 
@@ -513,7 +524,11 @@ def image_report(spec, tone, zone=2):
         return e, lim, ks
 
     kt = ch_of_if(tone, zone)
-    et, _, kts = excess(kt)
+    et, lim_t, kts = excess(kt)
+    if et <= lim_t:
+        log("")
+        log(f"判定 5: トーン {tone} MHz（ch {kt:.2f}）が床から立っていないので、イメージの表は出さない")
+        return
     b = kt * DF_HZ / 1e6                                   # トーンの第 1 ゾーン換算 [MHz]
     fsm = FS_HZ / 1e6
     cand = []
