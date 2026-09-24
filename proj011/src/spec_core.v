@@ -5,6 +5,7 @@
 // proj011 の分光計コア。ブロックデザインには module reference で置く。
 // proj010 からの差分は 2 点だけ: FFT IP を realtime にした（m_axis_data_tready の接続を外した）/
 // ID の下位 8 bit に FFT の設定の符号 FFT_CFG を載せた。
+// rev2: フレーム頭の判定の加算・比較を前もってレジスタに置いた（pre_*。rev1 の最悪経路 cur_k → t_last）。振る舞いは rev1 と同じ。
 // **全部が DSP ドメイン（256 MHz）で動く。**AXI4-Lite も 256 MHz で受け、
 // PS（pl_clk0）との乗り換えは SmartConnect に任せる。自作の CDC はここに無い。
 //
@@ -57,7 +58,7 @@
 //                  サンプルは ADC の 16 bit のまま（下位 2 bit は常に 0）
 //   0x8000–0xFFFF  スペクトル: ch k の 64 bit が 0x8000 + 8k（下位語）/ +4（上位語）
 //
-//   0x00 ID        R   0x0011_01CC（proj011 rev1。CC = FFT_CFG: [0] realtime / [1] 乗算器 use_mults_resources /
+//   0x00 ID        R   0x0011_02CC（proj011 rev2。rev1 は 0x0011_01CC。CC = FFT_CFG: [0] realtime / [1] 乗算器 use_mults_resources /
 //                      [2] バタフライ use_luts / [3] 乗算器 use_luts。build.tcl が src/fft_cfg.tcl から設定する）
 //   0x04 PARAM     R   [7:0] log2 NFFT = 13 / [15:8] log2 レーン = 4 / [23:16] QW = 18 / [31:24] IW = 14
 //   0x08 CTRL      W   [0] RUN（開始を予約）/ [1] STOP / [8] FLAGS を消す（いずれも 1 を書いた瞬間だけ）
@@ -140,7 +141,7 @@ module spec_core #(
     localparam integer PW = 2 * QW + 1;
     localparam integer FW = 48;        // フレーム番号（2 µs × 2^48 = 17 年）
     localparam [7:0]   FFT_CFG8 = FFT_CFG;
-    localparam [31:0]  ID = {16'h0011, 8'h01, FFT_CFG8};
+    localparam [31:0]  ID = {16'h0011, 8'h02, FFT_CFG8};
 
     // 固定のパイプライン段数（S0 = レーン出力を受けたクロック）
     //   S0  +2 ROM → +4 cmul → V@6  +6 dft16 → Z@12  +1 飽和 → Q@13
@@ -307,30 +308,60 @@ module spec_core #(
 
     wire [31:0] n_eff = (run_n == 0) ? 32'd1 : run_n;
 
-    // フレーム頭（k1 == 0）での判定を組み合わせ回路で出す
-    reg        d_act, d_newrun, d_stop;
+    // ---- フレーム頭の判定に使う加算・比較を、前もってレジスタに置く（proj011 rev2）----
+    // rev1 はフレーム頭（fs）の 1 クロックで「cur_k + 1 == run_ndump → d_idx の選択 → d_idx == n_eff − 1」と
+    // 32 bit の加算・比較を 2 段直列に通していて、これが最悪経路だった（CARRY8 5〜7 段。ビルドで +0.16〜+0.51 ns 動いた）。
+    // **入力（cur_k・cur_idx・run_ndump・run_n）は fs と cmd_run でしか変わらない**ので、変わった次のクロックには
+    // pre_* が追いつく。fs と fs の間は 512 クロック、cmd_run から最初の開始（fout == run_f0 = fin + 2）までは
+    // 2 フレーム以上あるので、fs で読む pre_* は必ず新しい。
+    // pre_f0hit だけは fout そのものが fs の直前（k1 == 511）に進むので、同じ瞬間に「進んだ後の fout」と比べる。
+    // cmd_run と同じクロックでは消す（新しい run_f0 は fin + 2 なので、どのみち一致しない）。
+    // **rev1 と振る舞いは bit 単位で同じ**（make sim の A 層が rev1 と同じ数字を出すことで確かめる）。
+    reg [31:0] pre_kp1, pre_idxp1;
+    reg        pre_end, pre_idxp1_is0, pre_nxt_last, pre_zero_last, pre_f0hit;
+    always @(posedge aclk) begin
+        pre_kp1       <= cur_k + 32'd1;
+        pre_end       <= (run_ndump != 32'd0) && (cur_k + 32'd1 == run_ndump);
+        pre_idxp1     <= cur_idx + 32'd1;
+        pre_idxp1_is0 <= (cur_idx == 32'hFFFF_FFFF);
+        pre_nxt_last  <= (cur_idx + 32'd1 == n_eff - 32'd1);
+        pre_zero_last <= (n_eff == 32'd1);
+        if (rst)
+            pre_f0hit <= 1'b0;
+        else if (cmd_run)
+            pre_f0hit <= 1'b0;
+        else if (o_valid && o_k1 == 9'd511)
+            pre_f0hit <= (fout + 1'b1 == run_f0);
+    end
+
+    // フレーム頭（k1 == 0）での判定。**幅のある演算は pre_* に追い出した**ので、ここは選択だけ
+    reg        d_act, d_newrun, d_stop, d_zero;
     reg [31:0] d_k, d_idx;
+    reg        d_idx_is0, d_idx_last;
     always @* begin
         d_act = 1'b0; d_newrun = 1'b0; d_stop = 1'b0;
-        d_k = cur_k; d_idx = cur_idx + 1;
-        if (sched && fout == run_f0) begin
-            d_act = 1'b1; d_newrun = 1'b1; d_k = 32'd0; d_idx = 32'd0;
+        d_k = cur_k; d_zero = 1'b0;                       // d_zero = 0 なら d_idx = cur_idx + 1
+        if (sched && pre_f0hit) begin
+            d_act = 1'b1; d_newrun = 1'b1; d_k = 32'd0; d_zero = 1'b1;
         end else if (acc_on) begin
             if (cur_last) begin
-                if (run_ndump != 0 && cur_k + 1 == run_ndump) begin
+                if (pre_end) begin
                     d_stop = 1'b1;
                 end else begin
-                    d_act = 1'b1; d_k = cur_k + 1; d_idx = 32'd0;
+                    d_act = 1'b1; d_k = pre_kp1; d_zero = 1'b1;
                 end
             end else begin
                 d_act = 1'b1;
             end
         end
+        d_idx      = d_zero ? 32'd0 : pre_idxp1;
+        d_idx_is0  = d_zero ? 1'b1  : pre_idxp1_is0;      // = (d_idx == 0)
+        d_idx_last = d_zero ? pre_zero_last : pre_nxt_last; // = (d_idx == n_eff − 1)
     end
     wire fs      = o_valid && (o_k1 == 9'd0);
     wire t_act   = fs ? d_act : cur_act;
-    wire t_first = fs ? (d_idx == 0) : cur_first;
-    wire t_last  = fs ? (d_idx == n_eff - 1) : cur_last;
+    wire t_first = fs ? d_idx_is0 : cur_first;
+    wire t_last  = fs ? d_idx_last : cur_last;
     wire t_bank  = fs ? d_k[0] : cur_bank;
 
     always @(posedge aclk) begin
@@ -348,14 +379,14 @@ module spec_core #(
             end
             if (fs) begin
                 cur_act   <= d_act;
-                cur_first <= (d_idx == 0);
-                cur_last  <= d_act && (d_idx == n_eff - 1);
+                cur_first <= d_idx_is0;
+                cur_last  <= d_act && d_idx_last;
                 cur_bank  <= d_k[0];
                 cur_k     <= d_k;
                 cur_idx   <= d_idx;
                 if (d_newrun) begin sched <= 1'b0; acc_on <= 1'b1; end
                 if (d_stop)   acc_on <= 1'b0;
-                if (d_act && d_idx == 0) begin
+                if (d_act && d_idx_is0) begin
                     if (d_k[0]) begin pend_f0_1 <= fout; pend_k_1 <= d_k; end
                     else        begin pend_f0_0 <= fout; pend_k_0 <= d_k; end
                 end

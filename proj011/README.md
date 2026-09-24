@@ -121,7 +121,28 @@ LUT・FF の増分（4ch で +41k / +69k）は XCZU48DR（LUT 425k / FF 850k）�
 - `sim/lane_fft_model.v`: 出力側の tready を外した / `sim/check.py`: ID の期待値
 - `tools/ip_survey.tcl`（新設）・`make survey`
 - `Makefile`: `FFT_OPT`（res / perf）と出力先の振り分け
-- `pynq/spectrometer.py`: BITFILE・ID の照合（上位 24 bit）・載っている変種の表示と `--record` の info.json への記録
+- `pynq/spectrometer.py`: BITFILE・ID の照合（上位 16 bit。rev2 から）・載っている変種の表示と `--record` の info.json への記録
+
+## rev2（2026-09-24）— フレーム頭の判定を前もってレジスタに置く
+
+rev1 の最悪経路（`cur_k → t_last`、フレーム頭の 1 クロックで 32 bit の加算・比較を 2 段直列）を構造から直す。
+
+- **幅のある演算を `pre_*` に追い出した**: `cur_k + 1`・`cur_k + 1 == run_ndump`・`cur_idx + 1`・`cur_idx + 1 == n_eff − 1`・`n_eff == 1`・`cur_idx == 0xFFFF_FFFF`。
+  入力（`cur_k`・`cur_idx`・`run_ndump`・`run_n`）はフレーム頭と RUN でしか変わらず、次に読まれるまで 512 クロック（RUN からは 2 フレーム以上）あるので、1 クロック遅れで必ず間に合う
+- **`fout == run_f0`（48 bit）も追い出した**: `fout` はフレーム頭の直前（k1 = 511）に進むので、同じ瞬間に `fout + 1 == run_f0` をレジスタへ取る。RUN と同じクロックでは消す（新しい `run_f0 = fin + 2` とはどのみち一致しない）
+- フレーム頭に残るのは選択だけ。ID = **0x0011_02CC**。`spectrometer.py` は上位 16 bit で照合し、rev を表示する
+- **`make sim`（SHIFT 7）: 全部通過。3 試験のダンプ（各 8215 行）が ID の 1 行を除いて rev1 と完全に同じ**（振る舞いを変えていないことの確認）
+
+### rev2 の予言（ビルドの前に書く）
+
+| | rev1 実測 | rev2 の予言 | 根拠 |
+|---|---|---|---|
+| DSP / BRAM / CDC | 480 / 23 ＋ 112 / 0・20・833 | **同じ** | 足したのはレジスタ約 100 個と比較器だけ |
+| `-2` の最悪経路 | `cur_k → t_last`（+0.159） | **`cur_k` からの経路は上位 5 本から消える** | 幅のある演算がフレーム頭の選択から外れた |
+| WNS `-2`（res） | +0.159 | **+0.35〜+0.45** | rev1 の 2 番手（+0.387 × 4）が先頭になる。その 4 本が同じ制御の別の枝なら、もっと上がる |
+| WNS `-1`（res） | +0.105 | **+0.15 以上** | 2 番手は +0.199 だった |
+
+- 外れ方の読み: `cur_k` から出る経路がまだ上位にいる → 合成が `pre_*` を元の組み合わせ回路に戻した（リタイミング）か、別の枝が残っている
 
 ## 結果
 
@@ -276,7 +297,8 @@ survey・ビルド・実機は未実施。
 - [x] `make FFT_OPT=perf`（`-2`）: DSP 944・CDC は予言どおり。**WNS +0.264 で予言（+0.45〜+0.50）は外れ**
 - [x] res・perf の最悪経路: どちらも `cur_k → t_last`（自作の制御。CARRY8 5〜7 段）。proj010 でも +0.512 で CE のすぐ後ろにいた
 - [x] `make timing-check`: res **+0.105**・perf **+0.033** で両方閉じた（判定 6 通過）
-- [ ] rev2: フレーム頭の判定を 1 フレーム前にレジスタへ（spec_core）。`make sim` で rev1 と bit 単位で同じことを確かめる
+- [x] rev2: フレーム頭の判定を前もってレジスタへ（spec_core）。`make sim` SHIFT 7 でダンプが rev1 と完全に一致
+- [ ] rev2 の `make` / `make timing-check`（res）
 - [ ] 実機 判定 0・2・1・3、realtime の危険
 - [ ] 4ch・窓の切り出しの資源の見積もりを、この proj の数字で書き直す
 

@@ -170,7 +170,7 @@ def check(out, shift):
         print("---- %s ----" % name)
         r, snap, spec, seq_after = load_dump(out, name)
         f0, n = r["DUMP_F0"], r["DUMP_N"]
-        judge(r["ID"] == 0x00110100, "ID = %08x（期待 00110100: proj011 rev1、FFT_CFG は sim の既定 0）" % r["ID"])
+        judge(r["ID"] == 0x00110200, "ID = %08x（期待 00110200: proj011 rev2、FFT_CFG は sim の既定 0）" % r["ID"])
         judge(r["FLAGS"] == 0, "FLAGS = %02x" % r["FLAGS"])
         judge(n == n_acc, "DUMP_N = %d（期待 %d）" % (n, n_acc))
         if want_k is not None:

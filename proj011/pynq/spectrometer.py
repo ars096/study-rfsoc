@@ -45,8 +45,8 @@ NFFT = 8192
 NCH_OUT = 4096
 DF_HZ = FS_HZ / NFFT              # 0.5 MHz
 T_FRAME = NFFT / FS_HZ            # 2.000 µs
-ID_EXPECT = 0x00110100            # proj011 rev1。下位 8 bit（FFT_CFG）は変種で変わるので比べない
-ID_MASK = 0xFFFFFF00
+ID_EXPECT = 0x00110000            # proj011。[15:8] は rev（1 / 2）、[7:0] は FFT_CFG（変種）なので比べない
+ID_MASK = 0xFFFF0000
 
 
 def fft_cfg_str(ident):
@@ -56,7 +56,7 @@ def fft_cfg_str(ident):
     cmul = "use_luts" if c & 8 else ("use_mults_resources" if c & 2 else "use_mults_performance")
     bfly = "use_luts" if c & 4 else "use_xtremedsp_slices"
     name = {0x07: "res", 0x01: "perf"}.get(c, "?")
-    return f"FFT_CFG 0x{c:02x} = {name}（{thr} / {cmul} / {bfly}）"
+    return f"rev{(ident >> 8) & 0xFF} / FFT_CFG 0x{c:02x} = {name}（{thr} / {cmul} / {bfly}）"
 
 LMK_FREQ = 245.76
 LMX_FREQ = 491.52
@@ -206,7 +206,7 @@ def check_tile(rfdc, zone):
 def probe(sp):
     """判定 0: 流れているか。fin − fout が一定か。フレームが 1 秒に 500,000 進むか。"""
     ident, prm = sp.rd(R_ID), sp.rd(R_PARAM)
-    log(f"ID = {ident:08x}（期待 {ID_EXPECT:08x} の上位 24 bit、{fft_cfg_str(ident)}） / PARAM = {prm:08x}"
+    log(f"ID = {ident:08x}（期待 {ID_EXPECT:08x} の上位 16 bit、{fft_cfg_str(ident)}） / PARAM = {prm:08x}"
         f"（log2 N = {prm & 0xFF} / log2 レーン = {prm >> 8 & 0xFF} / QW = {prm >> 16 & 0xFF} / IW = {prm >> 24}）")
     ok = (ident & ID_MASK) == ID_EXPECT
     fin0, t0 = sp.rd64(R_FIN_LO, R_FIN_HI), time.time()
@@ -685,7 +685,7 @@ def main():
     ident = sp.rd(R_ID)
     log(f"spec_core: ID = {ident:08x} / {fft_cfg_str(ident)}")
     if (ident & ID_MASK) != ID_EXPECT:
-        log(f"ERROR: ID の上位 24 bit が {ID_EXPECT >> 8:06x} でない。別の proj の .bit が載っている")
+        log(f"ERROR: ID の上位 16 bit が {ID_EXPECT >> 16:04x} でない。別の proj の .bit が載っている")
         sys.exit(1)
     sp.stop()
     sp.wr(R_CTRL, CTRL_CLR)                       # 立ち上がりの隙間で立ったフラグを消す
