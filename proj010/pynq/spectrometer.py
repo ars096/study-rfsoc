@@ -16,7 +16,8 @@ N_ACC フレームごとに 1 ダンプ（4096 ch × 64 bit）を閉じる。PS 
     sudo python3 spectrometer.py --clkin 0 --tone 3000.25           # 判定 1: 線がどの ch に立つか
     sudo python3 spectrometer.py --clkin 0 --radiometer --ndump 50  # 判定 3: σ/μ = 1/√(Δν·τ)
     sudo python3 spectrometer.py --clkin 0 --radiometer --nacc 5000,50000,500000 --ndump 30
-    sudo python3 spectrometer.py --clkin 0 --ndump 100 --save run.npz   # 記録
+    sudo python3 spectrometer.py --clkin 0 --ndump 100 --save run.npz   # 記録（メモリに溜めてから書く。短い記録向け）
+    sudo python3 spectrometer.py --clkin 0 --nacc 500000 --record 3600 --out noise1h   # 長時間の連続記録（アラン分散）
 
 1PPS が ADC に入ったまま（SG なし）でできるもの:
 
@@ -460,6 +461,65 @@ def tick(sp, nacc, seconds, shift, save=None):
 
 
 # ボード内のクロック（proj009 の adc_capture.py の表から）。無入力で立つ線の出どころを当てる
+def record(sp, nacc, seconds, shift, prefix, meta_info):
+    """長時間の連続記録。**ダンプを 1 つずつファイルへ書き、メモリに溜めない**（1 時間の 100 ms 記録は 1.2 GB）。
+
+    書くもの（`tools/allan.py` が読む）:
+      PREFIX.spec.npy  [ダンプ, 4096] uint64 — 積分した値そのまま（memmap。途中で止めても書いた分は残る）
+      PREFIX.meta.npy  [ダンプ, 7] int64 — seq, k, n, f0, sat, flags, 読んだ時刻（Unix ns、PS の時計）
+      PREFIX.info.json — nacc・τ・shift・書けたダンプ数・読み落とし・ボードの設定
+    Ctrl-C で止めても、それまでの分は正しく閉じる。
+    """
+    import json
+    tau = nacc * T_FRAME
+    ndump = int(round(seconds / tau))
+    mb = ndump * NCH_OUT * 8 / 1e6
+    log(f"記録: τ = {tau * 1e3:.1f} ms × {ndump} ダンプ（{ndump * tau:.0f} s）→ {prefix}.spec.npy（{mb:.0f} MB）")
+    spec_f = np.lib.format.open_memmap(prefix + ".spec.npy", mode="w+", dtype=np.uint64, shape=(ndump, NCH_OUT))
+    meta_f = np.lib.format.open_memmap(prefix + ".meta.npy", mode="w+", dtype=np.int64, shape=(ndump, 7))
+    info = dict(meta_info, nacc=nacc, tau_s=tau, shift=shift, ndump_planned=ndump, nch=NCH_OUT,
+                cols=["seq", "k", "n", "f0", "sat", "flags", "t_unix_ns"], start_unix=time.time())
+    seq = sp.run(nacc, 0, shift)
+    i, t0, last = 0, time.time(), 0.0
+    stopped = "完了"
+    try:
+        while i < ndump:
+            if sp.wait_dump(seq, tau * 3 + 1.0) is None:
+                stopped = "ダンプが閉じない"
+                break
+            m, spec, _ = sp.read_dump()
+            seq = m["seq"]
+            spec_f[i] = spec
+            meta_f[i] = (m["seq"], m["k"], m["n"], m["f0"], m["sat"], m["flags"], time.time_ns())
+            i += 1
+            if i % 100 == 0:
+                spec_f.flush()
+                meta_f.flush()
+            el = time.time() - t0
+            if el - last >= 60:
+                last = el
+                log(f"  {i} / {ndump} ダンプ（{el:.0f} s）")
+    except KeyboardInterrupt:
+        stopped = "Ctrl-C"
+    sp.stop()
+    spec_f.flush()
+    meta_f.flush()
+    k = meta_f[:i, 1]
+    f0 = meta_f[:i, 3]
+    gaps = int(np.sum(np.diff(k) != 1)) if i > 1 else 0
+    f0ok = bool(np.all(np.diff(f0) == np.diff(k) * nacc)) if i > 1 else True
+    flags = int(np.bitwise_or.reduce(meta_f[:i, 5])) if i else 0
+    sat = int(meta_f[:i, 4].sum()) if i else 0
+    info.update(ndump_written=i, gaps=gaps, f0_consistent=f0ok, flags_or=flags, sat_total=sat,
+                stopped=stopped, elapsed_s=time.time() - t0)
+    with open(prefix + ".info.json", "w") as fh:
+        json.dump(info, fh, ensure_ascii=False, indent=1)
+    log(f"記録を閉じた（{stopped}）: {i} ダンプ / 読み落とし {gaps} 箇所 / "
+        f"DUMP_F0 の間隔 {'OK' if f0ok else '**合わない**'} / FLAGS {flags:02x} / SAT 合計 {sat}")
+    log(f"  → {prefix}.spec.npy / .meta.npy / .info.json（解析は tools/allan.py {prefix}）")
+    return f0ok and flags == 0 and i > 0
+
+
 KNOWN_CLOCKS = [
     ("LMX2594 → RFDC 基準", 491.52e6), ("LMK04828 → LMX 基準", 245.76e6), ("LMK04828 → PL 基準", 122.88e6),
     ("DSP / clk_adc2 = fs/16", 256.0e6), ("ADC ドメイン = fs/12", FS_HZ / 12), ("MMCM の VCO", 1024.0e6),
@@ -583,6 +643,9 @@ def main():
                    help="判定 7: ADC に入っている 1PPS の縁を SEC 秒ぶん見る（--nacc の最初の値を使う）")
     p.add_argument("--peaks", type=int, default=0, help="通常の測定の後、細い線を上位 N 個出す")
     p.add_argument("--save", default=None, help="スペクトルとメタデータを .npz で残す")
+    p.add_argument("--record", type=float, default=None, metavar="SEC",
+                   help="SEC 秒の連続記録をファイルへ少しずつ書く（--out が要る。アラン分散用）")
+    p.add_argument("--out", default=None, help="--record の出力の接頭辞（PREFIX.spec.npy など）")
     p.add_argument("--slow-read", action="store_true", help="MMIO を 1 語ずつ読む")
     args = p.parse_args()
     if args.atten_db < 0:
@@ -628,6 +691,13 @@ def main():
         ok &= radiometer(sp, [int(v) for v in args.nacc.split(",")], max(args.ndump, 3), shift)
     elif args.tick is not None:
         ok &= tick(sp, int(args.nacc.split(",")[0]), args.tick, shift, args.save)
+    elif args.record is not None:
+        if not args.out:
+            log("ERROR: --record には --out PREFIX が要る")
+            sys.exit(2)
+        ok &= record(sp, int(args.nacc.split(",")[0]), args.record, shift, args.out,
+                     dict(clkin=args.clkin, zone=args.zone, bitfile=args.bitfile,
+                          if_mhz_ch0=float(if_of_ch(0, args.zone)), df_mhz=DF_HZ / 1e6))
     else:
         nacc = int(args.nacc.split(",")[0])
         seq = sp.run(nacc, args.ndump, shift)

@@ -377,7 +377,13 @@ sudo python3 spectrometer.py --clkin 0 --probe
 sudo python3 spectrometer.py --clkin 0 --golden --tone 3000.0 --sg-dbm -20 --atten-db 0
 sudo python3 spectrometer.py --clkin 0 --tone 3000.0 --sg-dbm -20 --atten-db 0
 sudo python3 spectrometer.py --clkin 0 --radiometer --nacc 5000,50000,500000 --ndump 30
+sudo python3 spectrometer.py --clkin 0 --ndump 100 --save run.npz                  # 100 ms × 100 個（メモリに溜めてから書く）
+sudo python3 spectrometer.py --clkin 0 --nacc 500000 --record 3600 --out noise1h   # 1 s × 1 時間（少しずつファイルへ）
+python3 tools/allan.py noise1h --plot noise1h_allan.png                              # アラン分散とラジオメータ式の曲線
 ```
+
+`--record` は PREFIX.spec.npy（[ダンプ, 4096] uint64）・.meta.npy・.info.json を書く。容量は 100 ms で 1 時間 1.2 GB、1 s で 120 MB。
+`tools/allan.py` は `--record` の出力のほか、`--tick --save` / `--ndump --save` の .npz も読む（連続した最長の区間だけを使う）。
 
 `pynq/extref.py` と `clocks/` は proj009 からそのまま持ってきた（自己完結のため）。
 
