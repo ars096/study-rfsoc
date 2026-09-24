@@ -1,7 +1,7 @@
 # proj011 — FFT IP を realtime・資源優先に設定し直し、1ch のまま資源と `-1` の余裕を測り直す
 
 日付: 2026-09-24
-状態: 進行中（準備完了・`make sim` SHIFT 7 通過。survey・ビルド・実機は未実施）
+状態: 進行中（`make sim` SHIFT 7 通過・`make survey` 完了。ビルドはポートの照合の誤りで 1 回止まり、照合を直した。実機は未実施）
 
 ## 目的
 
@@ -69,15 +69,21 @@ FFT IP 1 個（512 点・pipelined streaming・入力 14 bit・unscaled・位相
 - 読み: DSP 50 の内訳（乗算器とバタフライの比）は survey の 4 通りの差から分かる。予言が外れたら、内訳の見積もりのどちらが外れたかを書く
 - BRAM（RAMB18 6 / 個）はメモリの設定を触らないので **8 通りとも同じ**と予言する
 
-### 段階 2: 本番（`make`。survey の後・ビルドの前に空欄を埋める）
+### 段階 2: 本番（`make`。survey の後・ビルドの前に書いた。2026-09-24）
+
+survey の物差し（nrt / perf / dsp = DSP 50）が proj010 の配置配線後の実測と一致したので、survey の数字をそのまま 16 倍する。
 
 | | proj010 実測 | res の予言 | perf の予言 | 根拠 |
 |---|---|---|---|---|
-| DSP48E2 | 944 | 16 × (survey) ＋ 144 = ___ | 16 × (survey) ＋ 144 = ___ | 自作部分 144 は変えない |
-| DSP（4ch 換算） | 3776（88 %） | ___ | — | × 4 |
-| CLB LUT | ___（proj010 の utilization.rpt から転記） | ___ | ___ | |
-| BRAM | RAMB36 23 ＋ RAMB18 112 | **同じ** | **同じ** | メモリの設定を触らない |
+| DSP48E2 | 944 | **16 × 21 ＋ 144 = 480**（11.2 %） | **16 × 50 ＋ 144 = 944**（proj010 と同じ） | 自作部分 144 は変えない。物差しが 1 個単位で一致したので**ちょうどこの数**と予言する |
+| DSP（4ch 換算） | 3776（88 %） | **1920（45 %）** | 3776 | × 4 |
+| lane_fft 16 個の LUT | 16 × 1695 = 27,120（survey） | **+10,300**（16 × 641） | **−2,700**（16 × −166） | survey の差。配置配線後の値は OOC と数 % 違ってよい |
+| lane_fft 16 個の FF | 16 × 3640 = 58,240（survey） | **+17,200**（16 × 1075） | **−1,900**（16 × −119） | 同上 |
+| BRAM | RAMB36 23 ＋ RAMB18 112 | **同じ** | **同じ** | survey で 8 通りとも 3 タイル / 個 |
 | CDC（report_cdc） | Critical 0 / CDC-3 20 / CDC-15 833 | **同じ** | **同じ** | 変えたのは 256 MHz ドメインの内側だけ。**構造の指紋**（proj008 の規約） |
+
+**4ch の DSP は res で 45 %。**残り 55 % が窓の切り出し（PFB の FIR か DDC の NCO・乗算器）に使える予算になる。
+LUT・FF の増分（4ch で +41k / +69k）は XCZU48DR（LUT 425k / FF 850k）に対して 10 % 未満。
 
 ### 段階 2: タイミング（ビルドの前に書く。今書ける）
 
@@ -119,6 +125,50 @@ FFT IP 1 個（512 点・pipelined streaming・入力 14 bit・unscaled・位相
 
 ## 結果
 
+### IP 単体（`make survey`、2026-09-24、`-2`、OOC 合成後）
+
+| 名前 | throttle | 乗算器 | バタフライ | DSP | LUT | FF | BRAM | CARRY8 |
+|---|---|---|---|---|---|---|---|---|
+| nrt_perf_dsp（= proj010） | nonrealtime | performance | xtremedsp | **50** | 1695 | 3640 | 3 | 86 |
+| nrt_perf_lut | nonrealtime | performance | luts | 28 | 2246 | 3997 | 3 | 184 |
+| nrt_res_dsp | nonrealtime | resources | xtremedsp | 43 | 1950 | 4477 | 3 | 113 |
+| nrt_res_lut | nonrealtime | resources | luts | 21 | 2501 | 4834 | 3 | 211 |
+| rt_perf_dsp（= perf） | realtime | performance | xtremedsp | **50** | 1529 | 3521 | 3 | 86 |
+| rt_perf_lut | realtime | performance | luts | 28 | 2081 | 3878 | 3 | 184 |
+| rt_res_dsp | realtime | resources | xtremedsp | 43 | 1784 | 4358 | 3 | 113 |
+| **rt_res_lut（= res）** | realtime | resources | luts | **21** | 2336 | 4715 | 3 | 211 |
+
+**物差しは通った**（nrt_perf_dsp = 50 = proj010 の配置配線後の実測）。
+
+| 段階 1 の予言 | 結果 | |
+|---|---|---|
+| realtime で DSP は変わらない | 50 → 50（4 組とも同じ） | **当たり** |
+| realtime で LUT が 0〜10 % 減る | −166（−9.8 %）、FF −119（−3 %）。4 組とも同じ差 | **当たり**（範囲の端） |
+| 3 乗算で DSP 40〜46 | 43 | **当たり** |
+| 3 乗算で LUT ほぼ同じ | **LUT +255（+15 %）・FF +837（+23 %）・CARRY8 +27** | **外れ**（3 乗算の前置加算器の段と遅延合わせのレジスタを見ていなかった） |
+| LUT バタフライで DSP 20〜35 | 28 | **当たり** |
+| LUT バタフライで LUT +1,000〜3,000 | **+551**、FF +357、CARRY8 +98 | **外れ（小さく）** |
+| res で DSP 15〜30 | **21** | **当たり** |
+| BRAM は 8 通りとも同じ | 3 タイル（RAMB18 6） | **当たり** |
+
+- **DSP 50 の内訳が分かった: 複素乗算 7 個 × 4 = 28 ＋ バタフライ 22。**3 乗算で 7 減り（7 個 × 1）、LUT バタフライで 22 減る。
+  2 つの効きは**ちょうど足し算**（50 − 7 − 22 = 21）で、throttle とも独立（realtime の差は 4 組とも LUT −166 / FF −119）
+- 512 点 = 9 段で複素乗算が 7 個なのは、最後の 2 段の係数が自明（±1・±j）で乗算器が要らないためと読む
+- 外れた 2 つはどちらも LUT・FF の見積もりで、DSP は全部当たった。**資源の予言は「消える側」は当たり、「増える側」を外す**
+
+### ビルド（1 回目、2026-09-24）— ポートの照合の誤りで止まった
+
+`build.tcl` の「在ってはいけないポート」の照合が、realtime の IP に `m_axis_data_tready` が**在る**と判定して止まった。
+
+- **IP は realtime になっていた。**照合が読み違えていた: `synth/lane_fft.vhd` には entity の宣言のほかに、
+  IP コア（xfft_v9_1_x）の **component 宣言**が入っていて、そちらは設定に依らず全部のポート
+  （`aclken`・`m_axis_data_tready`・`m_axis_status_*`・`event_*_channel_halt` …）を持つ。照合はファイル全体を読んでいた
+- 裏づけ: エラーに出た一覧は RTL の 17 本が先に並び（entity）、その後に上の 8 本が component の宣言順で続いた。
+  throttle_scheme の読み返しは realtime で通っていた
+- **proj010 から在る「在るか」の照合にも同じ穴があった。**entity に無いポートでも component 側で通ってしまう。
+  「在ってはいけない」側を足して初めて、照合そのものが嘘をついていたと分かった（**外れた予言が道具の誤りを出した**）
+- 修正: entity lane_fft の宣言の中だけを読む。見出しに「entity の宣言から N 本」を出す（17 本が期待値）
+
 ### シミュレーション（2026-09-24、SHIFT 7）
 
 **全部通過。数字は proj010 と同じ**: t1 の B は差/許容の最大 0.66・平均の差 0.476 LSB、A は 3 試験とも不一致 0 ch、ID = 0x0011_0100（sim の既定 FFT_CFG = 0）。
@@ -130,7 +180,8 @@ survey・ビルド・実機は未実施。
 
 - [x] `make sim` SHIFT 7（proj010 と同じ数字で通過）
 - [ ] `make sim SIM_SHIFT=4`
-- [ ] `make survey` → 段階 1 の予言と突き合わせ、段階 2 の空欄を埋める
+- [x] `make survey` → 段階 1 の予言と突き合わせ（DSP は全部当たり、LUT・FF の 2 つが外れ）、段階 2 の空欄を埋めた
+- [x] ビルド 1 回目: ポートの照合の誤り（component 宣言を読んでいた）で停止 → entity だけを読むよう修正
 - [ ] `make` / `make FFT_OPT=perf` / `make timing-check` / `make timing-check FFT_OPT=perf`
 - [ ] 実機 判定 0・2・1・3、realtime の危険
 - [ ] 4ch・窓の切り出しの資源の見積もりを、この proj の数字で書き直す

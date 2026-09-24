@@ -293,15 +293,29 @@ if {$top eq ""} {
     puts "WARNING: IP のトップ（synth/lane_fft.vhd）が見つからない。ポートの照合を飛ばす"
 } else {
     set fh [open $top r]; set txt [read $fh]; close $fh
+    # **entity の宣言の中だけを読む。**lane_fft.vhd には IP コア（xfft_v9_1_x）の component 宣言も入っていて、
+    # そちらは設定に依らず**全部のポート**（aclken・m_axis_data_tready・m_axis_status_* …）を持つ。
+    # ファイル全体を読むと「在るか」は component 側で必ず通り、「在ってはいけないか」は必ず落ちる
+    # （2026-09-24、proj011 の初回ビルドで realtime の IP に m_axis_data_tready が「在る」と誤判定した）。
+    if {![regexp -nocase -indices {\mentity\s+lane_fft\s+is\M} $txt ent_a]} {
+        puts "ERROR: $top に entity lane_fft の宣言が見つからない"
+        exit 1
+    }
+    set a0 [lindex $ent_a 1]
+    if {![regexp -nocase -indices -start $a0 {\mend\s+(entity\s+)?lane_fft\s*;} $txt ent_b]} {
+        puts "ERROR: $top の entity lane_fft の終わりが見つからない"
+        exit 1
+    }
+    set ent_txt [string range $txt $a0 [lindex $ent_b 0]]
     set have [dict create]
     foreach {all name dir hi} [regexp -all -inline -nocase \
-            {\m(\w+)\s*:\s*(in|out)\s+std_logic(?:_vector\s*\(\s*(\d+)\s+downto\s+0\s*\))?} $txt] {
+            {\m(\w+)\s*:\s*(in|out)\s+std_logic(?:_vector\s*\(\s*(\d+)\s+downto\s+0\s*\))?} $ent_txt] {
         set w [expr {$hi eq "" ? 1 : $hi + 1}]
         if {![dict exists $have [string tolower $name]]} { dict set have [string tolower $name] $w }
     }
     set ng 0
     puts ""
-    puts "---- FFT IP のポート（RTL が使うもの）----"
+    puts "---- FFT IP のポート（entity lane_fft の宣言から [dict size $have] 本）----"
     dict for {n w} $want_ports {
         if {![dict exists $have $n]} {
             puts [format "  %-30s 無い" $n]; incr ng
@@ -321,7 +335,7 @@ if {$top eq ""} {
         }
     }
     if {$ng > 0} {
-        puts "ERROR: FFT IP のポートが spec_core.v の前提と $ng 件合わない。IP にあるポート:"
+        puts "ERROR: FFT IP のポートが spec_core.v の前提と $ng 件合わない。entity lane_fft にあるポート:"
         dict for {n w} $have { puts "    $n ($w)" }
         exit 1
     }
