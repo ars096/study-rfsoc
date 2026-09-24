@@ -632,6 +632,7 @@ def main():
         nacc = int(args.nacc.split(",")[0])
         seq = sp.run(nacc, args.ndump, shift)
         keep = []
+        t0 = time.time()
         for i in range(args.ndump):
             if sp.wait_dump(seq, nacc * T_FRAME * 3 + 1.0) is None:
                 log("ERROR: ダンプが閉じない")
@@ -639,6 +640,16 @@ def main():
             m, spec, _ = sp.read_dump()
             seq = m["seq"]
             keep.append((m, spec))
+        # **連続して読めたか**: DUMP_K が 1 ずつ増え、DUMP_F0 の間隔が N_ACC ちょうどなら、隙間なく並んだダンプを
+        # 1 つも落とさずに読んだことになる（二面で交互に積むので積分のデッドタイムは 0）
+        if len(keep) > 1:
+            kk = np.array([x["k"] for x, _ in keep])
+            ff = np.array([x["f0"] for x, _ in keep], dtype=np.int64)
+            gaps = int(np.sum(np.diff(kk) != 1))
+            f0ok = bool(np.all(np.diff(ff) == np.diff(kk) * nacc))
+            log(f"連続読み出し: {len(keep)} ダンプ × {nacc * T_FRAME * 1e3:.1f} ms を {time.time() - t0:.1f} s で / "
+                f"読み落とし {gaps} 箇所 / DUMP_F0 の間隔 {'= DUMP_K × N_ACC（OK）' if f0ok else '**が合わない**'}")
+            ok &= f0ok
         m, spec = keep[-1]
         spectrum_report(spec, m, args.tone, args.sg_dbm, args.atten_db, shift)
         if args.peaks > 0:
