@@ -19,6 +19,8 @@
      各ダンプを静かな ch の和で割ると ch ごとの揺れが期待（1.0 倍）に戻るかを見る
   8. 外れたダンプの中身: 全 ch の和が跳ねたダンプで、超過が全 ch に薄く広がるか（利得・較正）、
      特定の帯域に固まるか（電波の混入）。帯域はゾーン 2 の IF とゾーン 1 に置いたときの周波数の両方で出す
+  9. ダンプを 1 s・3 s に束ねたときの ch ごとの揺れを、割らない／共通の利得／帯域のなめらかな形（Legendre 多項式）／
+     128 ch の塊で割ったときで比べる。判定 3 の 1 s で残った超過（1.39 倍）が帯域の形の変化かを見る
 """
 import sys
 import numpy as np
@@ -137,7 +139,7 @@ def main(path):
     print(f"   共通の利得の揺れの幅: 全体の σ {g.std():.2e} / 最大−最小 {g.max() - g.min():.2e}")
 
     # ---- 8. 外れたダンプはどの ch が持ち上げたか ----
-    # 2026-09-24、ADC_B を 50 Ω 終端にしたら全 ch の和が 1 ダンプで +4〜13 % 跳ねる事象が 4 秒に固まって出た。
+    # 2026-09-24（1PPS が ADC に入ったまま。平日）、全 ch の和が 1 ダンプで +4〜13 % 跳ねる事象が 4 秒に固まって出た。
     # 広帯域（利得・較正）なら超過は全 ch に薄く広がり、電波の混入なら特定の帯域に固まる
     base_t = np.array([np.median(tot[max(0, i - 5):i + 6]) for i in range(nd)])
     rt = tot / base_t - 1
@@ -186,6 +188,45 @@ def main(path):
             ka, kb = a + 50, b + 50
             print(f"     ch {ka:>4}–{kb:>4}（{kb - ka + 1:>3} ch）IF {FS / 1e6 - kb * DF / 1e6:8.2f}–{FS / 1e6 - ka * DF / 1e6:8.2f} MHz"
                   f" / {ka * DF / 1e6:7.2f}–{kb * DF / 1e6:7.2f} MHz  超過の {m[a:b + 1].sum() / m.sum() * 100:4.1f} %")
+
+    # ---- 9. 1 s に束ねたときの揺れ: 共通の利得の次に残るものは帯域の形の変化か ----
+    # 2026-09-24（50 Ω 終端）の判定 3: 共通の利得を除いた比が 10 ms 0.98 / 100 ms 1.01 / **1 s 1.39**。
+    # 1 s で残る分は全 ch 共通ではない。周波数についてなめらか（帯域の傾き・うねり）なら、ダンプごとに
+    # 低次の多項式や ch の塊の中央値で割れば 1.0 に戻る。戻らなければ ch ごとに独立した何か
+    print("\n9. ダンプを束ねた揺れ（静かな ch、隣との差、期待比）: 何で割ると 1.0 に戻るか")
+    u = np.linspace(-1, 1, int(quiet.sum()))
+    blk = 128
+
+    def norm_ratio(X, t, how):
+        x = X / X.mean(axis=0)
+        if how == "scalar":
+            x = x / np.median(x, axis=1)[:, None]
+        elif how.startswith("leg"):
+            deg = int(how[3:])
+            fit = np.array([np.polynomial.legendre.legval(u, np.polynomial.legendre.legfit(u, row, deg))
+                            for row in x])
+            x = x / fit
+        elif how == "block":
+            y = x.copy()
+            for a0 in range(0, x.shape[1], blk):
+                sl = slice(a0, min(a0 + blk, x.shape[1]))
+                y[:, sl] = x[:, sl] / np.median(x[:, sl], axis=1)[:, None]
+            x = y
+        d = np.diff(x, axis=0)
+        return float(np.median(d.std(axis=0) / x.mean(axis=0) / np.sqrt(2))) * np.sqrt(DF * t)
+
+    hows = ["none", "scalar", "leg1", "leg3", "leg8", "block"]
+    print("   τ[s]   束   ダンプ  " + "  ".join(f"{h:>7}" for h in hows))
+    for nb in (1, per, 3 * per):
+        m_ = nd // nb
+        if m_ < 8:
+            continue
+        X = q[:m_ * nb].reshape(m_, nb, -1).sum(axis=1)
+        t = nb * tau
+        print(f"   {t:5.1f}  {nb:>3}  {m_:>5}   " + "  ".join(f"{norm_ratio(X, t, h):7.3f}" for h in hows))
+    print(f"   none = 割らない / scalar = ダンプごとの中央値 / legN = ch についての N 次の Legendre 多項式 / "
+          f"block = {blk} ch ごとの中央値")
+    print("   （ダンプ数が少ないと σ の推定が下に偏る: 30 個で約 0.98。block は塊の中央値の雑音で約 +0.5 %）")
 
 
 if __name__ == "__main__":
