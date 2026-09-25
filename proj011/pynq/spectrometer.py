@@ -305,6 +305,12 @@ def flagwatch(sp, seconds, shift, run_nacc):
     if run_nacc > 0:
         sp.run(run_nacc, 0, shift)
         log(f"連続積分を開始: N_ACC {run_nacc}（{run_nacc * T_FRAME * 1e3:.1f} ms）")
+        time.sleep(3 * run_nacc * T_FRAME + 0.05)    # 最初のダンプが閉じるまで待ってから読む
+    # **見張りの前に消す前に、起動の後の CTRL_CLR から今までに立ったものを読む**
+    # （初版はここで黙って消していて、SHIFT の自動決定と RUN の立ち上がりで立つ事象を見落とした。2026-09-25）
+    f_pre = sp.flags()
+    log(f"見張りの前（起動後の消去 → SHIFT の自動決定 → RUN の立ち上がり）に立っていた FLAGS: {f_pre:02x}"
+        f"（{flag_text(f_pre)}）")
     sp.wr(R_CTRL, CTRL_CLR)
     t0 = time.time()
     events = []
@@ -344,7 +350,7 @@ def flagwatch(sp, seconds, shift, run_nacc):
             log(f"事象の間隔（フレーム）: 最小 {min(gaps)} / 最大 {max(gaps)}")
     if run_nacc > 0:
         sp.stop()
-    return n == 0
+    return n == 0 and f_pre == 0
 
 
 def spectrum_report(spec, m, tone, sg_dbm, atten_db, shift):
