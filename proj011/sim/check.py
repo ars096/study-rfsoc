@@ -123,7 +123,8 @@ def load_lanes(out):
 REGS = {0x00: "ID", 0x04: "PARAM", 0x08: "CTRL", 0x0C: "N_ACC", 0x10: "N_DUMP", 0x14: "SHIFT",
         0x18: "FLAGS", 0x1C: "SEQ", 0x20: "FIN_LO", 0x24: "FIN_HI", 0x28: "FOUT_LO", 0x2C: "FOUT_HI",
         0x30: "DUMP_K", 0x34: "DUMP_N", 0x38: "DUMP_F0_LO", 0x3C: "DUMP_F0_HI", 0x40: "DUMP_SAT",
-        0x44: "SNAP_F_LO", 0x48: "SNAP_F_HI", 0x4C: "BANK", 0x50: "RUN_F0_LO", 0x54: "RUN_F0_HI"}
+        0x44: "SNAP_F_LO", 0x48: "SNAP_F_HI", 0x4C: "BANK", 0x50: "RUN_F0_LO", 0x54: "RUN_F0_HI",
+        0x58: "DIAG_TL", 0x5C: "DIAG_EV", 0x60: "DIAG_FS", 0x64: "DIAG_EVCNT", 0x68: "DIAG_FSCNT"}
 
 
 def load_dump(out, name):
@@ -148,7 +149,7 @@ def load_dump(out, name):
 
 
 # ---------------------------------------------------------------- 判定
-def check(out, shift):
+def check(out, shift, skew=0):
     lanes = load_lanes(out)
     x14 = np.load(os.path.join(out, "stim14.npy"))
     nfail = 0
@@ -170,8 +171,25 @@ def check(out, shift):
         print("---- %s ----" % name)
         r, snap, spec, seq_after = load_dump(out, name)
         f0, n = r["DUMP_F0"], r["DUMP_N"]
-        judge(r["ID"] == 0x00110200, "ID = %08x（期待 00110200: proj011 rev2、FFT_CFG は sim の既定 0）" % r["ID"])
-        judge(r["FLAGS"] == 0, "FLAGS = %02x" % r["FLAGS"])
+        judge(r["ID"] == 0x00110300, "ID = %08x（期待 00110300: proj011 rev3、FFT_CFG は sim の既定 0）" % r["ID"])
+        want_flags = 0x20 if skew else 0
+        judge(r["FLAGS"] == want_flags, "FLAGS = %02x（期待 %02x）" % (r["FLAGS"], want_flags))
+        # 診断（rev3）。リセット以来の累積（tb は CTRL[9] を書かない）
+        fin = (r["FIN_HI"] << 32) | r["FIN_LO"]
+        tl, ev, fs = r["DIAG_TL"], r["DIAG_EV"], r["DIAG_FS"]
+        judge(fs >> 31 == 1 and (fs >> 30) & 1 == 0 and (fs >> 29) & 1 == 0,
+              "DIAG_FS: frame_started を見た・m_in が一定・レーン間で揃う（%08x、m_in %d）" % (fs, fs & 0x1FF))
+        judge(abs(r["DIAG_FSCNT"] - fin) <= 2, "DIAG_FSCNT = %d（FIN %d と ±2 で一致）" % (r["DIAG_FSCNT"], fin))
+        if skew:
+            judge(tl == 0xFFFFFFFF, "DIAG_TL = %08x（期待 ffffffff: 16 レーンとも unexpected も missing も）" % tl)
+            evm = ev & 0x1FF
+            judge(ev >> 31 == 1 and evm in (0, (512 - skew) % 512),
+                  "DIAG_EV: 事象あり・最初の m_in %d（期待 0 か %d）・種類 %d" % (evm, (512 - skew) % 512, (ev >> 29) & 3))
+            judge(abs(r["DIAG_EVCNT"] - 2 * fin) <= 4,
+                  "DIAG_EVCNT = %d（期待 ≒ 2 × FIN = %d: 1 フレームに unexpected と missing が 1 回ずつ）" % (r["DIAG_EVCNT"], 2 * fin))
+        else:
+            judge(tl == 0 and ev >> 31 == 0 and r["DIAG_EVCNT"] == 0,
+                  "DIAG_TL / DIAG_EV / DIAG_EVCNT が 0（%08x / %08x / %d）" % (tl, ev, r["DIAG_EVCNT"]))
         judge(n == n_acc, "DUMP_N = %d（期待 %d）" % (n, n_acc))
         if want_k is not None:
             judge(r["DUMP_K"] == want_k, "DUMP_K = %d（期待 %d）" % (r["DUMP_K"], want_k))
@@ -260,4 +278,4 @@ if __name__ == "__main__":
     if sys.argv[1] == "gen":
         gen(sys.argv[2])
     else:
-        sys.exit(1 if check(sys.argv[2], int(sys.argv[3])) else 0)
+        sys.exit(1 if check(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]) if len(sys.argv) > 4 else 0) else 0)

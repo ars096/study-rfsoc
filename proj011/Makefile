@@ -49,7 +49,9 @@ IVERILOG  ?= iverilog
 VVP       ?= vvp
 PYTHON    ?= python3
 SIM_SHIFT ?= 7
-SIMDIR    := build-sim-s$(SIM_SHIFT)
+# SIM_SKEW: モデルの TLAST の検査だけを SIM_SKEW サンプルずらす（rev3 の診断の陽性対照）。0 = ずらさない
+SIM_SKEW  ?= 0
+SIMDIR    := build-sim-s$(SIM_SHIFT)$(if $(filter-out 0,$(SIM_SKEW)),-k$(SIM_SKEW))
 RTL       := src/spec_core.v src/cmul.v src/dft16.v src/tw_rom.v
 
 .PHONY: all sim survey twiddle prog id timing-check clean
@@ -61,9 +63,9 @@ all: $(OUTDIR)
 sim:
 	mkdir -p $(SIMDIR)
 	$(PYTHON) sim/check.py gen $(SIMDIR)
-	$(IVERILOG) -g2005 -DOUT=\"$(SIMDIR)\" -DSHIFT=$(SIM_SHIFT) -o $(SIMDIR)/tb $(RTL) sim/lane_fft_model.v sim/tb_spec_core.v
+	$(IVERILOG) -g2005 -DOUT=\"$(SIMDIR)\" -DSHIFT=$(SIM_SHIFT) -DTLAST_SKEW=$(SIM_SKEW) -o $(SIMDIR)/tb $(RTL) sim/lane_fft_model.v sim/tb_spec_core.v
 	$(VVP) -n $(SIMDIR)/tb
-	$(PYTHON) sim/check.py check $(SIMDIR) $(SIM_SHIFT)
+	$(PYTHON) sim/check.py check $(SIMDIR) $(SIM_SHIFT) $(SIM_SKEW)
 
 # ---- FFT IP を 1 個だけ OOC 合成して資源を数える（proj010 の教訓: IP の資源は数えてから予言する）----
 # throttle 2 × 乗算器 2 × バタフライ 2 = 8 通り。設定は src/fft_cfg.tcl（本番の build.tcl と同じ）。

@@ -68,7 +68,8 @@ R_FLAGS, R_SEQ, R_FIN_LO, R_FIN_HI, R_FOUT_LO, R_FOUT_HI = 0x18, 0x1C, 0x20, 0x2
 R_DUMP_K, R_DUMP_N, R_DUMP_F0_LO, R_DUMP_F0_HI, R_DUMP_SAT = 0x30, 0x34, 0x38, 0x3C, 0x40
 R_SNAP_F_LO, R_SNAP_F_HI, R_BANK, R_RUN_F0_LO, R_RUN_F0_HI = 0x44, 0x48, 0x4C, 0x50, 0x54
 SNAP_BASE, SPEC_BASE = 0x4000, 0x8000
-CTRL_RUN, CTRL_STOP, CTRL_CLR = 1 << 0, 1 << 1, 1 << 8
+CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_DCLR = 1 << 0, 1 << 1, 1 << 8, 1 << 9
+R_DIAG_TL, R_DIAG_EV, R_DIAG_FS, R_DIAG_EVCNT, R_DIAG_FSCNT = 0x58, 0x5C, 0x60, 0x64, 0x68   # rev3
 
 FLAG_NAMES = ["レーンの出力 valid が不揃い", "レーンの XK_INDEX が不揃い", "レーンの入力 ready が不揃い",
               "IP が入力を受けなかった（サンプル落ち）", "入力に隙間", "IP の TLAST 事象",
@@ -293,6 +294,29 @@ def golden(sp, shift, tone):
     return ok
 
 
+def diag_report(sp, label):
+    """rev3 の診断レジスタを読んで 1 行ずつ出す。rev2 以前の .bit では読まない（0xDEADBEEF が返る）。"""
+    if (sp.rd(R_ID) >> 8) & 0xFF < 3:
+        log(f"  診断（{label}）: rev3 以降の .bit でないので読まない")
+        return None
+    tl, ev, fs = sp.rd(R_DIAG_TL), sp.rd(R_DIAG_EV), sp.rd(R_DIAG_FS)
+    evc, fsc = sp.rd(R_DIAG_EVCNT), sp.rd(R_DIAG_FSCNT)
+    fin = sp.rd64(R_FIN_LO, R_FIN_HI)
+    ux, ms = tl & 0xFFFF, tl >> 16
+    log(f"  診断（{label}）: TLAST unexpected のレーン {ux:016b} / missing のレーン {ms:016b}"
+        f"（{bin(ux).count('1')} / {bin(ms).count('1')} 本）")
+    if ev >> 31:
+        typ = {1: "unexpected", 2: "missing", 3: "両方"}.get((ev >> 29) & 3, "?")
+        log(f"    レーン 0 の最初の TLAST 事象: {typ}、m_in = {ev & 0x1FF} / 事象のクロック数 {evc}"
+            f"（FIN {fin} に対して {evc / max(fin, 1):.3f} / フレーム）")
+    else:
+        log("    レーン 0 に TLAST 事象なし")
+    log(f"    frame_started: {'見た' if fs >> 31 else '**見ていない**'}、最初の m_in = {fs & 0x1FF}"
+        f"{'、**以後 m_in が違った**' if (fs >> 30) & 1 else '、以後も同じ'}"
+        f"{'、**レーン間で揃わなかった**' if (fs >> 29) & 1 else '、レーン間で揃う'} / 回数 {fsc}（FIN {fin}）")
+    return dict(tl=tl, ev=ev, fs=fs, evc=evc, fsc=fsc, fin=fin)
+
+
 def flagwatch(sp, seconds, shift, run_nacc):
     """FLAGS を 0.05 s おきに読み、立つたびに時刻・ビット・FIN を記録して消す（proj011 で新設）。
 
@@ -311,6 +335,7 @@ def flagwatch(sp, seconds, shift, run_nacc):
     f_pre = sp.flags()
     log(f"見張りの前（起動後の消去 → SHIFT の自動決定 → RUN の立ち上がり）に立っていた FLAGS: {f_pre:02x}"
         f"（{flag_text(f_pre)}）")
+    diag_report(sp, "起動から見張りの前まで")
     sp.wr(R_CTRL, CTRL_CLR)
     t0 = time.time()
     events = []
@@ -348,6 +373,7 @@ def flagwatch(sp, seconds, shift, run_nacc):
         gaps = np.diff([e[2] for e in events]) if n > 1 else []
         if len(gaps):
             log(f"事象の間隔（フレーム）: 最小 {min(gaps)} / 最大 {max(gaps)}")
+    diag_report(sp, "見張りの後（起動からの累積）")
     if run_nacc > 0:
         sp.stop()
     return n == 0 and f_pre == 0

@@ -123,7 +123,7 @@ module tb_spec_core;
         begin
             $sformat(path, "%0s/dump_%0s.txt", `OUT, name);
             fo = $fopen(path, "w");
-            for (i = 0; i < 22; i = i + 1) begin
+            for (i = 0; i < 27; i = i + 1) begin
                 axi_rd(i * 4, v);
                 $fwrite(fo, "reg %0d %0d\n", i * 4, v);
             end

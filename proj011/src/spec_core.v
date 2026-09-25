@@ -6,6 +6,8 @@
 // proj010 からの差分は 2 点だけ: FFT IP を realtime にした（m_axis_data_tready の接続を外した）/
 // ID の下位 8 bit に FFT の設定の符号 FFT_CFG を載せた。
 // rev2: フレーム頭の判定の加算・比較を前もってレジスタに置いた（pre_*。rev1 の最悪経路 cur_k → t_last）。振る舞いは rev1 と同じ。
+// rev3: 診断のレジスタ（0x58–0x68）を足した。realtime の FFT IP の TLAST 事象（起動の 7/20 で立ち続ける）を切り分けるため。
+//       データの経路には触らない。CTRL[9] で診断だけを消す（FLAGS の CTRL[8] とは別）。
 // **全部が DSP ドメイン（256 MHz）で動く。**AXI4-Lite も 256 MHz で受け、
 // PS（pl_clk0）との乗り換えは SmartConnect に任せる。自作の CDC はここに無い。
 //
@@ -58,10 +60,10 @@
 //                  サンプルは ADC の 16 bit のまま（下位 2 bit は常に 0）
 //   0x8000–0xFFFF  スペクトル: ch k の 64 bit が 0x8000 + 8k（下位語）/ +4（上位語）
 //
-//   0x00 ID        R   0x0011_02CC（proj011 rev2。rev1 は 0x0011_01CC。CC = FFT_CFG: [0] realtime / [1] 乗算器 use_mults_resources /
+//   0x00 ID        R   0x0011_03CC（proj011 rev3。rev2 は 0x0011_02CC、rev1 は 0x0011_01CC。CC = FFT_CFG: [0] realtime / [1] 乗算器 use_mults_resources /
 //                      [2] バタフライ use_luts / [3] 乗算器 use_luts。build.tcl が src/fft_cfg.tcl から設定する）
 //   0x04 PARAM     R   [7:0] log2 NFFT = 13 / [15:8] log2 レーン = 4 / [23:16] QW = 18 / [31:24] IW = 14
-//   0x08 CTRL      W   [0] RUN（開始を予約）/ [1] STOP / [8] FLAGS を消す（いずれも 1 を書いた瞬間だけ）
+//   0x08 CTRL      W   [0] RUN（開始を予約）/ [1] STOP / [8] FLAGS を消す / [9] 診断（0x58–0x68）を消す（いずれも 1 を書いた瞬間だけ）
 //                  R   [0] 積分中 / [1] 開始待ち / [2] スナップショット予約中 / [3] 入力が流れ始めた
 //   0x0C N_ACC     RW  1 ダンプのフレーム数（0 は 1 とみなす）。RUN の時点で取り込む。既定 50000 = 100 ms
 //   0x10 N_DUMP    RW  ダンプの回数。0 = 止めるまで。RUN の時点で取り込む
@@ -82,6 +84,11 @@
 //   0x4C BANK      R   読み出し窓が指している面（0/1）
 //   0x50 RUN_F0_LO R   RUN で予約した開始フレーム
 //   0x54 RUN_F0_HI R
+//   0x58 DIAG_TL   R   [15:0] レーンごとの TLAST unexpected / [31:16] missing（粘着。CTRL[9] で消す。rev3）
+//   0x5C DIAG_EV   R   [31] レーン 0 に TLAST 事象があった / [30:29] {missing, unexpected} / [8:0] 最初の事象の m_in
+//   0x60 DIAG_FS   R   [31] レーン 0 の frame_started を見た / [30] 以後 m_in が違った / [29] レーン間で揃わなかった / [8:0] 最初の m_in
+//   0x64 DIAG_EVCNT R  レーン 0 の TLAST 事象のクロック数
+//   0x68 DIAG_FSCNT R  レーン 0 の frame_started の回数
 //
 // FLAGS（粘着。CTRL[8] で消す）:
 //   [0] レーンの出力 valid が揃っていない     [1] レーンの XK_INDEX が揃っていない
@@ -141,7 +148,7 @@ module spec_core #(
     localparam integer PW = 2 * QW + 1;
     localparam integer FW = 48;        // フレーム番号（2 µs × 2^48 = 17 年）
     localparam [7:0]   FFT_CFG8 = FFT_CFG;
-    localparam [31:0]  ID = {16'h0011, 8'h02, FFT_CFG8};
+    localparam [31:0]  ID = {16'h0011, 8'h03, FFT_CFG8};
 
     // 固定のパイプライン段数（S0 = レーン出力を受けたクロック）
     //   S0  +2 ROM → +4 cmul → V@6  +6 dft16 → Z@12  +1 飽和 → Q@13
@@ -158,7 +165,7 @@ module spec_core #(
     // =====================================================================
     reg [31:0] r_nacc, r_ndump;
     reg [3:0]  r_shift;
-    reg        cmd_run, cmd_stop, cmd_clr;   // 1 クロックのパルス
+    reg        cmd_run, cmd_stop, cmd_clr, cmd_dclr;   // 1 クロックのパルス
 
     wire wr_go = s_axi_awvalid && s_axi_wvalid && !s_axi_bvalid;
     assign s_axi_awready = wr_go;
@@ -166,7 +173,7 @@ module spec_core #(
     assign s_axi_bresp   = 2'b00;
 
     always @(posedge aclk) begin
-        cmd_run <= 1'b0; cmd_stop <= 1'b0; cmd_clr <= 1'b0;
+        cmd_run <= 1'b0; cmd_stop <= 1'b0; cmd_clr <= 1'b0; cmd_dclr <= 1'b0;
         if (rst) begin
             s_axi_bvalid <= 1'b0;
             r_nacc  <= N_ACC_DEFAULT;
@@ -181,6 +188,7 @@ module spec_core #(
                         cmd_run  <= s_axi_wdata[0];
                         cmd_stop <= s_axi_wdata[1];
                         cmd_clr  <= s_axi_wdata[8];
+                        cmd_dclr <= s_axi_wdata[9];
                     end
                     14'h03: r_nacc  <= s_axi_wdata;
                     14'h04: r_ndump <= s_axi_wdata;
@@ -199,7 +207,7 @@ module spec_core #(
     // 入力側: レーン FFT への供給・フレーム番号・スナップショット
     // =====================================================================
     wire [NL-1:0] ln_s_tready;
-    wire [NL-1:0] ln_ev_tlast_unexp, ln_ev_tlast_miss, ln_ev_in_halt;
+    wire [NL-1:0] ln_ev_tlast_unexp, ln_ev_tlast_miss, ln_ev_in_halt, ln_ev_fs;
     wire [NL-1:0] ln_m_tvalid, ln_m_tlast;
     wire [NL*48-1:0] ln_m_tdata;
     wire [NL*16-1:0] ln_m_tuser;
@@ -283,7 +291,7 @@ module spec_core #(
                 .m_axis_data_tvalid     (ln_m_tvalid[p]),
                 // m_axis_data_tready は無い（realtime の IP には出力側の tready が無い。PG109）
                 .m_axis_data_tlast      (ln_m_tlast[p]),
-                .event_frame_started    (),
+                .event_frame_started    (ln_ev_fs[p]),
                 .event_tlast_unexpected (ln_ev_tlast_unexp[p]),
                 .event_tlast_missing    (ln_ev_tlast_miss[p]),
                 .event_data_in_channel_halt (ln_ev_in_halt[p])
@@ -606,6 +614,52 @@ module spec_core #(
     end
 
     // =====================================================================
+    // 診断（rev3）。TLAST 事象を「どのレーンで・どちらの種類で・入力側の数え m_in のどこで」に分ける
+    // =====================================================================
+    // 見立て: realtime の IP は、TLAST を照合する数えと実際に FFT に切る枠が別で、起動によって前者だけがずれる。
+    // これを確かめるため、IP が枠を始めた位置（event_frame_started の m_in）と、TLAST 事象の位置（m_in）を別々に取る。
+    //   枠の位置が立つ起動と立たない起動で同じ → 枠は同じ（照合が通ったことと合う）
+    //   事象の位置が一定 → 検査の数えが一定量ずれている（その量が読める）
+    // m_in は IP の事象の出力（登録済み）と同じクロックで読むので、IP の遅延ぶんの一定の足しが入る。**比べるのは起動どうしの差**
+    reg [NL-1:0] dg_unexp, dg_miss;     // レーンごと・粘着
+    reg          dg_ev_seen;
+    reg  [1:0]   dg_ev_type;            // {missing, unexpected}（レーン 0 の最初の事象）
+    reg  [8:0]   dg_ev_min;             // その m_in
+    reg          dg_fs_seen, dg_fs_var, dg_fs_lanes;
+    reg  [8:0]   dg_fs_min;             // レーン 0 の最初の frame_started の m_in。以後違えば dg_fs_var
+    reg  [31:0]  dg_evcnt, dg_fscnt;    // レーン 0 の TLAST 事象のクロック数 / frame_started の回数
+    wire         ev0 = ln_ev_tlast_unexp[0] | ln_ev_tlast_miss[0];
+    always @(posedge aclk) begin
+        if (rst || cmd_dclr) begin
+            dg_unexp <= {NL{1'b0}}; dg_miss <= {NL{1'b0}};
+            dg_ev_seen <= 1'b0; dg_ev_type <= 2'd0; dg_ev_min <= 9'd0;
+            dg_fs_seen <= 1'b0; dg_fs_var <= 1'b0; dg_fs_lanes <= 1'b0; dg_fs_min <= 9'd0;
+            dg_evcnt <= 32'd0; dg_fscnt <= 32'd0;
+        end else begin
+            dg_unexp <= dg_unexp | ln_ev_tlast_unexp;
+            dg_miss  <= dg_miss  | ln_ev_tlast_miss;
+            if (ev0) begin
+                dg_evcnt <= dg_evcnt + 32'd1;
+                if (!dg_ev_seen) begin
+                    dg_ev_seen <= 1'b1;
+                    dg_ev_type <= {ln_ev_tlast_miss[0], ln_ev_tlast_unexp[0]};
+                    dg_ev_min  <= m_in;
+                end
+            end
+            if (ln_ev_fs[0]) begin
+                dg_fscnt <= dg_fscnt + 32'd1;
+                if (!dg_fs_seen) begin
+                    dg_fs_seen <= 1'b1;
+                    dg_fs_min  <= m_in;
+                end else if (m_in != dg_fs_min) begin
+                    dg_fs_var <= 1'b1;
+                end
+            end
+            if (ln_ev_fs != {NL{1'b0}} && ln_ev_fs != {NL{1'b1}}) dg_fs_lanes <= 1'b1;
+        end
+    end
+
+    // =====================================================================
     // AXI4-Lite の読み出し側
     // =====================================================================
     // 受けたら 4 クロック待って返す（番地の登録 → BRAM → 出力レジスタ → 選択）
@@ -649,6 +703,11 @@ module spec_core #(
             6'h13: reg_rd = {31'd0, rd_bank};
             6'h14: reg_rd = run_f0[31:0];
             6'h15: reg_rd = {{(64-FW){1'b0}}, run_f0[FW-1:32]};
+            6'h16: reg_rd = {dg_miss, dg_unexp};
+            6'h17: reg_rd = {dg_ev_seen, dg_ev_type, 20'd0, dg_ev_min};
+            6'h18: reg_rd = {dg_fs_seen, dg_fs_var, dg_fs_lanes, 20'd0, dg_fs_min};
+            6'h19: reg_rd = dg_evcnt;
+            6'h1A: reg_rd = dg_fscnt;
             default: reg_rd = 32'hDEAD_BEEF;
         endcase
     end

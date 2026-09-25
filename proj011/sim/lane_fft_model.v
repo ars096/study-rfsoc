@@ -57,7 +57,14 @@ module lane_fft #(
     end
 
     assign s_axis_config_tready = 1'b1;
-    assign event_frame_started  = 1'b0;
+    // frame_started はフレームの最初のサンプルを受けた次のクロックに 1 回（rev3 の診断用）
+    reg ev_fs_r;
+    assign event_frame_started = ev_fs_r;
+`ifdef TLAST_SKEW
+    localparam integer SKEW = `TLAST_SKEW;   // **TLAST の検査の数えだけ**を SKEW サンプルずらす（診断の陽性対照）
+`else
+    localparam integer SKEW = 0;
+`endif
 
     reg signed [15:0] xin [0:M-1];
     integer cnt, rdy_cnt, started;
@@ -108,6 +115,7 @@ module lane_fft #(
         event_tlast_unexpected     <= 1'b0;
         event_tlast_missing        <= 1'b0;
         event_data_in_channel_halt <= 1'b0;
+        ev_fs_r                    <= 1'b0;
         if (!aresetn) begin
             cnt = 0; rdy_cnt = 0; started = 0; q_w = 0; q_r = 0; lat_cnt = 0;
             s_axis_data_tready <= 1'b0;
@@ -122,8 +130,10 @@ module lane_fft #(
             if (s_axis_data_tvalid && s_axis_data_tready) begin
                 started = 1;
                 xin[cnt] = s_axis_data_tdata[15:0];
-                if (s_axis_data_tlast && cnt != M-1) event_tlast_unexpected <= 1'b1;
-                if (!s_axis_data_tlast && cnt == M-1) event_tlast_missing   <= 1'b1;
+                if (cnt == 0) ev_fs_r <= 1'b1;
+                // 検査は (cnt + SKEW) mod M で行う。**枠（cnt）は変えない** — 実機の見立てと同じ形
+                if (s_axis_data_tlast && ((cnt + SKEW) % M) != M-1) event_tlast_unexpected <= 1'b1;
+                if (!s_axis_data_tlast && ((cnt + SKEW) % M) == M-1) event_tlast_missing   <= 1'b1;
                 if (cnt == M-1) begin
                     cnt = 0;
                     compute_frame;
