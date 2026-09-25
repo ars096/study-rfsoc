@@ -293,6 +293,60 @@ def golden(sp, shift, tone):
     return ok
 
 
+def flagwatch(sp, seconds, shift, run_nacc):
+    """FLAGS を 0.05 s おきに読み、立つたびに時刻・ビット・FIN を記録して消す（proj011 で新設）。
+
+    proj011 rev2 の実機で、realtime の FFT IP の TLAST 事象（FLAGS[5]）が --tone の途中で立った。
+    FLAGS は粘着なので、**1 回だけの事象か、立ち続ける（IP のフレームの切れ目がずれた）か**を区別できない。
+    ここでは消した直後にもう一度読み、続いているかを見る。最初の事象の後に --golden と同じ照合を 1 回行い、
+    **スペクトルがまだ正しい枠で切れているか**（スナップショットの numpy FFT と一致するか）を確かめる。
+    run_nacc > 0 なら、見ている間は連続で積分を回す（RUN の有無で率が変わるかを見るため）。
+    """
+    if run_nacc > 0:
+        sp.run(run_nacc, 0, shift)
+        log(f"連続積分を開始: N_ACC {run_nacc}（{run_nacc * T_FRAME * 1e3:.1f} ms）")
+    sp.wr(R_CTRL, CTRL_CLR)
+    t0 = time.time()
+    events = []
+    golden_after = None
+    log(f"FLAGS を {seconds:.0f} s 見る（0.05 s おき）")
+    while time.time() - t0 < seconds:
+        f = sp.flags()
+        if f:
+            t = time.time() - t0
+            fin = sp.rd64(R_FIN_LO, R_FIN_HI)
+            sp.wr(R_CTRL, CTRL_CLR)
+            time.sleep(0.01)                       # 5,000 フレーム
+            f2 = sp.flags()
+            sp.wr(R_CTRL, CTRL_CLR)
+            events.append((t, f, fin, f2))
+            log(f"  t = {t:7.2f} s  FLAGS {f:02x}（{flag_text(f)}）/ FIN {fin} / 消して 10 ms 後 {f2:02x}"
+                f"{'（**立ち続けている**）' if f2 else ''}")
+            if golden_after is None:
+                log("  → この状態で --golden と同じ照合を 1 回行う")
+                golden_after = golden(sp, shift, None)
+                log(f"  → 事象の後の照合: {'OK（枠はずれていない）' if golden_after else '**NG（枠がずれた可能性）**'}")
+                if run_nacc > 0:
+                    sp.run(run_nacc, 0, shift)
+                sp.wr(R_CTRL, CTRL_CLR)
+        time.sleep(0.05)
+    dur = time.time() - t0
+    n = len(events)
+    cont = sum(1 for e in events if e[3])
+    log(f"事象 {n} 回 / {dur:.0f} s（{n / dur * 60:.2f} 回/分）。立ち続けたもの {cont} 回")
+    bits = 0
+    for e in events:
+        bits |= e[1]
+    if n:
+        log(f"立ったビットの和: {bits:02x}（{flag_text(bits)}）")
+        gaps = np.diff([e[2] for e in events]) if n > 1 else []
+        if len(gaps):
+            log(f"事象の間隔（フレーム）: 最小 {min(gaps)} / 最大 {max(gaps)}")
+    if run_nacc > 0:
+        sp.stop()
+    return n == 0
+
+
 def spectrum_report(spec, m, tone, sg_dbm, atten_db, shift):
     n = max(m["n"], 1)
     p = spec.astype(float) / n                             # 1 フレームあたりの電力（SHIFT 後）
@@ -663,6 +717,13 @@ def main():
                    help="SEC 秒の連続記録をファイルへ少しずつ書く（--out が要る。アラン分散用）")
     p.add_argument("--out", default=None, help="--record の出力の接頭辞（PREFIX.spec.npy など）")
     p.add_argument("--slow-read", action="store_true", help="MMIO を 1 語ずつ読む")
+    p.add_argument("--flagwatch", type=float, default=None, metavar="SEC",
+                   help="FLAGS を SEC 秒見張り、立つたびに記録して消す。--flagwatch-run N で連続積分を回しながら")
+    p.add_argument("--flagwatch-run", type=int, default=0, metavar="N_ACC",
+                   help="--flagwatch の間、N_ACC フレームで連続積分を回す（0 = 回さない）")
+    p.add_argument("--any-id", action="store_true",
+                   help="ID が proj010（0x0010_xxxx）でも受け入れる。**対照実験で proj010.bit を載せるときだけ**。"
+                        "レジスタの配置は proj010 と同じ")
     args = p.parse_args()
     if args.atten_db < 0:
         log("ERROR: --atten-db は正の値で書く（10 dB の減衰なら 10）")
@@ -685,8 +746,11 @@ def main():
     ident = sp.rd(R_ID)
     log(f"spec_core: ID = {ident:08x} / {fft_cfg_str(ident)}")
     if (ident & ID_MASK) != ID_EXPECT:
-        log(f"ERROR: ID の上位 16 bit が {ID_EXPECT >> 16:04x} でない。別の proj の .bit が載っている")
-        sys.exit(1)
+        if args.any_id and (ident & ID_MASK) == 0x00100000:
+            log("NOTE: proj010 の .bit を対照として使う（--any-id）。レジスタの配置は同じ、FFT IP は nonrealtime")
+        else:
+            log(f"ERROR: ID の上位 16 bit が {ID_EXPECT >> 16:04x} でない。別の proj の .bit が載っている")
+            sys.exit(1)
     sp.stop()
     sp.wr(R_CTRL, CTRL_CLR)                       # 立ち上がりの隙間で立ったフラグを消す
 
@@ -706,6 +770,8 @@ def main():
         shift = int(args.shift)
 
     ok = True
+    if args.flagwatch is not None:
+        sys.exit(0 if flagwatch(sp, args.flagwatch, shift, args.flagwatch_run) else 1)
     if args.golden:
         ok &= golden(sp, shift, args.tone)
     elif args.radiometer:
