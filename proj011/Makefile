@@ -54,7 +54,7 @@ SIM_SKEW  ?= 0
 SIMDIR    := build-sim-s$(SIM_SHIFT)$(if $(filter-out 0,$(SIM_SKEW)),-k$(SIM_SKEW))
 RTL       := src/spec_core.v src/cmul.v src/dft16.v src/tw_rom.v
 
-.PHONY: all sim survey twiddle prog id timing-check clean
+.PHONY: all sim sim-all survey twiddle prog id timing-check clean
 
 all: $(OUTDIR)
 	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(JOBS)
@@ -75,6 +75,24 @@ sim:
 survey:
 	mkdir -p build-survey
 	$(VIVADO) -mode batch -nojournal -log build-survey/vivado.log -source tools/ip_survey.tcl -tclargs $(JOBS)
+
+# ---- sim の変種を同時に回す（Vivado サーバ向け。iverilog は 1 本 1 コアなので、変種の数だけ並べても時間は 1 本ぶん）----
+# SHIFT 7（飽和なし）/ SHIFT 4（強い線が飽和）/ SKEW 5（TLAST の検査だけをずらす陽性対照）。
+# **成否は make の終了状態ではなく各ログの「結果: 全部通過」で判定する**（make の成功を信用しない）。ログは build-sim-logs/
+# `make sim-all &` で `make`（ビルド）と並べて走らせてよい（出力先が別）
+SIM_VARIANTS ?= 7-0 4-0 7-5
+sim-all:
+	@mkdir -p build-sim-logs
+	@rm -f build-sim-logs/*.log
+	$(MAKE) --no-print-directory -j$(words $(SIM_VARIANTS)) $(addprefix sim-v-,$(SIM_VARIANTS))
+	@echo "---- sim-all ----"
+	@for f in build-sim-logs/*.log; do printf '%-36s %s\n' "$$f" "$$(grep '結果:' $$f || echo '結果の行が無い（途中で落ちた）')"; done
+	@fail=$$(grep -L '結果: 全部通過' build-sim-logs/*.log); \
+	  if [ -n "$$fail" ]; then echo "FAIL: $$fail"; exit 1; else echo "sim-all: 全部通過"; fi
+
+sim-v-%:
+	-$(MAKE) --no-print-directory sim SIM_SHIFT=$(word 1,$(subst -, ,$*)) SIM_SKEW=$(word 2,$(subst -, ,$*)) \
+	  > build-sim-logs/sim-s$(word 1,$(subst -, ,$*))-k$(word 2,$(subst -, ,$*)).log 2>&1
 
 # ひねり係数の ROM を作り直す（生成物もコミットする。差分が出たら理由を README に書く）
 twiddle:

@@ -121,7 +121,29 @@ module tb_spec_core;
         end
     endtask
 
-    task dump(input [8*16-1:0] name);
+    // ---- 裏口（fast = 1 のダンプ用）----
+    // AXI4-Lite で 4096 ch × 2 語 ＋ スナップショット 4096 語を読むのが sim の時間の大半を占める。
+    // t1 だけは全部を AXI で読み（読み出しの経路の試験）、t2 以降は凍っている面（rd_bank）のメモリを直接覗く。
+    // 裏口の値が AXI と同じ面・同じ番地を指していることは、毎回 16 か所を AXI でも読んで照合する（bdcheck の行）
+    reg [63:0]  bd_spec [0:4095];
+    reg [31:0]  bd_snap [0:4095];
+    reg [255:0] bd_beat;
+    integer q, bmis;
+`define BD(J) bd_spec[J*512 + q] = dut.rd_bank ? dut.g_bin[J].g_bank[1].mem[q] : dut.g_bin[J].g_bank[0].mem[q];
+    task bd_read;
+        begin
+            for (q = 0; q < 512; q = q + 1) begin
+                `BD(0) `BD(1) `BD(2) `BD(3) `BD(4) `BD(5) `BD(6) `BD(7)
+            end
+            for (q = 0; q < 4096; q = q + 1) begin
+                bd_beat = dut.snap_mem[{dut.rd_bank, q[11:3]}];
+                bd_snap[q] = bd_beat[32 * q[2:0] +: 32];
+            end
+        end
+    endtask
+`undef BD
+
+    task dump(input [8*16-1:0] name, input fast);
         begin
             $sformat(path, "%0s/dump_%0s.txt", `OUT, name);
             fo = $fopen(path, "w");
@@ -129,14 +151,31 @@ module tb_spec_core;
                 axi_rd(i * 4, v);
                 $fwrite(fo, "reg %0d %0d\n", i * 4, v);
             end
-            for (i = 0; i < 4096; i = i + 1) begin
-                axi_rd(16'h4000 + i * 4, v);
-                $fwrite(fo, "snap %0d %0d\n", i, v);
-            end
-            for (i = 0; i < 4096; i = i + 1) begin
-                axi_rd(16'h8000 + i * 8, lo);
-                axi_rd(16'h8000 + i * 8 + 4, hi);
-                $fwrite(fo, "spec %0d %0d %0d\n", i, hi, lo);
+            if (fast) begin
+                bd_read;
+                bmis = 0;
+                // 照合する 16 か所: 面の端・k2 の境目・中ほど
+                for (i = 0; i < 16; i = i + 1) begin
+                    q = (i == 0) ? 0 : (i == 1) ? 511 : (i == 2) ? 512 : (i == 3) ? 4095 : (i * 263) % 4096;
+                    axi_rd(16'h8000 + q * 8, lo);
+                    axi_rd(16'h8000 + q * 8 + 4, hi);
+                    if ({hi, lo} !== bd_spec[q]) bmis = bmis + 1;
+                    axi_rd(16'h4000 + q * 4, v);
+                    if (v !== bd_snap[q]) bmis = bmis + 1;
+                end
+                $fwrite(fo, "bdcheck 32 %0d\n", bmis);
+                for (i = 0; i < 4096; i = i + 1) $fwrite(fo, "snap %0d %0d\n", i, bd_snap[i]);
+                for (i = 0; i < 4096; i = i + 1) $fwrite(fo, "spec %0d %0d %0d\n", i, bd_spec[i][63:32], bd_spec[i][31:0]);
+            end else begin
+                for (i = 0; i < 4096; i = i + 1) begin
+                    axi_rd(16'h4000 + i * 4, v);
+                    $fwrite(fo, "snap %0d %0d\n", i, v);
+                end
+                for (i = 0; i < 4096; i = i + 1) begin
+                    axi_rd(16'h8000 + i * 8, lo);
+                    axi_rd(16'h8000 + i * 8 + 4, hi);
+                    $fwrite(fo, "spec %0d %0d %0d\n", i, hi, lo);
+                end
             end
             axi_rd(16'h001C, v);
             $fwrite(fo, "seq_after %0d\n", v);
@@ -169,7 +208,7 @@ module tb_spec_core;
         axi_wr(16'h0008, 1);
         wait_seq(seq0 + 1);
         repeat (3000) @(posedge clk);     // 1 回で止まることを確かめるため少し待つ
-        dump("t1");
+        dump("t1", 1'b0);          // 全部を AXI4-Lite で読む
 
         // ---- t2 ----
         $display("t2: N_ACC = 3 / N_DUMP = 2");
@@ -179,7 +218,7 @@ module tb_spec_core;
         axi_wr(16'h0008, 1);
         wait_seq(seq0 + 2);
         repeat (3000) @(posedge clk);
-        dump("t2");
+        dump("t2", 1'b1);          // 以下は裏口（16 か所だけ AXI で照合）
 
         // ---- t3 ----
         $display("t3: N_ACC = 2 / N_DUMP = 0 → STOP");
@@ -190,7 +229,7 @@ module tb_spec_core;
         wait_seq(seq0 + 3);
         axi_wr(16'h0008, 2);
         repeat (6000) @(posedge clk);
-        dump("t3");
+        dump("t3", 1'b1);
 
         // ---- t4（rev4）: 起動のやり直しの後も同じように動く ----
         $display("t4: SRST（D = 7 / E = 3）→ N_ACC = 1 / N_DUMP = 1");
@@ -204,7 +243,7 @@ module tb_spec_core;
         axi_wr(16'h0008, 1);
         wait_seq(seq0 + 1);
         repeat (3000) @(posedge clk);
-        dump("t4");
+        dump("t4", 1'b1);
 
         $fclose(fl);
         $display("done");

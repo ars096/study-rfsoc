@@ -144,6 +144,8 @@ def load_dump(out, name):
                 spec[int(t[1])] = (int(t[2]) << 32) | int(t[3])
             elif t[0] == "seq_after":
                 seq_after = int(t[1])
+            elif t[0] == "bdcheck":
+                r["BDCHECK"] = (int(t[1]), int(t[2]))
     r["DUMP_F0"] = (r["DUMP_F0_HI"] << 32) | r["DUMP_F0_LO"]
     r["SNAP_F"] = (r["SNAP_F_HI"] << 32) | r["SNAP_F_LO"]
     return r, snap, spec, seq_after
@@ -173,6 +175,9 @@ def check(out, shift, skew=0):
         print("---- %s ----" % name)
         r, snap, spec, seq_after = load_dump(out, name)
         f0, n = r["DUMP_F0"], r["DUMP_N"]
+        if "BDCHECK" in r:
+            nchk, nmis = r["BDCHECK"]
+            judge(nmis == 0, "裏口の読み出しが AXI4-Lite と %d か所中 %d か所で食い違う（0 が期待）" % (nchk, nmis))
         judge(r["ID"] == 0x00110400, "ID = %08x（期待 00110400: proj011 rev4、FFT_CFG は sim の既定 0）" % r["ID"])
         want_sr = 1 if name == "t4" else 0
         judge(r["SRST_CNT"] == want_sr and r["BUILD"] == 0,

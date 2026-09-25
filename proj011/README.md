@@ -288,6 +288,17 @@ SNAP_F = DUMP_F0 = 7、SRST_CNT = 1、SRST_D / E の読み返し 7 / 3。SKEW 5 
 32 回 / 15 フレーム（SRST で診断が消えて、やり直しの後の分だけが数えられている）。
 lanes.txt のフレームの番号を spec_core の出力側の数え（SRST の回ごとに分ける）に変えたが、t1〜t3 の数字は rev3 と同じ。
 
+### sim の高速化と `make sim-all`（2026-09-25。RTL は触らない）
+
+- **時間の大半は、テストベンチが AXI4-Lite で 4096 ch × 2 語 ＋ スナップショット 4096 語をダンプごとに読むことだった。**
+  t1 だけは全部を AXI で読み（読み出しの経路の試験）、**t2〜t4 は凍っている面（`rd_bank`）のメモリを直接覗く**（裏口）。
+  裏口が AXI と同じ面・同じ番地を指していることは、毎回 16 か所（面の端・k2 の境目・中ほど）× スペクトルとスナップショットを AXI でも読んで照合する（`bdcheck`）。
+  面を取り違えれば、もう一方の面には前のダンプが入っているので食い違う
+- **`make sim-all`**: SHIFT 7 / SHIFT 4 / SKEW 5 の 3 本を同時に回す。成否は make の終了状態ではなく、各ログの「結果: 全部通過」で判定する（`build-sim-logs/`）
+- 実測（クラウドの作業環境）: **3 本同時で 11.7 分**（以前は 2 本同時で約 30 分）。いまは t1 の全読み出しが 10 分、t2〜t4 が合わせて 2 分
+- 3 本とも全部通過。bit 単位の照合（A）・飽和の数・numpy（B）は以前と同じ数字（t3 は待ちが短くなったのでフレームの番号だけ 422 → 230）
+- **Vivado サーバでは `make sim-all &` と `make` を同時に始めてよい**（出力先が別）。sim が落ちたら、そのビルドは使わない
+
 ## 結果
 
 ### IP 単体（`make survey`、2026-09-24、`-2`、OOC 合成後）
@@ -536,7 +547,8 @@ survey・ビルド・実機は未実施。
 ## 再現手順
 
 ```bash
-make sim                              # Vivado 不要。SIM_SHIFT=4 で飽和の数え方も見る
+make sim-all                          # Vivado 不要。SHIFT 7 / 4 / SKEW 5 を同時に（`make` と並べてよい）
+make sim                              # 1 本だけ。SIM_SHIFT=4 で飽和の数え方、SIM_SKEW=5 で TLAST の診断の陽性対照
 make survey                           # FFT IP 単体 × 8 通りの資源 → build-survey/survey.txt
 make                                  # res（既定）: build/proj011.bit / .hwh
 make FFT_OPT=perf                     # perf: build-perf/
