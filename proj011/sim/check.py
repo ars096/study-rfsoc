@@ -124,7 +124,8 @@ REGS = {0x00: "ID", 0x04: "PARAM", 0x08: "CTRL", 0x0C: "N_ACC", 0x10: "N_DUMP", 
         0x18: "FLAGS", 0x1C: "SEQ", 0x20: "FIN_LO", 0x24: "FIN_HI", 0x28: "FOUT_LO", 0x2C: "FOUT_HI",
         0x30: "DUMP_K", 0x34: "DUMP_N", 0x38: "DUMP_F0_LO", 0x3C: "DUMP_F0_HI", 0x40: "DUMP_SAT",
         0x44: "SNAP_F_LO", 0x48: "SNAP_F_HI", 0x4C: "BANK", 0x50: "RUN_F0_LO", 0x54: "RUN_F0_HI",
-        0x58: "DIAG_TL", 0x5C: "DIAG_EV", 0x60: "DIAG_FS", 0x64: "DIAG_EVCNT", 0x68: "DIAG_FSCNT"}
+        0x58: "DIAG_TL", 0x5C: "DIAG_EV", 0x60: "DIAG_FS", 0x64: "DIAG_EVCNT", 0x68: "DIAG_FSCNT",
+        0x6C: "BUILD", 0x70: "SRST_D", 0x74: "SRST_E", 0x78: "SRST_CNT"}
 
 
 def load_dump(out, name):
@@ -167,11 +168,18 @@ def check(out, shift, skew=0):
             cache[fr] = model_frame(lanes[fr], shift)
         return cache[fr]
 
-    for name, n_acc, want_k, snap_must in (("t1", 1, 0, True), ("t2", 3, 1, True), ("t3", 2, None, False)):
+    for name, n_acc, want_k, snap_must in (("t1", 1, 0, True), ("t2", 3, 1, True), ("t3", 2, None, False),
+                                           ("t4", 1, 0, True)):
         print("---- %s ----" % name)
         r, snap, spec, seq_after = load_dump(out, name)
         f0, n = r["DUMP_F0"], r["DUMP_N"]
-        judge(r["ID"] == 0x00110300, "ID = %08x（期待 00110300: proj011 rev3、FFT_CFG は sim の既定 0）" % r["ID"])
+        judge(r["ID"] == 0x00110400, "ID = %08x（期待 00110400: proj011 rev4、FFT_CFG は sim の既定 0）" % r["ID"])
+        want_sr = 1 if name == "t4" else 0
+        judge(r["SRST_CNT"] == want_sr and r["BUILD"] == 0,
+              "SRST_CNT = %d（期待 %d）/ BUILD = %08x（sim の既定 0）" % (r["SRST_CNT"], want_sr, r["BUILD"]))
+        if name == "t4":
+            judge(r["SRST_D"] == 7 and r["SRST_E"] == 3, "SRST_D / SRST_E の読み返し = %d / %d" % (r["SRST_D"], r["SRST_E"]))
+        base = 100000 * r["SRST_CNT"]         # lanes.txt のフレーム番号（tb が SRST の回ごとに分ける）
         want_flags = 0x20 if skew else 0
         judge(r["FLAGS"] == want_flags, "FLAGS = %02x（期待 %02x）" % (r["FLAGS"], want_flags))
         # 診断（rev3）。リセット以来の累積（tb は CTRL[9] を書かない）
@@ -197,7 +205,7 @@ def check(out, shift, skew=0):
         judge(r["CTRL"] & 0x3 == 0, "終わった後は積分中でも開始待ちでもない（CTRL = %x）" % r["CTRL"])
 
         # A. bit 単位
-        need = list(range(f0, f0 + n))
+        need = list(range(base + f0, base + f0 + n))
         missing = [fr for fr in need if fr not in lanes]
         if missing:
             judge(False, "lanes.txt にフレーム %s が無い" % missing)
@@ -231,7 +239,7 @@ def check(out, shift, skew=0):
         judge(len(hit) == 1, "C: スナップショットが刺激の 1 か所と一致（位置 %s）" % hit)
 
         # レーン FFT の入力の並び: Y_p = FFT512(x[p::16])
-        Y = lanes[f0]
+        Y = lanes[base + f0]
         ref = [np.fft.fft(s14[p::16]) for p in range(P)]
         err = max(abs(Y[p][k][0] - ref[p][k].real) + abs(Y[p][k][1] - ref[p][k].imag)
                   for p in range(P) for k in range(M))

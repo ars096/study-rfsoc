@@ -8,6 +8,10 @@
 // rev2: フレーム頭の判定の加算・比較を前もってレジスタに置いた（pre_*。rev1 の最悪経路 cur_k → t_last）。振る舞いは rev1 と同じ。
 // rev3: 診断のレジスタ（0x58–0x68）を足した。realtime の FFT IP の TLAST 事象（起動の 7/20 で立ち続ける）を切り分けるため。
 //       データの経路には触らない。CTRL[9] で診断だけを消す（FLAGS の CTRL[8] とは別）。
+// rev4: PS から何度でも「起動」をやり直せるようにした（CTRL[10] = SRST）。16 個の IP と入力側・出力側の数えを
+//       SR_LEN クロックだけリセットし、解除から SRST_D クロック後に入力を、SRST_E クロック後に設定の口を開ける。
+//       1 回の Overlay で起動の競争を何百回も試し、D と E を振って狙って起こすため。電源投入時の振る舞いは rev3 と同じ
+//       （ハードのリセットでは口は開いたまま）。ビルドの指紋 BUILD（0x6C）も足した。
 // **全部が DSP ドメイン（256 MHz）で動く。**AXI4-Lite も 256 MHz で受け、
 // PS（pl_clk0）との乗り換えは SmartConnect に任せる。自作の CDC はここに無い。
 //
@@ -60,10 +64,10 @@
 //                  サンプルは ADC の 16 bit のまま（下位 2 bit は常に 0）
 //   0x8000–0xFFFF  スペクトル: ch k の 64 bit が 0x8000 + 8k（下位語）/ +4（上位語）
 //
-//   0x00 ID        R   0x0011_03CC（proj011 rev3。rev2 は 0x0011_02CC、rev1 は 0x0011_01CC。CC = FFT_CFG: [0] realtime / [1] 乗算器 use_mults_resources /
+//   0x00 ID        R   0x0011_04CC（proj011 rev4。rev3 は 0x0011_03CC、rev2 は 0x0011_02CC、rev1 は 0x0011_01CC。CC = FFT_CFG: [0] realtime / [1] 乗算器 use_mults_resources /
 //                      [2] バタフライ use_luts / [3] 乗算器 use_luts。build.tcl が src/fft_cfg.tcl から設定する）
 //   0x04 PARAM     R   [7:0] log2 NFFT = 13 / [15:8] log2 レーン = 4 / [23:16] QW = 18 / [31:24] IW = 14
-//   0x08 CTRL      W   [0] RUN（開始を予約）/ [1] STOP / [8] FLAGS を消す / [9] 診断（0x58–0x68）を消す（いずれも 1 を書いた瞬間だけ）
+//   0x08 CTRL      W   [0] RUN（開始を予約）/ [1] STOP / [8] FLAGS を消す / [9] 診断（0x58–0x68）を消す / [10] SRST（起動のやり直し。rev4）（いずれも 1 を書いた瞬間だけ）
 //                  R   [0] 積分中 / [1] 開始待ち / [2] スナップショット予約中 / [3] 入力が流れ始めた
 //   0x0C N_ACC     RW  1 ダンプのフレーム数（0 は 1 とみなす）。RUN の時点で取り込む。既定 50000 = 100 ms
 //   0x10 N_DUMP    RW  ダンプの回数。0 = 止めるまで。RUN の時点で取り込む
@@ -89,6 +93,11 @@
 //   0x60 DIAG_FS   R   [31] レーン 0 の frame_started を見た / [30] 以後 m_in が違った / [29] レーン間で揃わなかった / [8:0] 最初の m_in
 //   0x64 DIAG_EVCNT R  レーン 0 の TLAST 事象のクロック数
 //   0x68 DIAG_FSCNT R  レーン 0 の frame_started の回数
+//   0x6C BUILD     R   ビルドの指紋 [30] ボードのプリセットあり / [29:28] 速度グレード（1 / 2）/ [27:0] 予約（0）。rev4
+//                      **ビルド時刻は入れない**: 定数が変わると配置が組み替わり、同じ RTL の作り直しが WNS まで再現しなくなる
+//   0x70 SRST_D    RW  [15:0] SRST の解除から入力（tvalid）を開けるまでのクロック数。既定 0。rev4
+//   0x74 SRST_E    RW  [15:0] SRST の解除から設定の口（config tvalid）を開けるまでのクロック数。既定 0。rev4
+//   0x78 SRST_CNT  R   SRST を受けた回数（リセット以来）。rev4
 //
 // FLAGS（粘着。CTRL[8] で消す）:
 //   [0] レーンの出力 valid が揃っていない     [1] レーンの XK_INDEX が揃っていない
@@ -102,7 +111,8 @@
 module spec_core #(
     parameter integer N_ACC_DEFAULT = 50000,
     parameter integer SHIFT_DEFAULT = 4,
-    parameter integer FFT_CFG       = 0      // ID の下位 8 bit。lane_fft の設定の符号（build.tcl が与える）
+    parameter integer FFT_CFG       = 0,     // ID の下位 8 bit。lane_fft の設定の符号（build.tcl が与える）
+    parameter integer BUILD_TAG     = 0      // ビルドの指紋（build.tcl が与える。rev4）
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axis:s_axi, ASSOCIATED_RESET aresetn" *)
@@ -148,7 +158,7 @@ module spec_core #(
     localparam integer PW = 2 * QW + 1;
     localparam integer FW = 48;        // フレーム番号（2 µs × 2^48 = 17 年）
     localparam [7:0]   FFT_CFG8 = FFT_CFG;
-    localparam [31:0]  ID = {16'h0011, 8'h03, FFT_CFG8};
+    localparam [31:0]  ID = {16'h0011, 8'h04, FFT_CFG8};
 
     // 固定のパイプライン段数（S0 = レーン出力を受けたクロック）
     //   S0  +2 ROM → +4 cmul → V@6  +6 dft16 → Z@12  +1 飽和 → Q@13
@@ -165,7 +175,8 @@ module spec_core #(
     // =====================================================================
     reg [31:0] r_nacc, r_ndump;
     reg [3:0]  r_shift;
-    reg        cmd_run, cmd_stop, cmd_clr, cmd_dclr;   // 1 クロックのパルス
+    reg        cmd_run, cmd_stop, cmd_clr, cmd_dclr, cmd_srst;   // 1 クロックのパルス
+    reg [15:0] r_sd, r_se;
 
     wire wr_go = s_axi_awvalid && s_axi_wvalid && !s_axi_bvalid;
     assign s_axi_awready = wr_go;
@@ -173,12 +184,14 @@ module spec_core #(
     assign s_axi_bresp   = 2'b00;
 
     always @(posedge aclk) begin
-        cmd_run <= 1'b0; cmd_stop <= 1'b0; cmd_clr <= 1'b0; cmd_dclr <= 1'b0;
+        cmd_run <= 1'b0; cmd_stop <= 1'b0; cmd_clr <= 1'b0; cmd_dclr <= 1'b0; cmd_srst <= 1'b0;
         if (rst) begin
             s_axi_bvalid <= 1'b0;
             r_nacc  <= N_ACC_DEFAULT;
             r_ndump <= 32'd0;
             r_shift <= SHIFT_DEFAULT;
+            r_sd    <= 16'd0;
+            r_se    <= 16'd0;
         end else begin
             if (s_axi_bvalid && s_axi_bready) s_axi_bvalid <= 1'b0;
             if (wr_go) begin
@@ -189,15 +202,46 @@ module spec_core #(
                         cmd_stop <= s_axi_wdata[1];
                         cmd_clr  <= s_axi_wdata[8];
                         cmd_dclr <= s_axi_wdata[9];
+                        cmd_srst <= s_axi_wdata[10];
                     end
                     14'h03: r_nacc  <= s_axi_wdata;
                     14'h04: r_ndump <= s_axi_wdata;
                     14'h05: r_shift <= s_axi_wdata[3:0];
+                    14'h1C: r_sd    <= s_axi_wdata[15:0];
+                    14'h1D: r_se    <= s_axi_wdata[15:0];
                     default: ;
                 endcase
             end
         end
     end
+
+    // ---- 起動のやり直し（rev4）----
+    // cmd_srst で SR_LEN クロックだけ rst_core を立て（16 個の IP の aresetn と、入力側・出力側・積分の数え）、
+    // 解除から r_sd クロック後に入力の口（gate_d）、r_se クロック後に設定の口（gate_c）を開ける。
+    // ハードのリセット（rst）では口は開いたまま = rev3 までと同じ起動
+    localparam integer SR_LEN = 32;
+    reg  [5:0]  sr_hold;
+    reg         sr_act, gate_d, gate_c;
+    reg  [15:0] sr_cnt;
+    reg  [31:0] sr_n;
+    always @(posedge aclk) begin
+        if (rst) begin
+            sr_hold <= 6'd0; sr_act <= 1'b0; gate_d <= 1'b1; gate_c <= 1'b1; sr_cnt <= 16'd0; sr_n <= 32'd0;
+        end else if (cmd_srst) begin
+            sr_hold <= SR_LEN[5:0]; sr_act <= 1'b1; gate_d <= 1'b0; gate_c <= 1'b0; sr_cnt <= 16'd0;
+            sr_n    <= sr_n + 32'd1;
+        end else if (sr_hold != 6'd0) begin
+            sr_hold <= sr_hold - 6'd1;
+        end else if (sr_act) begin
+            sr_cnt <= sr_cnt + 16'd1;
+            if (sr_cnt >= r_sd) gate_d <= 1'b1;
+            if (sr_cnt >= r_se) gate_c <= 1'b1;
+            if (sr_cnt >= r_sd && sr_cnt >= r_se) sr_act <= 1'b0;
+        end
+    end
+    wire srst_on  = (sr_hold != 6'd0);
+    wire rst_core = rst | srst_on;
+    wire vin      = s_axis_tvalid & gate_d;      // IP と入力側の数えが見る valid
 
     // RUN の時点で取り込む値（積分中にレジスタを書き換えても、走っている RUN は変わらない）
     reg  [31:0]   run_n, run_ndump;
@@ -215,7 +259,7 @@ module spec_core #(
     reg  [8:0]    m_in;          // フレーム内のビート
     reg  [FW-1:0] fin;           // 入力のフレーム番号
     reg           started;       // 最初のビートを IP が受けた
-    wire          in_acc = s_axis_tvalid && ln_s_tready[0];
+    wire          in_acc = vin && ln_s_tready[0];
     wire          in_tlast = (m_in == 9'd511);
 
     // スナップショットの予約（入力側）
@@ -235,7 +279,7 @@ module spec_core #(
     end
 
     always @(posedge aclk) begin
-        if (rst) begin
+        if (rst_core) begin
             m_in <= 9'd0; fin <= {FW{1'b0}}; started <= 1'b0;
             in_on <= 1'b0; in_next <= {FW{1'b0}}; in_k <= 32'd0;
             snap_act <= 1'b0; snap_buf <= 1'b0;
@@ -278,12 +322,12 @@ module spec_core #(
             wire signed [15:0] xin = xs >>> 2;
             lane_fft u_fft (
                 .aclk                   (aclk),
-                .aresetn                (aresetn),
+                .aresetn                (~rst_core),
                 .s_axis_config_tdata    (8'h01),       // FWD_INV = 1（順変換）
-                .s_axis_config_tvalid   (1'b1),
+                .s_axis_config_tvalid   (gate_c),
                 .s_axis_config_tready   (),
                 .s_axis_data_tdata      ({16'h0000, xin}),
-                .s_axis_data_tvalid     (s_axis_tvalid),
+                .s_axis_data_tvalid     (vin),
                 .s_axis_data_tready     (ln_s_tready[p]),
                 .s_axis_data_tlast      (in_tlast),
                 .m_axis_data_tdata      (ln_m_tdata[48*p +: 48]),
@@ -334,7 +378,7 @@ module spec_core #(
         pre_idxp1_is0 <= (cur_idx == 32'hFFFF_FFFF);
         pre_nxt_last  <= (cur_idx + 32'd1 == n_eff - 32'd1);
         pre_zero_last <= (n_eff == 32'd1);
-        if (rst)
+        if (rst_core)
             pre_f0hit <= 1'b0;
         else if (cmd_run)
             pre_f0hit <= 1'b0;
@@ -373,7 +417,7 @@ module spec_core #(
     wire t_bank  = fs ? d_k[0] : cur_bank;
 
     always @(posedge aclk) begin
-        if (rst) begin
+        if (rst_core) begin
             fout <= {FW{1'b0}}; k1_exp <= 9'd0;
             sched <= 1'b0; acc_on <= 1'b0;
             cur_k <= 0; cur_idx <= 0;
@@ -422,7 +466,7 @@ module spec_core #(
     reg [TW-1:0] tag [0:S_SUM];
     integer ti;
     always @(posedge aclk) begin
-        if (rst) begin
+        if (rst_core) begin
             for (ti = 0; ti <= S_SUM; ti = ti + 1) tag[ti] <= {TW{1'b0}};
         end else begin
             tag[0] <= {o_valid, o_valid && t_act, t_first, t_last, t_bank, o_k1};
@@ -569,7 +613,7 @@ module spec_core #(
     reg          rd_bank;
     wire commit = `TG_V(S_SUM) && `TG_A(S_SUM) && `TG_L(S_SUM) && (`TG_K(S_SUM) == 9'd511);
     always @(posedge aclk) begin
-        if (rst) begin
+        if (rst_core) begin
             seq <= 0; rd_k <= 0; rd_n <= 0; rd_sat <= 0; sat_run <= 0;
             rd_f0 <= {FW{1'b1}}; rd_bank <= 1'b0;
         end else begin
@@ -602,14 +646,14 @@ module spec_core #(
             if (ln_m_tvalid[fi] && ln_m_tuser[16*fi +: 9] != o_k1) f_k1_mis = 1'b1;
     end
     assign f_now[1] = f_k1_mis;
-    assign f_now[2] = s_axis_tvalid && (ln_s_tready != {NL{1'b0}}) && (ln_s_tready != {NL{1'b1}});
-    assign f_now[3] = started && s_axis_tvalid && !ln_s_tready[0];
-    assign f_now[4] = started && !s_axis_tvalid;
+    assign f_now[2] = vin && (ln_s_tready != {NL{1'b0}}) && (ln_s_tready != {NL{1'b1}});
+    assign f_now[3] = started && vin && !ln_s_tready[0];
+    assign f_now[4] = started && !vin;
     assign f_now[5] = |(ln_ev_tlast_unexp | ln_ev_tlast_miss);
     assign f_now[6] = started && (|ln_ev_in_halt);
     assign f_now[7] = o_valid && (o_k1 != k1_exp);
     always @(posedge aclk) begin
-        if (rst || cmd_clr) flags <= 8'd0;
+        if (rst_core || cmd_clr) flags <= 8'd0;
         else                flags <= flags | f_now;
     end
 
@@ -630,7 +674,7 @@ module spec_core #(
     reg  [31:0]  dg_evcnt, dg_fscnt;    // レーン 0 の TLAST 事象のクロック数 / frame_started の回数
     wire         ev0 = ln_ev_tlast_unexp[0] | ln_ev_tlast_miss[0];
     always @(posedge aclk) begin
-        if (rst || cmd_dclr) begin
+        if (rst_core || cmd_dclr) begin
             dg_unexp <= {NL{1'b0}}; dg_miss <= {NL{1'b0}};
             dg_ev_seen <= 1'b0; dg_ev_type <= 2'd0; dg_ev_min <= 9'd0;
             dg_fs_seen <= 1'b0; dg_fs_var <= 1'b0; dg_fs_lanes <= 1'b0; dg_fs_min <= 9'd0;
@@ -708,6 +752,10 @@ module spec_core #(
             6'h18: reg_rd = {dg_fs_seen, dg_fs_var, dg_fs_lanes, 20'd0, dg_fs_min};
             6'h19: reg_rd = dg_evcnt;
             6'h1A: reg_rd = dg_fscnt;
+            6'h1B: reg_rd = BUILD_TAG;
+            6'h1C: reg_rd = {16'd0, r_sd};
+            6'h1D: reg_rd = {16'd0, r_se};
+            6'h1E: reg_rd = sr_n;
             default: reg_rd = 32'hDEAD_BEEF;
         endcase
     end

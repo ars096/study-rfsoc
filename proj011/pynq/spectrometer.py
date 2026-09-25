@@ -70,6 +70,8 @@ R_SNAP_F_LO, R_SNAP_F_HI, R_BANK, R_RUN_F0_LO, R_RUN_F0_HI = 0x44, 0x48, 0x4C, 0
 SNAP_BASE, SPEC_BASE = 0x4000, 0x8000
 CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_DCLR = 1 << 0, 1 << 1, 1 << 8, 1 << 9
 R_DIAG_TL, R_DIAG_EV, R_DIAG_FS, R_DIAG_EVCNT, R_DIAG_FSCNT = 0x58, 0x5C, 0x60, 0x64, 0x68   # rev3
+R_BUILD, R_SRST_D, R_SRST_E, R_SRST_CNT = 0x6C, 0x70, 0x74, 0x78                             # rev4
+CTRL_SRST = 1 << 10
 
 FLAG_NAMES = ["レーンの出力 valid が不揃い", "レーンの XK_INDEX が不揃い", "レーンの入力 ready が不揃い",
               "IP が入力を受けなかった（サンプル落ち）", "入力に隙間", "IP の TLAST 事象",
@@ -315,6 +317,55 @@ def diag_report(sp, label):
         f"{'、**以後 m_in が違った**' if (fs >> 30) & 1 else '、以後も同じ'}"
         f"{'、**レーン間で揃わなかった**' if (fs >> 29) & 1 else '、レーン間で揃う'} / 回数 {fsc}（FIN {fin}）")
     return dict(tl=tl, ev=ev, fs=fs, evc=evc, fsc=fsc, fin=fin)
+
+
+def srst_trials(sp, n, dlist, elist, wait, shift):
+    """rev4: 起動（16 個の IP と数えのリセット）を PS から n 回ずつやり直し、TLAST 事象の率を (D, E) ごとに数える。
+
+    D = リセット解除から入力（tvalid）を開けるまでのクロック、E = 設定の口（config tvalid）を開けるまでのクロック。
+    1 回ごとに: D・E を書く → SRST → wait 秒待つ → FLAGS と診断を読む。SRST が FLAGS と診断を消すので、読むのはその回の分だけ。
+    **Overlay を読み直す起動とは別の起動**（構成・クロックの立ち上がりは含まない）。両者の率が同じなら、競争は IP のリセットの解除の側にある。
+    """
+    if (sp.rd(R_ID) >> 8) & 0xFF < 4:
+        log("ERROR: --srst-trials は rev4 以降の .bit が要る")
+        return False
+    n0 = sp.rd(R_SRST_CNT)
+    rows = []
+    golden_done = False
+    for d in dlist:
+        for e in elist:
+            hits, lanes, evm, fsm, fsvar, fslanes, evc_per = 0, set(), set(), set(), 0, 0, []
+            for _ in range(n):
+                sp.wr(R_SRST_D, d)
+                sp.wr(R_SRST_E, e)
+                sp.wr(R_CTRL, CTRL_SRST)
+                time.sleep(wait)
+                f = sp.flags()
+                tl, ev, fs = sp.rd(R_DIAG_TL), sp.rd(R_DIAG_EV), sp.rd(R_DIAG_FS)
+                evc, fin = sp.rd(R_DIAG_EVCNT), sp.rd64(R_FIN_LO, R_FIN_HI)
+                fsm.add(fs & 0x1FF)
+                fsvar += (fs >> 30) & 1
+                fslanes += (fs >> 29) & 1
+                if f & 0x20:
+                    hits += 1
+                    lanes.add(tl)
+                    evm.add(((ev >> 29) & 3, ev & 0x1FF))
+                    evc_per.append(evc / max(fin, 1))
+                    if not golden_done:
+                        log(f"  D {d} / E {e}: 最初の事象（FLAGS {f:02x}、TL {tl:08x}）→ --golden と同じ照合を 1 回")
+                        ok = golden(sp, shift, None)
+                        log(f"  → 照合: {'OK（枠はずれていない）' if ok else '**NG**'}")
+                        golden_done = True
+            rows.append((d, e, hits, lanes, evm, fsm, fsvar, fslanes, evc_per))
+            ev_txt = ", ".join(f"{({1: 'U', 2: 'M', 3: 'UM'}).get(t, '?')}@{m}" for t, m in sorted(evm)) or "—"
+            per = f"{np.mean(evc_per):.2f}" if evc_per else "—"
+            log(f"  D {d:5d} / E {e:5d}: 事象 {hits:3d} / {n}  レーン {'/'.join(f'{x:08x}' for x in sorted(lanes)) or '—'}"
+                f"  最初の事象 {ev_txt}  回/フレーム {per}  frame_started の m_in {sorted(fsm)}"
+                f"{'  **m_in が動いた**' if fsvar else ''}{'  **レーン不揃い**' if fslanes else ''}")
+    sp.wr(R_SRST_D, 0)
+    sp.wr(R_SRST_E, 0)
+    log(f"SRST の回数: {sp.rd(R_SRST_CNT) - n0}（期待 {n * len(dlist) * len(elist)}）")
+    return all(r[2] == 0 for r in rows)
 
 
 def flagwatch(sp, seconds, shift, run_nacc):
@@ -753,6 +804,13 @@ def main():
                    help="FLAGS を SEC 秒見張り、立つたびに記録して消す。--flagwatch-run N で連続積分を回しながら")
     p.add_argument("--flagwatch-run", type=int, default=0, metavar="N_ACC",
                    help="--flagwatch の間、N_ACC フレームで連続積分を回す（0 = 回さない）")
+    p.add_argument("--srst-trials", type=int, default=None, metavar="N",
+                   help="rev4: 起動（IP のリセット）を PS から N 回ずつやり直して TLAST 事象の率を数える")
+    p.add_argument("--srst-d", default="0", help="--srst-trials の D（入力を開けるまでのクロック）。カンマ区切り")
+    p.add_argument("--srst-e", default="0", help="--srst-trials の E（設定の口を開けるまでのクロック）。カンマ区切り")
+    p.add_argument("--srst-wait", type=float, default=0.02, help="--srst-trials の 1 回ごとの待ち [s]")
+    p.add_argument("--allow-nopreset", action="store_true",
+                   help="ボードのプリセットの無い検証ビルド（make timing-check の成果物）でも動かす。**実機の測定には使わない**")
     p.add_argument("--any-id", action="store_true",
                    help="ID が proj010（0x0010_xxxx）でも受け入れる。**対照実験で proj010.bit を載せるときだけ**。"
                         "レジスタの配置は proj010 と同じ")
@@ -783,6 +841,13 @@ def main():
         else:
             log(f"ERROR: ID の上位 16 bit が {ID_EXPECT >> 16:04x} でない。別の proj の .bit が載っている")
             sys.exit(1)
+    if (ident >> 8) & 0xFF >= 4 and (ident & ID_MASK) == ID_EXPECT:
+        bt = sp.rd(R_BUILD)
+        preset, grade = (bt >> 30) & 1, (bt >> 28) & 3
+        log(f"ビルドの指紋: BUILD = {bt:08x}（ボードのプリセット {'あり' if preset else '**なし**'} / 速度グレード -{grade}）")
+        if not preset and not args.allow_nopreset:
+            log("ERROR: プリセットの無い検証ビルド（build-1-e*/ など）が載っている。実機には build/ の .bit を使う")
+            sys.exit(1)
     sp.stop()
     sp.wr(R_CTRL, CTRL_CLR)                       # 立ち上がりの隙間で立ったフラグを消す
 
@@ -802,6 +867,9 @@ def main():
         shift = int(args.shift)
 
     ok = True
+    if args.srst_trials is not None:
+        sys.exit(0 if srst_trials(sp, args.srst_trials, [int(v) for v in args.srst_d.split(",")],
+                                  [int(v) for v in args.srst_e.split(",")], args.srst_wait, shift) else 1)
     if args.flagwatch is not None:
         sys.exit(0 if flagwatch(sp, args.flagwatch, shift, args.flagwatch_run) else 1)
     if args.golden:

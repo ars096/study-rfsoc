@@ -20,6 +20,7 @@
 #   4. spec_core の ID の下位 8 bit に FFT の設定の符号を載せる（CONFIG.FFT_CFG）。
 #      res と perf は同名の proj011.bit になるので、**PS から載っている変種を読めるようにする**
 #   5. lane_fft 1 個ぶんの資源を別に出す（予言の突き合わせ用）
+#   6. （rev4）spec_core にビルドの指紋 BUILD_TAG（プリセットの有無・速度グレード）を与える
 #
 # RFDC・Clocking Wizard・ギアボックス・spec_core の本体は proj010 と同一。
 # ナイキストゾーン（2）は実行時に PYNQ から設定する（pynq/spectrometer.py）。
@@ -677,7 +678,23 @@ if {$got_code != $fft_code} {
     puts "ERROR: spec_core_0 の FFT_CFG が $got_code（要求 $fft_code）"
     exit 1
 }
-puts [format "spec_core_0: FFT_CFG = 0x%02x → ID = 0x0011_01%02x" $fft_code $fft_code]
+puts [format "spec_core_0: FFT_CFG = 0x%02x（ID の下位 8 bit）" $fft_code]
+# ビルドの指紋（rev4）: [30] ボードのプリセットあり / [29:28] 速度グレード。**ID では build/ と build-1-e/ を区別できない**
+# （同じ RTL・同じ FFT_OPT）ので、PS がこれを読んで、プリセットの無い検証ビルドを実機に載せたら止める。
+# ビルド時刻は入れない（定数が変わると配置が組み替わり、作り直しが WNS まで再現しなくなる）
+set grade [string index [lindex [split $part -] 2] 0]
+if {![string is integer -strict $grade] || $grade < 1 || $grade > 3} {
+    puts "ERROR: part '$part' から速度グレードが読めない"
+    exit 1
+}
+set build_tag [expr {($use_board << 30) | (($grade & 3) << 28)}]
+set_property CONFIG.BUILD_TAG $build_tag $spec
+set got_tag [get_property CONFIG.BUILD_TAG $spec]
+if {$got_tag != $build_tag} {
+    puts "ERROR: spec_core_0 の BUILD_TAG が $got_tag（要求 $build_tag）"
+    exit 1
+}
+puts [format "spec_core_0: BUILD_TAG = 0x%08x（プリセット %s / 速度グレード -%s）" $build_tag [expr {$use_board ? "あり" : "なし"}] $grade]
 set spec_axi  [BI spec_core_0 [list "s_axi"  "S_AXI"]  "spec_core の AXI4-Lite"]
 set spec_axis [BI spec_core_0 [list "s_axis" "S_AXIS"] "spec_core の AXI4-Stream 入力"]
 

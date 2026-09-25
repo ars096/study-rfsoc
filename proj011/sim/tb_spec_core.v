@@ -61,7 +61,9 @@ module tb_spec_core;
     reg [47:0] ld;
     always @(posedge clk) begin
         if (aresetn && dut.ln_m_tvalid[0]) begin
-            $fwrite(fl, "%0d %0d", lf, dut.ln_m_tuser[8:0]);
+            // フレームの番号は spec_core の出力側の数え fout に、SRST の回数を 100000 倍して足したもの（rev4）。
+            // SRST で fout は 0 に戻るので、回ごとに別の番号にする。途中で切られたフレームは埋まらないので check.py が捨てる
+            $fwrite(fl, "%0d %0d", dut.sr_n * 100000 + dut.fout, dut.ln_m_tuser[8:0]);
             for (lp = 0; lp < 16; lp = lp + 1) begin
                 ld = dut.ln_m_tdata[48*lp +: 48];
                 $fwrite(fl, " %0d %0d", $signed(ld[23:0]), $signed(ld[47:24]));
@@ -123,7 +125,7 @@ module tb_spec_core;
         begin
             $sformat(path, "%0s/dump_%0s.txt", `OUT, name);
             fo = $fopen(path, "w");
-            for (i = 0; i < 27; i = i + 1) begin
+            for (i = 0; i < 31; i = i + 1) begin
                 axi_rd(i * 4, v);
                 $fwrite(fo, "reg %0d %0d\n", i * 4, v);
             end
@@ -189,6 +191,20 @@ module tb_spec_core;
         axi_wr(16'h0008, 2);
         repeat (6000) @(posedge clk);
         dump("t3");
+
+        // ---- t4（rev4）: 起動のやり直しの後も同じように動く ----
+        $display("t4: SRST（D = 7 / E = 3）→ N_ACC = 1 / N_DUMP = 1");
+        axi_wr(16'h0070, 7);
+        axi_wr(16'h0074, 3);
+        axi_wr(16'h0008, 32'h400);
+        repeat (3000) @(posedge clk);
+        axi_rd(16'h001C, seq0);
+        axi_wr(16'h000C, 1);
+        axi_wr(16'h0010, 1);
+        axi_wr(16'h0008, 1);
+        wait_seq(seq0 + 1);
+        repeat (3000) @(posedge clk);
+        dump("t4");
 
         $fclose(fl);
         $display("done");
