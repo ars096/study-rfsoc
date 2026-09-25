@@ -329,6 +329,13 @@ def srst_trials(sp, n, dlist, elist, wait, shift):
     if (sp.rd(R_ID) >> 8) & 0xFF < 4:
         log("ERROR: --srst-trials は rev4 以降の .bit が要る")
         return False
+    # **最初の SRST の前に、Overlay の起動で立っていたかを読む**（SRST は FLAGS と診断を消す）。
+    # Overlay の起動で立ち、SRST のやり直しでは立たないなら、競争は IP のリセットの解除ではなく構成の直後にある。
+    # 立っていた起動で、最初の SRST の後に消えるかどうかも、状態が IP のリセットで戻るかの手がかりになる
+    time.sleep(3 * 50000 * T_FRAME)
+    f_ol = sp.flags()
+    log(f"Overlay の起動で立っていた FLAGS: {f_ol:02x}（{flag_text(f_ol)}）")
+    diag_report(sp, "Overlay の起動から最初の SRST まで")
     n0 = sp.rd(R_SRST_CNT)
     rows = []
     golden_done = False
