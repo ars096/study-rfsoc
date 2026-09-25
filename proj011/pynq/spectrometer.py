@@ -816,6 +816,8 @@ def main():
     p.add_argument("--srst-d", default="0", help="--srst-trials の D（入力を開けるまでのクロック）。カンマ区切り")
     p.add_argument("--srst-e", default="0", help="--srst-trials の E（設定の口を開けるまでのクロック）。カンマ区切り")
     p.add_argument("--srst-wait", type=float, default=0.02, help="--srst-trials の 1 回ごとの待ち [s]")
+    p.add_argument("--keep-startup-flags", action="store_true",
+                   help="起動（Overlay）直後の FLAGS の消去をしない。起動の瞬間に立ったもの（入力の隙間など）を残して読む")
     p.add_argument("--allow-nopreset", action="store_true",
                    help="ボードのプリセットの無い検証ビルド（make timing-check の成果物）でも動かす。**実機の測定には使わない**")
     p.add_argument("--any-id", action="store_true",
@@ -856,7 +858,13 @@ def main():
             log("ERROR: プリセットの無い検証ビルド（build-1-e*/ など）が載っている。実機には build/ の .bit を使う")
             sys.exit(1)
     sp.stop()
-    sp.wr(R_CTRL, CTRL_CLR)                       # 立ち上がりの隙間で立ったフラグを消す
+    if args.keep_startup_flags:
+        # **起動の瞬間に立ったものを残す**（2026-09-25）。通常は消すが、消すと「起動の直後に入力の隙間があり、
+        # それが realtime の IP の枠と入力側の数えをずらした」ことの証拠まで消える
+        f0 = sp.flags()
+        log(f"起動の直後の FLAGS（消さない）: {f0:02x}（{flag_text(f0)}）")
+    else:
+        sp.wr(R_CTRL, CTRL_CLR)                   # 立ち上がりの隙間で立ったフラグを消す
 
     if args.probe:
         sys.exit(0 if probe(sp) else 1)
