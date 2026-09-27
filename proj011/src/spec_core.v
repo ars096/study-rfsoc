@@ -12,6 +12,11 @@
 //       SR_LEN クロックだけリセットし、解除から SRST_D クロック後に入力を、SRST_E クロック後に設定の口を開ける。
 //       1 回の Overlay で起動の競争を何百回も試し、D と E を振って狙って起こすため。電源投入時の振る舞いは rev3 と同じ
 //       （ハードのリセットでは口は開いたまま）。ビルドの指紋 BUILD（0x6C）も足した。
+// rev5: **ハードのリセット（Overlay）の後も入力の口を閉じておき、入力（tvalid）が STABLE_N クロック途切れずに
+//       続いてから開ける。**起動の直後のギアボックスの出口の途切れを、realtime の IP が待たずに進んで制御側の数えが
+//       ずれる（TLAST 事象が立ち続ける）ことへの対策（proj011 の README の rev4 の節）。待っている間の途切れの回数と、
+//       開くまでのクロック数を ST_GAPS / ST_CYC（0x7C / 0x80）に残す（途切れが起きていたのに IP に届いていないことの証拠）。
+//       STABLE_N = 0 なら rev4 と同じ（ハードのリセットで口は開いたまま。sim の陰性対照用）。
 // **全部が DSP ドメイン（256 MHz）で動く。**AXI4-Lite も 256 MHz で受け、
 // PS（pl_clk0）との乗り換えは SmartConnect に任せる。自作の CDC はここに無い。
 //
@@ -64,7 +69,7 @@
 //                  サンプルは ADC の 16 bit のまま（下位 2 bit は常に 0）
 //   0x8000–0xFFFF  スペクトル: ch k の 64 bit が 0x8000 + 8k（下位語）/ +4（上位語）
 //
-//   0x00 ID        R   0x0011_04CC（proj011 rev4。rev3 は 0x0011_03CC、rev2 は 0x0011_02CC、rev1 は 0x0011_01CC。CC = FFT_CFG: [0] realtime / [1] 乗算器 use_mults_resources /
+//   0x00 ID        R   0x0011_05CC（proj011 rev5。rev4 は 0x0011_04CC、rev3 は 0x0011_03CC、rev2 は 0x0011_02CC、rev1 は 0x0011_01CC。CC = FFT_CFG: [0] realtime / [1] 乗算器 use_mults_resources /
 //                      [2] バタフライ use_luts / [3] 乗算器 use_luts。build.tcl が src/fft_cfg.tcl から設定する）
 //   0x04 PARAM     R   [7:0] log2 NFFT = 13 / [15:8] log2 レーン = 4 / [23:16] QW = 18 / [31:24] IW = 14
 //   0x08 CTRL      W   [0] RUN（開始を予約）/ [1] STOP / [8] FLAGS を消す / [9] 診断（0x58–0x68）を消す / [10] SRST（起動のやり直し。rev4）（いずれも 1 を書いた瞬間だけ）
@@ -98,6 +103,8 @@
 //   0x70 SRST_D    RW  [15:0] SRST の解除から入力（tvalid）を開けるまでのクロック数。既定 0。rev4
 //   0x74 SRST_E    RW  [15:0] SRST の解除から設定の口（config tvalid）を開けるまでのクロック数。既定 0。rev4
 //   0x78 SRST_CNT  R   SRST を受けた回数（リセット以来）。rev4
+//   0x7C ST_GAPS   R   [31] 起動の見張りが口を開けた / [15:0] 見張りの間に入力が途切れた回数（1 → 0。飽和）。rev5
+//   0x80 ST_CYC    R   ハードのリセットの解除から、起動の見張りが口を開けるまでのクロック数。rev5
 //
 // FLAGS（粘着。CTRL[8] で消す）:
 //   [0] レーンの出力 valid が揃っていない     [1] レーンの XK_INDEX が揃っていない
@@ -112,7 +119,8 @@ module spec_core #(
     parameter integer N_ACC_DEFAULT = 50000,
     parameter integer SHIFT_DEFAULT = 4,
     parameter integer FFT_CFG       = 0,     // ID の下位 8 bit。lane_fft の設定の符号（build.tcl が与える）
-    parameter integer BUILD_TAG     = 0      // ビルドの指紋（build.tcl が与える。rev4）
+    parameter integer BUILD_TAG     = 0,     // ビルドの指紋（build.tcl が与える。rev4）
+    parameter integer STABLE_N      = 16384  // 起動の見張り: 入力がこのクロック数途切れずに続いたら口を開ける（64 µs）。0 = 見張らない。rev5
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axis:s_axi, ASSOCIATED_RESET aresetn" *)
@@ -158,7 +166,7 @@ module spec_core #(
     localparam integer PW = 2 * QW + 1;
     localparam integer FW = 48;        // フレーム番号（2 µs × 2^48 = 17 年）
     localparam [7:0]   FFT_CFG8 = FFT_CFG;
-    localparam [31:0]  ID = {16'h0011, 8'h04, FFT_CFG8};
+    localparam [31:0]  ID = {16'h0011, 8'h05, FFT_CFG8};
 
     // 固定のパイプライン段数（S0 = レーン出力を受けたクロック）
     //   S0  +2 ROM → +4 cmul → V@6  +6 dft16 → Z@12  +1 飽和 → Q@13
@@ -218,15 +226,43 @@ module spec_core #(
     // ---- 起動のやり直し（rev4）----
     // cmd_srst で SR_LEN クロックだけ rst_core を立て（16 個の IP の aresetn と、入力側・出力側・積分の数え）、
     // 解除から r_sd クロック後に入力の口（gate_d）、r_se クロック後に設定の口（gate_c）を開ける。
-    // ハードのリセット（rst）では口は開いたまま = rev3 までと同じ起動
+    // rev5: ハードのリセット（rst）の後は、入力が STABLE_N クロック途切れずに続くまで入力の口を閉じておく（起動の見張り）。
+    //       STABLE_N = 0 なら口は開いたまま = rev4 までと同じ起動。SRST は見張りを打ち切って D / E の規則で開ける
     localparam integer SR_LEN = 32;
     reg  [5:0]  sr_hold;
     reg         sr_act, gate_d, gate_c;
     reg  [15:0] sr_cnt;
     reg  [31:0] sr_n;
+    reg         st_wait, st_prev;
+    reg  [15:0] st_run, st_gaps;
+    reg  [31:0] st_cyc;
     always @(posedge aclk) begin
         if (rst) begin
-            sr_hold <= 6'd0; sr_act <= 1'b0; gate_d <= 1'b1; gate_c <= 1'b1; sr_cnt <= 16'd0; sr_n <= 32'd0;
+            sr_hold <= 6'd0; sr_act <= 1'b0; gate_c <= 1'b1; sr_cnt <= 16'd0; sr_n <= 32'd0;
+            gate_d  <= (STABLE_N == 0);
+            st_wait <= (STABLE_N != 0);
+            st_prev <= 1'b0; st_run <= 16'd0; st_gaps <= 16'd0; st_cyc <= 32'd0;
+        end else begin
+            // ---- 起動の見張り（rev5）----
+            if (st_wait) begin
+                st_cyc  <= st_cyc + 32'd1;
+                st_prev <= s_axis_tvalid;
+                if (st_prev && !s_axis_tvalid && st_gaps != 16'hFFFF) st_gaps <= st_gaps + 16'd1;
+                if (s_axis_tvalid) begin
+                    if (st_run == STABLE_N - 1) begin
+                        st_wait <= 1'b0;
+                        gate_d  <= 1'b1;
+                    end else begin
+                        st_run <= st_run + 16'd1;
+                    end
+                end else begin
+                    st_run <= 16'd0;
+                end
+            end
+            // ---- 起動のやり直し（rev4）。見張りより後に書く（同じクロックなら SRST が勝つ）----
+            if (cmd_srst) st_wait <= 1'b0;
+        end
+        if (rst) begin
         end else if (cmd_srst) begin
             sr_hold <= SR_LEN[5:0]; sr_act <= 1'b1; gate_d <= 1'b0; gate_c <= 1'b0; sr_cnt <= 16'd0;
             sr_n    <= sr_n + 32'd1;
@@ -756,6 +792,8 @@ module spec_core #(
             6'h1C: reg_rd = {16'd0, r_sd};
             6'h1D: reg_rd = {16'd0, r_se};
             6'h1E: reg_rd = sr_n;
+            6'h1F: reg_rd = {!st_wait && (STABLE_N != 0), 15'd0, st_gaps};
+            6'h20: reg_rd = st_cyc;
             default: reg_rd = 32'hDEAD_BEEF;
         endcase
     end

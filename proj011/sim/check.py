@@ -125,7 +125,7 @@ REGS = {0x00: "ID", 0x04: "PARAM", 0x08: "CTRL", 0x0C: "N_ACC", 0x10: "N_DUMP", 
         0x30: "DUMP_K", 0x34: "DUMP_N", 0x38: "DUMP_F0_LO", 0x3C: "DUMP_F0_HI", 0x40: "DUMP_SAT",
         0x44: "SNAP_F_LO", 0x48: "SNAP_F_HI", 0x4C: "BANK", 0x50: "RUN_F0_LO", 0x54: "RUN_F0_HI",
         0x58: "DIAG_TL", 0x5C: "DIAG_EV", 0x60: "DIAG_FS", 0x64: "DIAG_EVCNT", 0x68: "DIAG_FSCNT",
-        0x6C: "BUILD", 0x70: "SRST_D", 0x74: "SRST_E", 0x78: "SRST_CNT"}
+        0x6C: "BUILD", 0x70: "SRST_D", 0x74: "SRST_E", 0x78: "SRST_CNT", 0x7C: "ST_GAPS", 0x80: "ST_CYC"}
 
 
 def load_dump(out, name):
@@ -152,7 +152,7 @@ def load_dump(out, name):
 
 
 # ---------------------------------------------------------------- 判定
-def check(out, shift, skew=0):
+def check(out, shift, skew=0, start=0):
     lanes = load_lanes(out)
     x14 = np.load(os.path.join(out, "stim14.npy"))
     nfail = 0
@@ -178,14 +178,24 @@ def check(out, shift, skew=0):
         if "BDCHECK" in r:
             nchk, nmis = r["BDCHECK"]
             judge(nmis == 0, "裏口の読み出しが AXI4-Lite と %d か所中 %d か所で食い違う（0 が期待）" % (nchk, nmis))
-        judge(r["ID"] == 0x00110400, "ID = %08x（期待 00110400: proj011 rev4、FFT_CFG は sim の既定 0）" % r["ID"])
+        judge(r["ID"] == 0x00110500, "ID = %08x（期待 00110500: proj011 rev5、FFT_CFG は sim の既定 0）" % r["ID"])
+        # 起動の見張り（rev5）。start 0: 途切れなし / 1: 起動の直後に途切れ・見張りあり / 2: 途切れ・見張りなし（陰性対照）
+        stg, stc = r["ST_GAPS"], r["ST_CYC"]
+        if start == 2:
+            judge(stg == 0 and stc == 0, "起動の見張りなし: ST_GAPS = %08x / ST_CYC = %d（期待 0 / 0）" % (stg, stc))
+        else:
+            want_g = (lambda g: g > 0) if start == 1 else (lambda g: g == 0)
+            judge(stg >> 31 == 1 and want_g(stg & 0xFFFF) and stc >= 16384,
+                  "起動の見張り: 開けた・途切れ %d 回（期待 %s）・開くまで %d クロック（≧ 16384）"
+                  % (stg & 0xFFFF, "1 回以上" if start == 1 else "0 回", stc))
         want_sr = 1 if name == "t4" else 0
         judge(r["SRST_CNT"] == want_sr and r["BUILD"] == 0,
               "SRST_CNT = %d（期待 %d）/ BUILD = %08x（sim の既定 0）" % (r["SRST_CNT"], want_sr, r["BUILD"]))
         if name == "t4":
             judge(r["SRST_D"] == 7 and r["SRST_E"] == 3, "SRST_D / SRST_E の読み返し = %d / %d" % (r["SRST_D"], r["SRST_E"]))
         base = 100000 * r["SRST_CNT"]         # lanes.txt のフレーム番号（tb が SRST の回ごとに分ける）
-        want_flags = 0x20 if skew else 0
+        slipped = start == 2 and name != "t4"      # 見張りなしで途切れを受けた起動（t4 は SRST で戻る）
+        want_flags = 0x20 if (skew or slipped) else 0
         judge(r["FLAGS"] == want_flags, "FLAGS = %02x（期待 %02x）" % (r["FLAGS"], want_flags))
         # 診断（rev3）。リセット以来の累積（tb は CTRL[9] を書かない）
         fin = (r["FIN_HI"] << 32) | r["FIN_LO"]
@@ -193,10 +203,10 @@ def check(out, shift, skew=0):
         judge(fs >> 31 == 1 and (fs >> 30) & 1 == 0 and (fs >> 29) & 1 == 0,
               "DIAG_FS: frame_started を見た・m_in が一定・レーン間で揃う（%08x、m_in %d）" % (fs, fs & 0x1FF))
         judge(abs(r["DIAG_FSCNT"] - fin) <= 2, "DIAG_FSCNT = %d（FIN %d と ±2 で一致）" % (r["DIAG_FSCNT"], fin))
-        if skew:
+        if skew or slipped:
             judge(tl == 0xFFFFFFFF, "DIAG_TL = %08x（期待 ffffffff: 16 レーンとも unexpected も missing も）" % tl)
             evm = ev & 0x1FF
-            judge(ev >> 31 == 1 and evm in (0, (512 - skew) % 512),
+            judge(ev >> 31 == 1 and (slipped or evm in (0, (512 - skew) % 512)),
                   "DIAG_EV: 事象あり・最初の m_in %d（期待 0 か %d）・種類 %d" % (evm, (512 - skew) % 512, (ev >> 29) & 3))
             judge(abs(r["DIAG_EVCNT"] - 2 * fin) <= 4,
                   "DIAG_EVCNT = %d（期待 ≒ 2 × FIN = %d: 1 フレームに unexpected と missing が 1 回ずつ）" % (r["DIAG_EVCNT"], 2 * fin))
@@ -291,4 +301,5 @@ if __name__ == "__main__":
     if sys.argv[1] == "gen":
         gen(sys.argv[2])
     else:
-        sys.exit(1 if check(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]) if len(sys.argv) > 4 else 0) else 0)
+        sys.exit(1 if check(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]) if len(sys.argv) > 4 else 0,
+                            int(sys.argv[5]) if len(sys.argv) > 5 else 0) else 0)

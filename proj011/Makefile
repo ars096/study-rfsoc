@@ -51,7 +51,10 @@ PYTHON    ?= python3
 SIM_SHIFT ?= 7
 # SIM_SKEW: モデルの TLAST の検査だけを SIM_SKEW サンプルずらす（rev3 の診断の陽性対照）。0 = ずらさない
 SIM_SKEW  ?= 0
-SIMDIR    := build-sim-s$(SIM_SHIFT)$(if $(filter-out 0,$(SIM_SKEW)),-k$(SIM_SKEW))
+# SIM_START: 起動の直後の入力の途切れ（rev5）。0 = 途切れなし / 1 = 途切れ・起動の見張りあり / 2 = 途切れ・見張りなし（陰性対照）
+SIM_START ?= 0
+SIM_DEFS  := $(if $(filter 1 2,$(SIM_START)),-DSTART_GAPS) $(if $(filter 2,$(SIM_START)),-DNO_GUARD)
+SIMDIR    := build-sim-s$(SIM_SHIFT)$(if $(filter-out 0,$(SIM_SKEW)),-k$(SIM_SKEW))$(if $(filter-out 0,$(SIM_START)),-g$(SIM_START))
 RTL       := src/spec_core.v src/cmul.v src/dft16.v src/tw_rom.v
 
 .PHONY: all sim sim-all survey twiddle prog id timing-check clean
@@ -63,9 +66,9 @@ all: $(OUTDIR)
 sim:
 	mkdir -p $(SIMDIR)
 	$(PYTHON) sim/check.py gen $(SIMDIR)
-	$(IVERILOG) -g2005 -DOUT=\"$(SIMDIR)\" -DSHIFT=$(SIM_SHIFT) -DTLAST_SKEW=$(SIM_SKEW) -o $(SIMDIR)/tb $(RTL) sim/lane_fft_model.v sim/tb_spec_core.v
+	$(IVERILOG) -g2005 -DOUT=\"$(SIMDIR)\" -DSHIFT=$(SIM_SHIFT) -DTLAST_SKEW=$(SIM_SKEW) $(SIM_DEFS) -o $(SIMDIR)/tb $(RTL) sim/lane_fft_model.v sim/tb_spec_core.v
 	$(VVP) -n $(SIMDIR)/tb
-	$(PYTHON) sim/check.py check $(SIMDIR) $(SIM_SHIFT) $(SIM_SKEW)
+	$(PYTHON) sim/check.py check $(SIMDIR) $(SIM_SHIFT) $(SIM_SKEW) $(SIM_START)
 
 # ---- FFT IP を 1 個だけ OOC 合成して資源を数える（proj010 の教訓: IP の資源は数えてから予言する）----
 # throttle 2 × 乗算器 2 × バタフライ 2 = 8 通り。設定は src/fft_cfg.tcl（本番の build.tcl と同じ）。
@@ -80,7 +83,8 @@ survey:
 # SHIFT 7（飽和なし）/ SHIFT 4（強い線が飽和）/ SKEW 5（TLAST の検査だけをずらす陽性対照）。
 # **成否は make の終了状態ではなく各ログの「結果: 全部通過」で判定する**（make の成功を信用しない）。ログは build-sim-logs/
 # `make sim-all &` で `make`（ビルド）と並べて走らせてよい（出力先が別）
-SIM_VARIANTS ?= 7-0 4-0 7-5
+# 変種は SHIFT-SKEW-START。7-0-1 は起動の直後の途切れを見張りが吸収すること、7-0-2 は見張りがないと崩れること（陰性対照）
+SIM_VARIANTS ?= 7-0-0 4-0-0 7-5-0 7-0-1 7-0-2
 sim-all:
 	@mkdir -p build-sim-logs
 	@rm -f build-sim-logs/*.log
@@ -92,7 +96,8 @@ sim-all:
 
 sim-v-%:
 	-$(MAKE) --no-print-directory sim SIM_SHIFT=$(word 1,$(subst -, ,$*)) SIM_SKEW=$(word 2,$(subst -, ,$*)) \
-	  > build-sim-logs/sim-s$(word 1,$(subst -, ,$*))-k$(word 2,$(subst -, ,$*)).log 2>&1
+	  SIM_START=$(or $(word 3,$(subst -, ,$*)),0) \
+	  > build-sim-logs/sim-$*.log 2>&1
 
 # ひねり係数の ROM を作り直す（生成物もコミットする。差分が出たら理由を README に書く）
 twiddle:

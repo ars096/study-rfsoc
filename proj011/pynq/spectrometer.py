@@ -71,6 +71,8 @@ SNAP_BASE, SPEC_BASE = 0x4000, 0x8000
 CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_DCLR = 1 << 0, 1 << 1, 1 << 8, 1 << 9
 R_DIAG_TL, R_DIAG_EV, R_DIAG_FS, R_DIAG_EVCNT, R_DIAG_FSCNT = 0x58, 0x5C, 0x60, 0x64, 0x68   # rev3
 R_BUILD, R_SRST_D, R_SRST_E, R_SRST_CNT = 0x6C, 0x70, 0x74, 0x78                             # rev4
+R_ST_GAPS, R_ST_CYC = 0x7C, 0x80                                                              # rev5
+F_CORE = 256.0e6                  # spec_core のクロック（clk_adc2 = fs/16）
 CTRL_SRST = 1 << 10
 
 FLAG_NAMES = ["レーンの出力 valid が不揃い", "レーンの XK_INDEX が不揃い", "レーンの入力 ready が不揃い",
@@ -317,6 +319,21 @@ def diag_report(sp, label):
         f"{'、**以後 m_in が違った**' if (fs >> 30) & 1 else '、以後も同じ'}"
         f"{'、**レーン間で揃わなかった**' if (fs >> 29) & 1 else '、レーン間で揃う'} / 回数 {fsc}（FIN {fin}）")
     return dict(tl=tl, ev=ev, fs=fs, evc=evc, fsc=fsc, fin=fin)
+
+
+def startguard_report(sp):
+    """rev5: 起動の見張り（Overlay の後、入力が STABLE_N クロック途切れずに続くまで入力の口を閉じる）の結果を出す。
+
+    ST_GAPS = 見張りの間に見た入力の途切れの回数（bit 31 = 口が開いた）、ST_CYC = 口が開くまでのクロック数。
+    ハードのリセットでだけ数え直す（CTRL_CLR / DCLR / SRST では消えない）。rev4 以前の .bit では読まない。
+    """
+    if (sp.rd(R_ID) >> 8) & 0xFF < 5:
+        return None
+    g, c = sp.rd(R_ST_GAPS), sp.rd(R_ST_CYC)
+    opened, gaps = g >> 31, g & 0xFFFF
+    log(f"起動の見張り: 途切れ {gaps} 回、{'開くまで' if opened else '**まだ閉じている** / 今まで'} "
+        f"{c} クロック（{c / F_CORE * 1e6:.1f} µs）")
+    return dict(opened=opened, gaps=gaps, cyc=c)
 
 
 def srst_trials(sp, n, dlist, elist, wait, shift):
@@ -857,6 +874,7 @@ def main():
         if not preset and not args.allow_nopreset:
             log("ERROR: プリセットの無い検証ビルド（build-1-e*/ など）が載っている。実機には build/ の .bit を使う")
             sys.exit(1)
+    startguard_report(sp)
     sp.stop()
     if args.keep_startup_flags:
         # **起動の瞬間に立ったものを残す**（2026-09-25）。通常は消すが、消すと「起動の直後に入力の隙間があり、

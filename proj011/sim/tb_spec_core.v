@@ -34,7 +34,13 @@ module tb_spec_core;
     wire [1:0]  bresp, rresp;
     wire [31:0] rdata;
 
-    spec_core #(.N_ACC_DEFAULT(50000), .SHIFT_DEFAULT(4)) dut (
+    // rev5: NO_GUARD なら起動の見張りを外す（STABLE_N = 0 = rev4 と同じ起動）。陰性対照
+`ifdef NO_GUARD
+    localparam integer TB_STABLE_N = 0;
+`else
+    localparam integer TB_STABLE_N = 16384;
+`endif
+    spec_core #(.N_ACC_DEFAULT(50000), .SHIFT_DEFAULT(4), .STABLE_N(TB_STABLE_N)) dut (
         .aclk(clk), .aresetn(aresetn),
         .s_axis_tdata(s_tdata), .s_axis_tvalid(s_tvalid), .s_axis_tready(),
         .s_axi_awaddr(awaddr), .s_axi_awprot(3'd0), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
@@ -46,13 +52,25 @@ module tb_spec_core;
 
     // ---- ADC の流し込み（リセット解除から途切れなく。ループする）----
     // 実機のギアボックスと同じく **backpressure を見ない**。IP が受け始める前のビートは捨てられる。
+    // rev5: START_GAPS なら、リセット解除から 400 クロックの間だけ入力をところどころ途切れさせる（実機の起動の直後の
+    // ギアボックスの出口の模型）。途切れたクロックはデータを進めない（データの並びは途切れの前後で続いている）
+    integer cyc0;
+    reg     v_now;
     always @(posedge clk) begin
         if (!aresetn) begin
-            sp <= 0; s_tvalid <= 1'b0; s_tdata <= 256'd0;
+            sp <= 0; s_tvalid <= 1'b0; s_tdata <= 256'd0; cyc0 = 0;
         end else begin
-            s_tvalid <= 1'b1;
-            s_tdata  <= stim[sp];
-            sp       <= (sp + 1) % NBEAT;
+`ifdef START_GAPS
+            v_now = !(cyc0 < 400 && ((cyc0 % 37) == 5 || (cyc0 % 53) == 11));
+`else
+            v_now = 1'b1;
+`endif
+            cyc0 = cyc0 + 1;
+            s_tvalid <= v_now;
+            if (v_now) begin
+                s_tdata <= stim[sp];
+                sp      <= (sp + 1) % NBEAT;
+            end
         end
     end
 
@@ -147,7 +165,7 @@ module tb_spec_core;
         begin
             $sformat(path, "%0s/dump_%0s.txt", `OUT, name);
             fo = $fopen(path, "w");
-            for (i = 0; i < 31; i = i + 1) begin
+            for (i = 0; i < 33; i = i + 1) begin
                 axi_rd(i * 4, v);
                 $fwrite(fo, "reg %0d %0d\n", i * 4, v);
             end

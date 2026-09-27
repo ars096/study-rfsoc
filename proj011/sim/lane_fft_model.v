@@ -68,6 +68,7 @@ module lane_fft #(
 
     reg signed [15:0] xin [0:M-1];
     integer cnt, rdy_cnt, started;
+    integer slip;               // rev5: 入力の途切れ 1 クロックごとに、TLAST の検査の数えだけが 1 進む（realtime の IP の振る舞いの模型）
     integer q_re [0:QF*M-1];
     integer q_im [0:QF*M-1];
     integer q_w, q_r;           // 書いたサンプル数 / 出したサンプル数（通算）
@@ -117,7 +118,7 @@ module lane_fft #(
         event_data_in_channel_halt <= 1'b0;
         ev_fs_r                    <= 1'b0;
         if (!aresetn) begin
-            cnt = 0; rdy_cnt = 0; started = 0; q_w = 0; q_r = 0; lat_cnt = 0;
+            cnt = 0; rdy_cnt = 0; started = 0; q_w = 0; q_r = 0; lat_cnt = 0; slip = 0;
             s_axis_data_tready <= 1'b0;
             m_axis_data_tvalid <= 1'b0;
             m_axis_data_tlast  <= 1'b0;
@@ -132,8 +133,8 @@ module lane_fft #(
                 xin[cnt] = s_axis_data_tdata[15:0];
                 if (cnt == 0) ev_fs_r <= 1'b1;
                 // 検査は (cnt + SKEW) mod M で行う。**枠（cnt）は変えない** — 実機の見立てと同じ形
-                if (s_axis_data_tlast && ((cnt + SKEW) % M) != M-1) event_tlast_unexpected <= 1'b1;
-                if (!s_axis_data_tlast && ((cnt + SKEW) % M) == M-1) event_tlast_missing   <= 1'b1;
+                if (s_axis_data_tlast && ((cnt + SKEW + slip) % M) != M-1) event_tlast_unexpected <= 1'b1;
+                if (!s_axis_data_tlast && ((cnt + SKEW + slip) % M) == M-1) event_tlast_missing   <= 1'b1;
                 if (cnt == M-1) begin
                     cnt = 0;
                     compute_frame;
@@ -142,6 +143,7 @@ module lane_fft #(
                 end
             end else if (started && s_axis_data_tready) begin
                 event_data_in_channel_halt <= 1'b1;
+                slip = slip + 1;         // 実機の realtime の IP: 待たずに進み、制御側の数えだけがずれる（データの枠はずれない）
             end
             // ---- 出力（最初のフレームが揃ってから LAT 待つ）----
             if (q_w > 0 && lat_cnt < LAT) lat_cnt = lat_cnt + 1;
