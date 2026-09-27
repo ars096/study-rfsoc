@@ -11,6 +11,10 @@
 //   t1  N_ACC = 1 / N_DUMP = 1   スナップショットの FFT とダンプが 1 対 1
 //   t2  N_ACC = 3 / N_DUMP = 2   2 つ目のダンプ（k = 1）を読む。3 フレームの和
 //   t3  N_ACC = 2 / N_DUMP = 0   止めるまで回し、途中で STOP。SEQ が止まること
+//   t4  SRST（D 7 / E 3）の後に N_ACC = 1（rev4）
+//   t5  GRST（書き込み側 16 / 読み出し側 32 クロック、ADJ 2）＋ 見張りの間に途切れを 1 回注入 → N_ACC = 1（rev6）。
+//       見張りがあれば IP に届かず FLAGS 0、見張りが無ければ（NO_GUARD）IP の数えがずれて 0x70
+//   t6  口が開いた後に途切れを 1 回注入 → N_ACC = 1（rev6。**陽性対照**: FLAGS 0x70、データの枠は正しいまま）
 // どの試験の後も FLAGS = 0 であること（check.py が見る）。
 
 `timescale 1ns / 1ps
@@ -40,9 +44,17 @@ module tb_spec_core;
 `else
     localparam integer TB_STABLE_N = 16384;
 `endif
+    // rev6: ギアボックスの見張りの入力は定数（配線と読み出しの番地の確認）。gb_dn_rstn が 0 の間は入力を止める（ギアボックスの再起動の模型）
+    localparam [31:0] TB_GB_STAT  = 32'h8203_0145;
+    localparam [31:0] TB_ADC_STAT = 32'h8000_0000;
+    wire       gb_hold, gb_dn_rstn;
+    wire [1:0] gb_adj;
+    wire [5:0] gb_k;
     spec_core #(.N_ACC_DEFAULT(50000), .SHIFT_DEFAULT(4), .STABLE_N(TB_STABLE_N)) dut (
         .aclk(clk), .aresetn(aresetn),
         .s_axis_tdata(s_tdata), .s_axis_tvalid(s_tvalid), .s_axis_tready(),
+        .gb_hold(gb_hold), .gb_adj(gb_adj), .gb_dn_rstn(gb_dn_rstn), .gb_k(gb_k),
+        .gb_stat(TB_GB_STAT), .adc_stat(TB_ADC_STAT),
         .s_axi_awaddr(awaddr), .s_axi_awprot(3'd0), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
         .s_axi_wdata(wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(wvalid), .s_axi_wready(wready),
         .s_axi_bresp(bresp), .s_axi_bvalid(bvalid), .s_axi_bready(bready),
@@ -65,6 +77,7 @@ module tb_spec_core;
 `else
             v_now = 1'b1;
 `endif
+            if (!gb_dn_rstn) v_now = 1'b0;     // rev6: GRST の間はギアボックスの出口が止まる
             cyc0 = cyc0 + 1;
             s_tvalid <= v_now;
             if (v_now) begin
@@ -81,13 +94,23 @@ module tb_spec_core;
         if (aresetn && dut.ln_m_tvalid[0]) begin
             // フレームの番号は spec_core の出力側の数え fout に、SRST の回数を 100000 倍して足したもの（rev4）。
             // SRST で fout は 0 に戻るので、回ごとに別の番号にする。途中で切られたフレームは埋まらないので check.py が捨てる
-            $fwrite(fl, "%0d %0d", dut.sr_n * 100000 + dut.fout, dut.ln_m_tuser[8:0]);
+            $fwrite(fl, "%0d %0d", (dut.sr_n + dut.g_n) * 100000 + dut.fout, dut.ln_m_tuser[8:0]);
             for (lp = 0; lp < 16; lp = lp + 1) begin
                 ld = dut.ln_m_tdata[48*lp +: 48];
                 $fwrite(fl, " %0d %0d", $signed(ld[23:0]), $signed(ld[47:24]));
             end
             $fwrite(fl, "\n");
             if (dut.ln_m_tuser[8:0] == 9'd511) lf = lf + 1;
+        end
+    end
+
+    // ---- GRST の長さを測る（rev6）----
+    integer m_hold = 0, m_dsp = 0, m_adj = 0;
+    always @(posedge clk) begin
+        if (aresetn) begin
+            if (gb_hold) m_hold = m_hold + 1;
+            if (!gb_dn_rstn) m_dsp = m_dsp + 1;
+            m_adj = gb_adj;
         end
     end
 
@@ -165,7 +188,7 @@ module tb_spec_core;
         begin
             $sformat(path, "%0s/dump_%0s.txt", `OUT, name);
             fo = $fopen(path, "w");
-            for (i = 0; i < 33; i = i + 1) begin
+            for (i = 0; i < 46; i = i + 1) begin
                 axi_rd(i * 4, v);
                 $fwrite(fo, "reg %0d %0d\n", i * 4, v);
             end
@@ -197,6 +220,7 @@ module tb_spec_core;
             end
             axi_rd(16'h001C, v);
             $fwrite(fo, "seq_after %0d\n", v);
+            $fwrite(fo, "grst_meas %0d %0d %0d\n", m_hold, m_dsp, m_adj);
             $fclose(fo);
             $display("  wrote %0s", path);
         end
@@ -262,6 +286,34 @@ module tb_spec_core;
         wait_seq(seq0 + 1);
         repeat (3000) @(posedge clk);
         dump("t4", 1'b1);
+
+        // ---- t5（rev6）: GRST ＋ 見張りの間に途切れを 1 回注入 ----
+        $display("t5: GRST（16 / 32、ADJ 2）＋ 見張りの間（最初の valid から 100 クロック目）に注入 → N_ACC = 1");
+        m_hold = 0; m_dsp = 0;
+        axi_wr(16'h0090, (32 << 16) | 16);
+        axi_wr(16'h0094, 2);
+        axi_wr(16'h008C, 32'hC000_0000 | 100);   // [30]: 次の GRST の後から数える
+        axi_wr(16'h0008, 32'h800);
+        repeat (20000) @(posedge clk);            // 見張り（16384）が開くのを待つ
+        axi_rd(16'h001C, seq0);
+        axi_wr(16'h000C, 1);
+        axi_wr(16'h0010, 1);
+        axi_wr(16'h0008, 1);
+        wait_seq(seq0 + 1);
+        repeat (3000) @(posedge clk);
+        dump("t5", 1'b1);
+
+        // ---- t6（rev6）: 口が開いた後に途切れを 1 回注入（陽性対照）----
+        $display("t6: 走っている最中に注入 → N_ACC = 1");
+        axi_wr(16'h008C, 32'h8000_0000);
+        repeat (3000) @(posedge clk);
+        axi_rd(16'h001C, seq0);
+        axi_wr(16'h000C, 1);
+        axi_wr(16'h0010, 1);
+        axi_wr(16'h0008, 1);
+        wait_seq(seq0 + 1);
+        repeat (3000) @(posedge clk);
+        dump("t6", 1'b1);
 
         $fclose(fl);
         $display("done");

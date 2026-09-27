@@ -72,6 +72,11 @@ CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_DCLR = 1 << 0, 1 << 1, 1 << 8, 1 << 9
 R_DIAG_TL, R_DIAG_EV, R_DIAG_FS, R_DIAG_EVCNT, R_DIAG_FSCNT = 0x58, 0x5C, 0x60, 0x64, 0x68   # rev3
 R_BUILD, R_SRST_D, R_SRST_E, R_SRST_CNT = 0x6C, 0x70, 0x74, 0x78                             # rev4
 R_ST_GAPS, R_ST_CYC = 0x7C, 0x80                                                              # rev5
+R_GB_K, R_ST_N, R_INJ, R_GRST_T, R_GRST_ADJ, R_GRST_CNT = 0x84, 0x88, 0x8C, 0x90, 0x94, 0x98     # rev6
+R_RAW_T0, R_RAW_GAPS, R_RAW_FIRST, R_RAW_MAXLEN = 0x9C, 0xA0, 0xA4, 0xA8
+R_GB_STAT, R_ADC_STAT, R_INJ_CNT = 0xAC, 0xB0, 0xB4
+CTRL_GRST = 1 << 11
+INJ_ARM, INJ_AFTER_GRST = 1 << 31, 1 << 30
 F_CORE = 256.0e6                  # spec_core のクロック（clk_adc2 = fs/16）
 CTRL_SRST = 1 << 10
 
@@ -333,7 +338,150 @@ def startguard_report(sp):
     opened, gaps = g >> 31, g & 0xFFFF
     log(f"起動の見張り: 途切れ {gaps} 回、{'開くまで' if opened else '**まだ閉じている** / 今まで'} "
         f"{c} クロック（{c / F_CORE * 1e6:.1f} µs）")
-    return dict(opened=opened, gaps=gaps, cyc=c)
+    out = dict(opened=opened, gaps=gaps, cyc=c)
+    if (sp.rd(R_ID) >> 8) & 0xFF >= 6:
+        raw = raw_state(sp)
+        where = "" if raw["gaps"] == 0 else f"（最初 {raw['first']} クロック目・最長 {raw['max']}）"
+        log(f"ギアボックスの出口（生）: 途切れ {raw['gaps']} 回{where}"
+            f"、起動から最初の valid まで {raw['t0']} クロック（{raw['t0'] / F_CORE * 1e3:.3f} ms）")
+        log(f"gb_gate: K = {sp.rd(R_GB_K)}・始めたときの残量 {raw['cnt_arm']}・その後の最小 {raw['cnt_min']}・空振り {raw['under']}"
+            f" / RFDC の出口: 途切れ {raw['adc_gaps']} 回{'' if raw['adc_ok'] else '（**2 回の読みが食い違う**）'}")
+        out.update(raw)
+    return out
+
+
+def raw_state(sp):
+    """rev6: 生の見張り（ギアボックスの出口）・gb_gate・gb_adc の値を読む。ADC_STAT は ADC ドメインの値なので 2 回読んで比べる"""
+    g, f, m, t0 = sp.rd(R_RAW_GAPS), sp.rd(R_RAW_FIRST), sp.rd(R_RAW_MAXLEN), sp.rd(R_RAW_T0)
+    gs = sp.rd(R_GB_STAT)
+    a1, a2 = sp.rd(R_ADC_STAT), sp.rd(R_ADC_STAT)
+    return dict(seen=g >> 31, gaps=g & 0xFFFF, first=(None if f == 0xFFFFFFFF else f), max=m & 0xFFFF, t0=t0,
+                armed=gs >> 31, cnt_arm=(gs >> 24) & 0x3F, cnt_min=(gs >> 16) & 0x3F, under=gs & 0xFFFF,
+                adc_gaps=a2 & 0xFFFF, adc_ok=(a1 == a2))
+
+
+def grst_once(sp, wait):
+    """GRST を 1 回かけ、wait 秒後に起動の結果を読む（rev6）"""
+    sp.wr(R_CTRL, CTRL_GRST)
+    time.sleep(wait)
+    raw = raw_state(sp)
+    stg, stc = sp.rd(R_ST_GAPS), sp.rd(R_ST_CYC)
+    raw.update(flags=sp.flags(), st_open=stg >> 31, st_gaps=stg & 0xFFFF, st_cyc=stc,
+               fs=sp.rd(R_DIAG_FS), tl=sp.rd(R_DIAG_TL))
+    return raw
+
+
+def grst_trials(sp, n, klist, stnlist, adclist, dsplist, adjlist, wait, csv_path=None):
+    """rev6: ギアボックスごとの起動のやり直し（GRST）を条件ごとに n 回。起動の途切れの率・位置・対策の効きを数える。
+
+    条件 = しきい値 K × 見張りの長さ ST_N × 書き込み側 / 読み出し側のリセットの長さ × 書き込み側の解除の遅れ ADJ。
+    1 回ごとに: 生の途切れ（口の外側）・最初の途切れの位置・最長・gb_gate の残量・RFDC の出口の途切れ・見張りの途切れ・
+    FLAGS（[4] 隙間・[5] TLAST 事象・[6] halt）・frame_started の位置が動いたか、を読む。
+    **見立て**（README の rev6）: 途切れは起動ごとに高々 1 回・長さ 1 クロック・位置は語 2^b − 1 の受け渡し（b は遅いビット）。
+    K ≧ 2 で 0。ADJ（書き込み側の語の位相）で決まるので、同じ条件のくり返しでは同じ結果になりやすい。
+    """
+    if (sp.rd(R_ID) >> 8) & 0xFF < 6:
+        log("ERROR: --grst-trials は rev6 以降の .bit が要る")
+        return False
+    n0, i0 = sp.rd(R_GRST_CNT), sp.rd(R_INJ_CNT)
+    k_save, stn_save = sp.rd(R_GB_K), sp.rd(R_ST_N)
+    rows, allrec = [], []
+    for k in klist:
+        for stn in stnlist:
+            for ta in adclist:
+                for td in dsplist:
+                    for adj in adjlist:
+                        sp.wr(R_GB_K, k)
+                        sp.wr(R_ST_N, stn)
+                        sp.wr(R_GRST_T, (td << 16) | ta)
+                        sp.wr(R_GRST_ADJ, adj)
+                        rec = [grst_once(sp, wait) for _ in range(n)]
+                        for r in rec:
+                            allrec.append(dict(k=k, stn=stn, ta=ta, td=td, adj=adj, **r))
+                        gapped = [r for r in rec if r["gaps"] > 0]
+                        multi = sum(1 for r in rec if r["gaps"] > 1)
+                        firsts = sorted({r["first"] for r in gapped})
+                        maxl = max((r["max"] for r in gapped), default=0)
+                        tla = sum(1 for r in rec if r["flags"] & 0x20)
+                        f4 = sum(1 for r in rec if r["flags"] & 0x10)
+                        f6 = sum(1 for r in rec if r["flags"] & 0x40)
+                        stg = sum(1 for r in rec if r["st_gaps"] > 0)
+                        fsv = sum(1 for r in rec if (r["fs"] >> 30) & 1)
+                        und = sum(1 for r in rec if r["under"] > 0)
+                        adc = sum(1 for r in rec if r["adc_gaps"] > 0)
+                        cmin = sorted({r["cnt_min"] for r in rec})
+                        rows.append((k, stn, ta, td, adj, len(gapped), tla))
+                        log(f"  K {k:2d} ST_N {stn:5d} T {ta:3d}/{td:3d} ADJ {adj}: 途切れ {len(gapped):3d}/{n}"
+                            f"（2 回以上 {multi}、最初 {firsts[:6]}{'…' if len(firsts) > 6 else ''}、最長 {maxl}）"
+                            f"  見張り {stg:3d}  FLAGS [4] {f4:3d} [5] {tla:3d} [6] {f6:3d}  m_in 動く {fsv:3d}"
+                            f"  空振り {und:3d}  残量の最小 {cmin}  RFDC {adc}")
+    sp.wr(R_GB_K, k_save)
+    sp.wr(R_ST_N, stn_save)
+    sp.wr(R_GRST_T, (64 << 16) | 64)
+    sp.wr(R_GRST_ADJ, 0)
+    log(f"GRST の回数: {sp.rd(R_GRST_CNT) - n0}（期待 {len(allrec)}）・注入 {sp.rd(R_INJ_CNT) - i0}（期待 0）")
+    if csv_path:
+        keys = list(allrec[0].keys()) if allrec else []
+        with open(csv_path, "w") as f:
+            f.write(",".join(keys) + "\n")
+            for r in allrec:
+                f.write(",".join("" if r[k] is None else str(r[k]) for k in keys) + "\n")
+        log(f"1 回ごとの記録: {csv_path}")
+    return True
+
+
+def inject_test(sp, n, wait):
+    """rev6: **実機の陽性対照。**途切れを 1 クロック注入して、見張りと FLAGS が見立てどおりに振る舞うかを n 回ずつ確かめる。
+
+      a. GRST ＋ 見張りの間（最初の valid から 1000 クロック目）に注入 → 見張りが 1 回数え、IP には届かない（FLAGS 0）
+      b. 口が開いた後（走っている最中）に注入 → 実際の IP で [4] 隙間・[5] TLAST 事象・[6] halt が立つ（0x70）
+      c. 見張りを外して（ST_N 0）GRST ＋ 1000 クロック目に注入 → b と同じ（見張りが無ければ起動の途切れも IP に届く）
+      d. 見張りを戻して GRST だけ → FLAGS 0（状態は起動のやり直しで戻る）
+    """
+    if (sp.rd(R_ID) >> 8) & 0xFF < 6:
+        log("ERROR: --inject-test は rev6 以降の .bit が要る")
+        return False
+    stn_save = sp.rd(R_ST_N)
+    if stn_save == 0:
+        log("ERROR: ST_N が 0（見張りなし）。a と d が意味を持たない")
+        return False
+    # 自然の起動の途切れと混ざらないよう、試験の間はしきい値 K = 4 にする（rev6 の見立てでは K ≧ 2 で自然の途切れは消える）
+    k_save = sp.rd(R_GB_K)
+    sp.wr(R_GB_K, 4)
+    res = {c: 0 for c in "abcd"}
+    detail = {c: [] for c in "abcd"}
+    for _ in range(n):
+        # a
+        sp.wr(R_INJ, INJ_ARM | INJ_AFTER_GRST | 1000)
+        r = grst_once(sp, wait)
+        ok = r["flags"] == 0 and r["st_gaps"] >= 1 and r["st_open"] == 1
+        res["a"] += ok; detail["a"].append((r["flags"], r["st_gaps"], r["gaps"]))
+        # b
+        sp.wr(R_INJ, INJ_ARM | 0)
+        time.sleep(wait)
+        f = sp.flags()
+        ok = (f & 0x70) == 0x70
+        res["b"] += ok; detail["b"].append((f,))
+        # c
+        sp.wr(R_ST_N, 0)
+        sp.wr(R_INJ, INJ_ARM | INJ_AFTER_GRST | 1000)
+        r = grst_once(sp, wait)
+        ok = (r["flags"] & 0x70) == 0x70
+        res["c"] += ok; detail["c"].append((r["flags"], r["gaps"]))
+        # d
+        sp.wr(R_ST_N, stn_save)
+        r = grst_once(sp, wait)
+        ok = r["flags"] == 0
+        res["d"] += ok; detail["d"].append((r["flags"], r["gaps"]))
+    sp.wr(R_GB_K, k_save)
+    names = {"a": "GRST ＋ 見張りの間に注入 → FLAGS 0・見張り 1 回",
+             "b": "走っている最中に注入 → FLAGS に [4][5][6]",
+             "c": "見張りなしで GRST ＋ 注入 → FLAGS に [4][5][6]",
+             "d": "見張りを戻して GRST → FLAGS 0"}
+    for c in "abcd":
+        ex = "" if res[c] == n else "  **NG** 記録（FLAGS, …）: " + ", ".join(str(x) for x in detail[c][:8])
+        log(f"  {c}. {names[c]}: {res[c]} / {n}{ex}")
+    return all(v == n for v in res.values())
 
 
 def srst_trials(sp, n, dlist, elist, wait, shift):
@@ -833,6 +981,17 @@ def main():
     p.add_argument("--srst-d", default="0", help="--srst-trials の D（入力を開けるまでのクロック）。カンマ区切り")
     p.add_argument("--srst-e", default="0", help="--srst-trials の E（設定の口を開けるまでのクロック）。カンマ区切り")
     p.add_argument("--srst-wait", type=float, default=0.02, help="--srst-trials の 1 回ごとの待ち [s]")
+    p.add_argument("--grst-trials", type=int, default=None, metavar="N",
+                   help="rev6: ギアボックスごとの起動のやり直し（GRST）を条件ごとに N 回。起動の途切れの率・位置・対策の効きを数える")
+    p.add_argument("--gb-k", default="0", help="--grst-trials のしきい値 K（gb_fifo に溜まるまで待つ語数）。カンマ区切り")
+    p.add_argument("--st-n", default="16384", help="--grst-trials の見張りの長さ ST_N（0 = 見張らない）。カンマ区切り")
+    p.add_argument("--grst-adc", default="64", help="--grst-trials の書き込み側のリセットの長さ（DSP クロック）。カンマ区切り")
+    p.add_argument("--grst-dsp", default="64", help="--grst-trials の読み出し側・spec_core のリセットの長さ。カンマ区切り")
+    p.add_argument("--grst-adj", default="0,1,2,3", help="--grst-trials の書き込み側の解除の遅れ（0〜3 ADC クロック）。カンマ区切り")
+    p.add_argument("--grst-wait", type=float, default=0.02, help="--grst-trials / --inject-test の 1 回ごとの待ち [s]")
+    p.add_argument("--grst-csv", default=None, help="--grst-trials の 1 回ごとの記録（CSV）")
+    p.add_argument("--inject-test", type=int, default=None, metavar="N",
+                   help="rev6: 途切れを注入して、見張りと FLAGS の振る舞いを N 回ずつ確かめる（実機の陽性対照）")
     p.add_argument("--keep-startup-flags", action="store_true",
                    help="起動（Overlay）直後の FLAGS の消去をしない。起動の瞬間に立ったもの（入力の隙間など）を残して読む")
     p.add_argument("--allow-nopreset", action="store_true",
@@ -900,6 +1059,12 @@ def main():
         shift = int(args.shift)
 
     ok = True
+    ints = lambda t: [int(v) for v in t.split(",")]
+    if args.grst_trials is not None:
+        sys.exit(0 if grst_trials(sp, args.grst_trials, ints(args.gb_k), ints(args.st_n), ints(args.grst_adc),
+                                  ints(args.grst_dsp), ints(args.grst_adj), args.grst_wait, args.grst_csv) else 1)
+    if args.inject_test is not None:
+        sys.exit(0 if inject_test(sp, args.inject_test, args.grst_wait) else 1)
     if args.srst_trials is not None:
         sys.exit(0 if srst_trials(sp, args.srst_trials, [int(v) for v in args.srst_d.split(",")],
                                   [int(v) for v in args.srst_e.split(",")], args.srst_wait, shift) else 1)

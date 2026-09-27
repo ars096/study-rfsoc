@@ -125,7 +125,11 @@ REGS = {0x00: "ID", 0x04: "PARAM", 0x08: "CTRL", 0x0C: "N_ACC", 0x10: "N_DUMP", 
         0x30: "DUMP_K", 0x34: "DUMP_N", 0x38: "DUMP_F0_LO", 0x3C: "DUMP_F0_HI", 0x40: "DUMP_SAT",
         0x44: "SNAP_F_LO", 0x48: "SNAP_F_HI", 0x4C: "BANK", 0x50: "RUN_F0_LO", 0x54: "RUN_F0_HI",
         0x58: "DIAG_TL", 0x5C: "DIAG_EV", 0x60: "DIAG_FS", 0x64: "DIAG_EVCNT", 0x68: "DIAG_FSCNT",
-        0x6C: "BUILD", 0x70: "SRST_D", 0x74: "SRST_E", 0x78: "SRST_CNT", 0x7C: "ST_GAPS", 0x80: "ST_CYC"}
+        0x6C: "BUILD", 0x70: "SRST_D", 0x74: "SRST_E", 0x78: "SRST_CNT", 0x7C: "ST_GAPS", 0x80: "ST_CYC",
+        0x84: "GB_K", 0x88: "ST_N", 0x8C: "INJ", 0x90: "GRST_T", 0x94: "GRST_ADJ", 0x98: "GRST_CNT",
+        0x9C: "RAW_T0", 0xA0: "RAW_GAPS", 0xA4: "RAW_FIRST", 0xA8: "RAW_MAXLEN", 0xAC: "GB_STAT", 0xB0: "ADC_STAT",
+        0xB4: "INJ_CNT"}
+TB_GB_STAT, TB_ADC_STAT = 0x82030145, 0x80000000     # tb_spec_core.v の定数
 
 
 def load_dump(out, name):
@@ -144,6 +148,8 @@ def load_dump(out, name):
                 spec[int(t[1])] = (int(t[2]) << 32) | int(t[3])
             elif t[0] == "seq_after":
                 seq_after = int(t[1])
+            elif t[0] == "grst_meas":
+                r["GRST_MEAS"] = tuple(int(v) for v in t[1:4])
             elif t[0] == "bdcheck":
                 r["BDCHECK"] = (int(t[1]), int(t[2]))
     r["DUMP_F0"] = (r["DUMP_F0_HI"] << 32) | r["DUMP_F0_LO"]
@@ -171,31 +177,70 @@ def check(out, shift, skew=0, start=0):
         return cache[fr]
 
     for name, n_acc, want_k, snap_must in (("t1", 1, 0, True), ("t2", 3, 1, True), ("t3", 2, None, False),
-                                           ("t4", 1, 0, True)):
+                                           ("t4", 1, 0, True), ("t5", 1, 0, True), ("t6", 1, 0, True)):
         print("---- %s ----" % name)
         r, snap, spec, seq_after = load_dump(out, name)
         f0, n = r["DUMP_F0"], r["DUMP_N"]
         if "BDCHECK" in r:
             nchk, nmis = r["BDCHECK"]
             judge(nmis == 0, "裏口の読み出しが AXI4-Lite と %d か所中 %d か所で食い違う（0 が期待）" % (nchk, nmis))
-        judge(r["ID"] == 0x00110500, "ID = %08x（期待 00110500: proj011 rev5、FFT_CFG は sim の既定 0）" % r["ID"])
+        judge(r["ID"] == 0x00110600, "ID = %08x（期待 00110600: proj011 rev6、FFT_CFG は sim の既定 0）" % r["ID"])
+        after_g = name in ("t5", "t6")          # GRST の後
+        # ---- rev6: ギアボックスの制御と見張り ----
+        judge(r["GRST_CNT"] == (1 if after_g else 0) and r["INJ_CNT"] == {"t5": 1, "t6": 2}.get(name, 0)
+              and r["INJ"] >> 30 == 0,
+              "GRST_CNT = %d / INJ_CNT = %d / INJ = %08x（期待 %d / %d / 予約は解けている）"
+              % (r["GRST_CNT"], r["INJ_CNT"], r["INJ"], 1 if after_g else 0, {"t5": 1, "t6": 2}.get(name, 0)))
+        judge(r["GB_STAT"] == TB_GB_STAT and r["ADC_STAT"] == TB_ADC_STAT and r["GB_K"] == 0
+              and r["ST_N"] == (0 if start == 2 else 16384),
+              "GB_STAT / ADC_STAT の配線（%08x / %08x）・GB_K %d・ST_N %d" % (r["GB_STAT"], r["ADC_STAT"], r["GB_K"], r["ST_N"]))
+        want_gt, want_adj = (0x00200010, 2) if after_g else (0x00400040, 0)
+        judge(r["GRST_T"] == want_gt and r["GRST_ADJ"] == want_adj,
+              "GRST_T = %08x / GRST_ADJ = %d（期待 %08x / %d）" % (r["GRST_T"], r["GRST_ADJ"], want_gt, want_adj))
+        if after_g:
+            mh, md, ma = r["GRST_MEAS"]
+            judge((mh, md, ma) == (16, 32, 2),
+                  "GRST の長さ: gb_hold %d / gb_dn_rstn = 0 が %d クロック・gb_adj %d（期待 16 / 32 / 2）" % (mh, md, ma))
+        rg, rf, rt0 = r["RAW_GAPS"], r["RAW_FIRST"], r["RAW_T0"]
+        raw_gaps_expected = start in (1, 2) and not after_g      # tb が途切れを入れるのはハードのリセットの後だけ
+        judge(rg >> 31 == 1 and ((rg & 0xFFFF) > 0 if raw_gaps_expected else (rg & 0xFFFF) == 0 and rf == 0xFFFFFFFF)
+              and rt0 <= 10,
+              "生の見張り: 途切れ %d 回（期待 %s。注入は数えない）・最初 %d・最長 %d・最初の valid まで %d クロック（≦ 10）"
+              % (rg & 0xFFFF, "1 回以上" if raw_gaps_expected else "0 回", rf if rf != 0xFFFFFFFF else -1, r["RAW_MAXLEN"], rt0))
         # 起動の見張り（rev5）。start 0: 途切れなし / 1: 起動の直後に途切れ・見張りあり / 2: 途切れ・見張りなし（陰性対照）
         stg, stc = r["ST_GAPS"], r["ST_CYC"]
         if start == 2:
             judge(stg == 0 and stc == 0, "起動の見張りなし: ST_GAPS = %08x / ST_CYC = %d（期待 0 / 0）" % (stg, stc))
+        elif after_g:
+            judge(stg >> 31 == 1 and stg & 0xFFFF == 1 and stc >= 16384,
+                  "起動の見張り（GRST の後）: 開けた・途切れ %d 回（期待 1 回 = 注入）・開くまで %d クロック（≧ 16384）"
+                  % (stg & 0xFFFF, stc))
         else:
             want_g = (lambda g: g > 0) if start == 1 else (lambda g: g == 0)
             judge(stg >> 31 == 1 and want_g(stg & 0xFFFF) and stc >= 16384,
                   "起動の見張り: 開けた・途切れ %d 回（期待 %s）・開くまで %d クロック（≧ 16384）"
                   % (stg & 0xFFFF, "1 回以上" if start == 1 else "0 回", stc))
-        want_sr = 1 if name == "t4" else 0
+        want_sr = 1 if name in ("t4", "t5", "t6") else 0
         judge(r["SRST_CNT"] == want_sr and r["BUILD"] == 0,
               "SRST_CNT = %d（期待 %d）/ BUILD = %08x（sim の既定 0）" % (r["SRST_CNT"], want_sr, r["BUILD"]))
         if name == "t4":
             judge(r["SRST_D"] == 7 and r["SRST_E"] == 3, "SRST_D / SRST_E の読み返し = %d / %d" % (r["SRST_D"], r["SRST_E"]))
-        base = 100000 * r["SRST_CNT"]         # lanes.txt のフレーム番号（tb が SRST の回ごとに分ける）
-        slipped = start == 2 and name != "t4"      # 見張りなしで途切れを受けた起動（t4 は SRST で戻る）
-        want_flags = 0x20 if (skew or slipped) else 0
+        base = 100000 * (r["SRST_CNT"] + r["GRST_CNT"])   # lanes.txt のフレーム番号（tb が SRST・GRST の回ごとに分ける）
+        # 見張りなしで途切れを受けた起動（t4 は SRST で戻る）。t5 は注入が見張りの間なので、見張りがあれば IP に届かない。
+        # t6 は口が開いた後の注入（陽性対照）。t1〜t3 は tb が途切れの後に FLAGS を消すので [5] だけが残り、
+        # t5 / t6 は消さないので [4] 入力の隙間・[5] TLAST 事象・[6] halt が全部残る
+        if name in ("t1", "t2", "t3"):
+            slipped = start == 2
+            want_flags = 0x20 if (skew or slipped) else 0
+        elif name == "t4":
+            slipped = False
+            want_flags = 0x20 if skew else 0
+        elif name == "t5":
+            slipped = start == 2
+            want_flags = (0x70 if slipped else 0) | (0x20 if skew else 0)
+        else:
+            slipped = True
+            want_flags = 0x70
         judge(r["FLAGS"] == want_flags, "FLAGS = %02x（期待 %02x）" % (r["FLAGS"], want_flags))
         # 診断（rev3）。リセット以来の累積（tb は CTRL[9] を書かない）
         fin = (r["FIN_HI"] << 32) | r["FIN_LO"]
@@ -208,8 +253,12 @@ def check(out, shift, skew=0, start=0):
             evm = ev & 0x1FF
             judge(ev >> 31 == 1 and (slipped or evm in (0, (512 - skew) % 512)),
                   "DIAG_EV: 事象あり・最初の m_in %d（期待 0 か %d）・種類 %d" % (evm, (512 - skew) % 512, (ev >> 29) & 3))
-            judge(abs(r["DIAG_EVCNT"] - 2 * fin) <= 4,
-                  "DIAG_EVCNT = %d（期待 ≒ 2 × FIN = %d: 1 フレームに unexpected と missing が 1 回ずつ）" % (r["DIAG_EVCNT"], 2 * fin))
+            if name == "t6" and not (skew or start == 2):
+                judge(0 < r["DIAG_EVCNT"] < 2 * fin,
+                      "DIAG_EVCNT = %d（期待: 0 より大きく 2 × FIN = %d より小さい。注入の後の分だけ）" % (r["DIAG_EVCNT"], 2 * fin))
+            elif name != "t6":
+                judge(abs(r["DIAG_EVCNT"] - 2 * fin) <= 4,
+                      "DIAG_EVCNT = %d（期待 ≒ 2 × FIN = %d: 1 フレームに unexpected と missing が 1 回ずつ）" % (r["DIAG_EVCNT"], 2 * fin))
         else:
             judge(tl == 0 and ev >> 31 == 0 and r["DIAG_EVCNT"] == 0,
                   "DIAG_TL / DIAG_EV / DIAG_EVCNT が 0（%08x / %08x / %d）" % (tl, ev, r["DIAG_EVCNT"]))

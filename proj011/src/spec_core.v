@@ -17,6 +17,15 @@
 //       ずれる（TLAST 事象が立ち続ける）ことへの対策（proj011 の README の rev4 の節）。待っている間の途切れの回数と、
 //       開くまでのクロック数を ST_GAPS / ST_CYC（0x7C / 0x80）に残す（途切れが起きていたのに IP に届いていないことの証拠）。
 //       STABLE_N = 0 なら rev4 と同じ（ハードのリセットで口は開いたまま。sim の陰性対照用）。
+// rev6: **起動の途切れを 1 回の Overlay の中で何千回も再現して、仕組みを確かめ、元を断つための道具**（README の rev6 の節）。
+//       - GRST（CTRL[11]）: ギアボックスごとの起動のやり直し。gb_hold で gb_up / gb_fifo の書き込み側を（gb_adc 経由で）、
+//         gb_dn_rstn で gb_fifo の読み出し側の gb_gate と gb_dn を、rst_core で spec_core を、GRST_T の長さだけリセットする。
+//         解除の後はハードのリセットと同じ起動（見張りも張り直す）。
+//       - 生の途切れの見張り（RAW_*）: 口の外側の s_axis_tvalid を、最初の valid から数える（注入した途切れは数えない）
+//       - GB_K: gb_gate のしきい値（gb_fifo に K 語溜まるまで読み出しを止める）。起動の瞬間の値が効く
+//       - ST_N: 見張りの長さをレジスタに（既定 STABLE_N）。0 で見張らない
+//       - INJ: 途切れの注入。最初の valid から pos クロック目の入力を 1 クロックだけ落とす（口と見張りの手前。**実機の陽性対照**）
+//       - GB_STAT / ADC_STAT: gb_gate と gb_adc の見張りを読む
 // **全部が DSP ドメイン（256 MHz）で動く。**AXI4-Lite も 256 MHz で受け、
 // PS（pl_clk0）との乗り換えは SmartConnect に任せる。自作の CDC はここに無い。
 //
@@ -69,10 +78,10 @@
 //                  サンプルは ADC の 16 bit のまま（下位 2 bit は常に 0）
 //   0x8000–0xFFFF  スペクトル: ch k の 64 bit が 0x8000 + 8k（下位語）/ +4（上位語）
 //
-//   0x00 ID        R   0x0011_05CC（proj011 rev5。rev4 は 0x0011_04CC、rev3 は 0x0011_03CC、rev2 は 0x0011_02CC、rev1 は 0x0011_01CC。CC = FFT_CFG: [0] realtime / [1] 乗算器 use_mults_resources /
+//   0x00 ID        R   0x0011_06CC（proj011 rev6。rev5 は 0x0011_05CC、rev4 は 0x0011_04CC、rev3 は 0x0011_03CC、rev2 は 0x0011_02CC、rev1 は 0x0011_01CC。CC = FFT_CFG: [0] realtime / [1] 乗算器 use_mults_resources /
 //                      [2] バタフライ use_luts / [3] 乗算器 use_luts。build.tcl が src/fft_cfg.tcl から設定する）
 //   0x04 PARAM     R   [7:0] log2 NFFT = 13 / [15:8] log2 レーン = 4 / [23:16] QW = 18 / [31:24] IW = 14
-//   0x08 CTRL      W   [0] RUN（開始を予約）/ [1] STOP / [8] FLAGS を消す / [9] 診断（0x58–0x68）を消す / [10] SRST（起動のやり直し。rev4）（いずれも 1 を書いた瞬間だけ）
+//   0x08 CTRL      W   [0] RUN（開始を予約）/ [1] STOP / [8] FLAGS を消す / [9] 診断（0x58–0x68）を消す / [10] SRST（起動のやり直し。rev4）/ [11] GRST（ギアボックスごとの起動のやり直し。rev6）（いずれも 1 を書いた瞬間だけ）
 //                  R   [0] 積分中 / [1] 開始待ち / [2] スナップショット予約中 / [3] 入力が流れ始めた
 //   0x0C N_ACC     RW  1 ダンプのフレーム数（0 は 1 とみなす）。RUN の時点で取り込む。既定 50000 = 100 ms
 //   0x10 N_DUMP    RW  ダンプの回数。0 = 止めるまで。RUN の時点で取り込む
@@ -104,7 +113,23 @@
 //   0x74 SRST_E    RW  [15:0] SRST の解除から設定の口（config tvalid）を開けるまでのクロック数。既定 0。rev4
 //   0x78 SRST_CNT  R   SRST を受けた回数（リセット以来）。rev4
 //   0x7C ST_GAPS   R   [31] 起動の見張りが口を開けた / [15:0] 見張りの間に入力が途切れた回数（1 → 0。飽和）。rev5
-//   0x80 ST_CYC    R   ハードのリセットの解除から、起動の見張りが口を開けるまでのクロック数。rev5
+//   0x80 ST_CYC    R   起動（ハードのリセット・GRST）の解除から、起動の見張りが口を開けるまでのクロック数。rev5
+//   ---- rev6（ギアボックスの起動の途切れ。README の rev6 の節）----
+//   0x84 GB_K      RW  [5:0] gb_gate のしきい値: 起動の後、gb_fifo に K 語溜まるまで読み出しを止める。0 = 素通し。既定 GB_K_RST
+//   0x88 ST_N      RW  [15:0] 起動の見張りの長さ（クロック）。0 = 見張らない。既定 STABLE_N。次の起動から効く
+//   0x8C INJ       RW  W: [31] 注入を予約 / [30] 次の GRST の後から数える / [23:0] 位置 = 起動の後の最初の valid から数えたクロック。
+//                      その 1 クロックの入力を落とす（口と見張りの手前。1 回だけ）。[30] なしなら今の起動の位置で数える
+//                      （もう過ぎていれば直ちに）。R: [31] 予約中 / [30] GRST 待ち / [23:0] 位置
+//   0x90 GRST_T    RW  [15:0] 書き込み側（gb_up / gb_fifo）をリセットに保つクロック数 / [31:16] 読み出し側と spec_core（0 は 1 とみなす）。既定 64 / 64
+//   0x94 GRST_ADJ  RW  [1:0] 書き込み側の解除を、さらに 0〜3 ADC クロック遅らせる（gb_up の語の位相を選ぶ）
+//   0x98 GRST_CNT  R   GRST を受けた回数
+//   0x9C RAW_T0    R   起動の解除から最初の valid までのクロック数（口の外側）
+//   0xA0 RAW_GAPS  R   [31] 最初の valid を見た / [15:0] その後に valid が落ちた回数（注入は含まない。飽和）
+//   0xA4 RAW_FIRST R   最初の valid から最初の途切れまでのクロック数（無ければ 0xFFFFFFFF）
+//   0xA8 RAW_MAXLEN R  [15:0] 途切れの最長（クロック）
+//   0xAC GB_STAT   R   gb_gate: [31] 読み出しを始めた / [29:24] 始めたときの残量 / [21:16] 最初の受け渡しの後の残量の最小 / [15:0] 空振りのクロック数
+//   0xB0 ADC_STAT  R   gb_adc（RFDC の出口）: [31] valid を見た / [15:0] valid が落ちた回数。**2 回読んで一致を確かめる**（ADC ドメインの値）
+//   0xB4 INJ_CNT   R   注入した回数（ハードのリセット以来）
 //
 // FLAGS（粘着。CTRL[8] で消す）:
 //   [0] レーンの出力 valid が揃っていない     [1] レーンの XK_INDEX が揃っていない
@@ -120,10 +145,11 @@ module spec_core #(
     parameter integer SHIFT_DEFAULT = 4,
     parameter integer FFT_CFG       = 0,     // ID の下位 8 bit。lane_fft の設定の符号（build.tcl が与える）
     parameter integer BUILD_TAG     = 0,     // ビルドの指紋（build.tcl が与える。rev4）
-    parameter integer STABLE_N      = 16384  // 起動の見張り: 入力がこのクロック数途切れずに続いたら口を開ける（64 µs）。0 = 見張らない。rev5
+    parameter integer STABLE_N      = 16384, // 起動の見張り: 入力がこのクロック数途切れずに続いたら口を開ける（64 µs）。0 = 見張らない。rev5（rev6 から ST_N の既定値）
+    parameter integer GB_K_RST      = 0      // gb_gate のしきい値 GB_K の既定値（ハードのリセットの起動に効く）。rev6
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
-    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axis:s_axi, ASSOCIATED_RESET aresetn" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axis:s_axi, ASSOCIATED_RESET aresetn:gb_dn_rstn" *)
     input  wire         aclk,
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
@@ -133,6 +159,16 @@ module spec_core #(
     input  wire [255:0] s_axis_tdata,
     input  wire         s_axis_tvalid,
     output wire         s_axis_tready,
+
+    // ---- ギアボックスの制御と見張り（rev6）----
+    output reg          gb_hold,          // gb_adc へ（ADC ドメインで取り込む）: gb_up / gb_fifo の書き込み側をリセットに保つ
+    output reg  [1:0]   gb_adj,           // gb_adc へ（静的）: 書き込み側の解除を 0〜3 ADC クロック遅らせる
+    (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 gb_dn_rstn RST" *)
+    (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
+    output reg          gb_dn_rstn,       // gb_gate / gb_dn へ
+    output wire [5:0]   gb_k,             // gb_gate へ
+    input  wire [31:0]  gb_stat,          // gb_gate から
+    input  wire [31:0]  adc_stat,         // gb_gate から（ADC ドメインの数えを取り込んだもの）
 
     // ---- AXI4-Lite（制御と読み出し）----
     input  wire [15:0]  s_axi_awaddr,
@@ -166,7 +202,7 @@ module spec_core #(
     localparam integer PW = 2 * QW + 1;
     localparam integer FW = 48;        // フレーム番号（2 µs × 2^48 = 17 年）
     localparam [7:0]   FFT_CFG8 = FFT_CFG;
-    localparam [31:0]  ID = {16'h0011, 8'h05, FFT_CFG8};
+    localparam [31:0]  ID = {16'h0011, 8'h06, FFT_CFG8};
 
     // 固定のパイプライン段数（S0 = レーン出力を受けたクロック）
     //   S0  +2 ROM → +4 cmul → V@6  +6 dft16 → Z@12  +1 飽和 → Q@13
@@ -183,8 +219,16 @@ module spec_core #(
     // =====================================================================
     reg [31:0] r_nacc, r_ndump;
     reg [3:0]  r_shift;
-    reg        cmd_run, cmd_stop, cmd_clr, cmd_dclr, cmd_srst;   // 1 クロックのパルス
+    reg        cmd_run, cmd_stop, cmd_clr, cmd_dclr, cmd_srst, cmd_grst;   // 1 クロックのパルス
     reg [15:0] r_sd, r_se;
+    reg [5:0]  r_gbk;                  // rev6
+    reg [15:0] r_stn;
+    reg [15:0] r_gt_adc, r_gt_dsp;
+    reg [1:0]  r_gadj;
+    reg [23:0] r_inj_pos;
+    reg        inj_arm, inj_pend;
+    wire       inj_fire;               // 下（生の見張り）で決まる
+    reg        g_act, g_core;          // 下（GRST）で決まる
 
     wire wr_go = s_axi_awvalid && s_axi_wvalid && !s_axi_bvalid;
     assign s_axi_awready = wr_go;
@@ -192,8 +236,18 @@ module spec_core #(
     assign s_axi_bresp   = 2'b00;
 
     always @(posedge aclk) begin
-        cmd_run <= 1'b0; cmd_stop <= 1'b0; cmd_clr <= 1'b0; cmd_dclr <= 1'b0; cmd_srst <= 1'b0;
+        cmd_run <= 1'b0; cmd_stop <= 1'b0; cmd_clr <= 1'b0; cmd_dclr <= 1'b0; cmd_srst <= 1'b0; cmd_grst <= 1'b0;
+        if (inj_fire) inj_arm <= 1'b0;
+        if (g_core) inj_pend <= 1'b0;          // 「次の起動の後から数える」の予約は GRST で解ける
         if (rst) begin
+            r_gbk    <= GB_K_RST;
+            r_stn    <= STABLE_N;
+            r_gt_adc <= 16'd64;
+            r_gt_dsp <= 16'd64;
+            r_gadj   <= 2'd0;
+            r_inj_pos <= 24'd0;
+            inj_arm  <= 1'b0;
+            inj_pend <= 1'b0;
             s_axi_bvalid <= 1'b0;
             r_nacc  <= N_ACC_DEFAULT;
             r_ndump <= 32'd0;
@@ -211,12 +265,18 @@ module spec_core #(
                         cmd_clr  <= s_axi_wdata[8];
                         cmd_dclr <= s_axi_wdata[9];
                         cmd_srst <= s_axi_wdata[10];
+                        cmd_grst <= s_axi_wdata[11];
                     end
                     14'h03: r_nacc  <= s_axi_wdata;
                     14'h04: r_ndump <= s_axi_wdata;
                     14'h05: r_shift <= s_axi_wdata[3:0];
                     14'h1C: r_sd    <= s_axi_wdata[15:0];
                     14'h1D: r_se    <= s_axi_wdata[15:0];
+                    14'h21: r_gbk   <= s_axi_wdata[5:0];
+                    14'h22: r_stn   <= s_axi_wdata[15:0];
+                    14'h23: begin r_inj_pos <= s_axi_wdata[23:0]; inj_arm <= s_axi_wdata[31]; inj_pend <= s_axi_wdata[30]; end
+                    14'h24: begin r_gt_adc <= s_axi_wdata[15:0]; r_gt_dsp <= s_axi_wdata[31:16]; end
+                    14'h25: r_gadj  <= s_axi_wdata[1:0];
                     default: ;
                 endcase
             end
@@ -228,6 +288,35 @@ module spec_core #(
     // 解除から r_sd クロック後に入力の口（gate_d）、r_se クロック後に設定の口（gate_c）を開ける。
     // rev5: ハードのリセット（rst）の後は、入力が STABLE_N クロック途切れずに続くまで入力の口を閉じておく（起動の見張り）。
     //       STABLE_N = 0 なら口は開いたまま = rev4 までと同じ起動。SRST は見張りを打ち切って D / E の規則で開ける
+    // ---- ギアボックスごとの起動のやり直し（rev6）----
+    // cmd_grst から、書き込み側（gb_hold）を r_gt_adc クロック、読み出し側と spec_core（gb_dn_rstn / g_core）を
+    // max(r_gt_dsp, 1) クロックだけリセットに保つ。**spec_core は必ず 1 クロック以上リセットする**（見張りと数えを張り直すため）。
+    // ハードのリセット（rst）でも gb_dn_rstn は落ちる（BD では gb_dn の aresetn はこれだけで駆動する）
+    reg [16:0] g_cnt;
+    reg [31:0] g_n;
+    wire [16:0] g_dsp_len = (r_gt_dsp == 16'd0) ? 17'd1 : {1'b0, r_gt_dsp};
+    always @(posedge aclk) begin
+        if (rst) begin
+            g_act <= 1'b0; g_cnt <= 17'd0; g_n <= 32'd0;
+            gb_hold <= 1'b0; g_core <= 1'b0; gb_dn_rstn <= 1'b0; gb_adj <= 2'd0;
+        end else begin
+            gb_adj <= r_gadj;
+            if (cmd_grst) begin
+                g_act <= 1'b1; g_cnt <= 17'd0; g_n <= g_n + 32'd1;
+                gb_hold <= (r_gt_adc != 16'd0); g_core <= 1'b1; gb_dn_rstn <= 1'b0;
+            end else if (g_act) begin
+                g_cnt <= g_cnt + 17'd1;
+                if (g_cnt + 17'd1 >= {1'b0, r_gt_adc}) gb_hold <= 1'b0;
+                if (g_cnt + 17'd1 >= g_dsp_len) begin g_core <= 1'b0; gb_dn_rstn <= 1'b1; end
+                if (g_cnt + 17'd1 >= {1'b0, r_gt_adc} && g_cnt + 17'd1 >= g_dsp_len) g_act <= 1'b0;
+            end else begin
+                gb_dn_rstn <= 1'b1;
+            end
+        end
+    end
+    assign gb_k = r_gbk;
+    wire rst_start = rst | g_core;   // 「起動」: ハードのリセットか GRST。見張り・生の見張りを張り直す
+
     localparam integer SR_LEN = 32;
     reg  [5:0]  sr_hold;
     reg         sr_act, gate_d, gate_c;
@@ -236,20 +325,23 @@ module spec_core #(
     reg         st_wait, st_prev;
     reg  [15:0] st_run, st_gaps;
     reg  [31:0] st_cyc;
+    wire [15:0] stn_now = rst ? STABLE_N[15:0] : r_stn;   // ハードのリセットの間は r_stn もまだ既定値に戻っていない
+    wire        s_tv;                                      // 注入を反映した tvalid（下の生の見張りで決まる）
     always @(posedge aclk) begin
-        if (rst) begin
-            sr_hold <= 6'd0; sr_act <= 1'b0; gate_c <= 1'b1; sr_cnt <= 16'd0; sr_n <= 32'd0;
-            gate_d  <= (STABLE_N == 0);
-            st_wait <= (STABLE_N != 0);
+        if (rst) sr_n <= 32'd0;
+        if (rst_start) begin
+            sr_hold <= 6'd0; sr_act <= 1'b0; gate_c <= 1'b1; sr_cnt <= 16'd0;
+            gate_d  <= (stn_now == 16'd0);
+            st_wait <= (stn_now != 16'd0);
             st_prev <= 1'b0; st_run <= 16'd0; st_gaps <= 16'd0; st_cyc <= 32'd0;
         end else begin
-            // ---- 起動の見張り（rev5）----
+            // ---- 起動の見張り（rev5。rev6 から長さは ST_N、見るのは注入を反映した s_tv）----
             if (st_wait) begin
                 st_cyc  <= st_cyc + 32'd1;
-                st_prev <= s_axis_tvalid;
-                if (st_prev && !s_axis_tvalid && st_gaps != 16'hFFFF) st_gaps <= st_gaps + 16'd1;
-                if (s_axis_tvalid) begin
-                    if (st_run == STABLE_N - 1) begin
+                st_prev <= s_tv;
+                if (st_prev && !s_tv && st_gaps != 16'hFFFF) st_gaps <= st_gaps + 16'd1;
+                if (s_tv) begin
+                    if (st_run == r_stn - 16'd1) begin
                         st_wait <= 1'b0;
                         gate_d  <= 1'b1;
                     end else begin
@@ -262,7 +354,7 @@ module spec_core #(
             // ---- 起動のやり直し（rev4）。見張りより後に書く（同じクロックなら SRST が勝つ）----
             if (cmd_srst) st_wait <= 1'b0;
         end
-        if (rst) begin
+        if (rst_start) begin
         end else if (cmd_srst) begin
             sr_hold <= SR_LEN[5:0]; sr_act <= 1'b1; gate_d <= 1'b0; gate_c <= 1'b0; sr_cnt <= 16'd0;
             sr_n    <= sr_n + 32'd1;
@@ -276,8 +368,48 @@ module spec_core #(
         end
     end
     wire srst_on  = (sr_hold != 6'd0);
-    wire rst_core = rst | srst_on;
-    wire vin      = s_axis_tvalid & gate_d;      // IP と入力側の数えが見る valid
+    wire rst_core = rst | srst_on | g_core;
+
+    // ---- 生の途切れの見張りと注入（rev6）----
+    // 口の外側の s_axis_tvalid（ギアボックスの出口そのもの）を、起動（rst_start の解除）から見る。注入した途切れは含まない
+    reg        rw_seen, rw_prev;
+    reg [31:0] rw_t0, rw_first, rw_cyc;
+    reg [15:0] rw_gaps, rw_len, rw_max;
+    reg [31:0] inj_n;
+    reg        inj_q;
+    // 注入はレジスタから出す（32 bit の比較を vin の経路 = 16 個の IP の tvalid に入れない）。位置は 1 クロック遅れる
+    assign inj_fire = inj_q;
+    assign s_tv     = s_axis_tvalid & ~inj_q;
+    always @(posedge aclk) begin
+        if (rst) inj_n <= 32'd0;
+        else if (inj_fire) inj_n <= inj_n + 32'd1;
+        if (rst_start) inj_q <= 1'b0;
+        else           inj_q <= inj_arm && !inj_pend && !inj_q && rw_seen && (rw_cyc >= {8'd0, r_inj_pos});
+        if (rst_start) begin
+            rw_seen <= 1'b0; rw_prev <= 1'b0; rw_t0 <= 32'd0; rw_first <= 32'hFFFF_FFFF; rw_cyc <= 32'd0;
+            rw_gaps <= 16'd0; rw_len <= 16'd0; rw_max <= 16'd0;
+        end else begin
+            rw_prev <= s_axis_tvalid;
+            if (!rw_seen) begin
+                if (s_axis_tvalid) rw_seen <= 1'b1;
+                else if (rw_t0 != 32'hFFFF_FFFF) rw_t0 <= rw_t0 + 32'd1;
+            end else begin
+                if (rw_cyc != 32'hFFFF_FFFF) rw_cyc <= rw_cyc + 32'd1;
+                if (rw_prev && !s_axis_tvalid) begin
+                    if (rw_gaps != 16'hFFFF) rw_gaps <= rw_gaps + 16'd1;
+                    if (rw_first == 32'hFFFF_FFFF) rw_first <= rw_cyc;
+                end
+                if (!s_axis_tvalid) begin
+                    if (rw_len != 16'hFFFF) rw_len <= rw_len + 16'd1;
+                end else begin
+                    if (rw_len > rw_max) rw_max <= rw_len;
+                    rw_len <= 16'd0;
+                end
+            end
+        end
+    end
+
+    wire vin      = s_tv & gate_d;               // IP と入力側の数えが見る valid（rev6: 注入を反映）
 
     // RUN の時点で取り込む値（積分中にレジスタを書き換えても、走っている RUN は変わらない）
     reg  [31:0]   run_n, run_ndump;
@@ -792,8 +924,21 @@ module spec_core #(
             6'h1C: reg_rd = {16'd0, r_sd};
             6'h1D: reg_rd = {16'd0, r_se};
             6'h1E: reg_rd = sr_n;
-            6'h1F: reg_rd = {!st_wait && (STABLE_N != 0), 15'd0, st_gaps};
+            6'h1F: reg_rd = {!st_wait && (r_stn != 16'd0), 15'd0, st_gaps};
             6'h20: reg_rd = st_cyc;
+            6'h21: reg_rd = {26'd0, r_gbk};
+            6'h22: reg_rd = {16'd0, r_stn};
+            6'h23: reg_rd = {inj_arm, inj_pend, 6'd0, r_inj_pos};
+            6'h24: reg_rd = {r_gt_dsp, r_gt_adc};
+            6'h25: reg_rd = {30'd0, r_gadj};
+            6'h26: reg_rd = g_n;
+            6'h27: reg_rd = rw_t0;
+            6'h28: reg_rd = {rw_seen, 15'd0, rw_gaps};
+            6'h29: reg_rd = rw_first;
+            6'h2A: reg_rd = {16'd0, rw_max};
+            6'h2B: reg_rd = gb_stat;
+            6'h2C: reg_rd = adc_stat;
+            6'h2D: reg_rd = inj_n;
             default: reg_rd = 32'hDEAD_BEEF;
         endcase
     end

@@ -21,6 +21,9 @@
 #      res と perf は同名の proj011.bit になるので、**PS から載っている変種を読めるようにする**
 #   5. lane_fft 1 個ぶんの資源を別に出す（予言の突き合わせ用）
 #   6. （rev4）spec_core にビルドの指紋 BUILD_TAG（プリセットの有無・速度グレード）を与える
+#   7. （rev6）ギアボックスの入口に gb_adc（再起動のリセット・RFDC の見張り）、gb_fifo の出口に gb_gate
+#      （読み出しの開始のしきい値 K・見張り）を挟む。gb_fifo に axis_rd_data_count を出させる。
+#      GB_K（環境変数、既定 0）を spec_core の GB_K_RST に与える（ハードのリセットの起動に効くしきい値）
 #
 # RFDC・Clocking Wizard・ギアボックス・spec_core の本体は proj010 と同一。
 # ナイキストゾーン（2）は実行時に PYNQ から設定する（pynq/spectrometer.py）。
@@ -35,6 +38,12 @@ if {[info exists ::env(PART)]   && $::env(PART)   ne ""} { set part   $::env(PAR
 if {[info exists ::env(OUTDIR)] && $::env(OUTDIR) ne ""} { set outdir ./$::env(OUTDIR) }
 set fft_opt res
 if {[info exists ::env(FFT_OPT)] && $::env(FFT_OPT) ne ""} { set fft_opt $::env(FFT_OPT) }
+set gb_k_rst 0
+if {[info exists ::env(GB_K)] && $::env(GB_K) ne ""} { set gb_k_rst $::env(GB_K) }
+if {![string is integer -strict $gb_k_rst] || $gb_k_rst < 0 || $gb_k_rst > 24} {
+    puts "ERROR: GB_K = '$gb_k_rst'（0〜24。gb_fifo の深さ 32 に余裕を残す）"
+    exit 1
+}
 source ./src/fft_cfg.tcl
 lassign [fft_opt_map $fft_opt] fft_throttle fft_cmul fft_bfly
 set fft_code [fft_cfg_code $fft_throttle $fft_cmul $fft_bfly]
@@ -225,7 +234,7 @@ if {$use_board} {
     puts "NOTE: 速度グレード検証ビルド。board_part とボードプリセットは使わない"
 }
 
-add_files -norecurse [list ./src/spec_core.v ./src/cmul.v ./src/dft16.v ./src/tw_rom.v]
+add_files -norecurse [list ./src/spec_core.v ./src/cmul.v ./src/dft16.v ./src/tw_rom.v ./src/gb_adc.v ./src/gb_gate.v]
 
 # ------------------------------------------------------------------ FFT IP（lane_fft）
 # spec_core.v がレーンごとに 1 個（計 16 個）使う。**名前 lane_fft は RTL と対**。
@@ -639,6 +648,8 @@ if {$use_gb} {
             CONFIG.IS_ACLK_ASYNC    {1} \
             CONFIG.HAS_TLAST {0} CONFIG.HAS_TKEEP {0} CONFIG.HAS_TSTRB {0} \
         ] 0
+        # rev6: 読み出し側の残量（gb_gate がしきい値 K と見張りに使う）。**無いと gb_gate が働かない**ので fatal
+        cfg_apply gb_fifo_$i [list CONFIG.HAS_RD_DATA_COUNT {1}] 1
         create_bd_cell -type ip -vlnv xilinx.com:ip:axis_dwidth_converter gb_dn_$i
         cfg_apply gb_dn_$i [list \
             CONFIG.S_TDATA_NUM_BYTES [expr {$gb_mid * 2}] \
@@ -648,6 +659,11 @@ if {$use_gb} {
         incr i
     }
     cfg_report "ギアボックスの設定（読み返しで検証するので、ここでは止めない）"
+    foreach {k want} {CONFIG.IS_ACLK_ASYNC 1 CONFIG.HAS_RD_DATA_COUNT 1 CONFIG.FIFO_DEPTH 32} {
+        set got [get_property $k [get_bd_cells gb_fifo_0]]
+        puts [format "GEARBOX    : gb_fifo_0 %s = %s（期待 %s）" $k $got $want]
+        if {$got != $want} { puts "ERROR: gb_fifo_0 の $k が $got"; exit 1 }
+    }
     # **読み返しで判定する。**語幅が 1 段でも違えば、サンプルの並びが崩れる。
     set i 0
     foreach ch $chans {
@@ -695,6 +711,30 @@ if {$got_tag != $build_tag} {
     exit 1
 }
 puts [format "spec_core_0: BUILD_TAG = 0x%08x（プリセット %s / 速度グレード -%s）" $build_tag [expr {$use_board ? "あり" : "なし"}] $grade]
+set_property CONFIG.GB_K_RST $gb_k_rst $spec
+if {[get_property CONFIG.GB_K_RST $spec] != $gb_k_rst} {
+    puts "ERROR: spec_core_0 の GB_K_RST が [get_property CONFIG.GB_K_RST $spec]（要求 $gb_k_rst）"
+    exit 1
+}
+puts "spec_core_0: GB_K_RST = $gb_k_rst（ハードのリセットの起動で gb_gate が待つ語数。0 = 素通し）"
+
+# ---- ギアボックスの見張りと再起動（rev6）----
+# gb_adc: RFDC → gb_up の間（ADC ドメイン、素通し）。gb_gate: gb_fifo → gb_dn の間（DSP ドメイン）
+set gba [create_bd_cell -type module -reference gb_adc gb_adc_0]
+set_property CONFIG.DW [expr {$spw_adc * 16}] $gba
+set gbg [create_bd_cell -type module -reference gb_gate gb_gate_0]
+set_property CONFIG.DW [expr {$gb_mid * 16}] $gbg
+# gb_fifo の axis_rd_data_count の幅は版で変わりうるので、ピンの幅を読んで与える
+set rdc [get_bd_pins -quiet gb_fifo_0/axis_rd_data_count]
+if {[llength $rdc] == 0} {
+    puts "ERROR: gb_fifo_0/axis_rd_data_count が無い（HAS_RD_DATA_COUNT が効いていない）。gb_fifo_0 のピン:"
+    foreach p [get_bd_pins gb_fifo_0/*] { puts "  $p" }
+    exit 1
+}
+set rdc_w [expr {[get_property LEFT $rdc] - [get_property RIGHT $rdc] + 1}]
+set_property CONFIG.CW $rdc_w $gbg
+puts [format "gb_adc_0: DW = %d / gb_gate_0: DW = %d・CW = %d（axis_rd_data_count の幅）" \
+        [get_property CONFIG.DW $gba] [get_property CONFIG.DW $gbg] [get_property CONFIG.CW $gbg]]
 set spec_axi  [BI spec_core_0 [list "s_axi"  "S_AXI"]  "spec_core の AXI4-Lite"]
 set spec_axis [BI spec_core_0 [list "s_axis" "S_AXIS"] "spec_core の AXI4-Stream 入力"]
 
@@ -730,8 +770,8 @@ foreach p [list rst_ctrl/slowest_sync_clk smc_ctrl/aclk rfdc/s_axi_aclk \
 }
 set adc_dom [list rst_adc/slowest_sync_clk]
 foreach t $adc_tiles { lappend adc_dom rfdc/m${t}_axis_aclk }
-lappend adc_dom gb_up_0/aclk gb_fifo_0/s_axis_aclk
-set dsp_dom [list rst_dsp/slowest_sync_clk gb_fifo_0/m_axis_aclk gb_dn_0/aclk \
+lappend adc_dom gb_up_0/aclk gb_fifo_0/s_axis_aclk gb_adc_0/aclk
+set dsp_dom [list rst_dsp/slowest_sync_clk gb_fifo_0/m_axis_aclk gb_dn_0/aclk gb_gate_0/aclk \
                   spec_core_0/aclk smc_ctrl/aclk1]
 foreach p $adc_dom { nc $adc_fabric $p }
 foreach p $dsp_dom { nc $dsp_fabric $p }
@@ -746,9 +786,21 @@ foreach r {rst_ctrl rst_adc rst_dsp} { nc $ps_rstn $r/ext_reset_in }
 foreach p [list smc_ctrl/aresetn rfdc/s_axi_aresetn] { nc rst_ctrl/peripheral_aresetn $p }
 set adc_rst {}
 foreach t $adc_tiles { lappend adc_rst rfdc/m${t}_axis_aresetn }
-lappend adc_rst gb_up_0/aresetn gb_fifo_0/s_axis_aresetn
+lappend adc_rst gb_adc_0/aresetn
 foreach p $adc_rst { nc rst_adc/peripheral_aresetn $p }
-foreach p [list gb_dn_0/aresetn spec_core_0/aresetn] { nc rst_dsp/peripheral_aresetn $p }
+nc rst_dsp/peripheral_aresetn spec_core_0/aresetn
+# rev6: ギアボックスのリセットは spec_core の GRST からも来る。
+#   書き込み側（gb_up / gb_fifo）: gb_adc が rst_adc と spec_core の gb_hold から作る gb_rstn
+#   読み出し側（gb_gate / gb_dn）: spec_core の gb_dn_rstn（rst_dsp でも落ちる）
+foreach p [list gb_up_0/aresetn gb_fifo_0/s_axis_aresetn] { nc gb_adc_0/gb_rstn $p }
+foreach p [list gb_gate_0/aresetn gb_dn_0/aresetn] { nc spec_core_0/gb_dn_rstn $p }
+nc spec_core_0/gb_hold  gb_adc_0/hold
+nc spec_core_0/gb_adj   gb_adc_0/adj
+nc spec_core_0/gb_k     gb_gate_0/k
+nc gb_fifo_0/axis_rd_data_count gb_gate_0/rd_count
+nc gb_gate_0/gb_stat    spec_core_0/gb_stat
+nc gb_adc_0/adc_out     gb_gate_0/adc_in
+nc gb_gate_0/adc_stat   spec_core_0/adc_stat
 
 # ---- データ経路: RFDC → ギアボックス → spec_core ----
 lassign [lindex $chans 0] t s
@@ -760,11 +812,17 @@ if {![catch {set nb [get_property CONFIG.TDATA_NUM_BYTES $src]}] && $nb ne ""} {
         exit 1
     }
 }
-ic $src [get_bd_intf_pins gb_up_0/S_AXIS]
+set gba_s [BI gb_adc_0  [list "s_axis" "S_AXIS"] "gb_adc の入力"]
+set gba_m [BI gb_adc_0  [list "m_axis" "M_AXIS"] "gb_adc の出力"]
+set gbg_s [BI gb_gate_0 [list "s_axis" "S_AXIS"] "gb_gate の入力"]
+set gbg_m [BI gb_gate_0 [list "m_axis" "M_AXIS"] "gb_gate の出力"]
+ic $src $gba_s
+ic $gba_m [get_bd_intf_pins gb_up_0/S_AXIS]
 ic [get_bd_intf_pins gb_up_0/M_AXIS]   [get_bd_intf_pins gb_fifo_0/S_AXIS]
-ic [get_bd_intf_pins gb_fifo_0/M_AXIS] [get_bd_intf_pins gb_dn_0/S_AXIS]
+ic [get_bd_intf_pins gb_fifo_0/M_AXIS] $gbg_s
+ic $gbg_m [get_bd_intf_pins gb_dn_0/S_AXIS]
 ic [get_bd_intf_pins gb_dn_0/M_AXIS]   $spec_axis
-puts [format "  Tile %d slice %d -> gb_up_0 / gb_fifo_0 / gb_dn_0 -> spec_core_0" [expr {224 + $t}] $s]
+puts [format "  Tile %d slice %d -> gb_adc_0 / gb_up_0 / gb_fifo_0 / gb_gate_0 / gb_dn_0 -> spec_core_0" [expr {224 + $t}] $s]
 
 # 制御系 AXI: PS → SmartConnect → RFDC / spec_core
 ic [get_bd_intf_pins zynq_ultra_ps_e_0/M_AXI_HPM0_FPD] [get_bd_intf_pins smc_ctrl/S00_AXI]

@@ -19,6 +19,10 @@ PART         ?= $(PART_DEFAULT)
 #   perf = realtime + 乗算器 use_mults_performance + バタフライ use_xtremedsp_slices（proj010 と乗算器が同じ。realtime の効きだけを見る）
 FFT_OPT ?= res
 
+# rev6: gb_gate のしきい値のハードのリセットでの既定値（spec_core の GB_K_RST）。0 = 素通し（rev5 までと同じ起動）。
+# 0 以外は別ディレクトリ（build-k4/ など）に出す
+GB_K ?= 0
+
 # 既定以外の part・変種は別ディレクトリに出し、検証済みの成果物を上書きしない。
 #   build/            -2・res        build-perf/      -2・perf
 #   build-1-e/        -1・res        build-1-e-perf/  -1・perf
@@ -34,13 +38,16 @@ ifneq ($(FFT_OPT),res)
     OUTDIR := $(OUTDIR)-$(FFT_OPT)
   endif
 endif
+ifneq ($(GB_K),0)
+  OUTDIR := $(OUTDIR)-k$(GB_K)
+endif
 
 # 同時に走らせる run の数（launch_runs -jobs）。効くのは IP の OOC 合成だけ。
 # proj010 から lane_fft（FFT IP）の OOC 合成が 1 本増えている（proj011 も同じ）。ビルドサーバの nproc = 32 に合わせてある。
 # コア数やメモリの少ない機械では `make JOBS=8` に下げること。
 JOBS ?= 30
 
-export BOARD_REPO PART OUTDIR FFT_OPT
+export BOARD_REPO PART OUTDIR FFT_OPT GB_K
 
 # ---- シミュレーション（Vivado もライセンスも要らない。RTL を触ったらまずこれ）----
 # FFT IP の代わりに sim/lane_fft_model.v を使う。判定は sim/check.py（bit 単位・numpy・帳簿の 3 層）。
@@ -57,7 +64,7 @@ SIM_DEFS  := $(if $(filter 1 2,$(SIM_START)),-DSTART_GAPS) $(if $(filter 2,$(SIM
 SIMDIR    := build-sim-s$(SIM_SHIFT)$(if $(filter-out 0,$(SIM_SKEW)),-k$(SIM_SKEW))$(if $(filter-out 0,$(SIM_START)),-g$(SIM_START))
 RTL       := src/spec_core.v src/cmul.v src/dft16.v src/tw_rom.v
 
-.PHONY: all sim sim-all survey twiddle prog id timing-check clean
+.PHONY: all sim sim-gb sim-all gb-cdc survey twiddle prog id timing-check clean
 
 all: $(OUTDIR)
 	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(JOBS)
@@ -69,6 +76,21 @@ sim:
 	$(IVERILOG) -g2005 -DOUT=\"$(SIMDIR)\" -DSHIFT=$(SIM_SHIFT) -DTLAST_SKEW=$(SIM_SKEW) $(SIM_DEFS) -o $(SIMDIR)/tb $(RTL) sim/lane_fft_model.v sim/tb_spec_core.v
 	$(VVP) -n $(SIMDIR)/tb
 	$(PYTHON) sim/check.py check $(SIMDIR) $(SIM_SHIFT) $(SIM_SKEW) $(SIM_START)
+
+# ---- ギアボックスの起動の途切れの模型（rev6。数秒）----
+# 3 : 4 のクロックの非同期 FIFO で、gray ポインタのビットごとの遅延が起動の途切れを作ること・gb_gate のしきい値 K が
+# それを消すことを確かめる（sim/tb_gearbox.v の冒頭）。gb_gate.v / gb_adc.v の試験も兼ねる
+sim-gb:
+	mkdir -p build-sim-gb
+	$(IVERILOG) -g2005 -o build-sim-gb/tb sim/tb_gearbox.v src/gb_gate.v src/gb_adc.v
+	$(VVP) -n build-sim-gb/tb
+
+# ---- 配置配線後の dcp で gb_fifo の gray ポインタの乗り換えをビットごとに測る（rev6。ビルド不要、数分）----
+# DCP を指定しなければ build/ の dcp。結果は dcp と同じ場所の gb_cdc.txt
+DCP ?= $(firstword $(wildcard $(OUTDIR)/vivado/proj011.runs/impl_1/*_routed.dcp))
+gb-cdc:
+	@test -n "$(DCP)" || { echo "DCP が無い（make gb-cdc DCP=...）"; exit 1; }
+	$(VIVADO) -mode batch -nojournal -nolog -source tools/gb_cdc.tcl -tclargs $(DCP) $(dir $(DCP))gb_cdc.txt
 
 # ---- FFT IP を 1 個だけ OOC 合成して資源を数える（proj010 の教訓: IP の資源は数えてから予言する）----
 # throttle 2 × 乗算器 2 × バタフライ 2 = 8 通り。設定は src/fft_cfg.tcl（本番の build.tcl と同じ）。
@@ -88,11 +110,14 @@ SIM_VARIANTS ?= 7-0-0 4-0-0 7-5-0 7-0-1 7-0-2
 sim-all:
 	@mkdir -p build-sim-logs
 	@rm -f build-sim-logs/*.log
-	$(MAKE) --no-print-directory -j$(words $(SIM_VARIANTS)) $(addprefix sim-v-,$(SIM_VARIANTS))
+	$(MAKE) --no-print-directory -j$(words $(SIM_VARIANTS) gb) $(addprefix sim-v-,$(SIM_VARIANTS)) sim-v-gb
 	@echo "---- sim-all ----"
 	@for f in build-sim-logs/*.log; do printf '%-36s %s\n' "$$f" "$$(grep '結果:' $$f || echo '結果の行が無い（途中で落ちた）')"; done
 	@fail=$$(grep -L '結果: 全部通過' build-sim-logs/*.log); \
 	  if [ -n "$$fail" ]; then echo "FAIL: $$fail"; exit 1; else echo "sim-all: 全部通過"; fi
+
+sim-v-gb:
+	-$(MAKE) --no-print-directory sim-gb > build-sim-logs/sim-gb.log 2>&1
 
 sim-v-%:
 	-$(MAKE) --no-print-directory sim SIM_SHIFT=$(word 1,$(subst -, ,$*)) SIM_SKEW=$(word 2,$(subst -, ,$*)) \
