@@ -1379,9 +1379,17 @@ def main():
             # **Overlay の起動の途切れを、ギアボックスごとの起動のやり直しで避ける**（2026-09-28）。
             # rev1 の ch C は Overlay の起動で 7 / 24 回途切れ（最初の valid から 17036 クロック目で決まって）、
             # GRST では 400 回とも途切れなかった。同じ起動の中で GRST の前と後を並べて数える（対になった比較）
+            pf = sp.flags()
             r = grst_once(sp, 0.02)
-            log(f"STARTUP ch {sp.idx} {sp.label}: Overlay の起動 途切れ {pre.get('gaps', '?')} 回・空振り {pre.get('under', '?')}"
-                f" → GRST の後 途切れ {r['gaps']} 回・空振り {r['under']}・見張りの途切れ {r['st_gaps']}・FLAGS {r['flags']:02x}")
+            # 途切れが IP に届いたか: 見張りの中（口を開ける前）なら吸収される。FLAGS[4][5][6] が立てば届いた
+            def where(first, flags):
+                if first is None:
+                    return "-"
+                return "届いた" if flags & 0x70 else "見張りの中で吸収"
+            log(f"STARTUP ch {sp.idx} {sp.label}: Overlay の起動 途切れ {pre.get('gaps', '?')} 回"
+                f"（最初 {pre.get('first')}・{where(pre.get('first'), pf)}）・空振り {pre.get('under', '?')}・FLAGS {pf:02x}"
+                f" → GRST の後 途切れ {r['gaps']} 回（最初 {r['first']}・{where(r['first'], r['flags'])}）・空振り {r['under']}"
+                f"・見張りの途切れ {r['st_gaps']}・FLAGS {r['flags']:02x}")
             sp.stop()
         if args.keep_startup_flags:
             # **起動の瞬間に立ったものを残す**（2026-09-25）。通常は消すが、消すと「起動の直後に入力の隙間があり、
