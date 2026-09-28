@@ -174,6 +174,12 @@ class Spec:
         self.wr(R_CTRL, CTRL_RUN)
         return seq0
 
+    def arm(self, nacc, ndump, shift):
+        """RUN の前の設定だけを書く（4 本の開始を揃えるとき、RUN の書き込みを 1 語ずつ続けて打てるように）"""
+        self.wr(R_NACC, nacc)
+        self.wr(R_NDUMP, ndump)
+        self.wr(R_SHIFT, shift)
+
     def stop(self):
         self.wr(R_CTRL, CTRL_STOP)
 
@@ -331,24 +337,38 @@ def multi_probe(specs):
     log("読み出しの時間（1 ダンプ）: " + " / ".join(f"{sp.label} {dt * 1e3:.1f} ms" for sp, dt in zip(specs, dts))
         + f" / {len(specs)} 本続けて {tall * 1e3:.1f} ms（予言 4 本で 5〜20 ms）")
     ok &= tall < 0.05                                # 100 ms のダンプに対して半分以内
-    # FIN のずれ: 順に読んだものと逆順に読んだものの平均
-    fa = [sp.rd64(R_FIN_LO, R_FIN_HI) for sp in specs]
-    fb = [sp.rd64(R_FIN_LO, R_FIN_HI) for sp in reversed(specs)][::-1]
-    off = [((a + b) / 2) - ((fa[0] + fb[0]) / 2) for a, b in zip(fa, fb)]
-    unc = max(abs(a - b) for a, b in zip(fa, fb)) / 2
-    log("FIN のずれ（ch 0 を基準、フレーム）: " + " / ".join(f"{sp.label} {o:+.1f}" for sp, o in zip(specs, off))
-        + f"（± {unc:.1f}）")
-    # RUN を順に書く（案 (a)）。N_DUMP = 1 で予約だけ見て止める
-    for sp in specs:
-        sp.run(50000, 1, 4)
-    f0 = [sp.rd64(R_RUN_F0_LO, R_RUN_F0_HI) for sp in specs]
-    for sp in specs:
-        sp.stop()
-    adj = [f - o for f, o in zip(f0, off)]
-    skew = [a - adj[0] for a in adj]
-    log("RUN の開始のずれ（RUN_F0 − FIN のずれ、ch 0 基準、フレーム）: "
-        + " / ".join(f"{sp.label} {k:+.1f}" for sp, k in zip(specs, skew))
-        + f"（± {unc:.1f}。予言 0〜5 フレーム = 0〜10 µs）")
+    # FIN のずれ: ch 0 → ch i → ch 0 と挟んで読み、ch i を読んだ瞬間の ch 0 の FIN を前後の 2 つの間に閉じ込める。
+    # 何度も挟んで区間を狭める（判定 0 の深さと同じ方法）。2026-09-28 の初版は「順と逆順の平均」で、
+    # PYNQ の MMIO の 1 読み（≒ 10 µs）が遅く ± 36 フレームになった
+    def offset(sp, n=300):
+        lo, hi = -10**12, 10**12
+        for _ in range(n):
+            a = specs[0].rd64(R_FIN_LO, R_FIN_HI)
+            x = sp.rd64(R_FIN_LO, R_FIN_HI)
+            b = specs[0].rd64(R_FIN_LO, R_FIN_HI)
+            lo, hi = max(lo, x - b), min(hi, x - a)
+        return lo, hi
+    offs = [(0, 0)] + [offset(sp) for sp in specs[1:]]
+    log("FIN のずれ（ch 0 を基準、挟み読みの区間、フレーム）: "
+        + " / ".join(f"{sp.label} [{lo}, {hi}]" for sp, (lo, hi) in zip(specs, offs)))
+    if any(lo > hi for lo, hi in offs):
+        log("  **区間が成り立たない ch がある**（下限 > 上限。FIN の読み方か、ch 間で FIN の進む速さが違う）")
+    # RUN の開始のずれ。設定（N_ACC・N_DUMP・SHIFT）を先に全部に書き、RUN だけを 1 語ずつ続けて打つ。
+    # 初版は 1 本ずつ run()（5 回の読み書き）で、1 本あたり ≒ 25 フレーム（50 µs）ずれた（予言 0〜5 の外れ）
+    def run_skew(order):
+        for sp in specs:
+            sp.arm(50000, 1, 4)
+        for i in order:
+            specs[i].wr(R_CTRL, CTRL_RUN)
+        f0 = [sp.rd64(R_RUN_F0_LO, R_RUN_F0_HI) for sp in specs]
+        for sp in specs:
+            sp.stop()
+        return [(f - f0[0] - hi, f - f0[0] - lo) for f, (lo, hi) in zip(f0, offs)]
+    for name, order in (("順（0 → 3）", range(len(specs))), ("逆順（3 → 0）", reversed(range(len(specs))))):
+        sk = run_skew(list(order))
+        log(f"RUN の開始のずれ {name}（RUN_F0 − FIN のずれ、ch 0 基準、フレーム）: "
+            + " / ".join(f"{sp.label} [{a}, {b}]" for sp, (a, b) in zip(specs, sk))
+            + "（予言 0〜5 フレーム = 0〜10 µs）")
     for sp in specs:
         sp.wr(R_CTRL, CTRL_CLR)
     log(f"4 本の部分: {'OK' if ok else '**NG**（読み出しが遅い）'}")
