@@ -157,6 +157,7 @@ proj011 の判定を 4 本それぞれの回帰試験に使う。
 | LUT / FF | rev2 とほぼ同じ | **178,089 / 346,074**（rev1 178,163 / 346,282） | 当たり |
 | WNS / WHS `-2` | 正・動く | **+0.169 / +0.003 ns** | 当たり。**WHS が 3 ps と小さい**（rev2 +0.010）。正なので閉じているが、覚えておく |
 | run の segfault | — | なし | |
+| WNS / WHS `-1` | −0.05〜+0.10 ns（rev1 の 4ch の予言） | **+0.070 / +0.010 ns**（周期 3.906 ns の 1.8 %） | 当たり。rev1 +0.073 とほぼ同じ。1ch rev6 は +0.110（2.8 %） |
 
 ### rev3 の実機: Overlay × 20（2026-09-28、`--probe --startup-grst`）
 
@@ -461,7 +462,7 @@ rev1 の CDC-11 の 2 件は実害なしと読んだが（下の「結果」）�
 - [x] rev2: `make` / `make timing-check`（`-2` で CDC-11 0。`-1` は未読）
 - [x] rev2 の実機: Overlay × 20（早い型だけ・見張りが吸収）・GRST × K（K ≧ 1 で 0 / 450）
 - [x] rev3（K = 2）: `make sim-all`・`make`（`-2`）・実機の Overlay × 20（途切れ 0 / 80）
-- [ ] rev3 の `make timing-check`（`-1`）
+- [x] rev3 の `make timing-check`（`-1`）: WNS +0.070 / WHS +0.010 ns で閉じた（余裕 1.8 %）
 - [ ] rev3 で判定 1（`--tone --split`）・漏れ（`--leak-from`）・判定 2（`--golden`）・判定 3（`--radiometer`）・1 時間の `--record`
 - [x] `make sim`（SHIFT 7、2026-09-28、クラウドの作業環境の iverilog 12.0）: **全部通過**、ID 00120100。RTL は ID の定数だけなので、sim-all の残りの変種は Vivado サーバで回す
 - [x] `make sim-all`（2026-09-28、Vivado サーバ）: **6 本とも全部通過**（7-0-0・4-0-0・7-5-0・7-0-1・7-0-2・gb）。spec_core.v は ID の定数だけの変更なので、proj011 rev6 と同じ結果
