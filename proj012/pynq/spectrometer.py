@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-3-Clause
-"""proj011 — 分光計（ADC → 8192 点 FFT → 電力 → 積分）を動かし、判定する。
+"""proj012 — 4 本の分光計（ADC_A〜D → 8192 点 FFT → 電力 → 積分）を動かし、判定する。
 
-proj010 の spectrometer.py と同じもの。差分は ID の読み方だけ（下位 8 bit に FFT IP の設定の符号が載る）。
-**res と perf は同名の proj011.bit になるので、起動のたびに載っている変種を表示する。**
+proj011 の spectrometer.py を 4 本にしたもの。**`--ch` で選ぶ（既定 all）。**判定は選んだ ch を順に回す。
+起動のたびに 4 個の spec_core すべてについて、ID・BUILD の ch の番号（[1:0]）がセル名と合うかを確かめる。
+4 本すべてのタイルを確かめ、4 本すべてのブロックにナイキストゾーンを設定する（選ばなかった ch も）。
+ch の番号 i = 0..3 = ADC_A..D（build.tcl の chans と対。VERSIONS.md の実測）。
+
+4 本で初めて出るもの:
+  --probe（2 本以上）   ch ごとの判定 0 の後に、読み出しの時間・FIN のずれ・RUN の開始のずれを出す
+  --tone（2 本以上）    線の強さの ch 間の比。`--split` なら 4 分配の一致（≦ 0.3 dB）、`--leak-from I` なら漏れ（≦ −59 dBc）を判定
+長い記録（--record / --tick / --flag-timeline）は 1 本ずつ（`--ch` で 1 本を選ぶ）。
 
 PL の spec_core が 1 フレーム 8192 サンプル（2.000 µs）ごとに FFT して電力を積み、
 N_ACC フレームごとに 1 ダンプ（4096 ch × 64 bit）を閉じる。PS は AXI4-Lite で
@@ -14,7 +21,10 @@ N_ACC フレームごとに 1 ダンプ（4096 ch × 64 bit）を閉じる。PS 
 
 使い方（ボード上で sudo が要る）:
 
-    sudo python3 spectrometer.py --clkin 0 --probe                  # 判定 0: 流れているか・フレームの速さ
+    sudo python3 spectrometer.py --clkin 0 --probe                  # 判定 0: 4 本とも・読み出しの時間・開始のずれ
+    sudo python3 spectrometer.py --clkin 0 --ch B --probe           # 1 本だけ（0〜3 か A〜D。カンマ区切りで複数）
+    sudo python3 spectrometer.py --clkin 0 --tone 3000.0 --split    # 4 分配した同じ線が 4 本で揃うか
+    sudo python3 spectrometer.py --clkin 0 --tone 3000.0 --leak-from 0   # ADC_A だけに入れ、残り 3 本への漏れ
     sudo python3 spectrometer.py --clkin 0 --golden --tone 3000.25  # 判定 2: 同じフレームを numpy と照合
     sudo python3 spectrometer.py --clkin 0 --tone 3000.25           # 判定 1: 線がどの ch に立つか
     sudo python3 spectrometer.py --clkin 0 --radiometer --ndump 50  # 判定 3: σ/μ = 1/√(Δν·τ)
@@ -74,7 +84,11 @@ def fft_cfg_str(ident):
 
 LMK_FREQ = 245.76
 LMX_FREQ = 491.52
-TILE, SLICE, BLOCK = 2, 0, 0      # ADC_B = Tile 226 / slice 0 → PYNQ の blocks[0]（VERSIONS.md）
+# ch の番号 i = 0..3（spec_core_i）→ (SMA のラベル, PYNQ の adc_tiles の番号, blocks の番号)。**VERSIONS.md の実測が正**:
+#   ADC_A = Tile 226 / slice 2 = adc_tiles[2].blocks[1]   ADC_B = Tile 226 / slice 0 = adc_tiles[2].blocks[0]
+#   ADC_C = Tile 224 / slice 2 = adc_tiles[0].blocks[1]   ADC_D = Tile 224 / slice 0 = adc_tiles[0].blocks[0]
+CHANS = [("ADC_A", 2, 1), ("ADC_B", 2, 0), ("ADC_C", 0, 1), ("ADC_D", 0, 0)]
+BUILD_4CH = 1 << 23               # BUILD の [23] 4ch のビルド / [1:0] ch の番号（build.tcl の BUILD_TAG）
 
 # ---- レジスタ（src/spec_core.v の冒頭と対）----
 R_ID, R_PARAM, R_CTRL, R_NACC, R_NDUMP, R_SHIFT = 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14
@@ -118,9 +132,11 @@ def if_of_ch(k, zone=2):
 class Spec:
     """spec_core の AXI4-Lite。**読んだ中身は seqlock で 1 つのダンプのものと保証する。**"""
 
-    def __init__(self, mmio, slow=False):
+    def __init__(self, mmio, slow=False, idx=0, label="?"):
         self.m = mmio
         self.slow = slow
+        self.idx = idx
+        self.label = label
 
     def rd(self, a):
         return self.m.read(a)
@@ -207,23 +223,136 @@ def setup_clocks(clkin="stock", ref_mhz=10.0):
     fn(lmk_freq=LMK_FREQ, lmx_freq=LMX_FREQ)
 
 
-def check_tile(rfdc, zone):
-    """タイルは Overlay の時点で動いている。**触らずに確かめ、ゾーンだけ設定して読み返す。**"""
-    tile = rfdc.adc_tiles[TILE]
-    block = tile.blocks[BLOCK]
-    lock = tile.PLLLockStatus
-    st = block.BlockStatus
-    log(f"Tile {224 + TILE} / slice {SLICE}: PLLLockStatus = {lock}（2 = locked）/ "
-        f"SamplingFreq = {st.get('SamplingFreq')} GSPS")
-    if lock != 2 or abs(st.get("SamplingFreq", 0) * 1e9 - FS_HZ) > 1e3:
-        log("ERROR: タイル PLL がロックしていないか、fs が違う")
-        sys.exit(1)
-    block.NyquistZone = zone
-    if block.NyquistZone != zone:
-        log(f"ERROR: NyquistZone が {block.NyquistZone} のまま（要求 {zone}）")
-        sys.exit(1)
-    log(f"NyquistZone = {zone}")
-    return block
+def check_tiles(rfdc, zone):
+    """タイルは Overlay の時点で動いている。**触らずに確かめ、4 本すべてのブロックにゾーンだけ設定して読み返す。**
+
+    **起動・停止はしない**（VERSIONS.md: 複数タイルへの ShutDown() は順序を直しても成立しない）。
+    選ばなかった ch もゾーンを設定する（ch によって周波数軸が違う状態を作らない）。
+    """
+    for t in sorted({t for _, t, _ in CHANS}, reverse=True):     # 源のタイル（226）から見る
+        tile = rfdc.adc_tiles[t]
+        lock = tile.PLLLockStatus
+        log(f"Tile {224 + t}: PLLLockStatus = {lock}（2 = locked）")
+        if lock != 2:
+            log(f"ERROR: Tile {224 + t} のタイル PLL がロックしていない")
+            sys.exit(1)
+    for i, (lbl, t, b) in enumerate(CHANS):
+        block = rfdc.adc_tiles[t].blocks[b]
+        st = block.BlockStatus
+        if abs(st.get("SamplingFreq", 0) * 1e9 - FS_HZ) > 1e3:
+            log(f"ERROR: ch {i}（{lbl}）の fs が {st.get('SamplingFreq')} GSPS")
+            sys.exit(1)
+        block.NyquistZone = zone
+        if block.NyquistZone != zone:
+            log(f"ERROR: ch {i}（{lbl}）の NyquistZone が {block.NyquistZone} のまま（要求 {zone}）")
+            sys.exit(1)
+        log(f"ch {i}（{lbl} = Tile {224 + t} / blocks[{b}]）: SamplingFreq {st.get('SamplingFreq')} GSPS / NyquistZone = {zone}")
+
+
+def open_specs(ol, args):
+    """spec_core_0..3 を開き、**全部について** ID と BUILD の ch の番号を確かめる。選んだ ch の Spec を返す。
+
+    同じ RTL の 4 個を見分けるのは BUILD の [1:0] だけ。セル名 spec_core_i と BUILD の ch = i が合わなければ、
+    ch の取り違え（ラベルと中身が別の ch）なので止める。
+    """
+    specs = []
+    for i, (lbl, _, _) in enumerate(CHANS):
+        ip = getattr(ol, f"spec_core_{i}", None)
+        if ip is None:
+            log(f"ERROR: ol.spec_core_{i} が無い。1ch の .bit（proj011 など）が載っていないか")
+            sys.exit(1)
+        sp = Spec(ip.mmio, slow=args.slow_read, idx=i, label=lbl)
+        ident = sp.rd(R_ID)
+        if (ident & ID_MASK) != ID_EXPECT:
+            log(f"ERROR: spec_core_{i} の ID {ident:08x} の上位 16 bit が {ID_EXPECT >> 16:04x} でない。別の proj の .bit が載っている")
+            sys.exit(1)
+        bt = sp.rd(R_BUILD)
+        preset, grade, is4, chn = (bt >> 30) & 1, (bt >> 28) & 3, bool(bt & BUILD_4CH), bt & 3
+        log(f"spec_core_{i}（{lbl}）: ID {ident:08x} / {fft_cfg_str(ident)} / BUILD {bt:08x}"
+            f"（プリセット {'あり' if preset else '**なし**'} / -{grade} / 4ch {int(is4)} / ch {chn}）")
+        if not is4 or chn != i:
+            log(f"ERROR: spec_core_{i} の BUILD が「4ch・ch {i}」でない（4ch {int(is4)} / ch {chn}）。セルと ch の対応が崩れている")
+            sys.exit(1)
+        if (bt >> 27) & 1:
+            log(f"NOTE: **遅いビットの検証ビルド**（gb_fifo の gray の bit {(bt >> 24) & 7} をわざと遅らせてある。本番に使わない）")
+        if not preset and not args.allow_nopreset:
+            log("ERROR: プリセットの無い検証ビルド（build-1-e*/ など）が載っている。実機には build/ の .bit を使う")
+            sys.exit(1)
+        specs.append(sp)
+    return [specs[i] for i in args.chs]
+
+
+def parse_ch(text):
+    """--ch: all / 0〜3 / A〜D（ADC_A〜D）。カンマ区切り。"""
+    if text.strip().lower() == "all":
+        return list(range(len(CHANS)))
+    out = []
+    for v in text.split(","):
+        v = v.strip().upper().replace("ADC_", "")
+        if v.isdigit() and 0 <= int(v) < len(CHANS):
+            out.append(int(v))
+        elif len(v) == 1 and "A" <= v <= "D":
+            out.append(ord(v) - ord("A"))
+        else:
+            raise ValueError(f"--ch の '{v}' が読めない（all / 0〜3 / A〜D）")
+    return sorted(set(out))
+
+
+def auto_shift(sp):
+    """SHIFT: 雑音の成分の σ が SHIFT 後に 2^9 付近になるように選ぶ（強い線が 18 bit に収まる余地を残す）。ch ごと"""
+    sp.run(1, 1, 0)
+    time.sleep(0.01)
+    _, _, snap = sp.read_dump(with_snap=True)
+    sx = (snap.astype(np.int64) >> 2).std()
+    sz = sx * np.sqrt(NFFT / 2)                    # 成分あたり
+    shift = int(max(0, min(15, np.ceil(np.log2(max(sz, 1) / 512)))))
+    log(f"SHIFT = {shift}（auto: 入力 std {sx:.1f} LSB → 成分の σ {sz:.0f} → {sz / 2 ** shift:.0f} LSB）")
+    return shift
+
+
+def multi_probe(specs):
+    """判定 0 の 4 本の部分: 読み出しの時間・FIN のずれ・RUN を順に書いたときの開始のずれ。
+
+    **FIN は ch ごとに別の起動から数えている**（ギアボックスごとに流れ始めが違う）ので、番号どうしは比べられない。
+    先に FIN を並べて読んでずれ（オフセット）を測り、RUN_F0 からそのずれを引いて、開始の実時間のずれに直す。
+    読み出し 1 回（rd64 = 2 語）に数 µs かかるので、ずれは ±数フレーム（1 フレーム = 2 µs）の精度。
+    """
+    ok = True
+    # 読み出しの時間（1 ダンプ = 4096 ch × 64 bit）
+    dts = []
+    for sp in specs:
+        t0 = time.perf_counter()
+        sp.read_dump()
+        dts.append(time.perf_counter() - t0)
+    t0 = time.perf_counter()
+    for sp in specs:
+        sp.read_dump()
+    tall = time.perf_counter() - t0
+    log("読み出しの時間（1 ダンプ）: " + " / ".join(f"{sp.label} {dt * 1e3:.1f} ms" for sp, dt in zip(specs, dts))
+        + f" / {len(specs)} 本続けて {tall * 1e3:.1f} ms（予言 4 本で 5〜20 ms）")
+    ok &= tall < 0.05                                # 100 ms のダンプに対して半分以内
+    # FIN のずれ: 順に読んだものと逆順に読んだものの平均
+    fa = [sp.rd64(R_FIN_LO, R_FIN_HI) for sp in specs]
+    fb = [sp.rd64(R_FIN_LO, R_FIN_HI) for sp in reversed(specs)][::-1]
+    off = [((a + b) / 2) - ((fa[0] + fb[0]) / 2) for a, b in zip(fa, fb)]
+    unc = max(abs(a - b) for a, b in zip(fa, fb)) / 2
+    log("FIN のずれ（ch 0 を基準、フレーム）: " + " / ".join(f"{sp.label} {o:+.1f}" for sp, o in zip(specs, off))
+        + f"（± {unc:.1f}）")
+    # RUN を順に書く（案 (a)）。N_DUMP = 1 で予約だけ見て止める
+    for sp in specs:
+        sp.run(50000, 1, 4)
+    f0 = [sp.rd64(R_RUN_F0_LO, R_RUN_F0_HI) for sp in specs]
+    for sp in specs:
+        sp.stop()
+    adj = [f - o for f, o in zip(f0, off)]
+    skew = [a - adj[0] for a in adj]
+    log("RUN の開始のずれ（RUN_F0 − FIN のずれ、ch 0 基準、フレーム）: "
+        + " / ".join(f"{sp.label} {k:+.1f}" for sp, k in zip(specs, skew))
+        + f"（± {unc:.1f}。予言 0〜5 フレーム = 0〜10 µs）")
+    for sp in specs:
+        sp.wr(R_CTRL, CTRL_CLR)
+    log(f"4 本の部分: {'OK' if ok else '**NG**（読み出しが遅い）'}")
+    return ok
 
 
 # --------------------------------------------------------------------- 判定
@@ -348,7 +477,9 @@ def flag_timeline(ol, args, t_ov):
     それぞれが初めて立った時刻（Overlay() が返ってからの秒）を出す。その後ゾーンを設定して読み、待って読む。
     rev6 以降の .bit なら生の見張りも出す。**FLAGS は消さない。**
     """
-    sp = Spec(ol.spec_core_0.mmio, slow=args.slow_read)
+    i = args.chs[0]
+    sp = Spec(getattr(ol, f"spec_core_{i}").mmio, slow=args.slow_read, idx=i, label=CHANS[i][0])
+    log(f"ch {i}（{CHANS[i][0]}）を見る")
     ident = sp.rd(R_ID)
     rev = feat_rev(ident)
     log(f"spec_core: ID = {ident:08x}（{'proj010' if (ident & ID_MASK) == 0x00100000 else f'rev{(ident >> 8) & 0xFF}'}）"
@@ -380,7 +511,7 @@ def flag_timeline(ol, args, t_ov):
     for b in sorted(t_f):
         log(f"  FLAGS[{b}]（{FLAG_NAMES[b]}）が初めて立った: {t_f[b]:.4f} s")
     snap("読み続けた後")
-    check_tile(ol.rfdc, args.zone)
+    check_tiles(ol.rfdc, args.zone)
     snap("ゾーンの設定の直後")
     if args.settle > 0:
         time.sleep(args.settle)
@@ -685,6 +816,11 @@ def spectrum_report(spec, m, tone, sg_dbm, atten_db, shift):
     log(f"  線の振幅 ≒ {amp14:.1f} LSB（14 bit）= {dbfs:.2f} dBFS（ch の中心に乗っている場合。境目なら最大 −3.92 dB）")
     if tone is not None:
         kt = ch_of_if(tone)
+        kr = int(round(kt))
+        # **SHIFT は ch ごとに auto で選ぶので、ch 間で比べるときは 4^SHIFT を戻した値を使う**
+        # （2026-09-28、模擬で漏れの試験を回して −66 dB のはずが −23 dB と出て気づいた）
+        spectrum_report.last = dict(k=k, p_tone=float(p[kr]) * 4.0 ** shift, floor=float(floor) * 4.0 ** shift,
+                                    dbfs=dbfs, kt=kt, shift=shift)
         hit = abs(k - kt) <= 0.5
         log(f"  トーン {tone} MHz の期待 ch = {kt:.2f} → 実際 {k}（{'OK' if hit else '**違う**'}）")
         if not hit:
@@ -701,6 +837,34 @@ def spectrum_report(spec, m, tone, sg_dbm, atten_db, shift):
             log(f"  レベルの帳簿: SG {sg_dbm:+.2f} dBm − 減衰 {atten_db:.2f} dB = ADC 入力 {sg_dbm - atten_db:+.2f} dBm"
                 f" → 0 dBFS 換算 {sg_dbm - atten_db - dbfs_c:+.2f} dBm（VERSIONS.md: +5.8 dBm @ 100 MHz）")
     return k
+
+
+spectrum_report.last = None
+
+
+def xch_report(rows, split, leak_from):
+    """--tone を 2 本以上で: 期待 ch の強さの ch 間の比。rows = [(sp, last)]"""
+    ok = True
+    ref = max(r["p_tone"] for _, r in rows) if leak_from is None else \
+        next(r["p_tone"] for sp, r in rows if sp.idx == leak_from)
+    log("")
+    log("---- ch 間の比（トーンの期待 ch の電力、" + ("最大の ch 基準" if leak_from is None else f"ch {leak_from} 基準") + "）----")
+    rel = {}
+    for sp, r in rows:
+        rel[sp.idx] = 10 * np.log10(max(r["p_tone"], 1e-30) / ref)
+        log(f"  ch {sp.idx}（{sp.label}）: {rel[sp.idx]:+7.2f} dB / 中央値比 {10 * np.log10(max(r['p_tone'], 1e-30) / r['floor']):6.2f} dB"
+            f" / 最大の ch {r['k']} / SHIFT {r['shift']}")
+    if split:
+        spread = max(rel.values()) - min(rel.values())
+        good = spread <= 0.3
+        log(f"4 分配の一致: 最大 − 最小 = {spread:.2f} dB（予言 ≦ 0.3 dB。分配器の出口の不揃いを引く前）→ {'OK' if good else '**NG**'}")
+        ok &= good
+    if leak_from is not None:
+        worst = max(v for i, v in rel.items() if i != leak_from)
+        good = worst <= -59.0
+        log(f"漏れ: 最悪 {worst:.1f} dBc（予言 ≦ −59 dBc。床に埋もれていれば床の値）→ {'OK' if good else '**NG**'}")
+        ok &= good
+    return ok
 
 
 def radiometer(sp, nacc_list, ndump, shift):
@@ -1073,6 +1237,10 @@ def image_report(spec, tone, zone=2):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--bitfile", default=BITFILE)
+    p.add_argument("--ch", default="all", help="判定する ch: all / 0〜3 / A〜D（ADC_A〜D）。カンマ区切り")
+    p.add_argument("--split", action="store_true", help="--tone で、4 分配した同じ線の強さが揃うかを判定（≦ 0.3 dB）")
+    p.add_argument("--leak-from", type=int, default=None, metavar="I",
+                   help="--tone で、ch I だけに入れて残りへの漏れを判定（≦ −59 dBc）")
     p.add_argument("--clkin", default="stock", choices=("stock", "0", "1", "2"),
                    help="LMK の PLL1 の基準。0 = CLK_IN（外部 10 MHz）")
     p.add_argument("--ref", type=float, default=10.0)
@@ -1131,6 +1299,22 @@ def main():
     if args.atten_db < 0:
         log("ERROR: --atten-db は正の値で書く（10 dB の減衰なら 10）")
         sys.exit(2)
+    try:
+        args.chs = parse_ch(args.ch)
+    except ValueError as e:
+        log(f"ERROR: {e}")
+        sys.exit(2)
+    single = [n for n, v in (("--record", args.record), ("--tick", args.tick), ("--flag-timeline", args.flag_timeline))
+              if v is not None]
+    if single and len(args.chs) != 1:
+        log(f"ERROR: {single[0]} は 1 本ずつ（--ch で 1 本を選ぶ。4 本同時の記録はまだ無い）")
+        sys.exit(2)
+    if args.any_id:
+        log("ERROR: --any-id（proj010.bit の対照）は proj012 の 4 本の道では使えない。proj011 の spectrometer.py を使う")
+        sys.exit(2)
+    if args.leak_from is not None and args.leak_from not in args.chs:
+        log("ERROR: --leak-from の ch が --ch に入っていない")
+        sys.exit(2)
 
     from pynq import Overlay
     import xrfdc                                  # **Overlay() より前に import する**（VERSIONS.md）
@@ -1143,125 +1327,127 @@ def main():
         sys.exit(1)
     if args.flag_timeline is not None:
         sys.exit(0 if flag_timeline(ol, args, t_ov) else 1)
-    check_tile(ol.rfdc, args.zone)
+    check_tiles(ol.rfdc, args.zone)
     if args.settle > 0:
         log(f"背景較正の収束を待つ: {args.settle} s")
         time.sleep(args.settle)
 
-    sp = Spec(ol.spec_core_0.mmio, slow=args.slow_read)
-    ident = sp.rd(R_ID)
-    log(f"spec_core: ID = {ident:08x} / {fft_cfg_str(ident)}")
-    if (ident & ID_MASK) != ID_EXPECT:
-        if args.any_id and (ident & ID_MASK) == 0x00100000:
-            log("NOTE: proj010 の .bit を対照として使う（--any-id）。レジスタの配置は同じ、FFT IP は nonrealtime")
+    specs = open_specs(ol, args)
+    log(f"判定する ch: " + ", ".join(f"{sp.idx}（{sp.label}）" for sp in specs))
+    for sp in specs:
+        log(f"---- ch {sp.idx}（{sp.label}）の起動 ----")
+        startguard_report(sp)
+        sp.stop()
+        if args.keep_startup_flags:
+            # **起動の瞬間に立ったものを残す**（2026-09-25）。通常は消すが、消すと「起動の直後に入力の隙間があり、
+            # それが realtime の IP の枠と入力側の数えをずらした」ことの証拠まで消える
+            f0 = sp.flags()
+            log(f"起動の直後の FLAGS（消さない）: {f0:02x}（{flag_text(f0)}）")
         else:
-            log(f"ERROR: ID の上位 16 bit が {ID_EXPECT >> 16:04x} でない。別の proj の .bit が載っている")
-            sys.exit(1)
-    # proj012 は rev1 から BUILD を持つ（proj011 の rev 番号の規則「rev ≧ 4」を持ち込むと、BUILD の照合が黙って飛ぶ）
-    if (ident & ID_MASK) == ID_EXPECT:
-        bt = sp.rd(R_BUILD)
-        preset, grade = (bt >> 30) & 1, (bt >> 28) & 3
-        log(f"ビルドの指紋: BUILD = {bt:08x}（ボードのプリセット {'あり' if preset else '**なし**'} / 速度グレード -{grade}）")
-        if (bt >> 27) & 1:
-            log(f"NOTE: **遅いビットの検証ビルド**（gb_fifo の gray の bit {(bt >> 24) & 7} をわざと遅らせてある。本番に使わない）")
-        if not preset and not args.allow_nopreset:
-            log("ERROR: プリセットの無い検証ビルド（build-1-e*/ など）が載っている。実機には build/ の .bit を使う")
-            sys.exit(1)
-    startguard_report(sp)
-    sp.stop()
-    if args.keep_startup_flags:
-        # **起動の瞬間に立ったものを残す**（2026-09-25）。通常は消すが、消すと「起動の直後に入力の隙間があり、
-        # それが realtime の IP の枠と入力側の数えをずらした」ことの証拠まで消える
-        f0 = sp.flags()
-        log(f"起動の直後の FLAGS（消さない）: {f0:02x}（{flag_text(f0)}）")
-    else:
-        sp.wr(R_CTRL, CTRL_CLR)                   # 立ち上がりの隙間で立ったフラグを消す
-
-    if args.probe:
-        sys.exit(0 if probe(sp) else 1)
-
-    # SHIFT: 雑音の成分の σ が SHIFT 後に 2^9 付近になるように選ぶ（強い線が 18 bit に収まる余地を残す）
-    if args.shift == "auto":
-        sp.run(1, 1, 0)
-        time.sleep(0.01)
-        _, _, snap = sp.read_dump(with_snap=True)
-        sx = (snap.astype(np.int64) >> 2).std()
-        sz = sx * np.sqrt(NFFT / 2)                    # 成分あたり
-        shift = int(max(0, min(15, np.ceil(np.log2(max(sz, 1) / 512)))))
-        log(f"SHIFT = {shift}（auto: 入力 std {sx:.1f} LSB → 成分の σ {sz:.0f} → {sz / 2 ** shift:.0f} LSB）")
-    else:
-        shift = int(args.shift)
+            sp.wr(R_CTRL, CTRL_CLR)               # 立ち上がりの隙間で立ったフラグを消す
 
     ok = True
-    ints = lambda t: [int(v) for v in t.split(",")]
-    if args.grst_trials is not None:
-        sys.exit(0 if grst_trials(sp, args.grst_trials, ints(args.gb_k), ints(args.st_n), ints(args.grst_adc),
-                                  ints(args.grst_dsp), ints(args.grst_adj), args.grst_wait, args.grst_csv) else 1)
-    if args.inject_test is not None:
-        sys.exit(0 if inject_test(sp, args.inject_test, args.grst_wait) else 1)
-    if args.srst_trials is not None:
-        sys.exit(0 if srst_trials(sp, args.srst_trials, [int(v) for v in args.srst_d.split(",")],
-                                  [int(v) for v in args.srst_e.split(",")], args.srst_wait, shift) else 1)
-    if args.flagwatch is not None:
-        sys.exit(0 if flagwatch(sp, args.flagwatch, shift, args.flagwatch_run) else 1)
-    if args.golden:
-        ok &= golden(sp, shift, args.tone)
-    elif args.radiometer:
-        ok &= radiometer(sp, [int(v) for v in args.nacc.split(",")], max(args.ndump, 3), shift)
-    elif args.tick is not None:
-        ok &= tick(sp, int(args.nacc.split(",")[0]), args.tick, shift, args.save)
-    elif args.record is not None:
-        if not args.out:
-            log("ERROR: --record には --out PREFIX が要る")
-            sys.exit(2)
-        ok &= record(sp, int(args.nacc.split(",")[0]), args.record, shift, args.out, auto_recover=not args.no_recover, meta_info=
-                     dict(clkin=args.clkin, zone=args.zone, bitfile=args.bitfile,
-                          if_mhz_ch0=float(if_of_ch(0, args.zone)), df_mhz=DF_HZ / 1e6))
+    results = {}
+    if args.probe:
+        for sp in specs:
+            log(f"\n==== 判定 0: ch {sp.idx}（{sp.label}）====")
+            results[sp.idx] = probe(sp)
+            ok &= results[sp.idx]
+        if len(specs) > 1:
+            log("\n==== 判定 0: 4 本の部分 ====")
+            ok &= multi_probe(specs)
     else:
-        nacc = int(args.nacc.split(",")[0])
-        seq = sp.run(nacc, args.ndump, shift)
-        keep = []
-        t0 = time.time()
-        for i in range(args.ndump):
-            if sp.wait_dump(seq, nacc * T_FRAME * 3 + 1.0) is None:
-                log("ERROR: ダンプが閉じない")
-                sys.exit(1)
-            m, spec, _ = sp.read_dump()
-            seq = m["seq"]
-            keep.append((m, spec))
-        # **連続して読めたか**: DUMP_K が 1 ずつ増え、DUMP_F0 の間隔が N_ACC ちょうどなら、隙間なく並んだダンプを
-        # 1 つも落とさずに読んだことになる（二面で交互に積むので積分のデッドタイムは 0）
-        if len(keep) > 1:
-            kk = np.array([x["k"] for x, _ in keep])
-            ff = np.array([x["f0"] for x, _ in keep], dtype=np.int64)
-            gaps = int(np.sum(np.diff(kk) != 1))
-            f0ok = bool(np.all(np.diff(ff) == np.diff(kk) * nacc))
-            log(f"連続読み出し: {len(keep)} ダンプ × {nacc * T_FRAME * 1e3:.1f} ms を {time.time() - t0:.1f} s で / "
-                f"読み落とし {gaps} 箇所 / DUMP_F0 の間隔 {'= DUMP_K × N_ACC（OK）' if f0ok else '**が合わない**'}")
-            ok &= f0ok
-        m, spec = keep[-1]
-        spectrum_report(spec, m, args.tone, args.sg_dbm, args.atten_db, shift)
-        if args.peaks > 0:
-            # 何ダンプも取ったなら全部を足して床を下げてから探す
-            tot = np.sum([sp_.astype(np.float64) for _, sp_ in keep], axis=0)
-            mm = dict(m, n=sum(x["n"] for x, _ in keep))
-            peaks(tot, args.peaks, mm)
-            if args.tone is not None:
-                image_report(tot, args.tone, args.zone)
-        ok &= m["flags"] == 0
-        if args.save:
-            np.savez(args.save, spec=np.array([s for _, s in keep]),
-                     meta=np.array([[mm["seq"], mm["k"], mm["n"], mm["f0"], mm["sat"], mm["flags"]]
-                                    for mm, _ in keep], dtype=np.int64),
-                     meta_cols=np.array(["seq", "k", "n", "f0", "sat", "flags"]),
-                     if_mhz=if_of_ch(np.arange(NCH_OUT), args.zone), shift=shift,
-                     clkin=args.clkin, tone=np.nan if args.tone is None else args.tone,
-                     sg_dbm=np.nan if args.sg_dbm is None else args.sg_dbm, atten_db=args.atten_db)
-            log(f"saved: {args.save}")
-    sp.stop()
+        tone_rows = []
+        for sp in specs:
+            log(f"\n==== ch {sp.idx}（{sp.label}）====")
+            shift = auto_shift(sp) if args.shift == "auto" else int(args.shift)
+            r = measure_one(sp, args, shift)
+            results[sp.idx] = r
+            ok &= r
+            if args.tone is not None and spectrum_report.last is not None:
+                tone_rows.append((sp, spectrum_report.last))
+                spectrum_report.last = None
+        if len(tone_rows) > 1:
+            ok &= xch_report(tone_rows, args.split, args.leak_from)
+    for sp in specs:
+        sp.stop()
     log("")
+    log("ch ごと: " + " / ".join(f"{i}（{CHANS[i][0]}）{'OK' if v else 'NG'}" for i, v in sorted(results.items())))
     log(f"RESULT {'OK' if ok else 'NG'}")
     sys.exit(0 if ok else 1)
+
+
+def measure_one(sp, args, shift):
+    """1 本ぶんの判定（proj011 の main の本体を ch ごとに回す形にしたもの）。True / False を返す"""
+    ok = True
+    ints = lambda t: [int(v) for v in t.split(",")]
+    save = args.save
+    if save and len(args.chs) > 1:
+        save = (save[:-4] if save.endswith(".npz") else save) + f"_{sp.label}.npz"
+    if args.grst_trials is not None:
+        return grst_trials(sp, args.grst_trials, ints(args.gb_k), ints(args.st_n), ints(args.grst_adc),
+                           ints(args.grst_dsp), ints(args.grst_adj), args.grst_wait, args.grst_csv)
+    if args.inject_test is not None:
+        return inject_test(sp, args.inject_test, args.grst_wait)
+    if args.srst_trials is not None:
+        return srst_trials(sp, args.srst_trials, ints(args.srst_d), ints(args.srst_e), args.srst_wait, shift)
+    if args.flagwatch is not None:
+        return flagwatch(sp, args.flagwatch, shift, args.flagwatch_run)
+    if args.golden:
+        return golden(sp, shift, args.tone)
+    if args.radiometer:
+        return radiometer(sp, ints(args.nacc), max(args.ndump, 3), shift)
+    if args.tick is not None:
+        return tick(sp, int(args.nacc.split(",")[0]), args.tick, shift, save)
+    if args.record is not None:
+        if not args.out:
+            log("ERROR: --record には --out PREFIX が要る")
+            return False
+        return record(sp, int(args.nacc.split(",")[0]), args.record, shift, args.out, auto_recover=not args.no_recover,
+                      meta_info=dict(clkin=args.clkin, zone=args.zone, bitfile=args.bitfile, ch=sp.idx, ch_label=sp.label,
+                                     if_mhz_ch0=float(if_of_ch(0, args.zone)), df_mhz=DF_HZ / 1e6))
+    nacc = int(args.nacc.split(",")[0])
+    seq = sp.run(nacc, args.ndump, shift)
+    keep = []
+    t0 = time.time()
+    for i in range(args.ndump):
+        if sp.wait_dump(seq, nacc * T_FRAME * 3 + 1.0) is None:
+            log("ERROR: ダンプが閉じない")
+            return False
+        m, spec, _ = sp.read_dump()
+        seq = m["seq"]
+        keep.append((m, spec))
+    sp.stop()
+    # **連続して読めたか**: DUMP_K が 1 ずつ増え、DUMP_F0 の間隔が N_ACC ちょうどなら、隙間なく並んだダンプを
+    # 1 つも落とさずに読んだことになる（二面で交互に積むので積分のデッドタイムは 0）
+    if len(keep) > 1:
+        kk = np.array([x["k"] for x, _ in keep])
+        ff = np.array([x["f0"] for x, _ in keep], dtype=np.int64)
+        gaps = int(np.sum(np.diff(kk) != 1))
+        f0ok = bool(np.all(np.diff(ff) == np.diff(kk) * nacc))
+        log(f"連続読み出し: {len(keep)} ダンプ × {nacc * T_FRAME * 1e3:.1f} ms を {time.time() - t0:.1f} s で / "
+            f"読み落とし {gaps} 箇所 / DUMP_F0 の間隔 {'= DUMP_K × N_ACC（OK）' if f0ok else '**が合わない**'}")
+        ok &= f0ok
+    m, spec = keep[-1]
+    spectrum_report(spec, m, args.tone, args.sg_dbm, args.atten_db, shift)
+    if args.peaks > 0:
+        # 何ダンプも取ったなら全部を足して床を下げてから探す
+        tot = np.sum([sp_.astype(np.float64) for _, sp_ in keep], axis=0)
+        mm = dict(m, n=sum(x["n"] for x, _ in keep))
+        peaks(tot, args.peaks, mm)
+        if args.tone is not None:
+            image_report(tot, args.tone, args.zone)
+    ok &= m["flags"] == 0
+    if save:
+        np.savez(save, spec=np.array([s_ for _, s_ in keep]),
+                 meta=np.array([[mm["seq"], mm["k"], mm["n"], mm["f0"], mm["sat"], mm["flags"]]
+                                for mm, _ in keep], dtype=np.int64),
+                 meta_cols=np.array(["seq", "k", "n", "f0", "sat", "flags"]),
+                 if_mhz=if_of_ch(np.arange(NCH_OUT), args.zone), shift=shift, ch=sp.idx, ch_label=sp.label,
+                 clkin=args.clkin, tone=np.nan if args.tone is None else args.tone,
+                 sg_dbm=np.nan if args.sg_dbm is None else args.sg_dbm, atten_db=args.atten_db)
+        log(f"saved: {save}")
+    return ok
 
 
 if __name__ == "__main__":
