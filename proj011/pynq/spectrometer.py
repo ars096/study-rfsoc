@@ -326,6 +326,54 @@ def diag_report(sp, label):
     return dict(tl=tl, ev=ev, fs=fs, evc=evc, fsc=fsc, fin=fin)
 
 
+def flag_timeline(ol, args, t_ov):
+    """起動の途切れ（FLAGS[4]）が**いつ**立つかを見る（2026-09-28。途切れが出る proj010.bit で使う）。
+
+    分けたいのは 2 つ: (a) タイルの起動・データの始まりの瞬間に立つ / (b) PS が RFDC を触ったとき（ナイキストゾーンの設定）か、
+    背景較正の待ちの間に立つ。Overlay の直後から sec 秒、FLAGS と CTRL[3]（入力が流れ始めた）を読み続けて、
+    それぞれが初めて立った時刻（Overlay() が返ってからの秒）を出す。その後ゾーンを設定して読み、待って読む。
+    rev6 以降の .bit なら生の見張りも出す。**FLAGS は消さない。**
+    """
+    sp = Spec(ol.spec_core_0.mmio, slow=args.slow_read)
+    ident = sp.rd(R_ID)
+    rev = (ident >> 8) & 0xFF
+    log(f"spec_core: ID = {ident:08x}（{'proj010' if (ident & ID_MASK) == 0x00100000 else f'rev{rev}'}）"
+        f" / Overlay() が返ってから {time.time() - t_ov:.3f} s")
+
+    def snap(label):
+        f, c = sp.flags(), sp.rd(R_CTRL)
+        extra = ""
+        if (ident & ID_MASK) == ID_EXPECT and rev >= 6:
+            r = raw_state(sp)
+            extra = f" / 生の途切れ {r['gaps']}（最初 {r['first']}）・最初の valid まで {r['t0'] / F_CORE * 1e3:.3f} ms"
+        log(f"  [{time.time() - t_ov:7.3f} s] {label}: FLAGS {f:02x}（{flag_text(f)}）/ 流れ始めた {(c >> 3) & 1}{extra}")
+        return f
+
+    t_start, t_f = None, {}
+    t_end = t_ov + args.flag_timeline
+    n = 0
+    while time.time() < t_end:
+        f, c = sp.flags(), sp.rd(R_CTRL)
+        now = time.time() - t_ov
+        n += 1
+        if t_start is None and (c >> 3) & 1:
+            t_start = now
+        for b in range(8):
+            if (f >> b) & 1 and b not in t_f:
+                t_f[b] = now
+    log(f"Overlay の直後から {args.flag_timeline} s（{n} 回読んだ。1 回 {args.flag_timeline / max(n, 1) * 1e3:.2f} ms）:")
+    log(f"  入力が流れ始めた: {'%.4f s' % t_start if t_start is not None else '見ていない（読み始める前から）' if (sp.rd(R_CTRL) >> 3) & 1 else '**まだ**'}")
+    for b in sorted(t_f):
+        log(f"  FLAGS[{b}]（{FLAG_NAMES[b]}）が初めて立った: {t_f[b]:.4f} s")
+    snap("読み続けた後")
+    check_tile(ol.rfdc, args.zone)
+    snap("ゾーンの設定の直後")
+    if args.settle > 0:
+        time.sleep(args.settle)
+    snap(f"{args.settle} s 待った後")
+    return True
+
+
 def startguard_report(sp):
     """rev5: 起動の見張り（Overlay の後、入力が STABLE_N クロック途切れずに続くまで入力の口を閉じる）の結果を出す。
 
@@ -790,8 +838,30 @@ def tick(sp, nacc, seconds, shift, save=None):
     return ok
 
 
+# 運用中に立ったら起動をやり直すフラグ。[3]（IP が入力を受けなかった）は起動のたびに立つ別の事象なので外す（rev6 の実機）
+RECOVER_MASK = 0xFF & ~0x08
+
+
+def recover(sp):
+    """運用中の自動のやり直し（rev6）。GRST（rev6 以降。ギアボックスごと）か SRST（rev4・rev5）で起動をやり直し、
+    見張り（64 µs）とパイプラインが落ち着くのを待ってから FLAGS を消す。やり直した方法を返す"""
+    rev = (sp.rd(R_ID) >> 8) & 0xFF
+    sp.stop()
+    if rev >= 6:
+        sp.wr(R_CTRL, CTRL_GRST)
+        how = "GRST"
+    elif rev >= 4:
+        sp.wr(R_CTRL, CTRL_SRST)
+        how = "SRST"
+    else:
+        how = "なし（rev3 以前の .bit）"
+    time.sleep(0.01)
+    sp.wr(R_CTRL, CTRL_CLR)
+    return how
+
+
 # ボード内のクロック（proj009 の adc_capture.py の表から）。無入力で立つ線の出どころを当てる
-def record(sp, nacc, seconds, shift, prefix, meta_info):
+def record(sp, nacc, seconds, shift, prefix, meta_info, auto_recover=True):
     """長時間の連続記録。**ダンプを 1 つずつファイルへ書き、メモリに溜めない**（1 時間の 100 ms 記録は 1.2 GB）。
 
     書くもの（`tools/allan.py` が読む）:
@@ -799,6 +869,12 @@ def record(sp, nacc, seconds, shift, prefix, meta_info):
       PREFIX.meta.npy  [ダンプ, 7] int64 — seq, k, n, f0, sat, flags, 読んだ時刻（Unix ns、PS の時計）
       PREFIX.info.json — nacc・τ・shift・書けたダンプ数・読み落とし・ボードの設定
     Ctrl-C で止めても、それまでの分は正しく閉じる。
+
+    **自動のやり直し**（rev6、既定で有効。`--no-recover` で切る）: ダンプの FLAGS に [3] 以外が立っていたら、
+    そのダンプに印を付け（meta の flags に残る）、GRST / SRST で起動をやり直して RUN し直す。
+    やり直しで DUMP_K は 0 に、DUMP_F0 は新しい起動の番号に戻るので、meta の k 列は**通しの番号**に付け替え、
+    印の付いたダンプの前後で 2 ずつ飛ばす（tools/allan.py は k が 1 ずつ続く区間しか束ねないので、印の付いたダンプは自然に外れる）。
+    やり直しの記録は info.json の recoveries。
     """
     import json
     tau = nacc * T_FRAME
@@ -814,6 +890,9 @@ def record(sp, nacc, seconds, shift, prefix, meta_info):
     seq = sp.run(nacc, 0, shift)
     i, t0, last = 0, time.time(), 0.0
     stopped = "完了"
+    kg_base, last_kg = 0, -1
+    recoveries, seg = [], np.zeros(ndump, dtype=np.int64)
+    segid = 0
     try:
         while i < ndump:
             if sp.wait_dump(seq, tau * 3 + 1.0) is None:
@@ -821,9 +900,26 @@ def record(sp, nacc, seconds, shift, prefix, meta_info):
                 break
             m, spec, _ = sp.read_dump()
             seq = m["seq"]
+            bad = m["flags"] & RECOVER_MASK
+            if bad and auto_recover:
+                kg = last_kg + 2                         # 前後から切り離す
+                seg[i] = segid + 1
+                segid += 2
+            else:
+                kg = m["k"] + kg_base
+                seg[i] = segid
             spec_f[i] = spec
-            meta_f[i] = (m["seq"], m["k"], m["n"], m["f0"], m["sat"], m["flags"], time.time_ns())
+            meta_f[i] = (m["seq"], kg, m["n"], m["f0"], m["sat"], m["flags"], time.time_ns())
+            last_kg = kg
             i += 1
+            if bad and auto_recover:
+                how = recover(sp)
+                ev = dict(i=i - 1, t=time.time() - t0, seq=m["seq"], k=m["k"], f0=m["f0"], flags=m["flags"], how=how)
+                recoveries.append(ev)
+                log(f"  **FLAGS {m['flags']:02x}（{flag_text(m['flags'])}）→ {how} でやり直した**"
+                    f"（ダンプ {i - 1}、{ev['t']:.1f} s、k {m['k']}、F0 {m['f0']}）")
+                seq = sp.run(nacc, 0, shift)
+                kg_base = kg + 2
             if i % 100 == 0:
                 spec_f.flush()
                 meta_f.flush()
@@ -838,16 +934,22 @@ def record(sp, nacc, seconds, shift, prefix, meta_info):
     meta_f.flush()
     k = meta_f[:i, 1]
     f0 = meta_f[:i, 3]
-    gaps = int(np.sum(np.diff(k) != 1)) if i > 1 else 0
-    f0ok = bool(np.all(np.diff(f0) == np.diff(k) * nacc)) if i > 1 else True
-    flags = int(np.bitwise_or.reduce(meta_f[:i, 5])) if i else 0
+    same = (seg[1:i] == seg[:i - 1]) if i > 1 else np.zeros(0, bool)     # 同じ区間（やり直しをまたがない）の隣どうし
+    gaps = int(np.sum((np.diff(k) != 1) & same)) if i > 1 else 0
+    f0ok = bool(np.all((np.diff(f0) == np.diff(k) * nacc)[same])) if i > 1 else True
+    marked = {r["i"] for r in recoveries}
+    flags = int(np.bitwise_or.reduce([int(meta_f[j, 5]) & RECOVER_MASK for j in range(i) if j not in marked] or [0]))
+    flags_all = int(np.bitwise_or.reduce(meta_f[:i, 5])) if i else 0
     sat = int(meta_f[:i, 4].sum()) if i else 0
-    info.update(ndump_written=i, gaps=gaps, f0_consistent=f0ok, flags_or=flags, sat_total=sat,
-                stopped=stopped, elapsed_s=time.time() - t0)
+    info.update(ndump_written=i, gaps=gaps, f0_consistent=f0ok, flags_or=flags_all, flags_or_unmarked=flags,
+                sat_total=sat, stopped=stopped, elapsed_s=time.time() - t0,
+                auto_recover=auto_recover, recoveries=recoveries,
+                k_note="k は通しの番号。自動のやり直しで印を付けたダンプの前後は 2 飛ばす（DUMP_K そのものではない）")
     with open(prefix + ".info.json", "w") as fh:
         json.dump(info, fh, ensure_ascii=False, indent=1)
     log(f"記録を閉じた（{stopped}）: {i} ダンプ / 読み落とし {gaps} 箇所 / "
-        f"DUMP_F0 の間隔 {'OK' if f0ok else '**合わない**'} / FLAGS {flags:02x} / SAT 合計 {sat}")
+        f"DUMP_F0 の間隔 {'OK' if f0ok else '**合わない**'} / FLAGS {flags_all:02x}（印の無いダンプだけなら {flags:02x}）/ SAT 合計 {sat}")
+    log(f"  自動のやり直し: {len(recoveries)} 回{'' if auto_recover else '（無効）'}")
     log(f"  → {prefix}.spec.npy / .meta.npy / .info.json（解析は tools/allan.py {prefix}）")
     return f0ok and flags == 0 and i > 0
 
@@ -999,6 +1101,11 @@ def main():
     p.add_argument("--grst-csv", default=None, help="--grst-trials の 1 回ごとの記録（CSV）")
     p.add_argument("--inject-test", type=int, default=None, metavar="N",
                    help="rev6: 途切れを注入して、見張りと FLAGS の振る舞いを N 回ずつ確かめる（実機の陽性対照）")
+    p.add_argument("--no-recover", action="store_true",
+                   help="--record の自動のやり直し（FLAGS の [3] 以外で GRST / SRST）を切る")
+    p.add_argument("--flag-timeline", type=float, default=None, metavar="SEC",
+                   help="起動の途切れがいつ立つかを見る: Overlay の直後から SEC 秒 FLAGS を読み続け、ゾーンの設定・待ちの後にも読んで終わる。"
+                        "**起動の直後の消去をしない**。proj010 の .bit は --any-id")
     p.add_argument("--keep-startup-flags", action="store_true",
                    help="起動（Overlay）直後の FLAGS の消去をしない。起動の瞬間に立ったもの（入力の隙間など）を残して読む")
     p.add_argument("--allow-nopreset", action="store_true",
@@ -1015,10 +1122,13 @@ def main():
     import xrfdc                                  # **Overlay() より前に import する**（VERSIONS.md）
     setup_clocks(args.clkin, args.ref)
     ol = Overlay(args.bitfile)
+    t_ov = time.time()
     log(f"Overlay: {args.bitfile}")
     if not isinstance(ol.rfdc, xrfdc.RFdc):
         log("ERROR: RFDC に xrfdc のドライバが当たっていない（DefaultIP のまま）")
         sys.exit(1)
+    if args.flag_timeline is not None:
+        sys.exit(0 if flag_timeline(ol, args, t_ov) else 1)
     check_tile(ol.rfdc, args.zone)
     if args.settle > 0:
         log(f"背景較正の収束を待つ: {args.settle} s")
@@ -1089,7 +1199,7 @@ def main():
         if not args.out:
             log("ERROR: --record には --out PREFIX が要る")
             sys.exit(2)
-        ok &= record(sp, int(args.nacc.split(",")[0]), args.record, shift, args.out,
+        ok &= record(sp, int(args.nacc.split(",")[0]), args.record, shift, args.out, auto_recover=not args.no_recover, meta_info=
                      dict(clkin=args.clkin, zone=args.zone, bitfile=args.bitfile,
                           if_mhz_ch0=float(if_of_ch(0, args.zone)), df_mhz=DF_HZ / 1e6))
     else:
