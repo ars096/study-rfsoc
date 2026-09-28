@@ -630,7 +630,8 @@ ID 00110607 / BUILD 60000000。Overlay の起動 3 回とも: 生の途切れ 0�
 ### 遅いビットの検証ビルド（`make GB_SLOW=1`、2026-09-28。RTL は同じ）
 
 rev6 のビット列は途切れない側だったので、**途切れる状態をわざと作って**見立てを実機で直接試す。配置の後に、gb_fifo の書き込みポインタの
-bit 1 の同期段だけを SLICE の X で 60 離れた場所へ置き直す（tools/gb_slow.tcl。impl_1 の配置の後の Tcl）。出力は build-slow1/、
+bit 1 の同期段だけを遠くの SLICE（既定 SLICE_X46Y109。rev6 の元の場所 SLICE_X106Y109 から X で 60）に固定する（tools/gb_slow.tcl。impl_1 の配置の前の Tcl で LOC）。
+初版は配置の後に place_cell で SITE/BEL を指定したが、2 段目で「bel and site locations are in disagreement」が 60 か所すべてで出て止まった（2026-09-28）。出力は build-slow1/、
 spec_core の BUILD[27] = 1・[26:24] = 1（PS が「遅いビットの検証ビルド」と表示する。本番に使わない）。
 
 **予言（ビルドの前に書く）**

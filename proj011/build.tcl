@@ -39,11 +39,12 @@ if {[info exists ::env(OUTDIR)] && $::env(OUTDIR) ne ""} { set outdir ./$::env(O
 set fft_opt res
 if {[info exists ::env(FFT_OPT)] && $::env(FFT_OPT) ne ""} { set fft_opt $::env(FFT_OPT) }
 set gb_k_rst 0
-# rev6 の検証ビルド: GB_SLOW = b なら、gb_fifo の書き込みポインタの bit b の同期段を配置の後に X で GB_SLOW_DX 離す（tools/gb_slow.tcl）
+# rev6 の検証ビルド: GB_SLOW = b なら、gb_fifo の書き込みポインタの bit b の同期段を配置の前に遠くの SLICE（GB_SLOW_SITE）に固定する
+# （tools/gb_slow.tcl）。既定の SLICE_X46Y109 は rev6 の配置での元の場所 SLICE_X106Y109 から X で 60 離したもの
 set gb_slow ""
-set gb_slow_dx 60
+set gb_slow_site SLICE_X46Y109
 if {[info exists ::env(GB_SLOW)] && $::env(GB_SLOW) ne ""} { set gb_slow $::env(GB_SLOW) }
-if {[info exists ::env(GB_SLOW_DX)] && $::env(GB_SLOW_DX) ne ""} { set gb_slow_dx $::env(GB_SLOW_DX) }
+if {[info exists ::env(GB_SLOW_SITE)] && $::env(GB_SLOW_SITE) ne ""} { set gb_slow_site $::env(GB_SLOW_SITE) }
 if {$gb_slow ne "" && (![string is integer -strict $gb_slow] || $gb_slow < 0 || $gb_slow > 4)} {
     puts "ERROR: GB_SLOW = '$gb_slow'（0〜4。深さ 32 の gray は 5 ビット）"
     exit 1
@@ -951,11 +952,11 @@ if {$gb_slow ne ""} {
     set hook [file normalize $outdir/gb_slow_hook.tcl]
     set fh [open $hook w]
     puts $fh "set gb_slow_bit $gb_slow"
-    puts $fh "set gb_slow_dx $gb_slow_dx"
+    puts $fh "set gb_slow_site $gb_slow_site"
     puts $fh "source [file normalize ./tools/gb_slow.tcl]"
     close $fh
-    set_property STEPS.PLACE_DESIGN.TCL.POST $hook [get_runs impl_1]
-    puts "NOTE: 遅いビットの検証ビルド（bit $gb_slow、X で $gb_slow_dx）。**本番には使わない**"
+    set_property STEPS.PLACE_DESIGN.TCL.PRE $hook [get_runs impl_1]
+    puts "NOTE: 遅いビットの検証ビルド（bit $gb_slow → $gb_slow_site）。**本番には使わない**"
 }
 
 # ---- 合成〜実装〜ビットストリーム ----
