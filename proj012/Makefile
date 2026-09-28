@@ -20,8 +20,10 @@ PART         ?= $(PART_DEFAULT)
 FFT_OPT ?= res
 
 # rev6: gb_gate のしきい値のハードのリセットでの既定値（spec_core の GB_K_RST）。0 = 素通し（rev5 までと同じ起動）。
-# 0 以外は別ディレクトリ（build-k4/ など）に出す
-GB_K ?= 0
+# proj012 rev3: 既定値を 2 にした。rev2 のビット列の GRST で、K = 0 は 55 / 150 回途切れ、K = 1・2・4 は 450 回とも 0（README の rev3）。
+# 既定以外は別ディレクトリ（build-k0/ など）に出す
+GB_K_DEFAULT := 2
+GB_K ?= $(GB_K_DEFAULT)
 
 # 既定以外の part・変種は別ディレクトリに出し、検証済みの成果物を上書きしない。
 #   build/            -2・res        build-perf/      -2・perf
@@ -38,7 +40,7 @@ ifneq ($(FFT_OPT),res)
     OUTDIR := $(OUTDIR)-$(FFT_OPT)
   endif
 endif
-ifneq ($(GB_K),0)
+ifneq ($(GB_K),$(GB_K_DEFAULT))
   OUTDIR := $(OUTDIR)-k$(GB_K)
 endif
 # rev6 の検証ビルド: GB_SLOW=b で gb_fifo の gray の bit b の同期段を GB_SLOW_SITE に固定して、わざと遅らせる（tools/gb_slow.tcl）。build-slow1/ など

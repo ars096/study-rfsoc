@@ -100,7 +100,7 @@
 <rect class="blk" x="806" y="340" width="110" height="56" style="stroke:#2e8b57"/>
 <text x="814" y="358" class="tm">gb_gate_0</text>
 <text x="814" y="373" class="xs">しきい値 K</text>
-<text x="814" y="387" class="xs">見張り（既定 K = 0）</text>
+<text x="814" y="387" class="xs">見張り（既定 K = 2）</text>
 <path class="wG" d="M916,368 L936,368"/>
 <rect class="blk" x="938" y="340" width="110" height="56" style="stroke:#2e8b57"/>
 <text x="946" y="358" class="tm">gb_dn_0</text>
@@ -121,7 +121,7 @@
 <text x="1102" y="370" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
 <text x="1102" y="385" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
 <text x="1102" y="400" class="xs">BUILD_TAG 0x60800000（[23] 4ch・[1:0] ch = 0）</text>
-<text x="1102" y="415" class="xs">ID 0x0012_02CC（4 個とも同じ。rev2）</text>
+<text x="1102" y="415" class="xs">ID 0x0012_03CC（4 個とも同じ。rev3）</text>
 <text x="1364" y="336" class="xs" text-anchor="end">s_axi ◀</text>
 <rect class="ext" x="20" y="496" width="150" height="44"/>
 <text x="30" y="514" class="s">ADC_B（SMA）</text>
@@ -152,7 +152,7 @@
 <rect class="blk" x="806" y="490" width="110" height="56" style="stroke:#2e8b57"/>
 <text x="814" y="508" class="tm">gb_gate_1</text>
 <text x="814" y="523" class="xs">しきい値 K</text>
-<text x="814" y="537" class="xs">見張り（既定 K = 0）</text>
+<text x="814" y="537" class="xs">見張り（既定 K = 2）</text>
 <path class="wG" d="M916,518 L936,518"/>
 <rect class="blk" x="938" y="490" width="110" height="56" style="stroke:#2e8b57"/>
 <text x="946" y="508" class="tm">gb_dn_1</text>
@@ -169,7 +169,7 @@
 <text x="1102" y="520" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
 <text x="1102" y="535" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
 <text x="1102" y="550" class="xs">BUILD_TAG 0x60800001（[23] 4ch・[1:0] ch = 1）</text>
-<text x="1102" y="565" class="xs">ID 0x0012_02CC（4 個とも同じ。rev2）</text>
+<text x="1102" y="565" class="xs">ID 0x0012_03CC（4 個とも同じ。rev3）</text>
 <text x="1364" y="486" class="xs" text-anchor="end">s_axi ◀</text>
 <rect class="ext" x="20" y="646" width="150" height="44"/>
 <text x="30" y="664" class="s">ADC_C（SMA）</text>
@@ -200,7 +200,7 @@
 <rect class="blk" x="806" y="640" width="110" height="56" style="stroke:#2e8b57"/>
 <text x="814" y="658" class="tm">gb_gate_2</text>
 <text x="814" y="673" class="xs">しきい値 K</text>
-<text x="814" y="687" class="xs">見張り（既定 K = 0）</text>
+<text x="814" y="687" class="xs">見張り（既定 K = 2）</text>
 <path class="wG" d="M916,668 L936,668"/>
 <rect class="blk" x="938" y="640" width="110" height="56" style="stroke:#2e8b57"/>
 <text x="946" y="658" class="tm">gb_dn_2</text>
@@ -217,7 +217,7 @@
 <text x="1102" y="670" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
 <text x="1102" y="685" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
 <text x="1102" y="700" class="xs">BUILD_TAG 0x60800002（[23] 4ch・[1:0] ch = 2）</text>
-<text x="1102" y="715" class="xs">ID 0x0012_02CC（4 個とも同じ。rev2）</text>
+<text x="1102" y="715" class="xs">ID 0x0012_03CC（4 個とも同じ。rev3）</text>
 <text x="1364" y="636" class="xs" text-anchor="end">s_axi ◀</text>
 <rect class="ext" x="20" y="796" width="150" height="44"/>
 <text x="30" y="814" class="s">ADC_D（SMA）</text>
@@ -248,7 +248,7 @@
 <rect class="blk" x="806" y="790" width="110" height="56" style="stroke:#2e8b57"/>
 <text x="814" y="808" class="tm">gb_gate_3</text>
 <text x="814" y="823" class="xs">しきい値 K</text>
-<text x="814" y="837" class="xs">見張り（既定 K = 0）</text>
+<text x="814" y="837" class="xs">見張り（既定 K = 2）</text>
 <path class="wG" d="M916,818 L936,818"/>
 <rect class="blk" x="938" y="790" width="110" height="56" style="stroke:#2e8b57"/>
 <text x="946" y="808" class="tm">gb_dn_3</text>
@@ -265,7 +265,7 @@
 <text x="1102" y="820" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
 <text x="1102" y="835" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
 <text x="1102" y="850" class="xs">BUILD_TAG 0x60800003（[23] 4ch・[1:0] ch = 3）</text>
-<text x="1102" y="865" class="xs">ID 0x0012_02CC（4 個とも同じ。rev2）</text>
+<text x="1102" y="865" class="xs">ID 0x0012_03CC（4 個とも同じ。rev3）</text>
 <text x="1364" y="786" class="xs" text-anchor="end">s_axi ◀</text>
 <path class="wK" d="M285,880 L285,918"/>
 <text x="292" y="904" class="lb">clk_adc2 256 MHz（fs/16）</text>

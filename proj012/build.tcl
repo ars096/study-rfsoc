@@ -17,6 +17,7 @@
 #      組ごとに「在るべき相手と繋がっている」と「他の ch のセルと繋がっていない」の両側を見る
 #   6. （rev2）rst_adc の peripheral_aresetn をタイルの数の幅にし、xlslice でタイルごとに別のビット（別の DFF）から
 #      m*_axis_aresetn と、その タイルの ch の gb_adc_i へ配る。rev1 の CDC-11（1 個のフロップ → 2 タイルの同期段）を消す
+#   7. （rev3）gb_gate のしきい値 GB_K_RST の既定を 0 → 2（Overlay の起動にも効く）。RTL は ID の定数だけ
 #
 # 出力:
 #   build/proj012.bit      ビットストリーム（FFT_OPT=perf なら build-perf/）
@@ -55,7 +56,7 @@ if {[info exists ::env(PART)]   && $::env(PART)   ne ""} { set part   $::env(PAR
 if {[info exists ::env(OUTDIR)] && $::env(OUTDIR) ne ""} { set outdir ./$::env(OUTDIR) }
 set fft_opt res
 if {[info exists ::env(FFT_OPT)] && $::env(FFT_OPT) ne ""} { set fft_opt $::env(FFT_OPT) }
-set gb_k_rst 0
+set gb_k_rst 2          ;# rev3: 既定値 2（Makefile の GB_K_DEFAULT と対。README の rev3）
 # rev6 の検証ビルド: GB_SLOW = b なら、gb_fifo の書き込みポインタの bit b の同期段を配置の前に遠くの SLICE（GB_SLOW_SITE）に固定する
 # （tools/gb_slow.tcl）。既定の SLICE_X46Y109 は rev6 の配置での元の場所 SLICE_X106Y109 から X で 60 離したもの
 set gb_slow ""
