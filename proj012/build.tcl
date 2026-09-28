@@ -15,6 +15,8 @@
 #   5. **ch 間の結線の照合**（下の「結線の照合」）。4 組並べると、ch をまたいだ取り違え
 #      （spec_core_1 の gb_hold が gb_adc_2 に行く、など）がビルドも実機も通る形で起きうる。
 #      組ごとに「在るべき相手と繋がっている」と「他の ch のセルと繋がっていない」の両側を見る
+#   6. （rev2）rst_adc の peripheral_aresetn をタイルの数の幅にし、xlslice でタイルごとに別のビット（別の DFF）から
+#      m*_axis_aresetn と、その タイルの ch の gb_adc_i へ配る。rev1 の CDC-11（1 個のフロップ → 2 タイルの同期段）を消す
 #
 # 出力:
 #   build/proj012.bit      ビットストリーム（FFT_OPT=perf なら build-perf/）
@@ -782,6 +784,45 @@ puts [format "gb_adc_*: DW = %d / gb_gate_*: DW = %d・CW = %d（axis_rd_data_co
 set rst_ctrl [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst_ctrl]
 set rst_adc  [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst_adc]
 set rst_dsp  [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst_dsp]
+# rev2: **rst_adc の peripheral_aresetn をタイルの数だけの幅にし、タイルごとに別のフロップから配る。**
+#   rev1 では 1 個のフロップ（ACTIVE_LOW_PR_OUT_DFF[0]）が両タイルの m*_axis_aresetn に配られ、RFDC の IP の中の
+#   タイルごとの同期段（cdc_adc{0,2}_clk_valid_i）へ枝分かれして CDC-11（Critical）が 2 件出た。
+#   ビットごとに別の DFF（ACTIVE_LOW_PR_OUT_DFF[k]）になり、同じ順序回路から同じクロックで解かれるので、解除の時刻は揃ったまま。
+#   ch i の gb_adc_i は、その ch のタイルのビットを受ける
+set n_tiles [llength $adc_tiles]
+set_property CONFIG.C_NUM_PERP_ARESETN $n_tiles $rst_adc
+if {[get_property CONFIG.C_NUM_PERP_ARESETN $rst_adc] != $n_tiles} {
+    puts "ERROR: rst_adc の C_NUM_PERP_ARESETN が [get_property CONFIG.C_NUM_PERP_ARESETN $rst_adc]（要求 $n_tiles）"
+    exit 1
+}
+# 1 ビットを切り出すセル。**版で IP が変わる**（2024.2 以降は xlslice が非推奨で inline_hdl の ilslice）ので、作れた方を使い、
+# ピンは向きで探す（名前 Din / Dout に依存しない）。切り出したビットは読み返す
+proc mk_slice {name width bit} {
+    set c ""
+    foreach vlnv {xilinx.com:ip:xlslice xilinx.com:inline_hdl:ilslice} {
+        if {![catch {set c [create_bd_cell -type ip -vlnv $vlnv $name]}] && $c ne ""} { break }
+        set c ""
+    }
+    if {$c eq ""} { puts "ERROR: $name: xlslice も ilslice も作れない"; exit 1 }
+    set_property -dict [list CONFIG.DIN_WIDTH $width CONFIG.DIN_FROM $bit CONFIG.DIN_TO $bit] $c
+    foreach {k w} [list CONFIG.DIN_WIDTH $width CONFIG.DIN_FROM $bit CONFIG.DIN_TO $bit] {
+        if {[get_property $k $c] != $w} { puts "ERROR: $name の $k が [get_property $k $c]（要求 $w）"; exit 1 }
+    }
+    set pi [get_bd_pins -quiet -of_objects $c -filter {DIR == I}]
+    set po [get_bd_pins -quiet -of_objects $c -filter {DIR == O}]
+    if {[llength $pi] != 1 || [llength $po] != 1} {
+        puts "ERROR: $name のピンが 入力 1 本・出力 1 本 でない（[get_bd_pins -quiet -of_objects $c]）"
+        exit 1
+    }
+    puts [format "RST SLICE  : %s（%s）= peripheral_aresetn\[%d\]" $name [get_property VLNV $c] $bit]
+    return [list [norm_pin_s $pi] [norm_pin_s $po]]
+}
+proc norm_pin_s {p} { return [string trimleft $p /] }
+set k 0
+foreach t $adc_tiles {
+    lassign [mk_slice rst_adc_t$t $n_tiles $k] rst_in($t) rst_out($t)
+    incr k
+}
 
 # ---- 相互接続 ----
 # **NUM_CLKS = 2**: aclk = pl_clk0（PS と RFDC）/ aclk1 = DSP ドメイン（spec_core）。
@@ -831,10 +872,15 @@ nc clk_wiz_adc/locked rst_dsp/dcm_locked
 # リセット
 foreach r {rst_ctrl rst_adc rst_dsp} { nc $ps_rstn $r/ext_reset_in }
 foreach p [list smc_ctrl/aresetn rfdc/s_axi_aresetn] { nc rst_ctrl/peripheral_aresetn $p }
-set adc_rst {}
-foreach t $adc_tiles { lappend adc_rst rfdc/m${t}_axis_aresetn }
-for {set i 0} {$i < $nch} {incr i} { lappend adc_rst gb_adc_$i/aresetn }
-foreach p $adc_rst { nc rst_adc/peripheral_aresetn $p }
+# rev2: タイルごとのビット（上の rst_adc_t*）。ch i の gb_adc_i は ch i のタイルのビット
+foreach t $adc_tiles {
+    nc rst_adc/peripheral_aresetn $rst_in($t)
+    nc $rst_out($t) rfdc/m${t}_axis_aresetn
+}
+for {set i 0} {$i < $nch} {incr i} {
+    set ch_tile($i) [lindex [lindex $chans $i] 0]
+    nc $rst_out($ch_tile($i)) gb_adc_$i/aresetn
+}
 # rev6: ギアボックスのリセットは spec_core の GRST からも来る。**ch ごとに閉じている**（ch i の GRST は ch i のギアボックスだけを落とす）
 #   書き込み側（gb_up / gb_fifo）: gb_adc が rst_adc と spec_core の gb_hold から作る gb_rstn
 #   読み出し側（gb_gate / gb_dn）: spec_core の gb_dn_rstn（rst_dsp でも落ちる）
@@ -941,7 +987,8 @@ for {set i 0} {$i < $nch} {incr i} {
     # クロックと ADC 側のリセット（共有。載っているべきネットに載っているか）
     lappend rows pin $adc_fabric [list gb_up_$i/aclk gb_fifo_$i/s_axis_aclk gb_adc_$i/aclk] 1
     lappend rows pin $dsp_fabric [list gb_fifo_$i/m_axis_aclk gb_dn_$i/aclk gb_gate_$i/aclk spec_core_$i/aclk] 1
-    lappend rows pin rst_adc/peripheral_aresetn [list gb_adc_$i/aresetn] 1
+    # rev2: ADC 側のリセットは ch のタイルのビットから（そのタイルの m*_axis_aresetn と同じネット）
+    lappend rows pin $rst_out($ch_tile($i)) [list gb_adc_$i/aresetn rfdc/m$ch_tile($i)_axis_aresetn] 1
     # データ経路と AXI（インタフェースのネット）
     foreach {a b} $ch_intf($i) { lappend rows intf $a [list $b] 0 }
     foreach {kind a expects shared} $rows {
@@ -949,6 +996,20 @@ for {set i 0} {$i < $nch} {incr i} {
         set tag [expr {[llength $probs] ? "NG" : "OK"}]
         lappend nc_log [format "ch %d %-3s %-4s %s -> %s" $i $tag $kind [norm_pin $a] [lmap e $expects {norm_pin $e}]]
         foreach pr $probs { lappend nc_log "        $pr"; incr nc_ng }
+    }
+}
+# rev2: タイルのリセットが別のネット（別のフロップ）であること。**在ってはいけない側**
+foreach t $adc_tiles {
+    set peers [peer_names [get_bd_pins -quiet rfdc/m${t}_axis_aresetn] pin]
+    foreach u $adc_tiles {
+        if {$u == $t} continue
+        set tag [expr {[lsearch -exact $peers rfdc/m${u}_axis_aresetn] >= 0 ? "NG" : "OK"}]
+        lappend nc_log [format "tile %d %-3s rfdc/m%d_axis_aresetn と rfdc/m%d_axis_aresetn が別のネット" $t $tag $t $u]
+        if {$tag eq "NG"} { lappend nc_log "        タイル $t と $u のリセットが同じネット（rev1 の CDC-11 の形）"; incr nc_ng }
+    }
+    if {[lsearch -exact $peers rst_adc/peripheral_aresetn] >= 0} {
+        lappend nc_log "tile $t NG  rfdc/m${t}_axis_aresetn が rst_adc/peripheral_aresetn に直に繋がっている（切り出しを通っていない）"
+        incr nc_ng
     }
 }
 # 陽性対照: (a) 在るべき相手を他の ch にする（(1) が落ちるべき）/ (b) 正しいネットを他の ch の番号で照らす（(2) が落ちるべき）

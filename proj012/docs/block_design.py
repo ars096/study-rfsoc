@@ -159,7 +159,7 @@ for i in range(4):
     t(SX + 12, top + 60, "4096 ch × 0.5 MHz・既定 100 ms・二面", "xs")
     t(SX + 12, top + 75, "起動の見張り・FLAGS・GRST・自動のやり直し", "xs")
     t(SX + 12, top + 90, f"BUILD_TAG 0x6080000{i}（[23] 4ch・[1:0] ch = {i}）", "xs")
-    t(SX + 12, top + 105, "ID 0x0012_01CC（4 個とも同じ）", "xs")
+    t(SX + 12, top + 105, "ID 0x0012_02CC（4 個とも同じ。rev2）", "xs")
     t(SX + SW - 6, top + 26, "s_axi ◀", "xs", "end")
 
 # ---------------- クロックとリセット ----------------
@@ -178,10 +178,11 @@ rx0 = RX + 260
 box(rx0, cy, 150, 56, style="stroke:#2f6fb5")
 t(rx0 + 10, cy + 22, "rst_ctrl", "t"); t(rx0 + 10, cy + 42, "pl_clk0：smc・rfdc 制御", "xs")
 box(rx0 + 165, cy, 180, 56, style="stroke:#d9822b")
-t(rx0 + 175, cy + 22, "rst_adc", "t"); t(rx0 + 175, cy + 42, "rfdc AXIS・gb_adc_0〜3", "xs")
+t(rx0 + 175, cy + 22, "rst_adc", "t"); t(rx0 + 175, cy + 42, "タイルごとのビット（rev2）", "xs")
 box(rx0 + 360, cy, 180, 56, style="stroke:#2e8b57")
 t(rx0 + 370, cy + 22, "rst_dsp", "t"); t(rx0 + 370, cy + 42, "spec_core_0〜3・smc aclk1", "xs")
 t(rx0, cy + 78, "3 つとも ext_reset_in = pl_resetn0。ADC・DSP 側は MMCM の locked まで保持。", "xs")
+t(rx0, cy + 110, "rev2: rst_adc の出口をタイルごとの別ビットから配る（t2 → Tile 226、t0 → Tile 224）。", "xs")
 t(rx0, cy + 94, "ギアボックスは ch ごとに spec_core_i の GRST でも落ちる（ch i の GRST は ch i だけ）。", "xs")
 
 # 外部のクロック

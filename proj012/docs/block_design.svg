@@ -121,7 +121,7 @@
 <text x="1102" y="370" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
 <text x="1102" y="385" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
 <text x="1102" y="400" class="xs">BUILD_TAG 0x60800000（[23] 4ch・[1:0] ch = 0）</text>
-<text x="1102" y="415" class="xs">ID 0x0012_01CC（4 個とも同じ）</text>
+<text x="1102" y="415" class="xs">ID 0x0012_02CC（4 個とも同じ。rev2）</text>
 <text x="1364" y="336" class="xs" text-anchor="end">s_axi ◀</text>
 <rect class="ext" x="20" y="496" width="150" height="44"/>
 <text x="30" y="514" class="s">ADC_B（SMA）</text>
@@ -169,7 +169,7 @@
 <text x="1102" y="520" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
 <text x="1102" y="535" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
 <text x="1102" y="550" class="xs">BUILD_TAG 0x60800001（[23] 4ch・[1:0] ch = 1）</text>
-<text x="1102" y="565" class="xs">ID 0x0012_01CC（4 個とも同じ）</text>
+<text x="1102" y="565" class="xs">ID 0x0012_02CC（4 個とも同じ。rev2）</text>
 <text x="1364" y="486" class="xs" text-anchor="end">s_axi ◀</text>
 <rect class="ext" x="20" y="646" width="150" height="44"/>
 <text x="30" y="664" class="s">ADC_C（SMA）</text>
@@ -217,7 +217,7 @@
 <text x="1102" y="670" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
 <text x="1102" y="685" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
 <text x="1102" y="700" class="xs">BUILD_TAG 0x60800002（[23] 4ch・[1:0] ch = 2）</text>
-<text x="1102" y="715" class="xs">ID 0x0012_01CC（4 個とも同じ）</text>
+<text x="1102" y="715" class="xs">ID 0x0012_02CC（4 個とも同じ。rev2）</text>
 <text x="1364" y="636" class="xs" text-anchor="end">s_axi ◀</text>
 <rect class="ext" x="20" y="796" width="150" height="44"/>
 <text x="30" y="814" class="s">ADC_D（SMA）</text>
@@ -265,7 +265,7 @@
 <text x="1102" y="820" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
 <text x="1102" y="835" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
 <text x="1102" y="850" class="xs">BUILD_TAG 0x60800003（[23] 4ch・[1:0] ch = 3）</text>
-<text x="1102" y="865" class="xs">ID 0x0012_01CC（4 個とも同じ）</text>
+<text x="1102" y="865" class="xs">ID 0x0012_02CC（4 個とも同じ。rev2）</text>
 <text x="1364" y="786" class="xs" text-anchor="end">s_axi ◀</text>
 <path class="wK" d="M285,880 L285,918"/>
 <text x="292" y="904" class="lb">clk_adc2 256 MHz（fs/16）</text>
@@ -281,11 +281,12 @@
 <text x="470" y="962" class="xs">pl_clk0：smc・rfdc 制御</text>
 <rect class="blk" x="625" y="920" width="180" height="56" style="stroke:#d9822b"/>
 <text x="635" y="942" class="t">rst_adc</text>
-<text x="635" y="962" class="xs">rfdc AXIS・gb_adc_0〜3</text>
+<text x="635" y="962" class="xs">タイルごとのビット（rev2）</text>
 <rect class="blk" x="820" y="920" width="180" height="56" style="stroke:#2e8b57"/>
 <text x="830" y="942" class="t">rst_dsp</text>
 <text x="830" y="962" class="xs">spec_core_0〜3・smc aclk1</text>
 <text x="460" y="998" class="xs">3 つとも ext_reset_in = pl_resetn0。ADC・DSP 側は MMCM の locked まで保持。</text>
+<text x="460" y="1030" class="xs">rev2: rst_adc の出口をタイルごとの別ビットから配る（t2 → Tile 226、t0 → Tile 224）。</text>
 <text x="460" y="1014" class="xs">ギアボックスは ch ごとに spec_core_i の GRST でも落ちる（ch i の GRST は ch i だけ）。</text>
 <rect class="ext" x="20" y="920" width="150" height="44"/>
 <text x="30" y="938" class="s">LMX2594</text>
