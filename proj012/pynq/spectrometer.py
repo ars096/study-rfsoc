@@ -353,6 +353,16 @@ def multi_probe(specs):
         + " / ".join(f"{sp.label} [{lo}, {hi}]" for sp, (lo, hi) in zip(specs, offs)))
     if any(lo > hi for lo, hi in offs):
         log("  **区間が成り立たない ch がある**（下限 > 上限。FIN の読み方か、ch 間で FIN の進む速さが違う）")
+    # **ハードの数えから出すずれ（こちらを正とする）。**4 個の spec_core は同じ rst_dsp で同じクロックに起動し、
+    # ST_CYC（起動から見張りが口を開けるまでのクロック数）の後から FIN を数える。1 フレーム = 512 クロックなので、
+    # ずれ = (ST_CYC_0 − ST_CYC_i) / 512 フレームが 1 クロック単位で分かる（挟み読みは MMIO の遅さで ± 8 フレーム止まり。
+    # 2026-09-28 の 2 回目の実機で、区間の幅 16〜17 フレームから気づいた）。挟み読みの区間と食い違わないかも見る
+    cyc = [sp.rd(R_ST_CYC) for sp in specs]
+    exact = [(cyc[0] - c) / 512.0 for c in cyc]
+    agree = all(lo - 1 <= e <= hi + 1 for e, (lo, hi) in zip(exact, offs))
+    log("FIN のずれ（ST_CYC の差から、フレーム）: " + " / ".join(f"{sp.label} {e:+.3f}" for sp, e in zip(specs, exact))
+        + f" → 挟み読みの区間と {'合う' if agree else '**食い違う**（FIN が口の開いた時点から数えていない？）'}")
+    ok &= agree
     # RUN の開始のずれ。設定（N_ACC・N_DUMP・SHIFT）を先に全部に書き、RUN だけを 1 語ずつ続けて打つ。
     # 初版は 1 本ずつ run()（5 回の読み書き）で、1 本あたり ≒ 25 フレーム（50 µs）ずれた（予言 0〜5 の外れ）
     def run_skew(order):
@@ -363,15 +373,15 @@ def multi_probe(specs):
         f0 = [sp.rd64(R_RUN_F0_LO, R_RUN_F0_HI) for sp in specs]
         for sp in specs:
             sp.stop()
-        return [(f - f0[0] - hi, f - f0[0] - lo) for f, (lo, hi) in zip(f0, offs)]
+        return [f - f0[0] - e for f, e in zip(f0, exact)]
     for name, order in (("順（0 → 3）", range(len(specs))), ("逆順（3 → 0）", reversed(range(len(specs))))):
         sk = run_skew(list(order))
-        log(f"RUN の開始のずれ {name}（RUN_F0 − FIN のずれ、ch 0 基準、フレーム）: "
-            + " / ".join(f"{sp.label} [{a}, {b}]" for sp, (a, b) in zip(specs, sk))
-            + "（予言 0〜5 フレーム = 0〜10 µs）")
+        log(f"RUN の開始のずれ {name}（RUN_F0 − ST_CYC のずれ、ch 0 基準、フレーム）: "
+            + " / ".join(f"{sp.label} {k:+.2f}" for sp, k in zip(specs, sk))
+            + f"（幅 {max(sk) - min(sk):.2f}。予言 1 本あたり ≒ 5・4 本で 0〜15。RUN_F0 は FIN + 2 なので ±1 の丸めを含む）")
     for sp in specs:
         sp.wr(R_CTRL, CTRL_CLR)
-    log(f"4 本の部分: {'OK' if ok else '**NG**（読み出しが遅い）'}")
+    log(f"4 本の部分: {'OK' if ok else '**NG**（読み出しが遅いか、FIN のずれが 2 つの測り方で食い違う）'}")
     return ok
 
 
