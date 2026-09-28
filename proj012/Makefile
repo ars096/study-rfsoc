@@ -72,7 +72,7 @@ SIM_DEFS  := $(if $(filter 1 2,$(SIM_START)),-DSTART_GAPS) $(if $(filter 2,$(SIM
 SIMDIR    := build-sim-s$(SIM_SHIFT)$(if $(filter-out 0,$(SIM_SKEW)),-k$(SIM_SKEW))$(if $(filter-out 0,$(SIM_START)),-g$(SIM_START))
 RTL       := src/spec_core.v src/cmul.v src/dft16.v src/tw_rom.v
 
-.PHONY: all sim sim-gb sim-all gb-cdc survey twiddle prog id timing-check clean
+.PHONY: all sim sim-gb sim-all gb-cdc worst-paths survey twiddle prog id timing-check clean
 
 all: $(OUTDIR)
 	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(JOBS)
@@ -99,6 +99,15 @@ DCP ?= $(firstword $(wildcard $(OUTDIR)/vivado/proj012.runs/impl_1/*_routed.dcp)
 gb-cdc:
 	@test -n "$(DCP)" || { echo "DCP が無い（make gb-cdc DCP=...）"; exit 1; }
 	$(VIVADO) -mode batch -nojournal -nolog -source tools/gb_cdc.tcl -tclargs $(DCP) $(dir $(DCP))gb_cdc.txt
+
+# ---- 配置配線後の dcp で setup / hold の最悪経路の中身を読む（rev3。ビルド不要、数分）----
+# DCP は gb-cdc と同じ既定（$(OUTDIR) の dcp）。`make worst-paths PART=xczu48dr-ffvg1517-1-e` で -1 の dcp。
+# 結果は dcp の run と同じ階層の $(OUTDIR)/worst_paths/。WP_N = 上位の本数、WP_THR = 束ねるしきい値（ns）
+WP_N   ?= 200
+WP_THR ?= 0.30
+worst-paths:
+	@test -n "$(DCP)" || { echo "DCP が無い（make worst-paths DCP=...）"; exit 1; }
+	$(VIVADO) -mode batch -nojournal -nolog -source tools/worst_paths.tcl -tclargs $(DCP) $(OUTDIR)/worst_paths $(WP_N) $(WP_THR)
 
 # ---- FFT IP を 1 個だけ OOC 合成して資源を数える（proj010 の教訓: IP の資源は数えてから予言する）----
 # throttle 2 × 乗算器 2 × バタフライ 2 = 8 通り。設定は src/fft_cfg.tcl（本番の build.tcl と同じ）。
