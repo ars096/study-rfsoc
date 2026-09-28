@@ -95,9 +95,14 @@ set dmax -1e9; set bmax -1
 dict for {b a} $A { if {$b >= 1 && $a - $a0 > $dmax} { set dmax [expr {$a - $a0}]; set bmax $b } }
 say ""
 dict for {b a} $A { say [format "  A(%d) − A(0) = %+.3f ns" $b [expr {$a - $a0}]] }
-set p [expr {$dmax <= 0 ? 0.0 : ($dmax >= 0.9766 ? 1.0 : $dmax / 0.9766)}]
+# 位相は 4 通り（VCO 1 周期 = 0.977 ns 刻み）で、境目は A ≡ 0（mod 0.977 ns）に並ぶ。bit 0 と後のビットの間に境目が入る位相だけが途切れる。
+# **境目の絶対位置は読めない**（クロックの到着を setup の報告の早い側・遅い側から取るので、±0.2 ns 程度ずれる）ので、
+# 言えるのは「途切れうる位相の数の上限」= D を 0.977 で割って切り上げた数（D ≦ 0 なら 0）。2026-09-28、rev5 の 0/40 で
+# 旧式の P ≒ D / 0.977（位相を連続とみなした平均）が外れて改めた
+set nph [expr {$dmax <= 0 ? 0 : min(4, int(ceil($dmax / 0.9766)))}]
 say ""
-say [format "D = max A(b≥1) − A(0) = %+.3f ns（bit %d）→ 起動のうち途切れる割合の見込み P ≒ %.2f" $dmax $bmax $p]
+say [format "D = max A(b≥1) − A(0) = %+.3f ns（bit %d）→ 途切れうる位相は 4 通りのうち最大 %d（率は 0 か %d/4 以下。境目の位置しだい）" \
+        $dmax $bmax $nph $nph]
 set cand {}
 dict for {b a} $A { if {$b >= 1 && $a > $a0} { lappend cand [format "bit %d → 語 %d（RAW_FIRST ≒ %d クロック前後）" $b [expr {(1 << $b) - 1}] [expr {3 * ((1 << $b) - 1)}]] } }
 if {[llength $cand] > 0} {

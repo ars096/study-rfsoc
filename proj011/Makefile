@@ -41,13 +41,19 @@ endif
 ifneq ($(GB_K),0)
   OUTDIR := $(OUTDIR)-k$(GB_K)
 endif
+# rev6 の検証ビルド: GB_SLOW=b で gb_fifo の gray の bit b をわざと遅らせる（tools/gb_slow.tcl）。build-slow1/ など
+GB_SLOW    ?=
+GB_SLOW_DX ?= 60
+ifneq ($(GB_SLOW),)
+  OUTDIR := $(OUTDIR)-slow$(GB_SLOW)
+endif
 
 # 同時に走らせる run の数（launch_runs -jobs）。効くのは IP の OOC 合成だけ。
 # proj010 から lane_fft（FFT IP）の OOC 合成が 1 本増えている（proj011 も同じ）。ビルドサーバの nproc = 32 に合わせてある。
 # コア数やメモリの少ない機械では `make JOBS=8` に下げること。
 JOBS ?= 30
 
-export BOARD_REPO PART OUTDIR FFT_OPT GB_K
+export BOARD_REPO PART OUTDIR FFT_OPT GB_K GB_SLOW GB_SLOW_DX
 
 # ---- シミュレーション（Vivado もライセンスも要らない。RTL を触ったらまずこれ）----
 # FFT IP の代わりに sim/lane_fft_model.v を使う。判定は sim/check.py（bit 単位・numpy・帳簿の 3 層）。

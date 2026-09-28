@@ -39,6 +39,15 @@ if {[info exists ::env(OUTDIR)] && $::env(OUTDIR) ne ""} { set outdir ./$::env(O
 set fft_opt res
 if {[info exists ::env(FFT_OPT)] && $::env(FFT_OPT) ne ""} { set fft_opt $::env(FFT_OPT) }
 set gb_k_rst 0
+# rev6 の検証ビルド: GB_SLOW = b なら、gb_fifo の書き込みポインタの bit b の同期段を配置の後に X で GB_SLOW_DX 離す（tools/gb_slow.tcl）
+set gb_slow ""
+set gb_slow_dx 60
+if {[info exists ::env(GB_SLOW)] && $::env(GB_SLOW) ne ""} { set gb_slow $::env(GB_SLOW) }
+if {[info exists ::env(GB_SLOW_DX)] && $::env(GB_SLOW_DX) ne ""} { set gb_slow_dx $::env(GB_SLOW_DX) }
+if {$gb_slow ne "" && (![string is integer -strict $gb_slow] || $gb_slow < 0 || $gb_slow > 4)} {
+    puts "ERROR: GB_SLOW = '$gb_slow'（0〜4。深さ 32 の gray は 5 ビット）"
+    exit 1
+}
 if {[info exists ::env(GB_K)] && $::env(GB_K) ne ""} { set gb_k_rst $::env(GB_K) }
 if {![string is integer -strict $gb_k_rst] || $gb_k_rst < 0 || $gb_k_rst > 24} {
     puts "ERROR: GB_K = '$gb_k_rst'（0〜24。gb_fifo の深さ 32 に余裕を残す）"
@@ -703,7 +712,9 @@ if {![string is integer -strict $grade] || $grade < 1 || $grade > 3} {
     puts "ERROR: part '$part' から速度グレードが読めない"
     exit 1
 }
+# rev6: [27] 遅いビットの検証ビルド（GB_SLOW）/ [26:24] そのビット
 set build_tag [expr {($use_board << 30) | (($grade & 3) << 28)}]
+if {$gb_slow ne ""} { set build_tag [expr {$build_tag | (1 << 27) | (($gb_slow & 7) << 24)}] }
 set_property CONFIG.BUILD_TAG $build_tag $spec
 set got_tag [get_property CONFIG.BUILD_TAG $spec]
 if {$got_tag != $build_tag} {
@@ -934,6 +945,18 @@ if {$part_actual ne $part} {
     exit 1
 }
 puts "PART (確定): $part_actual"
+
+# ---- rev6 の検証ビルド: 配置の後に遅いビットを作る ----
+if {$gb_slow ne ""} {
+    set hook [file normalize $outdir/gb_slow_hook.tcl]
+    set fh [open $hook w]
+    puts $fh "set gb_slow_bit $gb_slow"
+    puts $fh "set gb_slow_dx $gb_slow_dx"
+    puts $fh "source [file normalize ./tools/gb_slow.tcl]"
+    close $fh
+    set_property STEPS.PLACE_DESIGN.TCL.POST $hook [get_runs impl_1]
+    puts "NOTE: 遅いビットの検証ビルド（bit $gb_slow、X で $gb_slow_dx）。**本番には使わない**"
+}
 
 # ---- 合成〜実装〜ビットストリーム ----
 launch_runs impl_1 -to_step write_bitstream -jobs $jobs

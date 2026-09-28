@@ -405,6 +405,7 @@ def grst_trials(sp, n, klist, stnlist, adclist, dsplist, adjlist, wait, csv_path
                         tla = sum(1 for r in rec if r["flags"] & 0x20)
                         f4 = sum(1 for r in rec if r["flags"] & 0x10)
                         f6 = sum(1 for r in rec if r["flags"] & 0x40)
+                        f3 = sum(1 for r in rec if r["flags"] & 0x08)
                         stg = sum(1 for r in rec if r["st_gaps"] > 0)
                         fsv = sum(1 for r in rec if (r["fs"] >> 30) & 1)
                         und = sum(1 for r in rec if r["under"] > 0)
@@ -413,7 +414,7 @@ def grst_trials(sp, n, klist, stnlist, adclist, dsplist, adjlist, wait, csv_path
                         rows.append((k, stn, ta, td, adj, len(gapped), tla))
                         log(f"  K {k:2d} ST_N {stn:5d} T {ta:3d}/{td:3d} ADJ {adj}: 途切れ {len(gapped):3d}/{n}"
                             f"（2 回以上 {multi}、最初 {firsts[:6]}{'…' if len(firsts) > 6 else ''}、最長 {maxl}）"
-                            f"  見張り {stg:3d}  FLAGS [4] {f4:3d} [5] {tla:3d} [6] {f6:3d}  m_in 動く {fsv:3d}"
+                            f"  見張り {stg:3d}  FLAGS [3] {f3:3d} [4] {f4:3d} [5] {tla:3d} [6] {f6:3d}  m_in 動く {fsv:3d}"
                             f"  空振り {und:3d}  残量の最小 {cmin}  RFDC {adc}")
     sp.wr(R_GB_K, k_save)
     sp.wr(R_ST_N, stn_save)
@@ -445,6 +446,9 @@ def inject_test(sp, n, wait):
     if stn_save == 0:
         log("ERROR: ST_N が 0（見張りなし）。a と d が意味を持たない")
         return False
+    # FLAGS[3]（IP が入力を受けなかった）は起動のたびに立つ別の事象（rev4 から 38/38・rev6 の GRST でも毎回）なので判定から外し、数だけ出す。
+    # 2026-09-28、初版は FLAGS == 0 を求めて a・d が 0/20 になった（FLAGS 08）
+    F3 = 0x08
     # 自然の起動の途切れと混ざらないよう、試験の間はしきい値 K = 4 にする（rev6 の見立てでは K ≧ 2 で自然の途切れは消える）
     k_save = sp.rd(R_GB_K)
     sp.wr(R_GB_K, 4)
@@ -454,7 +458,7 @@ def inject_test(sp, n, wait):
         # a
         sp.wr(R_INJ, INJ_ARM | INJ_AFTER_GRST | 1000)
         r = grst_once(sp, wait)
-        ok = r["flags"] == 0 and r["st_gaps"] >= 1 and r["st_open"] == 1
+        ok = (r["flags"] & ~F3) == 0 and r["st_gaps"] >= 1 and r["st_open"] == 1
         res["a"] += ok; detail["a"].append((r["flags"], r["st_gaps"], r["gaps"]))
         # b
         sp.wr(R_INJ, INJ_ARM | 0)
@@ -471,13 +475,16 @@ def inject_test(sp, n, wait):
         # d
         sp.wr(R_ST_N, stn_save)
         r = grst_once(sp, wait)
-        ok = r["flags"] == 0
+        ok = (r["flags"] & ~F3) == 0
         res["d"] += ok; detail["d"].append((r["flags"], r["gaps"]))
     sp.wr(R_GB_K, k_save)
-    names = {"a": "GRST ＋ 見張りの間に注入 → FLAGS 0・見張り 1 回",
+    for c in "acd":
+        n3 = sum(1 for x in detail[c] if x[0] & F3)
+        log(f"  （{c}: FLAGS[3] が立った回数 {n3} / {n}。判定には入れない）")
+    names = {"a": "GRST ＋ 見張りの間に注入 → FLAGS 0（[3] を除く）・見張り 1 回",
              "b": "走っている最中に注入 → FLAGS に [4][5][6]",
              "c": "見張りなしで GRST ＋ 注入 → FLAGS に [4][5][6]",
-             "d": "見張りを戻して GRST → FLAGS 0"}
+             "d": "見張りを戻して GRST → FLAGS 0（[3] を除く）"}
     for c in "abcd":
         ex = "" if res[c] == n else "  **NG** 記録（FLAGS, …）: " + ", ".join(str(x) for x in detail[c][:8])
         log(f"  {c}. {names[c]}: {res[c]} / {n}{ex}")
@@ -1030,6 +1037,8 @@ def main():
         bt = sp.rd(R_BUILD)
         preset, grade = (bt >> 30) & 1, (bt >> 28) & 3
         log(f"ビルドの指紋: BUILD = {bt:08x}（ボードのプリセット {'あり' if preset else '**なし**'} / 速度グレード -{grade}）")
+        if (bt >> 27) & 1:
+            log(f"NOTE: **遅いビットの検証ビルド**（gb_fifo の gray の bit {(bt >> 24) & 7} をわざと遅らせてある。本番に使わない）")
         if not preset and not args.allow_nopreset:
             log("ERROR: プリセットの無い検証ビルド（build-1-e*/ など）が載っている。実機には build/ の .bit を使う")
             sys.exit(1)
