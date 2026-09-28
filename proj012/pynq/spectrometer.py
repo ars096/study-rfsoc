@@ -381,7 +381,8 @@ def multi_probe(specs, exact_ok=True):
         return [f - f0[0] - e for f, e in zip(f0, exact)]
     for name, order in (("順（0 → 3）", range(len(specs))), ("逆順（3 → 0）", reversed(range(len(specs))))):
         sk = run_skew(list(order))
-        log(f"RUN の開始のずれ {name}（RUN_F0 − ST_CYC のずれ、ch 0 基準、フレーム）: "
+        base = "ST_CYC のずれ" if exact_ok else "挟み読みのずれ（± 8）"
+        log(f"RUN の開始のずれ {name}（RUN_F0 − {base}、ch 0 基準、フレーム）: "
             + " / ".join(f"{sp.label} {k:+.2f}" for sp, k in zip(specs, sk))
             + f"（幅 {max(sk) - min(sk):.2f}。予言 1 本あたり ≒ 5・4 本で 0〜15。RUN_F0 は FIN + 2 なので ±1 の丸めを含む）")
     for sp in specs:
