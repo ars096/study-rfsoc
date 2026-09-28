@@ -17,6 +17,12 @@
 **1 本ずつの機能は proj011 rev6 と同一**（8192 点・realtime / res・100 ms 積分・起動の見張り・FLAGS・`--record` の自動のやり直し）。
 proj011 の判定を 4 本それぞれの回帰試験に使う。
 
+## ブロックデザイン
+
+![ブロックデザイン](docs/block_design.svg)
+
+（`docs/block_design.svg` は `docs/block_design.py` で描いた。build.tcl の配線を変えたらこちらも直す）
+
 ## 着手の前に決めたこと（2026-09-28）
 
 | | 案 | 読み |
