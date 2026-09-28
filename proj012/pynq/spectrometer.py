@@ -316,7 +316,7 @@ def auto_shift(sp):
     return shift
 
 
-def multi_probe(specs):
+def multi_probe(specs, exact_ok=True):
     """判定 0 の 4 本の部分: 読み出しの時間・FIN のずれ・RUN を順に書いたときの開始のずれ。
 
     **FIN は ch ごとに別の起動から数えている**（ギアボックスごとに流れ始めが違う）ので、番号どうしは比べられない。
@@ -357,12 +357,17 @@ def multi_probe(specs):
     # ST_CYC（起動から見張りが口を開けるまでのクロック数）の後から FIN を数える。1 フレーム = 512 クロックなので、
     # ずれ = (ST_CYC_0 − ST_CYC_i) / 512 フレームが 1 クロック単位で分かる（挟み読みは MMIO の遅さで ± 8 フレーム止まり。
     # 2026-09-28 の 2 回目の実機で、区間の幅 16〜17 フレームから気づいた）。挟み読みの区間と食い違わないかも見る
-    cyc = [sp.rd(R_ST_CYC) for sp in specs]
-    exact = [(cyc[0] - c) / 512.0 for c in cyc]
-    agree = all(lo - 1 <= e <= hi + 1 for e, (lo, hi) in zip(exact, offs))
-    log("FIN のずれ（ST_CYC の差から、フレーム）: " + " / ".join(f"{sp.label} {e:+.3f}" for sp, e in zip(specs, exact))
-        + f" → 挟み読みの区間と {'合う' if agree else '**食い違う**（FIN が口の開いた時点から数えていない？）'}")
-    ok &= agree
+    if exact_ok:
+        cyc = [sp.rd(R_ST_CYC) for sp in specs]
+        exact = [(cyc[0] - c) / 512.0 for c in cyc]
+        agree = all(lo - 1 <= e <= hi + 1 for e, (lo, hi) in zip(exact, offs))
+        log("FIN のずれ（ST_CYC の差から、フレーム）: " + " / ".join(f"{sp.label} {e:+.3f}" for sp, e in zip(specs, exact))
+            + f" → 挟み読みの区間と {'合う' if agree else '**食い違う**（FIN が口の開いた時点から数えていない？）'}")
+        ok &= agree
+    else:
+        # --startup-grst の後は ch ごとに PS が別々の時刻に GRST をかけたので、ST_CYC の差はずれを表さない
+        exact = [(lo + hi) / 2.0 for lo, hi in offs]
+        log("FIN のずれ: 起動の GRST（--startup-grst）の後なので ST_CYC の差は使えない。挟み読みの区間の中心を使う（± 8 フレーム）")
     # RUN の開始のずれ。設定（N_ACC・N_DUMP・SHIFT）を先に全部に書き、RUN だけを 1 語ずつ続けて打つ。
     # 初版は 1 本ずつ run()（5 回の読み書き）で、1 本あたり ≒ 25 フレーム（50 µs）ずれた（予言 0〜5 の外れ）
     def run_skew(order):
@@ -1267,6 +1272,8 @@ def image_report(spec, tone, zone=2):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--bitfile", default=BITFILE)
+    p.add_argument("--startup-grst", action="store_true",
+                   help="Overlay の後、判定の前に ch ごとに GRST をかけて起動をやり直す。前と後の途切れを STARTUP の行に出す")
     p.add_argument("--ch", default="all", help="判定する ch: all / 0〜3 / A〜D（ADC_A〜D）。カンマ区切り")
     p.add_argument("--split", action="store_true", help="--tone で、4 分配した同じ線の強さが揃うかを判定（≦ 0.3 dB）")
     p.add_argument("--leak-from", type=int, default=None, metavar="I",
@@ -1366,8 +1373,16 @@ def main():
     log(f"判定する ch: " + ", ".join(f"{sp.idx}（{sp.label}）" for sp in specs))
     for sp in specs:
         log(f"---- ch {sp.idx}（{sp.label}）の起動 ----")
-        startguard_report(sp)
+        pre = startguard_report(sp) or {}
         sp.stop()
+        if args.startup_grst:
+            # **Overlay の起動の途切れを、ギアボックスごとの起動のやり直しで避ける**（2026-09-28）。
+            # rev1 の ch C は Overlay の起動で 7 / 24 回途切れ（最初の valid から 17036 クロック目で決まって）、
+            # GRST では 400 回とも途切れなかった。同じ起動の中で GRST の前と後を並べて数える（対になった比較）
+            r = grst_once(sp, 0.02)
+            log(f"STARTUP ch {sp.idx} {sp.label}: Overlay の起動 途切れ {pre.get('gaps', '?')} 回・空振り {pre.get('under', '?')}"
+                f" → GRST の後 途切れ {r['gaps']} 回・空振り {r['under']}・見張りの途切れ {r['st_gaps']}・FLAGS {r['flags']:02x}")
+            sp.stop()
         if args.keep_startup_flags:
             # **起動の瞬間に立ったものを残す**（2026-09-25）。通常は消すが、消すと「起動の直後に入力の隙間があり、
             # それが realtime の IP の枠と入力側の数えをずらした」ことの証拠まで消える
@@ -1385,7 +1400,7 @@ def main():
             ok &= results[sp.idx]
         if len(specs) > 1:
             log("\n==== 判定 0: 4 本の部分 ====")
-            ok &= multi_probe(specs)
+            ok &= multi_probe(specs, exact_ok=not args.startup_grst)
     else:
         tone_rows = []
         for sp in specs:
