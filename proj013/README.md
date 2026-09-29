@@ -1,7 +1,7 @@
 # proj013 — 全帯域の total power を 1 ms ごとに取る（4 IF）
 
 日付: 2026-09-28
-状態: **準備中**（RTL と sim まで: `make sim-tp`・陽性対照・`make sim` SHIFT 7 / 4 が通過。build.tcl はファイルを足しただけ。PS 側は未）
+状態: **進行中**（sim-all 8 本通過・`-2` +0.205 / `-1` +0.170 で閉じた。PS 側の読み出しは未）
 
 ## 目的
 
@@ -102,7 +102,41 @@ s10 区切りの和（64 bit）  s11 リングバッファ（BRAM）へ
 
 ## 結果
 
-（未）
+### sim（2026-09-29、Vivado サーバの `make sim-all`）
+
+8 本とも「結果: 全部通過」（4-0-0・7-0-0・7-0-1・7-0-2・7-5-0・gb・tp・tp-posctl。tp-posctl は落ちるべきところで落ちた）
+
+### ビルド（2026-09-29、`-2`・res と `-1`・res）
+
+| | 予言 | 結果 | |
+|---|---|---|---|
+| WNS / WHS `-2` | 正・動く | **+0.205 / +0.007 ns**（proj012 rev3 +0.169 / +0.003） | 当たり |
+| WNS / WHS `-1` | −0.05〜+0.15 ns | **+0.170 / +0.009 ns**（周期の 4.4 %。proj012 rev3 +0.070） | **外れ（楽観側に範囲の外）**。下の読み |
+| `-1` の最悪経路に tp_core | 出ない | **setup の slack < 0.30 ns の 218 本に u_tp は 0 本**（u_tp は hold の +0.012〜+0.016 に出るだけ） | 当たり |
+| DSP / BRAM / LUT / FF | 1984 / 324 / +2k〜+5k / +6k〜+10k | （未記入） | |
+| CDC・結線の照合 | 変わらない | （未記入） | |
+
+- `-1` の 1 回目は、PS の OOC 合成（`system_zynq_ultra_ps_e_0_0_synth_1`）が **0 errors で終わった後に Vivado が segfault**（`Abnormal program termination (11)`）して失敗扱いになり止まった。
+  proj012 の 1 回目（gb_gate_2 の OOC）と同じ落ち方で **2 回目**。`make timing-check JOBS=16` でやり直して通った。runme.log の `^ERROR` は 0 件で、この落ち方は数えても見えない
+
+#### `-1` の最悪経路（`make worst-paths PART=xczu48dr-ffvg1517-1-e WP_N=3000 WP_THR=0.30`、照合の問題 0 件）
+
+setup の slack < 0.30 ns は **218 本・すべて配線型**。群は proj012 rev3 と同じ顔ぶれで、**最悪の ch が入れ替わった**:
+
+| 群 | proj012 rev3（`-1`） | proj013 rev1（`-1`） |
+|---|---|---|
+| A ひねり係数の乗算 → DFT の中の DSP | **+0.070**（spec_core_2） | **+0.170**（spec_core_2）・+0.185 |
+| B DFT の最終段 → 電力の DSP | +0.103（spec_core_1） | +0.186（spec_core_2、m_re_reg） |
+| C gb_fifo の書き込みアドレス FO 888 | +0.146（**gb_fifo_0**） | +0.172（**gb_fifo_1**）・+0.230（gb_fifo_3） |
+| D gb_up の state_reg FO 195 → r0_data（新しく上位に） | — | +0.174（gb_up_0）・+0.203（gb_up_1） |
+| E spec_core の fin → スナップショットの BRAM（新しく上位に） | — | +0.178（spec_core_3。snap_hit の 48 bit の比較） |
+
+- **WNS が +0.07 → +0.17 に上がったのは、tp_core がタイミングを良くしたからではない。**同じ形の群が +0.17〜+0.23 に 5 つ並び、配置の組み替わりで +0.07 の 1 本が救われただけと読む。
+  C の最悪が gb_fifo_0 → gb_fifo_1 に移ったのも同じ（配置で最悪の ch が入れ替わる）。**次に何かを足せば +0.07 付近に戻りうる**ものとして扱う
+- 予言の外れの中身は「±0.1 ns の幅が、配置のばらつきより狭かった」。proj012 rev3 → proj013 rev1 で +0.100 動いた（proj011 では −0.167）。**次の予言は ±0.2 ns の幅で書く**
+- D・E は proj012 rev3 では 0.20 ns 未満に出ていなかった。D はギアボックスの AXIS upsizer の状態の大ファンアウト、E はスナップショットの予約の比較で、どちらも tp_core とは別の場所
+- hold は +0.009〜+0.019 に並ぶ（配線ツールの hold 修正の跡）。u_tp の中の hold も同じ並び
+
 
 ## 結論・次にやること
 
@@ -110,8 +144,10 @@ s10 区切りの和（64 bit）  s11 リングバッファ（BRAM）へ
 - [x] 複製と ID（0x0013_01CC）
 - [x] tp_core.v・単体の sim（本番の通過と陽性対照）
 - [x] `make sim`（SHIFT 7 / 4、クラウドの作業環境の iverilog 12.0）: **全部通過**。6 試験とも区切りの和 = Σ(snap>>2)²（bit 単位）・TP_F0 = RUN_F0。パーセバルは 0.999982〜1.000009
-- [ ] `make sim-all`（Vivado サーバ）
-- [ ] `make` / `make timing-check` / `make worst-paths`
+- [x] `make sim-all`（Vivado サーバ）: 8 本とも通過
+- [x] `make` / `make timing-check` / `make worst-paths`: `-2` +0.205・`-1` +0.170（1 回目は PS の OOC の segfault でやり直し）。tp_core は setup の上位に出ない
+- [ ] 資源（DSP・BRAM・LUT・FF）と CDC・結線の照合を上の表に書き写す
+- [ ] build.tcl: OOC の run が「合成 0 errors の後の segfault」で落ちたら 1 回だけやり直す（2 回目なので型として扱う）。runbook にも
 - [ ] PS 側の total power の読み出しと判定
 - [ ] docs/block_design.py に tp_core を描き足す（spec_core の中の箱 1 個）
 - [ ] 実機の判定
