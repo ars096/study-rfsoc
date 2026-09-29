@@ -18,10 +18,14 @@ PFB_KS        ?= 0 1 4 5 8 13 15 16
 # SIM_PFB_POSCTL=1: 陽性対照（RTL の分岐の和の丸めを切り捨てに）。一致しなければ「結果: 全部通過」
 SIM_PFB_POSCTL ?= 0
 PFB_DIR       := build-sim-pfb$(if $(filter 1,$(SIM_PFB_POSCTL)),-posctl)
+# SIM_DDC_POSCTL=1: 陽性対照（RTL の NCO の番地を 1 つずらす）
+SIM_DDC_POSCTL ?= 0
+DDC_DIR       := build-sim-ddc$(if $(filter 1,$(SIM_DDC_POSCTL)),-posctl)
+DDC_RTL       := src/nco_rom.v src/hb2.v src/pair2.v src/ddc_core.v
 
 export PART
 
-.PHONY: model model-posctl model-sweep fixed fixed-posctl coef sim-pfb survey clean
+.PHONY: model model-posctl model-sweep fixed fixed-posctl coef sim-pfb sim-ddc sim-win sim-all sim-pfb-p sim-ddc-p survey clean
 
 # 仕様の模型（numpy だけ。Vivado もライセンスも要らない）。成否は「結果: 全部通過」の行で読む
 model:
@@ -61,10 +65,39 @@ sim-pfb:
 	done; done
 	SIM_PFB_POSCTL=$(SIM_PFB_POSCTL) $(PYTHON) sim/check_pfb.py check $(PFB_DIR) $(PFB_KS) | tee $(PFB_DIR)/check.log
 
+# ddc_core の単体の sim（NCO → 半帯域 × NS）。入力は pfb_fixed の y。NS 1..6 × d 2 通り × 途切れ あり / なし
+sim-ddc:
+	mkdir -p $(DDC_DIR)
+	$(PYTHON) sim/check_ddc.py gen $(DDC_DIR)
+	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_DDC_POSCTL)),-DDDC_POSCTL) -o $(DDC_DIR)/tb $(DDC_RTL) sim/tb_ddc.v
+	NB=$$(wc -l < $(DDC_DIR)/y.txt); $(PYTHON) sim/check_ddc.py cases | while read ns dp; do for g in 0 1; do \
+	  $(VVP) -n $(DDC_DIR)/tb +NS=$$ns +DPHI=$$dp +GAP=$$g +NBEAT=$$NB +IN=$(DDC_DIR)/y.txt +OUT=$(DDC_DIR)/z_ns$${ns}_d$${dp}_g$${g}.txt | grep '^ddc:' ; \
+	done; done
+	SIM_DDC_POSCTL=$(SIM_DDC_POSCTL) $(PYTHON) sim/check_ddc.py check $(DDC_DIR) | tee $(DDC_DIR)/check.log
+
+# pfb_core → ddc_core をつないだ sim（つなぎ目の試験。6 通りの幅、1 本 1 分級）
+sim-win:
+	mkdir -p build-sim-win
+	$(PYTHON) sim/check_win.py gen build-sim-win
+	$(IVERILOG) -g2005 -Isrc -o build-sim-win/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) sim/tb_win.v
+	$(PYTHON) sim/check_win.py cases | while read k ns dp; do \
+	  $(VVP) -n build-sim-win/tb +K=$$k +NS=$$ns +DPHI=$$dp +GAP=1 +NSAMP=65536 +IN=build-sim-win/x.hex +OUT=build-sim-win/z_k$${k}_ns$${ns}.txt | grep '^win:' ; \
+	done
+	$(PYTHON) sim/check_win.py check build-sim-win | tee build-sim-win/check.log
+
+# sim を全部並べる（iverilog は 1 本 1 コア）。成否は各 check.log の「結果: 全部通過」で読む（make の成功を信用しない）
+sim-all:
+	$(MAKE) --no-print-directory -j5 sim-pfb sim-ddc sim-win sim-pfb-p sim-ddc-p
+	@grep -H "結果" build-sim-*/check.log
+sim-pfb-p:
+	$(MAKE) --no-print-directory sim-pfb SIM_PFB_POSCTL=1
+sim-ddc-p:
+	$(MAKE) --no-print-directory sim-ddc SIM_DDC_POSCTL=1
+
 # FFT IP 単体の資源（ライセンスが要る。並列で 10〜20 分の見込み）。結果は build-survey/survey.txt
 survey:
 	mkdir -p build-survey
 	$(VIVADO) -mode batch -nojournal -log build-survey/vivado.log -source tools/ip_survey.tcl -tclargs $(JOBS)
 
 clean:
-	rm -rf build-model build-survey build-sim-pfb build-sim-pfb-posctl .Xil
+	rm -rf build-model build-survey build-sim-* .Xil

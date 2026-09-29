@@ -44,6 +44,39 @@ def main():
     with open(out, "w") as fp:
         fp.write("\n".join(lines) + "\n")
     print("書いた:", out)
+    gen_nco_rom(os.path.join(os.path.dirname(out), "nco_rom.v"))
+
+
+def gen_nco_rom(path):
+    """NCO の 1/4 波の表（model/win_fixed.py の nco_table と同じ値）を ROM のモジュールにする。"""
+    import win_fixed as F
+    P, A = F.DEFAULT["NCO_P"], (1 << (F.DEFAULT["NCO_A"] - 1)) - 1
+    T = F.nco_table(P, A)
+    q = len(T)
+    aw = (q - 1).bit_length()
+    L = ["// SPDX-License-Identifier: BSD-3-Clause",
+         "// 生成物（tools/gen_coef.py、make coef）。**手で直さない。**",
+         f"// nco_rom — NCO の 1/4 波の表 T[r] = round({A} · sin(2π(r + 1/2) / 2^{P}))、r = 0..{q - 1}（18 bit）。",
+         "// 読み出しは 2 口・1 クロック（出力をレジスタで受ける → BRAM に載る）。対応する模型: model/win_fixed.py の nco_table / nco_cs",
+         "`timescale 1ns / 1ps",
+         "module nco_rom (",
+         "    input  wire              clk,",
+         f"    input  wire [{aw - 1}:0]       a0, a1,",
+         "    output reg  signed [17:0] d0, d1",
+         ");",
+         f"    (* rom_style = \"block\" *) reg signed [17:0] rom [0:{q - 1}];",
+         "    initial begin"]
+    for r, v in enumerate(T):
+        L.append(f"        rom[{r}] = {'-' if v < 0 else ''}18'sd{abs(int(v))};")
+    L += ["    end",
+          "    always @(posedge clk) begin",
+          "        d0 <= rom[a0];",
+          "        d1 <= rom[a1];",
+          "    end",
+          "endmodule"]
+    with open(path, "w") as fp:
+        fp.write("\n".join(L) + "\n")
+    print("書いた:", path)
 
 
 if __name__ == "__main__":

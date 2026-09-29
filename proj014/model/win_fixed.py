@@ -12,16 +12,18 @@ RTL の bit 単位の照合は、後でこのファイルの式（段の境目�
          （仕様の式 exp(−j2πkp/M) のうち定数 exp(−j2πk(N−1)/M) を落とした形。電力には効かない。
           残る (−j)^(km) は符号と実虚の入れ替えだけ。32 点の実 DFT は RTL の形そのまま（下の rfft32_ch）:
           16 点 複素 DFT（proj013 の dft16 と同じ分解・同じ cmul の丸め）＋ 選んだ ch だけ実数化の後処理）
-  NCO    位相 32 bit、θ[m] = m·Δ mod 2³²、Δ = round(d / 512 · 2³²)。表の番地 = θ の上位 P bit、
-         値 = round(A · cos / sin)、A = 2^(NCO_A − 1) − 1
+  NCO    位相 32 bit、θ[m] = m·Δ mod 2³²、Δ = round(d / 512 · 2³²)。表の番地 a = θ の上位 P bit、
+         値 = 1/4 波の表から cos / sin(2π(a + 1/2) / 2^P)（nco_cs）、A = 2^(NCO_A − 1) − 1
   v      y · (cos − j sin)                                                                 V_W bit、Q = V_F
   半帯域 各段の出力                                                                         V_W bit、Q = V_F
   z      FFT の入力      z = v · 2^(G − V_F) を丸め                                          Z_W bit、Q = G
 既定の語長の根拠（2026-09-29、--sweep で振った結果）:
   G = 4      N1 の誤差は 1/W で増え、W = 8 で G 3: 2.1e-3（NG）/ 4: 5.3e-4 / 5: 1.4e-4 / 6: 4.1e-5。G 6 は −1 dBFS の CW が
              FFT の入力で飽和する（18 bit）。G 4 は CW に 7 dB の余裕を残して N1 を 2 倍の余裕で通す。G はレジスタで変えられる形にする
-  NCO_P = 14 格子に乗らない中心で、位相の切り捨ての線が P 12: −62.3 / 13: −68.3 / 14: −74.3 / 15: −80.3 / 16: −86.3 dBc（≒ −6.0·P + 10）。
-             ch の格子の上でも W ≦ 64 では切り捨てが起きる（Δ の下位 bit が残る）。表は 1/4 波で 4096 語 × 18 bit
+  NCO_P = 14 C1 の線（CW の ch を除く）の最悪: P 10: −59.3 / 11: −66.2 / 12: −79.4 / 13: −79.4 / 14: −85.2 dBc（2026-09-30）。
+             **初版（2026-09-29）の「P 12: −62.3 … ≒ −6.0·P + 10」は判定の誤り**: CW の ch そのものの誤差（切り捨ての位相の
+             平均のずれ = 定数の位相）を線として数えていた。直した後は P 12 でも要求（−70）を 9 dB で通る。
+             表は BRAM が余っているので P 14（1/4 波 4096 語 × 18 bit、余裕 15 dB）のままにする
   U・Y・V    24 bit（DSP48E2 の A ポート 27 bit に前置加算ごと入る）。整数部は最悪の利得（Σ|h|: PFB 1.65・light 1.32・final 1.80）から
 丸め: 床(x + 1/2)（1 << (k − 1) を足して k bit 右へ）。飽和: その段の bit 数の符号付きの範囲で止め、回数を数える
 
@@ -29,7 +31,7 @@ RTL の bit 単位の照合は、後でこのファイルの式（段の境目�
   N1  雑音 −47 dBFS（proj013 の熱雑音の入力、σ ≒ 26 LSB）: FFT の入力での誤差の電力 / 信号の電力 ≦ 1e-3（感度の損 0.1 %）
   N2  雑音 −10 dBFS（強い入力）: どの段も飽和 0、誤差 ≦ 1e-3
   C1  CW −1 dBFS（窓の中、乱数の位置・ch の格子の外の細かい NCO も含む）: 飽和 0、
-      固定小数点が作る線（誤差のスペクトルの最大）≦ −70 dBc（ADC 自身のイメージ −53〜−66 dBc より 4 dB 以上下）
+      固定小数点が作る線（誤差のスペクトルの、CW の ch を除いた最大）≦ −70 dBc（ADC 自身のイメージ −53〜−66 dBc より 4 dB 以上下）
   すべての幅（256〜8 MHz）× 窓の置き場所 2 か所（粗い ch の境目・乱数）
 
 使い方:
@@ -180,6 +182,52 @@ def pfb_fixed(x, k, des, cfg, cnt):
     return yr, yi
 
 
+def nco_table(P, A):
+    """1/4 波の表 T[r] = round(A · sin(2π(r + 1/2) / 2^P))、r = 0..2^(P−2) − 1（RTL の nco_rom と同じ）。"""
+    n = 1 << P
+    r = np.arange(n // 4)
+    return np.round(A * np.sin(2 * np.pi * (r + 0.5) / n)).astype(np.int64)
+
+
+def nco_cs(addr, P, T):
+    """番地 a（P bit）→ (cos φ, sin φ)、φ = 2π(a + 1/2) / 2^P。**半番地ずらす**ので 1/4 波の対称が端点なしで厳密に成り立つ
+    （定数の位相 π / 2^P は電力に効かない。切り捨ての位相の誤差の平均も 0 になる）。
+      象限 0: sin = T[r]、        cos = T[q − 1 − r]
+      象限 1: sin = T[q − 1 − r], cos = −T[r]
+      象限 2: sin = −T[r],        cos = −T[q − 1 − r]
+      象限 3: sin = −T[q − 1 − r], cos = T[r]        （q = 2^(P−2)、r = a mod q）"""
+    q = 1 << (P - 2)
+    qd = addr >> (P - 2)
+    r = addr & (q - 1)
+    a, b = T[r], T[q - 1 - r]
+    s = np.where(qd == 0, a, np.where(qd == 1, b, np.where(qd == 2, -a, -b)))
+    c = np.where(qd == 0, b, np.where(qd == 1, -a, np.where(qd == 2, -b, a)))
+    return c, s
+
+
+def ddc_fixed(yr, yi, dphi, ns, des, cfg, cnt):
+    """NCO → 半帯域 × ns 段（light × (ns − 1) → final）→ FFT の入力 z（Q = G、Z_W bit）。RTL の ddc_core と bit 単位で同じ。
+    y の m = 0 で NCO の位相 0、半帯域の各段の出力 q は入力 2q … 2q + N − 1 から（fir_decim_int）。"""
+    m_idx = np.arange(len(yr))
+    P, A = cfg["NCO_P"], (1 << (cfg["NCO_A"] - 1)) - 1
+    theta = (m_idx.astype(np.uint64) * np.uint64(dphi)) & np.uint64(0xFFFFFFFF)
+    addr = (theta >> np.uint64(32 - P)).astype(np.int64)
+    cq, sq = nco_cs(addr, P, nco_table(P, A))
+    sh = (cfg["NCO_A"] - 1) + cfg["Y_F"] - cfg["V_F"]
+    vr = sat(rnd_shift(yr * cq + yi * sq, sh), cfg["V_W"], cnt, "v")   # (yr + j yi)(c − j s)
+    vi = sat(rnd_shift(yi * cq - yr * sq, sh), cfg["V_W"], cnt, "v")
+    for j in range(ns):
+        key = "final" if j == ns - 1 else "light"
+        hq = np.round(des[key]["h"] * 2.0 ** des["sh_" + key]).astype(np.int64)
+        ne = 2 * (len(vr) // 2)                  # 各段は（偶, 奇）の組で受ける。流れの最後の相手のいない 1 個は入らない（RTL と同じ）
+        vr, vi = vr[:ne], vi[:ne]
+        vr = sat(rnd_shift(fir_decim_int(vr, hq, 2), des["sh_" + key]), cfg["V_W"], cnt, f"hb{j}")
+        vi = sat(rnd_shift(fir_decim_int(vi, hq, 2), des["sh_" + key]), cfg["V_W"], cnt, f"hb{j}")
+    zr = sat(rnd_shift(vr, cfg["V_F"] - cfg["G"]), cfg["Z_W"], cnt, "z")
+    zi = sat(rnd_shift(vi, cfg["V_F"] - cfg["G"]), cfg["Z_W"], cnt, "z")
+    return zr, zi
+
+
 def rot_mj(r, i, n):
     """(r + j i)·(−j)^n、n は配列（0..3）。"""
     out_r = np.where(n == 0, r, np.where(n == 1, i, np.where(n == 2, -r, -i)))
@@ -197,25 +245,7 @@ def run(x, c, W, des, cfg, fixed, cnt=None):
     m_idx = None
     if fixed:
         yr, yi = pfb_fixed(x, k, des, cfg, cnt)
-        m_idx = np.arange(len(yr))
-        # NCO
-        P, A = cfg["NCO_P"], (1 << (cfg["NCO_A"] - 1)) - 1
-        theta = (m_idx.astype(np.uint64) * np.uint64(dphi)) & np.uint64(0xFFFFFFFF)
-        addr = (theta >> np.uint64(32 - P)).astype(np.int64)
-        ang = 2 * np.pi * addr / 2 ** P
-        cq = np.round(A * np.cos(ang)).astype(np.int64)
-        sq = np.round(A * np.sin(ang)).astype(np.int64)
-        sh = (cfg["NCO_A"] - 1) + cfg["Y_F"] - cfg["V_F"]
-        vr = sat(rnd_shift(yr * cq + yi * sq, sh), cfg["V_W"], cnt, "v")   # (yr + j yi)(c − j s)
-        vi = sat(rnd_shift(yi * cq - yr * sq, sh), cfg["V_W"], cnt, "v")
-        ns = WM.nstages(W)
-        for j in range(ns):
-            key = "final" if j == ns - 1 else "light"
-            hq = np.round(des[key]["h"] * 2.0 ** des["sh_" + key]).astype(np.int64)
-            vr = sat(rnd_shift(fir_decim_int(vr, hq, 2), des["sh_" + key]), cfg["V_W"], cnt, f"hb{j}")
-            vi = sat(rnd_shift(fir_decim_int(vi, hq, 2), des["sh_" + key]), cfg["V_W"], cnt, f"hb{j}")
-        zr = sat(rnd_shift(vr, cfg["V_F"] - cfg["G"]), cfg["Z_W"], cnt, "z")
-        zi = sat(rnd_shift(vi, cfg["V_F"] - cfg["G"]), cfg["Z_W"], cnt, "z")
+        zr, zi = ddc_fixed(yr, yi, dphi, WM.nstages(W), des, cfg, cnt)
         return (zr + 1j * zi) / 2.0 ** cfg["G"]
     # 浮動小数点（同じ式・同じ添字、丸めなし、NCO は厳密な exp）
     u, p = pfb_branches(x.astype(float), des["pfb"]["h"])
@@ -253,7 +283,8 @@ def trial(kind, level, c, W, des, cfg, rng, nout=8192, f0=None):
     cnt = {}
     zf = run(x, c, W, des, cfg, True, cnt)
     zr = run(x, c, W, des, cfg, False)
-    zf, zr = zf[-nout:], zr[-nout:]                     # 頭の過渡を捨てる（同じ添字なので揃っている）
+    n = min(len(zf), len(zr))                           # 固定小数点の側は各段で組にするので末尾が 1 個短いことがある。頭で揃える
+    zf, zr = zf[:n][-nout:], zr[:n][-nout:]             # 頭の過渡を捨てる（同じ添字なので揃っている）
     e = zf - zr
     rel = np.mean(np.abs(e) ** 2) / np.mean(np.abs(zr) ** 2)
     spur = None
@@ -261,7 +292,11 @@ def trial(kind, level, c, W, des, cfg, rng, nout=8192, f0=None):
         nfr = nout // WM.NFFT
         E = (np.abs(np.fft.fft(e[-nfr * WM.NFFT:].reshape(nfr, WM.NFFT), axis=1)) ** 2).mean(0)
         Y = (np.abs(np.fft.fft(zr[-nfr * WM.NFFT:].reshape(nfr, WM.NFFT), axis=1)) ** 2).mean(0)
-        spur = 10 * np.log10(E.max() / Y.max())
+        bt = int(np.argmax(Y))
+        # 線は「CW の ch 以外」の最大で数える。CW の ch の誤差は利得・位相の誤差で、線ではない
+        # （NCO の半番地のずらしの定数の位相 π / 2^P はここに −74 dB で出る。電力には効かない）
+        Eo = E.copy(); Eo[bt] = 0.0
+        spur = 10 * np.log10(Eo.max() / Y[bt])
     return rel, cnt, spur
 
 
