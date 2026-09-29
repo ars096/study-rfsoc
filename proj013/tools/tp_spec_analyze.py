@@ -45,6 +45,10 @@ def main():
             spur[ch - 1:ch + 2] = True
         print(f"  全体の揺れ（ダンプごと）{np.sqrt(vt) / T.mean():.2e} / 理想 {np.sqrt(2.0 / (NFFT * 50000)):.2e}（N_ACC 50000 として）")
         print(f"  寄与: k·fs/8 の ch（DC・1024・2048・3072 ± 1）{c[spur].sum():+.3f} / それ以外 {c[~spur].sum():+.3f}")
+        # k·fs/8 の ch を除いた残りの揺れ（寄与は共分散なので、残りの揺れそのものを別に出す）
+        R = (S[:, ~spur] * w[~spur]).sum(axis=1)
+        print(f"  k·fs/8 の ch を除いた残り: 電力の {R.mean() / T.mean():.3f}・揺れ {R.std() / R.mean():.2e}（理想 {np.sqrt(2.0 / (NFFT * 50000)):.2e}。"
+              f"残りの帯域が狭いと理想は大きくなる）")
         order = np.argsort(-np.abs(c))
         cum = np.cumsum(c[order])
         for n in (1, 8, 64, 512):
@@ -60,6 +64,10 @@ def main():
             e = (x * x).sum(axis=1).astype(np.float64)
             xn = (x[:, 0::2].sum(axis=1) - x[:, 1::2].sum(axis=1)).astype(np.float64)
             q = xn ** 2 / (NFFT * e)
+            # 比の平均と、平均の比（DC がフレームごとに大きく動くと e と |X_4096|² が一緒に動き、2 つが食い違う）
+            print(f"  ナイキスト: 比の平均 {q.mean():.3e} / 平均の比 {np.mean(xn ** 2) / (NFFT * e.mean()):.3e}")
+            if f"{lb}_dump_S" in z.files:
+                pass
             print(f"  ナイキスト（1 フレームずつ）: q の平均 {q.mean():.2e}・標準偏差 {q.std():.2e}（白色雑音だけなら平均 {1 / NFFT:.1e}、"
                   f"標準偏差も同じ程度）/ X_4096 の符号付きの平均 {np.mean(xn / np.sqrt(NFFT * e)):+.3f}（安定した線なら 0 から離れる）")
         print()
