@@ -33,6 +33,7 @@ def main():
             excl.append((int(a_), int(b_)))
     z = np.load(path, allow_pickle=True)
     labels = [k[:-5] for k in z.files if k.endswith("_spec")]
+    rest = {}
     for lb in labels:
         S = z[f"{lb}_spec"]
         nd = S.shape[0]
@@ -67,6 +68,15 @@ def main():
             print(f"    除いた ch の電力: 平均 {X.mean() / T.mean():.2e}・中央値 {med / T.mean():.2e}・最大 {X.max() / T.mean():.2e}（全体比）/ "
                   f"中央値の 3 倍を越えるダンプ {np.mean(X > 3 * med) * 100:.1f} %（間欠的なら大きい）")
             print(f"    除いた残りの揺れ {Rx.std() / Rx.mean():.2e}（全体 {np.sqrt(vt) / T.mean():.2e}・理想 {np.sqrt(2.0 / (NFFT * 50000)):.2e}）")
+            # 残りの揺れの元（除いた ch の外で）
+            cr = w * ((S - S.mean(0)) * (Rx - Rx.mean())[:, None]).mean(0) / Rx.var()
+            cr[ex] = 0.0
+            o2 = np.argsort(-np.abs(cr))
+            cum2 = np.cumsum(cr[o2])
+            print(f"    残りの揺れの寄与: 上位 8 ch {cum2[7]:+.3f}・上位 64 ch {cum2[63]:+.3f}・上位 512 ch {cum2[511]:+.3f}"
+                  f"（小さければ広い帯域の全体が一緒に動いている = 利得の揺れ）")
+            print("    残りの上位: " + " / ".join(f"ch {k}（IF {if_mhz(k):.1f}・ゾーン 1 {k * FS_MHZ / NFFT:.1f} MHz）{cr[k]:+.3f}" for k in o2[:min(top, 8)]))
+            rest[lb] = Rx
         order = np.argsort(-np.abs(c))
         cum = np.cumsum(c[order])
         for n in (1, 8, 64, 512):
@@ -89,6 +99,20 @@ def main():
             print(f"  ナイキスト（1 フレームずつ）: q の平均 {q.mean():.2e}・標準偏差 {q.std():.2e}（白色雑音だけなら平均 {1 / NFFT:.1e}、"
                   f"標準偏差も同じ程度）/ X_4096 の符号付きの平均 {np.mean(xn / np.sqrt(NFFT * e)):+.3f}（安定した線なら 0 から離れる）")
         print()
+
+    # ---- 除いた残り（100 ms のダンプ）の ch 間の比 ----
+    if len(rest) > 1:
+        ks = list(rest)
+        n = min(len(v) for v in rest.values())
+        print(f"==== --exclude の残り（ダンプ = 100 ms、{n} 個）の ch 間の比 ====")
+        for i, a in enumerate(ks):
+            for b in ks[i + 1:]:
+                ra, rb = rest[a][:n], rest[b][:n]
+                r = ra / rb
+                print(f"  {a} / {b}: 比の揺れ {r.std() / r.mean():.2e}（{a} 単独 {ra.std() / ra.mean():.2e}・{b} 単独 {rb.std() / rb.mean():.2e}・"
+                      f"相関 {np.corrcoef(ra, rb)[0, 1]:+.3f}）")
+        print("  読み: 同じ雑音の波形を分配しているので、比では雑音そのものの揺れもほぼ消える（残るのは ADC 自身の雑音の分で、100 ms で 1e-5 程度）。"
+              "比の揺れが単独よりずっと小さければ、残りは 4 本に共通の入力側（雑音源・アンプの利得）。比の揺れが大きければ ADC ごとの利得の揺れか、ch ごとに違う混信")
 
     # ---- ch 間の比（1 ms の total power）----
     # 同じ入力を分配したとき、入力側の揺れ（雑音そのもの・雑音源やアンプの利得）は比で消え、ADC ごとの利得の揺れと
