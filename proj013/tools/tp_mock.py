@@ -37,6 +37,9 @@ class FakeCore:
         self.f0 = None
         self.stalled = False
         self.frozen = None                          # 読み出し窓が指しているダンプ
+        # スナップショット: σ = SIGMA の雑音（16 bit、下位 2 bit は 0）。2 サンプルで 1 語
+        x = (np.round(np.random.default_rng(ch).normal(0, SIGMA, 8192)).astype(np.int64) * 4) & 0xFFFF
+        self.snapw = (x[0::2] | (x[1::2] << 16)).astype(np.uint32)
 
     def frame(self):
         return int((time.time() - self.t0) / T_FRAME)
@@ -140,16 +143,23 @@ class FakeCore:
 
         class A:
             def __getitem__(self, sl):
+                a0, a1 = 4 * sl.start, 4 * sl.stop
+                # 1 回の読み出しは 1 つの領域に収まる（Spec.block の使い方）。領域ごとにまとめて作る（模擬を速く保つ）
+                if S.SNAP_BASE <= a0 and a1 <= S.SPEC_BASE:
+                    return core.snapw[(a0 - S.SNAP_BASE) // 4:(a1 - S.SNAP_BASE) // 4]
+                if a0 >= S.SPEC_BASE:
+                    spec = (core.frozen or {}).get("spec")
+                    if spec is None:
+                        spec = np.zeros(4096, np.uint64)
+                    w = np.empty(8192, np.uint32)
+                    w[0::2] = (spec & np.uint64(0xFFFFFFFF)).astype(np.uint32)
+                    w[1::2] = (spec >> np.uint64(32)).astype(np.uint32)
+                    return w[(a0 - S.SPEC_BASE) // 4:(a1 - S.SPEC_BASE) // 4]
                 out = []
                 for i in range(sl.start, sl.stop):
                     a = 4 * i
                     if S.TP_BASE <= a < S.TP_BASE + 16 * 512:
                         out.append(core.entry_words((a - S.TP_BASE) // 16)[(a % 16) // 4])
-                    elif a >= S.SPEC_BASE:
-                        spec = (core.frozen or {}).get("spec")
-                        k, hi = (a - S.SPEC_BASE) // 8, (a // 4) & 1
-                        w = 0 if spec is None else int(spec[k])
-                        out.append((w >> 32) if hi else (w & 0xFFFFFFFF))
                     else:
                         out.append(core.read(a))
                 return np.array(out, dtype=np.uint32)
