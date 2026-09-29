@@ -1,7 +1,7 @@
 # proj014 — 狭帯域の窓（256〜8 MHz）を粗い PFB ＋ 窓ごとの DDC で切り出す（まず 1 ADC・1 窓）
 
 日付: 2026-09-29
-状態: **進行中**（手順 1・2 済み。手順 3 の RTL: **pfb_core → ddc_core（NCO・半帯域 × NS、幅 6 通り）が固定小数点の模型と bit 単位で一致**。次は窓の FFT・電力・積分）
+状態: **進行中**（手順 1・2 済み。手順 3 の RTL: pfb_core → ddc_core が模型と bit 単位で一致、**wspec_core（溜め → FFT → 電力 → 積分）が 4 層の判定を通過**。次は AXI の上位と proj013 への組み込み）
 
 ## 目的
 
@@ -164,6 +164,21 @@ bit ③（4 ADC × 4 窓、256 MHz 窓で規模が決まる）。**自作部分�
   CW の ch を除いて数え直すと P 10: −59.3 / 11: −66.2 / 12: −79.4 / 13: −79.4 / 14: −85.2 dBc で、P 12 でも要求（−70）を 9 dB で通る。
   表は BRAM が余っているので P 14 のままにした（余裕 15 dB）。見つけたきっかけは、半番地のずらしを入れたら格子の上の中心（位相の切り捨てのない中心）で
   −74 dBc の「線」が出たこと（ずらしの定数の位相 π/2^14 = −74 dB そのもの）
+- **手順 3 の 3 つ目: `src/wspec_core.v`（溜め → 複素 4096 点 FFT → 電力 → 積分）と単体の sim（`make sim-wspec`）**（2026-09-30）
+  - 溜め: z を 2 面 × 4096 語に書き、溜まった面を 4096 クロック途切れなく FFT へ（realtime の IP は途切れを待たないので）。次の面が溜まるには 4096 クロック以上かかるので読み出しは間に合う（間に合わなければ FLAGS[1]）
+  - FFT は build では Xilinx FFT IP（`win_fft`、survey の win4096_res_lut と同じ設定）、sim では `sim/win_fft_model.v`（倍精度の基数 2 を丸める。proj013 の lane_fft_model の型）
+  - 電力と積分は spec_core と同じ約束: q = sat18(Y >>> SHIFT)、p = re² + im²（37 bit）、64 bit で N_ACC フレーム、二面・RUN の F0 = fin + 2・seqlock・スナップショット（ダンプ k の最初のフレームの z）。
+    フレームの判定（pre_* に比較を追い出す形）も spec_core の rev2 の形をそのまま
+  - 判定 4 層（`sim/check_wspec.py`）: A 積分が FFT のモデルの出力から bit 単位（全 4096 ch・飽和の回数も）/ B FFT のモデル = numpy（差 0 LSB）/
+    C 帳簿（SEQ・k・f0 = RUN_F0 + k·N・面・スナップショットの番号と中身）/ D FLAGS 0・fin − fout ≦ 2。
+    変種 3 つ（途切れなし = 256 MHz 窓の速さ・N_ACC 4 / 平均 3 クロックに 1 個・N_ACC 2・SHIFT 7 / 32 クロックに 1 個 = 8 MHz 窓の速さ・N_ACC 1）とも通過。
+    陽性対照（`SIM_WSPEC_POSCTL=1`、初回のフレームでも読み値に足す）は A が落ちた
+  - sim の道具の誤り 2 件: ダンプの読み出しが遅くて（3 クロック / 語）、次の次のダンプのスナップショットが同じ面に書かれ始めた（sim の NG は道具の側）→ 1 クロック / 語に。
+    その直後に拾う位置を 1 つずらして A が全 ch で落ちた（NBA の順序で 2 クロック後の値を読む）
+  - **スナップショットの制約**: ダンプ k のスナップショットは、commit から (N_ACC − 2) フレーム以内に読むこと（次の次のダンプの最初のフレームが同じ面に書かれる）。
+    100 ms の積分（256 MHz 窓で 6250 フレーム）なら問題にならない。N_ACC = 1 で照合するときは N_DUMP = 1 にする
+  - **BRAM の見当（窓 1 つ）**: 溜め 8・スナップショット 8・積分 16（二面 × 4096 × 64 bit）・FFT 15・NCO 4 = 51 → 16 窓で ≒ 816（1080 の 76 %）。
+    **積分を URAM に（窓 1 つ 2 個、16 窓で 32 / 80）、スナップショットを ADC ごとに 1 つに**すれば ≒ 440 に下がる。4 窓にするときに決める
 - この proj014 の Makefile には model・survey・sim だけを置いた。**手順 3 で proj013 を複製するまで、ビルドのターゲットは置かない**（proj013 と同じ名前の .bit を作る道を作らない）
 
 ## 結果
@@ -232,7 +247,9 @@ bit ③（4 ADC × 4 窓、256 MHz 窓で規模が決まる）。**自作部分�
 - [ ] 32 点の実 FFT（PFB）の形と内部の丸めを決めて固定小数点の模型に足す（RTL の bit 単位の照合の正）
 - [x] RTL の 1 つ目: pfb_core（粗い PFB の 1 ch）を固定小数点の模型と bit 単位で照合（16 通り・陽性対照つき）
 - [x] RTL: NCO・半帯域の縦続（幅可変、ddc_core）を模型と bit 単位で照合（24 通り＋つないだ 6 通り・陽性対照つき）
-- [ ] RTL: 窓の FFT（複素 4096 点 IP）・電力・積分（1 ADC・1 窓）と sim。**FFT の前にフレームの溜め（4096 語 × 2 面）を置き、1 フレームを途切れなく流す**:
+- [x] RTL: 窓の FFT・電力・積分（wspec_core）と sim（4 層・変種 3 つ・陽性対照）
+- [ ] AXI4-Lite の上位（win_core: pfb_core → ddc_core → wspec_core ＋ レジスタ）と、それを通した sim
+- 設計のメモ（wspec_core で実装済み）: **FFT の前にフレームの溜め（4096 語 × 2 面）を置き、1 フレームを途切れなく流す**:
   realtime の FFT IP は入力の途切れを待たずに進む（proj011）が、窓の出力は W MSPS（W = 8 なら 32 クロックに 1 個）で必ず途切れる。
   溜めれば realtime のまま使え、64 MHz 以下の窓 4 つで FFT 1 個を共有する時分割もこの溜めの上に載る（BRAM 36 × 4〜8 / 窓）。見送った案: nonrealtime の IP（待つが、proj010 の CE の大ファンアウト）
 - [ ] ddc_core の時分割（94 → 64 DSP / 窓の見当）。sim-ddc・sim-win を回帰試験に
@@ -253,7 +270,8 @@ make sim-pfb        # pfb_core の単体の sim（iverilog、1 分級）
 make sim-pfb SIM_PFB_POSCTL=1   # 陽性対照
 make sim-ddc        # ddc_core の単体の sim（NS 6 通り × d 2 × 途切れ 2）
 make sim-win        # pfb_core → ddc_core（6 通り、1 本 1 分級）
-make sim-all        # 上の 3 つと陽性対照 2 つを並べる。各 build-sim-*/check.log の「結果: 全部通過」で読む
+make sim-wspec      # wspec_core の単体の sim（変種 3 つ、1 分級）
+make sim-all        # sim を全部と陽性対照 3 つを並べる。各 build-sim-*/check.log の「結果: 全部通過」で読む
 make survey         # FFT IP 単体の資源（Vivado サーバ、ライセンスが要る）。build-survey/survey.txt
 # 手順 3 以降のビルドは proj013 から複製した Makefile に足して書く
 ```
