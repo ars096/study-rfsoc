@@ -97,6 +97,10 @@ R_DUMP_K, R_DUMP_N, R_DUMP_F0_LO, R_DUMP_F0_HI, R_DUMP_SAT = 0x30, 0x34, 0x38, 0
 R_SNAP_F_LO, R_SNAP_F_HI, R_BANK, R_RUN_F0_LO, R_RUN_F0_HI = 0x44, 0x48, 0x4C, 0x50, 0x54
 SNAP_BASE, SPEC_BASE = 0x4000, 0x8000
 CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_DCLR = 1 << 0, 1 << 1, 1 << 8, 1 << 9
+# ---- total power（src/tp_core.v の冒頭と対。proj013）----
+R_TP_N, R_TP_NEFF, R_TP_WP, R_TP_F0_LO, R_TP_F0_HI, R_TP_PARAM, R_TP_STAT = 0x100, 0x104, 0x108, 0x10C, 0x110, 0x114, 0x118
+TP_BASE, TP_DEPTH, TP_PARAM_EXPECT = 0x2000, 512, (512 << 16) | (16 << 8) | 1
+TPF_SHORT, TPF_RUN, TPF_GAP, TPF_BOOT = 1, 2, 4, 8
 R_DIAG_TL, R_DIAG_EV, R_DIAG_FS, R_DIAG_EVCNT, R_DIAG_FSCNT = 0x58, 0x5C, 0x60, 0x64, 0x68   # rev3
 R_BUILD, R_SRST_D, R_SRST_E, R_SRST_CNT = 0x6C, 0x70, 0x74, 0x78                             # rev4
 R_ST_GAPS, R_ST_CYC = 0x7C, 0x80                                                              # rev5
@@ -1270,6 +1274,250 @@ def image_report(spec, tone, zone=2):
 
 
 # --------------------------------------------------------------------- main
+# --------------------------------------------------------------------- total power（proj013）
+class TpReader:
+    """1 本の tp_core のリングバッファを取りこぼさずに読む。
+
+    **読み方**: TP_WP を読む → 前回からの個を読む → TP_WP を読み直す。個は 512 個で一巡するので、
+    読み直した TP_WP が「前回の続き + 512」を越えていたら、読んでいる間に上書きされた恐れがある（読み落としとして数える）。
+    個は自分の最初のフレームの番号（下位 32 bit）を持つので、**番号が TP_N ずつ進むことで中身の正しさも確かめる**。
+    """
+
+    def __init__(self, sp, tp_n, run_f0):
+        self.sp, self.tp_n, self.run_f0 = sp, tp_n, run_f0
+        self.wp = None            # 次に読む個の番号（TP_WP の数え）
+        self.started = False      # F0 で始まった個を見たか
+        self.f0, self.nfr, self.sum, self.flags = [], [], [], []
+        self.lost = 0             # 読み落とした個（リングバッファの一巡を越えた）
+        self.bad_seq = 0          # フレームの番号が続かない
+        self.bad_flag = 0         # F0 の個の後に FLAGS が立った（隙間・短い）
+        self.bad_nfr = 0
+        self.pre = 0              # F0 より前の個（捨てた）
+        self.last_f0 = None
+
+    def _entries(self, i0, n):
+        """個 i0..i0+n−1 を読む（slot は i mod 512。巻き戻りで 2 回に分ける）"""
+        out = []
+        while n > 0:
+            s0 = i0 % TP_DEPTH
+            k = min(n, TP_DEPTH - s0)
+            w = self.sp.block(TP_BASE + 16 * s0, 4 * k).reshape(k, 4).astype(np.uint64)
+            out.append(w)
+            i0 += k
+            n -= k
+        return np.concatenate(out) if out else np.zeros((0, 4), np.uint64)
+
+    def poll(self):
+        wp0 = self.sp.rd(R_TP_WP)
+        if self.wp is None:
+            # 初回: F0 の個を探すため、リングバッファに残っている分から読む
+            self.wp = max(0, wp0 - TP_DEPTH)
+        n = wp0 - self.wp
+        if n <= 0:
+            return 0
+        if n > TP_DEPTH:
+            self.lost += n - TP_DEPTH
+            self.wp = wp0 - TP_DEPTH
+            n = TP_DEPTH
+        w = self._entries(self.wp, n)
+        wp1 = self.sp.rd(R_TP_WP)
+        over = wp1 - TP_DEPTH - self.wp          # 読んでいる間に上書きされたかもしれない個の数
+        if over > 0:
+            self.lost += over
+            w = w[over:]
+        self.wp = wp0
+        for e in w:
+            self._take(int(e[0]) | (int(e[1]) << 32), int(e[2]), int(e[3]) >> 24, int(e[3]) & 0xFFFFFF)
+        return len(w)
+
+    def _take(self, tsum, f0lo, fl, nfr):
+        if not self.started:
+            if (fl & TPF_RUN) and f0lo == (self.run_f0 & 0xFFFFFFFF):
+                self.started = True
+                f0 = self.run_f0
+            else:
+                self.pre += 1
+                return
+        else:
+            # 下位 32 bit を前の個から伸ばす（2^32 フレーム = 2.4 時間で巻き戻る）
+            exp = self.last_f0 + self.nfr[-1]
+            f0 = exp + ((f0lo - (exp & 0xFFFFFFFF) + (1 << 31)) % (1 << 32)) - (1 << 31)
+            if f0 != exp:
+                self.bad_seq += 1
+            if fl != 0:
+                self.bad_flag += 1
+        if nfr != self.tp_n:
+            self.bad_nfr += 1
+        self.last_f0 = f0
+        self.f0.append(f0); self.nfr.append(nfr); self.sum.append(tsum); self.flags.append(fl)
+
+    def arrays(self):
+        return (np.array(self.f0, np.int64), np.array(self.nfr, np.int64),
+                np.array(self.sum, np.float64), np.array(self.flags, np.int64))
+
+
+FULL_SCALE_P = 8191.0 ** 2 / 2.0      # 14 bit の正弦波の満振幅の平均電力（dBFS の基準）
+
+
+def tp_parseval(dumps, f0, nfr, tsum, tp_n):
+    """判定 TP-1: ダンプ 1 回と、同じフレームの total power の和の比。
+
+    パーセバル: Σ_{k=0}^{4095} |X_k|² = (8192 Σx² + |X_0|² − |X_4096|²) / 2（フレームごと）。
+    ダンプは |X_k >> SHIFT|² なので r = (2 Σ spec − spec[0]) · 4^SHIFT / (8192 · Σ TP) = 1 − |X_4096|² / (8192 Σx²)。
+    X_4096（ナイキストの ch）はダンプに無いので、そこに強い成分があると r は 1 より小さくなる。
+    """
+    rs = []
+    idx = {int(v): i for i, v in enumerate(f0)}
+    for d in dumps:
+        if d["n"] % tp_n != 0 or d["sat"] != 0 or d["flags"] != 0:
+            continue
+        i = idx.get(int(d["f0"]))
+        m = d["n"] // tp_n
+        if i is None or i + m > len(f0) or f0[i + m - 1] != d["f0"] + d["n"] - tp_n or np.any(nfr[i:i + m] != tp_n):
+            continue
+        rs.append(d["S"] / (NFFT * tsum[i:i + m].sum()))
+    return np.array(rs)
+
+
+def tp_run(specs, args, shifts):
+    """--tp SEC: 選んだ ch の total power を同時に読み、判定 TP-0〜TP-2・TP-4・TP-5 を出す。True / False"""
+    ok = True
+    tp_n = args.tp_n
+    nacc = int(args.nacc.split(",")[0])
+    use_spec = not args.tp_no_spec
+    log(f"\n==== total power: {len(specs)} 本・{args.tp:.1f} s・TP_N {tp_n}（{tp_n * T_FRAME * 1e3:.3f} ms）"
+        f"{f'・スペクトル N_ACC {nacc}（TP の {nacc / tp_n:g} 個ぶん）' if use_spec else '・スペクトルは読まない'} ====")
+    if use_spec and nacc % tp_n != 0:
+        log(f"NOTE: N_ACC {nacc} が TP_N {tp_n} の倍数でない。判定 TP-1（パーセバル）はできない")
+
+    # ---- TP-0: 版と RUN の F0 ----
+    for sp in specs:
+        prm = sp.rd(R_TP_PARAM)
+        good = prm == TP_PARAM_EXPECT
+        log(f"TP-0 ch {sp.idx}（{sp.label}）: TP_PARAM {prm:08x}（期待 {TP_PARAM_EXPECT:08x}）{'OK' if good else 'NG'}")
+        ok &= good
+        sp.wr(R_TP_N, tp_n)
+        sp.arm(nacc, 0, shifts[sp.idx])
+    if not ok:
+        return False
+    for sp in specs:                              # RUN を続けて打つ（ch 間の開始のずれは ≒ 25 フレーム。proj012）
+        sp.wr(R_CTRL, CTRL_RUN)
+    readers = []
+    for sp in specs:
+        run_f0 = sp.rd64(R_RUN_F0_LO, R_RUN_F0_HI)
+        tp_f0 = sp.rd64(R_TP_F0_LO, R_TP_F0_HI)
+        neff = sp.rd(R_TP_NEFF)
+        good = tp_f0 == run_f0 and neff == tp_n
+        log(f"TP-0 ch {sp.idx}（{sp.label}）: RUN_F0 {run_f0} / TP_F0 {tp_f0} / TP_NEFF {neff} {'OK' if good else 'NG'}")
+        ok &= good
+        readers.append(TpReader(sp, tp_n, run_f0))
+    f0s = [r.run_f0 for r in readers]
+    if len(readers) > 1:
+        log(f"RUN の開始のずれ: {', '.join(f'{r.sp.label} {r.run_f0 - f0s[0]:+d}' for r in readers)} フレーム（ch {readers[0].sp.idx} から）")
+
+    # ---- 読み続ける ----
+    dumps = {sp.idx: [] for sp in specs}
+    seqs = {sp.idx: sp.rd(R_SEQ) for sp in specs}
+    t0 = time.time()
+    t_poll = []
+    while time.time() - t0 < args.tp:
+        ta = time.time()
+        for r in readers:
+            r.poll()
+        t_poll.append(time.time() - ta)
+        if use_spec:
+            for sp in specs:
+                s_ = sp.rd(R_SEQ)
+                if s_ != seqs[sp.idx]:
+                    m, spec, _ = sp.read_dump()
+                    seqs[sp.idx] = m["seq"]
+                    S = (2.0 * float(spec.astype(np.float64).sum()) - float(spec[0])) * 4.0 ** shifts[sp.idx]
+                    dumps[sp.idx].append(dict(m, S=S))
+        time.sleep(0.02)
+    time.sleep(3 * tp_n * T_FRAME + 0.01)           # 最後の区切りを閉じさせてから読み切る
+    for r in readers:
+        r.poll()
+    for sp in specs:
+        sp.stop()
+    log(f"読み出し 1 回（{len(readers)} 本の TP）: 中央値 {1e3 * np.median(t_poll):.2f} ms・最大 {1e3 * np.max(t_poll):.2f} ms")
+
+    # ---- ch ごとの判定 ----
+    rel = {}
+    for r in readers:
+        sp = r.sp
+        f0, nfr, tsum, fl = r.arrays()
+        log(f"\n---- ch {sp.idx}（{sp.label}）: {len(f0)} 個（{len(f0) * tp_n * T_FRAME:.2f} s）----")
+        if len(f0) < 10:
+            log("NG: 個が 10 個に満たない（F0 の個を見つけられなかった？）")
+            ok = False
+            continue
+        # TP-4: 取りこぼし・フレームの番号の連続・FLAGS
+        good4 = r.lost == 0 and r.bad_seq == 0 and r.bad_flag == 0 and r.bad_nfr == 0 and fl[0] == TPF_RUN
+        log(f"TP-4: 読み落とし {r.lost} 個 / 番号の飛び {r.bad_seq} / F0 の後の FLAGS {r.bad_flag} / フレーム数の違い {r.bad_nfr}"
+            f" / 最初の個の FLAGS {fl[0]:02x}（期待 02）/ F0 より前に捨てた個 {r.pre} → {'OK' if good4 else 'NG'}")
+        ok &= good4
+        p = tsum / (NFFT * nfr)                    # 1 サンプルあたりの電力 [LSB²]
+        pm = p.mean()
+        log(f"平均電力 {pm:.1f} LSB² = {10 * np.log10(pm / FULL_SCALE_P):.2f} dBFS（14 bit の正弦波の満振幅が 0 dBFS）")
+        # TP-2: 揺れ（ガウス雑音なら 1 個の相対の揺れは √(2 / (8192 · TP_N))）
+        x = p / pm - 1.0
+        rel[sp.idx] = (f0, x)
+        ideal = np.sqrt(2.0 / (NFFT * tp_n))
+        log(f"TP-2: 1 個（{tp_n * T_FRAME * 1e3:.3f} ms）の相対の揺れ {x.std():.3e}（ガウス雑音の理想 {ideal:.3e}、比 {x.std() / ideal:.2f}）")
+        rows = []
+        for mm in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000):
+            nb = len(x) // mm
+            if nb < 10:
+                break
+            xb = x[:nb * mm].reshape(nb, mm).mean(axis=1)
+            rows.append(f"{mm * tp_n * T_FRAME * 1e3:g} ms {xb.std():.2e}（理想 {ideal / np.sqrt(mm):.2e}・比 {xb.std() * np.sqrt(mm) / ideal:.2f}）")
+        log("      束ねた揺れ: " + " / ".join(rows))
+        # TP-1: パーセバル
+        if use_spec and nacc % tp_n == 0:
+            rs = tp_parseval(dumps[sp.idx], f0, nfr, tsum, tp_n)
+            nd = len(dumps[sp.idx])
+            if len(rs) == 0:
+                log(f"TP-1: 照合できたダンプ 0 / {nd}（飽和・FLAGS・個の欠け）→ NG")
+                ok = False
+            else:
+                d = np.abs(rs - 1.0)
+                good1 = bool(d.max() <= 1e-3)
+                log(f"TP-1: パーセバル（Σスペクトル / Σ total power）{len(rs)} / {nd} ダンプ: 1 − r の範囲 "
+                    f"{(1 - rs).min():+.2e}〜{(1 - rs).max():+.2e}（≦ 1e-3）→ {'OK' if good1 else 'NG'}")
+                ok &= good1
+        if any(dd["flags"] for dd in dumps[sp.idx]):
+            log(f"NG: スペクトルのダンプに FLAGS が立った（{sorted(set(dd['flags'] for dd in dumps[sp.idx]))}）")
+            ok = False
+
+    # TP-5: ch 間の相関（情報。開始のずれは TP_N より短いので、個の番号で揃える）
+    if len(rel) > 1:
+        ks = sorted(rel)
+        n = min(len(rel[k][1]) for k in ks)
+        for mm in (1, 100):
+            nb = n // mm
+            if nb < 10:
+                continue
+            X = np.array([rel[k][1][:nb * mm].reshape(nb, mm).mean(axis=1) for k in ks])
+            c = np.corrcoef(X)
+            log(f"TP-5（情報）: ch 間の相関（{mm * tp_n * T_FRAME * 1e3:g} ms に束ねて {nb} 点）")
+            for a_, ka in enumerate(ks):
+                log("      " + CHANS[ka][0] + " " + " ".join(f"{c[a_, b_]:+.3f}" for b_ in range(len(ks))))
+
+    if args.out:
+        z = dict(tp_n=tp_n, nacc=nacc, chs=np.array([r.sp.idx for r in readers]), shifts=np.array([shifts[r.sp.idx] for r in readers]),
+                 run_f0=np.array([r.run_f0 for r in readers], np.int64), bitfile=args.bitfile, clkin=args.clkin)
+        for r in readers:
+            f0, nfr, tsum, fl = r.arrays()
+            k = r.sp.label
+            z.update({f"{k}_f0": f0, f"{k}_nfr": nfr, f"{k}_sum": tsum, f"{k}_flags": fl,
+                      f"{k}_dump_f0": np.array([d["f0"] for d in dumps[r.sp.idx]], np.int64),
+                      f"{k}_dump_S": np.array([d["S"] for d in dumps[r.sp.idx]])})
+        path = args.out + ".tp.npz"
+        np.savez(path, **z)
+        log(f"saved: {path}")
+    return ok
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--bitfile", default=BITFILE)
@@ -1295,6 +1543,10 @@ def main():
     p.add_argument("--radiometer", action="store_true")
     p.add_argument("--tick", type=float, default=None, metavar="SEC",
                    help="判定 7: ADC に入っている 1PPS の縁を SEC 秒ぶん見る（--nacc の最初の値を使う）")
+    p.add_argument("--tp", type=float, default=None, metavar="SEC",
+                   help="total power（proj013）: 選んだ ch を同時に SEC 秒読み、判定 TP-0〜TP-2・TP-4・TP-5 を出す。--out で .tp.npz")
+    p.add_argument("--tp-n", type=int, default=500, help="--tp の 1 区切りのフレーム数（500 = 1 ms）")
+    p.add_argument("--tp-no-spec", action="store_true", help="--tp でスペクトルを読まない（TP-1 パーセバルを省く）")
     p.add_argument("--peaks", type=int, default=0, help="通常の測定の後、細い線を上位 N 個出す")
     p.add_argument("--save", default=None, help="スペクトルとメタデータを .npz で残す")
     p.add_argument("--record", type=float, default=None, metavar="SEC",
@@ -1402,7 +1654,15 @@ def main():
 
     ok = True
     results = {}
-    if args.probe:
+    if args.tp is not None:
+        shifts = {sp.idx: (auto_shift(sp) if args.shift == "auto" else int(args.shift)) for sp in specs}
+        for sp in specs:
+            sp.stop()
+            sp.wr(R_CTRL, CTRL_CLR)
+        ok = tp_run(specs, args, shifts)
+        for sp in specs:
+            results[sp.idx] = ok
+    elif args.probe:
         for sp in specs:
             log(f"\n==== 判定 0: ch {sp.idx}（{sp.label}）====")
             results[sp.idx] = probe(sp)
