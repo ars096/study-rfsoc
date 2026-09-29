@@ -166,6 +166,20 @@ def rfft32_ch(u, k, cnt):
     return ar + cr, -(ai + ci)                                    # 共役 → exp(+j…)
 
 
+def pfb_fixed(x, k, des, cfg, cnt):
+    """粗い PFB（固定小数点、RTL の pfb_core と bit 単位で同じ）。x は 14 bit の整数。戻り値は y（Q = Y_F）の実部・虚部。
+    y[m] の m = 0 は p = N − 1（x の最初の N 個で作る最初のフレーム）。"""
+    hq_p = np.round(des["pfb"]["h"] * 2.0 ** des["sh_pfb"]).astype(np.int64)
+    u, _ = pfb_branches(np.asarray(x).astype(np.int64), hq_p)
+    u = sat(rnd_shift(u, des["sh_pfb"] - cfg["U_F"]), cfg["U_W"], cnt, "u")
+    xr, xi = rfft32_ch(u, k, cnt)                                 # 2·Σ_r u_r exp(+j2πkr/32)（整数、Q = U_F）
+    m_idx = np.arange(len(xr))
+    xr, xi = rot_mj(xr, xi, (k * m_idx) % 4)                      # (−j)^(k·m)
+    yr = sat(rnd_shift(xr, cfg["U_F"] + 1 - cfg["Y_F"]), cfg["Y_W"], cnt, "y")
+    yi = sat(rnd_shift(xi, cfg["U_F"] + 1 - cfg["Y_F"]), cfg["Y_W"], cnt, "y")
+    return yr, yi
+
+
 def rot_mj(r, i, n):
     """(r + j i)·(−j)^n、n は配列（0..3）。"""
     out_r = np.where(n == 0, r, np.where(n == 1, i, np.where(n == 2, -r, -i)))
@@ -182,14 +196,8 @@ def run(x, c, W, des, cfg, fixed, cnt=None):
     tw = np.exp(2j * np.pi * k * np.arange(M) / M)
     m_idx = None
     if fixed:
-        hq_p = np.round(des["pfb"]["h"] * 2.0 ** des["sh_pfb"]).astype(np.int64)
-        u, p = pfb_branches(x.astype(np.int64), hq_p)
-        u = sat(rnd_shift(u, des["sh_pfb"] - cfg["U_F"]), cfg["U_W"], cnt, "u")
-        xr, xi = rfft32_ch(u, k, cnt)                             # 2·Σ_r u_r exp(+j2πkr/32)（整数、Q = U_F）
-        m_idx = np.arange(len(xr))
-        xr, xi = rot_mj(xr, xi, (k * m_idx) % 4)                  # (−j)^(k·m)
-        yr = sat(rnd_shift(xr, cfg["U_F"] + 1 - cfg["Y_F"]), cfg["Y_W"], cnt, "y")
-        yi = sat(rnd_shift(xi, cfg["U_F"] + 1 - cfg["Y_F"]), cfg["Y_W"], cnt, "y")
+        yr, yi = pfb_fixed(x, k, des, cfg, cnt)
+        m_idx = np.arange(len(yr))
         # NCO
         P, A = cfg["NCO_P"], (1 << (cfg["NCO_A"] - 1)) - 1
         theta = (m_idx.astype(np.uint64) * np.uint64(dphi)) & np.uint64(0xFFFFFFFF)

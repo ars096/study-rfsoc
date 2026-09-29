@@ -11,10 +11,17 @@ PART          ?= $(PART_DEFAULT)
 JOBS          ?= 8
 PYTHON        ?= python3
 MODEL_A       ?= 60
+IVERILOG      ?= iverilog
+VVP           ?= vvp
+# sim-pfb の粗い ch（0・8・16 は実数化の後処理が自明になる端、4・12 は 45°）
+PFB_KS        ?= 0 1 4 5 8 13 15 16
+# SIM_PFB_POSCTL=1: 陽性対照（RTL の分岐の和の丸めを切り捨てに）。一致しなければ「結果: 全部通過」
+SIM_PFB_POSCTL ?= 0
+PFB_DIR       := build-sim-pfb$(if $(filter 1,$(SIM_PFB_POSCTL)),-posctl)
 
 export PART
 
-.PHONY: model model-posctl model-sweep fixed fixed-posctl survey clean
+.PHONY: model model-posctl model-sweep fixed fixed-posctl coef sim-pfb survey clean
 
 # 仕様の模型（numpy だけ。Vivado もライセンスも要らない）。成否は「結果: 全部通過」の行で読む
 model:
@@ -40,10 +47,24 @@ fixed-posctl:
 	mkdir -p build-model
 	$(PYTHON) model/win_fixed.py --posctl | tee build-model/fixed_posctl.log
 
+# 係数の生成物 src/win_coef.vh（リポジトリに入れる。手で直さない）。設計を変えたら作り直して sim-pfb を回し直す
+coef:
+	$(PYTHON) tools/gen_coef.py src/win_coef.vh
+
+# pfb_core の単体の sim（iverilog）。model/win_fixed.py の pfb_fixed と bit 単位で照合。k ごと × 入力の途切れ あり / なし
+sim-pfb:
+	mkdir -p $(PFB_DIR)
+	$(PYTHON) sim/check_pfb.py gen $(PFB_DIR)
+	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_PFB_POSCTL)),-DPFB_POSCTL) -o $(PFB_DIR)/tb src/cmul.v src/dft16f.v src/pfb_core.v sim/tb_pfb.v
+	for k in $(PFB_KS); do for g in 0 1; do \
+	  $(VVP) -n $(PFB_DIR)/tb +K=$$k +GAP=$$g +IN=$(PFB_DIR)/x.hex +OUT=$(PFB_DIR)/y_k$${k}_g$${g}.txt +NSAMP=16384 | grep '^pfb:' ; \
+	done; done
+	SIM_PFB_POSCTL=$(SIM_PFB_POSCTL) $(PYTHON) sim/check_pfb.py check $(PFB_DIR) $(PFB_KS) | tee $(PFB_DIR)/check.log
+
 # FFT IP 単体の資源（ライセンスが要る。並列で 10〜20 分の見込み）。結果は build-survey/survey.txt
 survey:
 	mkdir -p build-survey
 	$(VIVADO) -mode batch -nojournal -log build-survey/vivado.log -source tools/ip_survey.tcl -tclargs $(JOBS)
 
 clean:
-	rm -rf build-model build-survey .Xil
+	rm -rf build-model build-survey build-sim-pfb build-sim-pfb-posctl .Xil
