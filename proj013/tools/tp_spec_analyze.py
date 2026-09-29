@@ -72,6 +72,32 @@ def main():
                   f"標準偏差も同じ程度）/ X_4096 の符号付きの平均 {np.mean(xn / np.sqrt(NFFT * e)):+.3f}（安定した線なら 0 から離れる）")
         print()
 
+    # ---- ch 間の比（1 ms の total power）----
+    # 同じ入力を分配したとき、入力側の揺れ（雑音そのもの・雑音源やアンプの利得）は比で消え、ADC ごとの利得の揺れと
+    # ADC 自身の雑音だけが残る。開始のずれ（数十フレーム）は TP_N より短いので個の番号で揃える
+    labs = [lb for lb in ("ADC_A", "ADC_B", "ADC_C", "ADC_D") if f"{lb}_sum" in z.files]
+    if len(labs) > 1:
+        tp_n = int(z["tp_n"])
+        p = {lb: z[f"{lb}_sum"] / (NFFT * z[f"{lb}_nfr"]) for lb in labs}
+        n = min(len(v) for v in p.values())
+        print(f"==== ch 間の比（1 区切り = {tp_n * 2e-3:g} ms、{n} 個）====")
+        print("  相関（1 区切り）: " + " / ".join(f"{a}-{b} {np.corrcoef(p[a][:n], p[b][:n])[0, 1]:+.3f}"
+                                            for i, a in enumerate(labs) for b in labs[i + 1:]))
+        for i, a in enumerate(labs):
+            for b in labs[i + 1:]:
+                r = p[a][:n] / p[b][:n]
+                r = r / r.mean() - 1.0
+                xa, xb = p[a][:n] / p[a][:n].mean() - 1.0, p[b][:n] / p[b][:n].mean() - 1.0
+                rows = []
+                for m in (1, 10, 100, 1000):
+                    nb = n // m
+                    if nb < 10:
+                        break
+                    f = lambda v: v[:nb * m].reshape(nb, m).mean(axis=1).std()
+                    rows.append(f"{m * tp_n * 2e-3:g} ms 比 {f(r):.2e}（{a} 単独 {f(xa):.2e}・{b} 単独 {f(xb):.2e}）")
+                print(f"  {a} / {b}: " + " / ".join(rows))
+        print("  読み: 比の揺れが単独の揺れより十分小さければ、揺れの大部分は 4 本に共通（入力側）。同じ程度なら ADC ごと")
+
 
 if __name__ == "__main__":
     main()
