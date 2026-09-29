@@ -1496,6 +1496,16 @@ def tp_run(specs, args, shifts):
             xb = x[:nb * mm].reshape(nb, mm).mean(axis=1)
             rows.append(f"{mm * tp_n * T_FRAME * 1e3:g} ms {xb.std():.2e}（理想 {ideal / np.sqrt(mm):.2e}・比 {xb.std() * np.sqrt(mm) / ideal:.2f}）")
         log("      束ねた揺れ: " + " / ".join(rows))
+        # アラン偏差: 束ねた標準偏差は 60 秒の漂い（利得の温度変化など）で τ に依らず平らになる。隣どうしの差で漂いを除く
+        rows = []
+        for mm in (1, 10, 100, 1000, 5000):
+            nb = len(x) // mm
+            if nb < 10:
+                break
+            xb = x[:nb * mm].reshape(nb, mm).mean(axis=1)
+            ad = float(np.sqrt(0.5 * np.mean(np.diff(xb) ** 2)))
+            rows.append(f"{mm * tp_n * T_FRAME * 1e3:g} ms {ad:.2e}（比 {ad * np.sqrt(mm) / ideal:.2f}）")
+        log("      アラン偏差: " + " / ".join(rows))
         # TP-1: パーセバル。1 − r はナイキスト（X_4096）の割合 q のはずなので、スナップショットの q で補正して判定する
         if use_spec and nacc % tp_n == 0:
             rs, used = tp_parseval(dumps[sp.idx], f0, nfr, tsum, tp_n, with_index=True)

@@ -17,6 +17,16 @@ import numpy as np
 FS_MHZ, NFFT = 4096.0, 8192
 
 
+def adev(x, m):
+    """アラン偏差（区切り m 個を束ねた平均の、隣どうしの差）。**ゆっくりした漂い（直線の傾きなど）を除いて、τ ごとの揺れを見る**。
+    白色雑音なら束ねた標準偏差と同じ（1/√τ で下がる）。漂いがあれば標準偏差は τ に依らず平らになるが、アラン偏差はそうならない"""
+    nb = len(x) // m
+    if nb < 3:
+        return np.nan
+    xb = x[:nb * m].reshape(nb, m).mean(axis=1)
+    return float(np.sqrt(0.5 * np.mean(np.diff(xb) ** 2)))
+
+
 def if_mhz(k, zone=2):
     fa = k * FS_MHZ / NFFT
     return FS_MHZ - fa if zone == 2 else fa
@@ -125,6 +135,22 @@ def main():
         print(f"==== ch 間の比（1 区切り = {tp_n * 2e-3:g} ms、{n} 個）====")
         print("  相関（1 区切り）: " + " / ".join(f"{a}-{b} {np.corrcoef(p[a][:n], p[b][:n])[0, 1]:+.3f}"
                                             for i, a in enumerate(labs) for b in labs[i + 1:]))
+        ms = [m for m in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000) if n // m >= 10]
+        ideal = np.sqrt(2.0 / (NFFT * tp_n))
+        print(f"  アラン偏差（単独。理想 = √(2 / (8192·TP_N·m)) = 1 区切りで {ideal:.2e}）:")
+        print("      τ [ms]  " + " ".join(f"{m * tp_n * 2e-3:>9g}" for m in ms))
+        print("      理想    " + " ".join(f"{ideal / np.sqrt(m):9.2e}" for m in ms))
+        for a in labs:
+            x = p[a][:n] / p[a][:n].mean() - 1.0
+            print(f"      {a}   " + " ".join(f"{adev(x, m):9.2e}" for m in ms))
+        print("  アラン偏差（ch 間の比）:")
+        for i, a in enumerate(labs):
+            for b in labs[i + 1:]:
+                r = p[a][:n] / p[b][:n]
+                r = r / r.mean() - 1.0
+                print(f"      {a[-1]}/{b[-1]}         " + " ".join(f"{adev(r, m):9.2e}" for m in ms))
+        print("  読み: 単独が理想に沿って 1/√τ で下がり、どこかで平らか上がりに転じる点が、その道の利得の安定の限界（アラン時間）。"
+              "比のアラン偏差が単独より小さい τ では、揺れは 4 本に共通（入力側）")
         for i, a in enumerate(labs):
             for b in labs[i + 1:]:
                 r = p[a][:n] / p[b][:n]
