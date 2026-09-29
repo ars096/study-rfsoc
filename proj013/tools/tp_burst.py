@@ -59,6 +59,48 @@ def main():
         k = np.sum([over[lb] for lb in labs], axis=0)
         ev2 = events(k >= 2)
         print(f"  2 本以上が同じ区切りで越えた事象: {len(ev2)} 回（{len(ev2) / minutes:.2f} 回/分）/ 4 本とも: {len(events(k >= 4))} 回")
+        # ---- 事象の間隔（周期があるか）----
+        if len(ev2) >= 10:
+            st = np.array([s_ for s_, _ in ev2])
+            iv = np.diff(st) * tp_n * 2e-3                     # ms
+            hist, edges = np.histogram(iv, bins=np.arange(0, min(iv.max(), 500) + 2, 1))
+            top = np.argsort(-hist)[:5]
+            print(f"  事象の間隔: 中央値 {np.median(iv):.1f} ms・最小 {iv.min():.0f} ms・最大 {iv.max():.0f} ms / "
+                  f"多い間隔: " + " / ".join(f"{edges[i]:.0f} ms（{hist[i]} 回）" for i in top if hist[i] > 0))
+            ln = np.array([l for _, l in ev2]) * tp_n * 2e-3
+            print(f"  事象の長さ: " + " / ".join(f"{v:g} ms {np.sum(ln == v)} 回" for v in np.unique(ln)[:8]))
+        # ---- スペクトルがあれば: 事象の多いダンプと少ないダンプの平均スペクトルの差（事象がどの ch にあるか）----
+        lab0 = labs[0]
+        if f"{lab0}_spec" in z.files and len(ev2) > 0:
+            f0 = z[f"{lab0}_f0"][:n]
+            S = z[f"{lab0}_spec"]
+            sf0 = z[f"{lab0}_spec_f0"]
+            nacc = int(z["nacc"])
+            per = nacc // tp_n
+            cnt = []
+            for d0 in sf0:
+                i0 = np.searchsorted(f0, d0)
+                cnt.append(int(np.sum(k[i0:i0 + per] >= 2)) if i0 + per <= n and f0[i0] == d0 else -1)
+            cnt = np.array(cnt)
+            ok = cnt >= 0
+            if ok.sum() >= 10 and np.any(cnt[ok] > 0) and np.any(cnt[ok] == 0):
+                hi = S[ok & (cnt >= np.percentile(cnt[ok], 75)) & (cnt > 0)].mean(axis=0)
+                lo = S[ok & (cnt == 0)].mean(axis=0)
+                dlt = hi - lo
+                w = np.full(S.shape[1], 2.0); w[0] = 1.0
+                tot = (w * dlt).sum()
+                o = np.argsort(-(w * dlt))
+                cum = np.cumsum((w * dlt)[o]) / tot
+                print(f"  {lab0} のスペクトル: 事象の多いダンプ（{int(np.sum(ok & (cnt >= np.percentile(cnt[ok], 75)) & (cnt > 0)))} 個）− 事象の無いダンプ（{int(np.sum(ok & (cnt == 0)))} 個）"
+                      f" = 全電力の {tot / (w * lo).sum() * 100:+.2f} %")
+                print(f"    その差の上位 8 ch が {cum[7] * 100:.0f} %・上位 64 ch が {cum[63] * 100:.0f} %・上位 512 ch が {cum[511] * 100:.0f} %"
+                      f"（上位の数 ch に集まれば細い混信、512 ch でも小さければ帯域全体）")
+                print("    上位: " + " / ".join(f"ch {c}（IF {4096 - c * 0.5:.1f}・ゾーン 1 {c * 0.5:.1f} MHz）{(w * dlt)[c] / tot * 100:.1f} %" for c in o[:6]))
+                # 帯域を 8 つに分けた差の比（帯域全体が一様に上がるなら、どの帯も同じ比）
+                band = [(w * dlt)[i * 512:(i + 1) * 512].sum() / max((w * lo)[i * 512:(i + 1) * 512].sum(), 1e-30) for i in range(8)]
+                print("    帯域ごとの上がり（ch 0〜511, 512〜1023, …）: " + " ".join(f"{b_ * 100:+.2f}%" for b_ in band))
+            else:
+                print(f"  （スペクトルと事象の突き合わせができない: 照合できたダンプ {int(ok.sum())} 個）")
     print()
     print("==== まとめ（事象の回数 / 1 分あたり / 最大の強さ）====")
     for path in args:
