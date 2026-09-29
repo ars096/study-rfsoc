@@ -1,7 +1,7 @@
 # proj014 — 狭帯域の窓（256〜8 MHz）を粗い PFB ＋ 窓ごとの DDC で切り出す（まず 1 ADC・1 窓）
 
 日付: 2026-09-29
-状態: **進行中**（手順 1・2 済み。手順 3 の RTL: pfb_core → ddc_core が模型と bit 単位で一致、**wspec_core（溜め → FFT → 電力 → 積分）が 4 層の判定を通過**。次は AXI の上位と proj013 への組み込み）
+状態: **進行中**（手順 1・2 済み。手順 3: **win_core（1 ADC・1 窓）を AXI 越しに端から端まで sim で通過**。proj013 に組み込んだ build.tcl を用意。**次は Vivado サーバでのビルド**）
 
 ## 目的
 
@@ -88,6 +88,18 @@ bit ③（4 ADC × 4 窓、256 MHz 窓で規模が決まる）。**自作部分�
   ② の見当: DSP ≒ 27 × 64 ＋ 自作 144 × 4（proj012）＋ tp_core 96 ≒ 2400（56 %）、BRAM は FFT だけで 7.5 × 64 = 480（proj012 は 3 × 64 = 192）。
   ひねり係数・16 点 DFT・ch の選択・積分（ch が 2 倍）も長さ切り替えに合わせる。**① は ② が実機で proj012/013 の判定を通るまで残す**
   - 見送った案: 1 GHz を 32768 点の隣り合う 2 ch の電力の和で作る（切り替えが要らないが、ch の応答の形が 16384 点と違う）
+
+### ビルドの予言（proj014 rev1 = proj013 rev1 ＋ win_core × 1、2026-09-30。測る前に書く）
+
+| | proj013 rev1 | 予言 | 根拠 |
+|---|---|---|---|
+| DSP48E2 | 2016 | **≒ 2400（+ 360〜420）** | win_core: pfb 264（分岐の和 192・dft16f 64・実数化 8）＋ ddc 94 ＋ FFT 30 ＝ 388 |
+| BRAM | 324 | **≒ 370〜380（+ 47〜55）** | 溜め 8・スナップショット 8・積分 16・FFT 15・NCO 4 |
+| LUT | 180,396 | **+ 15k〜30k** | FFT 4.0k（survey）、pfb の窓（112 × 14 bit のレジスタと mux）・加算、hb2 の和 |
+| FF | 348,665 | **+ 25k〜45k** | pfb の窓と積の段、hb2 × 6 の履歴、wspec の段 |
+| CDC | CDC-3 78・CDC-6 8・CDC-15 3137・Critical 0 | **同じ** | win_core は DSP ドメインの内側だけ |
+| 結線の照合 | 80 行・問題 0 | **行が増え、問題 0** | ch 1 の行に gb_bc_1 の 3 本 |
+| WNS `-2` / `-1` | +0.205 / +0.170 | **−0.03〜+0.37 / 閉じない恐れあり** | proj013 の教訓（±0.2 ns で書く）。**負なら `make worst-paths` で、proj013 の群（A〜E）か win_core の中（pfb の分岐の和・hb2・wspec）かを分ける** |
 
 ## 手順（予定）
 
@@ -179,7 +191,27 @@ bit ③（4 ADC × 4 窓、256 MHz 窓で規模が決まる）。**自作部分�
     100 ms の積分（256 MHz 窓で 6250 フレーム）なら問題にならない。N_ACC = 1 で照合するときは N_DUMP = 1 にする
   - **BRAM の見当（窓 1 つ）**: 溜め 8・スナップショット 8・積分 16（二面 × 4096 × 64 bit）・FFT 15・NCO 4 = 51 → 16 窓で ≒ 816（1080 の 76 %）。
     **積分を URAM に（窓 1 つ 2 個、16 窓で 32 / 80）、スナップショットを ADC ごとに 1 つに**すれば ≒ 440 に下がる。4 窓にするときに決める
-- この proj014 の Makefile には model・survey・sim だけを置いた。**手順 3 で proj013 を複製するまで、ビルドのターゲットは置かない**（proj013 と同じ名前の .bit を作る道を作らない）
+- **手順 3 の 4 つ目: `src/win_core.v`（AXI4-Lite の上位）と、AXI 越しの sim（`make sim-top`）**（2026-09-30）
+  - レジスタは spec_core と同じ並び（ID・CTRL・N_ACC・N_DUMP・SHIFT・FLAGS・SEQ・FIN/FOUT・DUMP_*・SNAP_F・BANK・RUN_F0）に、
+    窓の設定 WK・WDPHI・WNS（**CTRL[12] = WRST で取り込み、窓の経路を最初から**）・WCUR・PFB_SAT・DDC_SAT・BUILD・WRST_T を足した。窓は 128 KiB
+    （0x08000– スナップショット、0x10000– スペクトル）。表は src/win_core.v の冒頭
+  - **入力の途切れが値を変えない**: pfb_core は valid なビートだけで窓を進めるので、realtime の FFT IP に直につないでいた proj011〜013 の
+    起動の途切れの守り（見張り・GRST）はこの経路では要らない。sim では、ダンプを AXI で読む間に入力を止めて（tvalid = 0）、再開しても値が変わらないことも確かめている
+  - `make sim-top`（NS = 1、N_ACC 2 × 3 ダンプ、入力の途切れあり、AXI で全部読む。iverilog で 30 分）: **z が模型（x → pfb_fixed → ddc_fixed）と 52,682 個 1 LSB も違わず**、
+    wspec の 4 層（積分が bit 単位・FFT のモデル = numpy・帳簿・FLAGS）と WCUR・飽和の印も通過
+  - 気づいたこと: SHIFT 4 では窓の中の強い CW（振幅 2000 LSB）が ch あたり 23〜29 回飽和した。窓の FFT の出力は全帯域より 8 倍（18 dB）大きい
+    （z は Q4、4096 点）。**SHIFT の既定は窓の幅と入力のレベルから決める**（PS の自動の SHIFT は後で）
+  - 半帯域の和を 2 段（4 項ずつの部分和 → 和）に切った（final は 18 項 × 43 bit を 1 クロックで足していた。256 MHz に収まらない見込み）。レイテンシ 4 → 5、値は同じ（sim-ddc・sim-win で確かめた）
+- **proj013 への組み込み（手順 3 の 5 つ目、2026-09-30）**: `git ls-files proj013` の追跡ファイルを複製（Makefile・README・cmul.v・ip_survey.tcl は proj014 のものを残した）し、
+  - **build.tcl**: proj013 rev1 の 4ch の全帯域（spec_core × 4 ＋ total power）はそのままに、**ADC_B（ch 1）の gb_dn の出口を axis_broadcaster（gb_bc_1）で 2 本に分け、
+    spec_core_1 と win_core_0 に同じ流れを入れる**。同じ入力で全帯域と窓を比べられる（判定 W-6）。ギアボックスの制御は spec_core_1 のまま。
+    FFT IP win_fft（survey の win4096_res_lut と同じ設定、読み返しで照合）、SmartConnect の M を 6 本、win_core の窓 128 KiB（揃い・重なりを照合）、
+    BUILD_TAG の [22] = 窓のコア。変更点は build.tcl の冒頭。当てたスクリプトは 1 回限り（proj014 の履歴に残らない。差分は git diff proj013/build.tcl proj014/build.tcl）
+  - **spec_core の ID を 0x0014_01CC に**（RTL は proj013 rev1 と同一で定数だけ。sim/check.py の期待値も）。pynq/spectrometer.py は BITFILE と ID_EXPECT だけ
+  - **pynq/window.py**（新規）: win_core_0 の判定 W-0（ID・BUILD・WCUR・FLAGS・飽和）・W-1（CW の ch の位置）・W-6（spec_core_1 と同時に測って電力の比を予言 64·4^(SHIFT_full − SHIFT_win) と比べる、±0.1 dB）。
+    起動（クロック・Overlay・タイル）は spectrometer.py のものを使う。窓の中心は ch の格子に丸め、k·fs/8 の線が中央 90 % に入れば警告
+  - Makefile は proj013 のもの（ビルド・spec_core の sim）の後ろに窓の標的を足した。`make sim-all` = sim-spec-all（proj013 の 7 本）＋ sim-win-all（窓の 7 本）
+- この proj014 の Makefile には model・survey・sim だけを置いた（← 上の組み込みで、ビルドの標的も持つようになった）。**手順 3 で proj013 を複製するまで、ビルドのターゲットは置かない**（proj013 と同じ名前の .bit を作る道を作らない）
 
 ## 結果
 
@@ -248,7 +280,10 @@ bit ③（4 ADC × 4 窓、256 MHz 窓で規模が決まる）。**自作部分�
 - [x] RTL の 1 つ目: pfb_core（粗い PFB の 1 ch）を固定小数点の模型と bit 単位で照合（16 通り・陽性対照つき）
 - [x] RTL: NCO・半帯域の縦続（幅可変、ddc_core）を模型と bit 単位で照合（24 通り＋つないだ 6 通り・陽性対照つき）
 - [x] RTL: 窓の FFT・電力・積分（wspec_core）と sim（4 層・変種 3 つ・陽性対照）
-- [ ] AXI4-Lite の上位（win_core: pfb_core → ddc_core → wspec_core ＋ レジスタ）と、それを通した sim
+- [x] AXI4-Lite の上位（win_core）と、AXI 越しの sim（sim-top）
+- [x] proj013 への組み込み（build.tcl・ID・window.py・Makefile）
+- [ ] **Vivado サーバ: `make sim-all` → `make` → `make timing-check` → `make worst-paths PART=xczu48dr-ffvg1517-1-e`**（予言は下の「ビルドの予言」）
+- [ ] 実機: spectrometer.py の proj013 の判定の回帰（4 本）→ window.py の W-0・W-1・W-6（W = 256 と 8）
 - 設計のメモ（wspec_core で実装済み）: **FFT の前にフレームの溜め（4096 語 × 2 面）を置き、1 フレームを途切れなく流す**:
   realtime の FFT IP は入力の途切れを待たずに進む（proj011）が、窓の出力は W MSPS（W = 8 なら 32 クロックに 1 個）で必ず途切れる。
   溜めれば realtime のまま使え、64 MHz 以下の窓 4 つで FFT 1 個を共有する時分割もこの溜めの上に載る（BRAM 36 × 4〜8 / 窓）。見送った案: nonrealtime の IP（待つが、proj010 の CE の大ファンアウト）

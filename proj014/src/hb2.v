@@ -8,7 +8,7 @@
 // 対称 h[2i] = h[2(2L − 1 − i)] なので前置加算で乗算は L + 1 個 / 成分。
 // **最初の出力 q = 0 は組 n = 2L − 1 が来たとき**（x[0..N−1] が揃ったとき）。rst の後の最初の組を n = 0 とする。
 //
-// 段: 組を受ける（履歴）→ 前置加算 → 積 → 和 → 丸め（>>> SH、+2^(SH−1)）・飽和 W bit。レイテンシ 4（in_v → out_v）
+// 段: 組を受ける（履歴）→ 前置加算 → 積 → 部分和（4 項ずつ）→ 和 → 丸め（>>> SH、+2^(SH−1)）・飽和 W bit。レイテンシ 5（in_v → out_v）
 // **組の間隔は自由**（in_v が来たときだけ進む）。出力の間隔は入力の組の間隔と同じ。
 //
 // 資源: 乗算 2(L + 1)（複素）を並列に持つ（1 組 / クロックまで受けられる）。
@@ -83,14 +83,28 @@ module hb2 #(
         v3 <= v2;
     end
 
+    // 和は 2 段: 4 項ずつの部分和（NG 個）→ その和。final（L + 1 = 18 項 × 43 bit）を 1 クロックで足すと 256 MHz に収まらない見込み
+    localparam integer NG = (L + 1 + 3) / 4;
+    reg signed [PW-1:0] gr [0:NG-1], gi [0:NG-1];
+    reg                 v3b;
+    reg signed [PW-1:0] ar, ai;                 // 途中（ブロッキング）
+    integer g;
+    always @(posedge clk) begin
+        for (g = 0; g < NG; g = g + 1) begin
+            ar = 0; ai = 0;
+            for (i = 4 * g; i < 4 * g + 4; i = i + 1)
+                if (i <= L) begin ar = ar + mr[i]; ai = ai + mi[i]; end
+            gr[g] <= ar;  gi[g] <= ai;
+        end
+        v3b <= v3;
+    end
     reg signed [PW-1:0] sr, si;
     reg                 v4;
-    reg signed [PW-1:0] ar, ai;                 // 和の途中（ブロッキング。組み合わせの加算木 → 後でタイミングを見て段を切る）
     always @(posedge clk) begin
         ar = 0; ai = 0;
-        for (i = 0; i <= L; i = i + 1) begin ar = ar + mr[i]; ai = ai + mi[i]; end
+        for (g = 0; g < NG; g = g + 1) begin ar = ar + gr[g]; ai = ai + gi[g]; end
         sr <= ar;  si <= ai;
-        v4 <= v3;
+        v4 <= v3b;
     end
 
     wire signed [PW-1:0] rr = (sr + (1 <<< (SH - 1))) >>> SH;
