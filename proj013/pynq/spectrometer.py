@@ -1361,6 +1361,7 @@ class TpReader:
 
 
 FULL_SCALE_P = 8191.0 ** 2 / 2.0      # 14 bit の正弦波の満振幅の平均電力（dBFS の基準）
+TP_NBAND = 128                        # --tp --out で残すダンプごとの帯の数（1 帯 = 32 ch = 16 MHz）
 TP_SAVE_MAX = 600                     # --tp-save-spec で残すダンプの上限（ch ごと。100 ms なら 60 s ぶん、1 ch 約 30 MB）
 SPUR_CH = (1024, 2048, 3072)          # k·fs/8（k = 1..3）の ch。k = 0 は DC（ch 0）、k = 4 はナイキスト（ダンプに無い）
 
@@ -1452,7 +1453,9 @@ def tp_run(specs, args, shifts):
                     e = float((x * x).sum())
                     xn = float(x[0::2].sum() - x[1::2].sum())
                     q = xn * xn / (NFFT * e) if e > 0 else np.nan
-                    d_ = dict(m, S=S, Sspur=Sspur, q=q)
+                    # 128 帯（32 ch = 16 MHz ずつ）の電力。長い記録でも、事象がどの帯に載ったかを残す（1 時間・4 本で ≒ 70 MB）
+                    band = (spf * g).reshape(TP_NBAND, NCH_OUT // TP_NBAND).sum(axis=1).astype(np.float32)
+                    d_ = dict(m, S=S, Sspur=Sspur, q=q, band=band)
                     if args.tp_save_spec and len(dumps[sp.idx]) < TP_SAVE_MAX:
                         d_["spec"] = (spf * g).astype(np.float64)      # SHIFT を戻した |X_k|²
                         d_["snap"] = snap.copy()
@@ -1566,7 +1569,8 @@ def tp_run(specs, args, shifts):
                       f"{k}_dump_S": np.array([d["S"] for d in dumps[r.sp.idx]]),
                       f"{k}_dump_Sspur": np.array([d["Sspur"] for d in dumps[r.sp.idx]]),
                       f"{k}_dump_q": np.array([d["q"] for d in dumps[r.sp.idx]]),
-                      f"{k}_dump_snap_f": np.array([d["snap_f"] for d in dumps[r.sp.idx]], np.int64)})
+                      f"{k}_dump_snap_f": np.array([d["snap_f"] for d in dumps[r.sp.idx]], np.int64),
+                      f"{k}_dump_band": np.array([d["band"] for d in dumps[r.sp.idx]], np.float32).reshape(-1, TP_NBAND)})
             if args.tp_save_spec:
                 ds = [d for d in dumps[r.sp.idx] if "spec" in d]
                 z.update({f"{k}_spec": np.array([d["spec"] for d in ds], np.float64),
