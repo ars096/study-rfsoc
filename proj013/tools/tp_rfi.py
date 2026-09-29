@@ -37,10 +37,21 @@ def main():
         hit = {}
         for lb in labs:
             B = z[f"{lb}_dump_band"][:nd].astype(np.float64)
-            B = B / B.sum(axis=1, keepdims=True).mean()          # 全電力の平均で割る（帯の割合）
-            med = np.median(B, axis=0)
-            sig = 1.4826 * np.median(np.abs(B - med), axis=0)
-            hit[lb] = B > med + nsig * np.maximum(sig, 1e-12)
+            # **利得の漂いを除く**（2026-09-29、10 分の記録で全部の帯が「混信あり」になった誤りを直した）:
+            #   1. ダンプごとに、帯の中央値で割る（帯域全体が一緒に動く分 = 利得が消え、一部の帯だけの上がり = 混信が残る）
+            #   2. 帯ごとに、50 ダンプ（5 s）ずつの中央値で割る（帯の形のゆっくりした変化を除く）
+            R = B / np.median(B, axis=1, keepdims=True)
+            w = 50
+            nb_ = nd // w
+            base = np.empty_like(R)
+            for j in range(nb_ + (1 if nd % w else 0)):
+                sl = slice(j * w, min(nd, (j + 1) * w))
+                base[sl] = np.median(R[sl], axis=0)
+            X = R / base - 1.0
+            sig = 1.4826 * np.median(np.abs(X - np.median(X, axis=0)), axis=0)
+            hit[lb] = X > nsig * np.maximum(sig, 1e-12)
+            wide = np.mean(hit[lb].sum(axis=1) > NB // 10) * 100
+            print(f"  {lb}: 帯ごとの σ（中央値）{np.median(sig):.1e} / 1 割以上の帯が同時に越えたダンプ {wide:.2f} %（多ければ利得の漂いが残っている）")
         H = np.sum([hit[lb] for lb in labs], axis=0) >= max(1, len(labs) // 2)   # 半分以上の ch で越えたダンプ
         cnt = H.sum(axis=0)
         order = np.argsort(-cnt)
