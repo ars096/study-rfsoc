@@ -25,6 +25,12 @@ def if_mhz(k, zone=2):
 def main():
     path = sys.argv[1]
     top = int(sys.argv[sys.argv.index("--top") + 1]) if "--top" in sys.argv else 20
+    # --exclude A:B（ch の範囲、複数はカンマ）: その ch を除いた残りの揺れと、除いた ch の電力の時系列（間欠性）を出す
+    excl = []
+    if "--exclude" in sys.argv:
+        for t in sys.argv[sys.argv.index("--exclude") + 1].split(","):
+            a_, b_ = t.split(":")
+            excl.append((int(a_), int(b_)))
     z = np.load(path, allow_pickle=True)
     labels = [k[:-5] for k in z.files if k.endswith("_spec")]
     for lb in labels:
@@ -49,6 +55,18 @@ def main():
         R = (S[:, ~spur] * w[~spur]).sum(axis=1)
         print(f"  k·fs/8 の ch を除いた残り: 電力の {R.mean() / T.mean():.3f}・揺れ {R.std() / R.mean():.2e}（理想 {np.sqrt(2.0 / (NFFT * 50000)):.2e}。"
               f"残りの帯域が狭いと理想は大きくなる）")
+        if excl:
+            ex = np.zeros(S.shape[1], bool)
+            for a_, b_ in excl:
+                ex[a_:b_ + 1] = True
+            X = (S[:, ex] * w[ex]).sum(axis=1)
+            Rx = T - X
+            med = np.median(X)
+            print(f"  --exclude {','.join(f'{a_}:{b_}' for a_, b_ in excl)}（{ex.sum()} ch、IF {if_mhz(np.where(ex)[0].max()):.1f}〜{if_mhz(np.where(ex)[0].min()):.1f} MHz、"
+                  f"ゾーン 1 なら {np.where(ex)[0].min() * FS_MHZ / NFFT:.1f}〜{np.where(ex)[0].max() * FS_MHZ / NFFT:.1f} MHz）:")
+            print(f"    除いた ch の電力: 平均 {X.mean() / T.mean():.2e}・中央値 {med / T.mean():.2e}・最大 {X.max() / T.mean():.2e}（全体比）/ "
+                  f"中央値の 3 倍を越えるダンプ {np.mean(X > 3 * med) * 100:.1f} %（間欠的なら大きい）")
+            print(f"    除いた残りの揺れ {Rx.std() / Rx.mean():.2e}（全体 {np.sqrt(vt) / T.mean():.2e}・理想 {np.sqrt(2.0 / (NFFT * 50000)):.2e}）")
         order = np.argsort(-np.abs(c))
         cum = np.cumsum(c[order])
         for n in (1, 8, 64, 512):
