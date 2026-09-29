@@ -27,16 +27,27 @@ def main():
     summary = []
     for path in files:
         z = np.load(path, allow_pickle=True)
-        labs = [lb for lb in ("ADC_A", "ADC_B", "ADC_C", "ADC_D") if f"{lb}_dump_band" in z.files and (only is None or lb == only)]
+        # 128 帯の電力: {ch}_dump_band（proj013 の 2026-09-29 以降）か、無ければ --tp-save-spec のスペクトル {ch}_spec から作る
+        bands = {}
+        for lb in ("ADC_A", "ADC_B", "ADC_C", "ADC_D"):
+            if only is not None and lb != only:
+                continue
+            if f"{lb}_dump_band" in z.files:
+                bands[lb] = z[f"{lb}_dump_band"]
+            elif f"{lb}_spec" in z.files:
+                S = z[f"{lb}_spec"]
+                bands[lb] = S.reshape(S.shape[0], NB, CPB).sum(axis=2)
+        labs = list(bands)
         if not labs:
-            print(f"{path}: {'{ch}'}_dump_band が無い（この版より前の spectrometer.py で取った記録）")
+            print(f"{path}: 帯の電力もスペクトルも無い（--tp-save-spec なしの、帯を残す前の記録）")
             continue
-        nd = min(len(z[f"{lb}_dump_band"]) for lb in labs)
+        src = "dump_band" if f"{labs[0]}_dump_band" in z.files else "スペクトルから作った"
+        nd = min(len(bands[lb]) for lb in labs)
         minutes = nd * 0.1 / 60
-        print(f"==== {path}: ダンプ {nd} 個（{minutes:.1f} 分）・+{nsig:g} σ ====")
+        print(f"==== {path}: ダンプ {nd} 個（{minutes:.1f} 分）・+{nsig:g} σ・帯は {src} ====")
         hit = {}
         for lb in labs:
-            B = z[f"{lb}_dump_band"][:nd].astype(np.float64)
+            B = np.asarray(bands[lb][:nd], dtype=np.float64)
             # **利得の漂いを除く**（2026-09-29、10 分の記録で全部の帯が「混信あり」になった誤りを直した）:
             #   1. ダンプごとに、帯の中央値で割る（帯域全体が一緒に動く分 = 利得が消え、一部の帯だけの上がり = 混信が残る）
             #   2. 帯ごとに、50 ダンプ（5 s）ずつの中央値で割る（帯の形のゆっくりした変化を除く）
