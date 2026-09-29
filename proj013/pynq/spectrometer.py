@@ -1361,6 +1361,7 @@ class TpReader:
 
 
 FULL_SCALE_P = 8191.0 ** 2 / 2.0      # 14 bit の正弦波の満振幅の平均電力（dBFS の基準）
+TP_SAVE_MAX = 600                     # --tp-save-spec で残すダンプの上限（ch ごと。100 ms なら 60 s ぶん、1 ch 約 30 MB）
 SPUR_CH = (1024, 2048, 3072)          # k·fs/8（k = 1..3）の ch。k = 0 は DC（ch 0）、k = 4 はナイキスト（ダンプに無い）
 
 
@@ -1451,7 +1452,11 @@ def tp_run(specs, args, shifts):
                     e = float((x * x).sum())
                     xn = float(x[0::2].sum() - x[1::2].sum())
                     q = xn * xn / (NFFT * e) if e > 0 else np.nan
-                    dumps[sp.idx].append(dict(m, S=S, Sspur=Sspur, q=q))
+                    d_ = dict(m, S=S, Sspur=Sspur, q=q)
+                    if args.tp_save_spec and len(dumps[sp.idx]) < TP_SAVE_MAX:
+                        d_["spec"] = (spf * g).astype(np.float64)      # SHIFT を戻した |X_k|²
+                        d_["snap"] = snap.copy()
+                    dumps[sp.idx].append(d_)
         time.sleep(0.02)
     time.sleep(3 * tp_n * T_FRAME + 0.01)           # 最後の区切りを閉じさせてから読み切る
     for r in readers:
@@ -1500,21 +1505,28 @@ def tp_run(specs, args, shifts):
                 ok = False
             else:
                 qs = np.array([dumps[sp.idx][j]["q"] for j in used])
-                dc = 1.0 - rs - qs
-                good1 = bool(np.all(np.isfinite(dc)) and np.abs(dc).max() <= 1e-3)
-                log(f"TP-1: パーセバル {len(rs)} / {nd} ダンプ: 1 − r {(1 - rs).min():+.2e}〜{(1 - rs).max():+.2e} / "
-                    f"ナイキストの割合 q（スナップショット）{np.nanmin(qs):.2e}〜{np.nanmax(qs):.2e} / "
-                    f"1 − r − q {dc.min():+.2e}〜{dc.max():+.2e}（≦ 1e-3）→ {'OK' if good1 else 'NG'}")
+                # **平均どうしで比べる**（2026-09-29、実機の 2 回目）: 1 − r は 50000 フレームの平均、q は 1 フレームの値。
+                # 未接続の ch では fs/2 の成分がフレームごとに大きく揺れ（C で q 6e-3〜1.8e-2、1 − r は 8.6e-3〜1.0e-2）、
+                # 1 対 1 の比較は ±9e-3 ずれた。許容は max(1e-3, 3 × q の標準誤差)
+                d1, mq = float(np.mean(1.0 - rs)), float(np.nanmean(qs))
+                se = float(np.nanstd(qs) / np.sqrt(max(1, np.sum(np.isfinite(qs)))))
+                tol = max(1e-3, 3.0 * se)
+                good1 = bool(np.isfinite(mq) and abs(d1 - mq) <= tol)
+                log(f"TP-1: パーセバル {len(rs)} / {nd} ダンプ: 1 − r の平均 {d1:+.3e}（{(1 - rs).min():+.2e}〜{(1 - rs).max():+.2e}）/ "
+                    f"ナイキストの割合 q の平均 {mq:.3e}（1 フレームずつ {np.nanmin(qs):.2e}〜{np.nanmax(qs):.2e}、標準誤差 {se:.1e}）/ "
+                    f"差 {d1 - mq:+.2e}（≦ {tol:.1e}）→ {'OK' if good1 else 'NG'}")
                 ok &= good1
                 # 線の割合と、線を除いた total power の揺れ（100 ms のダンプ単位）
                 Ptot = np.array([tsum[i0:i0 + nacc // tp_n].sum() for i0 in tp_parseval.idx0])
                 Pspur = np.array([dumps[sp.idx][j]["Sspur"] for j in used]) / NFFT
-                Pclean = Ptot - Pspur - qs * Ptot
-                fr = (Pspur + qs * Ptot) / Ptot
+                # **ナイキストは差し引かない**（1 フレームの q の揺れが、除いた後の揺れに乗ってしまう。初版で 4〜6e-3 が残ったのはこれ）。
+                # ダンプに在る線（DC・ch 1024/2048/3072 ± 1）だけを 100 ms ごとに除く。ナイキストはダンプの外なので Pclean に残る
+                Pclean = Ptot - Pspur
+                fr = Pspur / Ptot
                 ideal100 = np.sqrt(2.0 / (NFFT * nacc))
                 sd = lambda v: float(np.std(v / v.mean() - 1.0))
-                log(f"      線（DC・ch 1024/2048/3072 ± 1・ナイキスト）の割合 {fr.mean():.2e}（{fr.min():.2e}〜{fr.max():.2e}）/ "
-                    f"{nacc * T_FRAME * 1e3:g} ms の揺れ: 全体 {sd(Ptot):.2e} → 線を除く {sd(Pclean):.2e}（理想 {ideal100:.2e}）/ 線だけ {sd(Pspur + qs * Ptot):.2e}")
+                log(f"      線（DC・ch 1024/2048/3072 ± 1）の割合 {fr.mean():.2e}（{fr.min():.2e}〜{fr.max():.2e}）＋ ナイキスト（平均）{mq:.2e} / "
+                    f"{nacc * T_FRAME * 1e3:g} ms の揺れ: 全体 {sd(Ptot):.2e} → 線を除く {sd(Pclean):.2e}（ナイキストを含む。理想 {ideal100:.2e}）/ 線だけ {sd(Pspur):.2e}")
         if any(dd["flags"] for dd in dumps[sp.idx]):
             log(f"NG: スペクトルのダンプに FLAGS が立った（{sorted(set(dd['flags'] for dd in dumps[sp.idx]))}）")
             ok = False
@@ -1545,6 +1557,11 @@ def tp_run(specs, args, shifts):
                       f"{k}_dump_Sspur": np.array([d["Sspur"] for d in dumps[r.sp.idx]]),
                       f"{k}_dump_q": np.array([d["q"] for d in dumps[r.sp.idx]]),
                       f"{k}_dump_snap_f": np.array([d["snap_f"] for d in dumps[r.sp.idx]], np.int64)})
+            if args.tp_save_spec:
+                ds = [d for d in dumps[r.sp.idx] if "spec" in d]
+                z.update({f"{k}_spec": np.array([d["spec"] for d in ds], np.float64),
+                          f"{k}_snap": np.array([d["snap"] for d in ds], np.int16),
+                          f"{k}_spec_f0": np.array([d["f0"] for d in ds], np.int64)})
         path = args.out + ".tp.npz"
         np.savez(path, **z)
         log(f"saved: {path}")
@@ -1580,6 +1597,9 @@ def main():
                    help="total power（proj013）: 選んだ ch を同時に SEC 秒読み、判定 TP-0〜TP-2・TP-4・TP-5 を出す。--out で .tp.npz")
     p.add_argument("--tp-n", type=int, default=500, help="--tp の 1 区切りのフレーム数（500 = 1 ms）")
     p.add_argument("--tp-no-spec", action="store_true", help="--tp でスペクトルを読まない（TP-1 パーセバルを省く）")
+    p.add_argument("--tp-save-spec", action="store_true",
+                   help="--tp --out で、ダンプのスペクトルとスナップショットも .tp.npz に残す（ch ごとに最初の 600 ダンプまで）。"
+                        "tools/tp_spec_analyze.py でどの ch が揺れの元かを見る")
     p.add_argument("--peaks", type=int, default=0, help="通常の測定の後、細い線を上位 N 個出す")
     p.add_argument("--save", default=None, help="スペクトルとメタデータを .npz で残す")
     p.add_argument("--record", type=float, default=None, metavar="SEC",
@@ -1634,6 +1654,9 @@ def main():
         sys.exit(2)
     if args.any_id:
         log("ERROR: --any-id（proj010.bit の対照）は proj012 の 4 本の道では使えない。proj011 の spectrometer.py を使う")
+        sys.exit(2)
+    if args.tp_save_spec and not args.out:
+        log("ERROR: --tp-save-spec には --out PREFIX が要る")
         sys.exit(2)
     if args.leak_from is not None and args.leak_from not in args.chs:
         log("ERROR: --leak-from の ch が --ch に入っていない")

@@ -166,10 +166,10 @@ class FakeCore:
         return A()
 
 
-def run(mode, seconds=3.0):
+def run(mode, seconds=3.0, out=None):
     specs = [S.Spec(FakeCore(i, mode), idx=i, label=S.CHANS[i][0]) for i in range(4)]
-    args = types.SimpleNamespace(tp=seconds, tp_n=500, nacc="50000", tp_no_spec=False, out=None,
-                                 bitfile="mock", clkin="mock")
+    args = types.SimpleNamespace(tp=seconds, tp_n=500, nacc="50000", tp_no_spec=False, out=out,
+                                 tp_save_spec=out is not None, bitfile="mock", clkin="mock")
     return S.tp_run(specs, args, {i: 4 for i in range(4)})
 
 
@@ -179,6 +179,16 @@ if __name__ == "__main__":
     for mode, w in want.items():
         print(f"\n######## 模擬: {mode}（期待 {'OK' if w else 'NG'}）########")
         res[mode] = run(mode)
+    # 保存と解析の道具が通ること（--tp-save-spec → tools/tp_spec_analyze.py）
+    import tempfile, subprocess
+    tmp = os.path.join(tempfile.mkdtemp(), "mock")
+    print("\n######## 模擬: 保存（--tp-save-spec）と tp_spec_analyze.py ########")
+    run("normal", 2.0, out=tmp)
+    ra = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "tp_spec_analyze.py"),
+                         tmp + ".tp.npz", "--top", "3"], capture_output=True, text=True)
+    print(ra.stdout[-1500:], ra.stderr[-1500:])
+    want["save"] = True
+    res["save"] = ra.returncode == 0 and "ADC_D" in ra.stdout
     print()
     bad = [m for m, w in want.items() if res[m] != w]
     for m, w in want.items():
