@@ -10,7 +10,8 @@ RTL の bit 単位の照合は、後でこのファイルの式（段の境目�
   u_r    PFB の分岐の和  u_r[m] = Σ_t h[r + 32t] · x[p − r − 32t]、p = 8m + N − 1         U_W bit、Q = U_F
   y      粗い ch         y[m] = (−j)^(k·m) · Σ_r u_r[m] · exp(+j2πkr/32)                 Y_W bit、Q = Y_F（複素）
          （仕様の式 exp(−j2πkp/M) のうち定数 exp(−j2πk(N−1)/M) を落とした形。電力には効かない。
-          残る (−j)^(km) は符号と実虚の入れ替えだけ。32 点の DFT の中の丸めはここでは 1 回の丸めで代表させる）
+          残る (−j)^(km) は符号と実虚の入れ替えだけ。32 点の実 DFT は RTL の形そのまま（下の rfft32_ch）:
+          16 点 複素 DFT（proj013 の dft16 と同じ分解・同じ cmul の丸め）＋ 選んだ ch だけ実数化の後処理）
   NCO    位相 32 bit、θ[m] = m·Δ mod 2³²、Δ = round(d / 512 · 2³²)。表の番地 = θ の上位 P bit、
          値 = round(A · cos / sin)、A = 2^(NCO_A − 1) − 1
   v      y · (cos − j sin)                                                                 V_W bit、Q = V_F
@@ -46,7 +47,7 @@ import numpy as np
 import win_model as WM
 
 DEFAULT = {
-    "U_W": 24, "U_F": 12,
+    "U_W": 22, "U_F": 10,
     "Y_W": 24, "Y_F": 8,
     "V_W": 24, "V_F": 8,
     "NCO_P": 14, "NCO_A": 18,
@@ -108,6 +109,70 @@ def nco_step(d):
     return dphi, signed / 2 ** 32 * WM.R0
 
 
+# ---- PFB の 32 点 実 DFT（RTL の形そのもの）--------------------------------------------------
+# z[n] = u[2n] + j·u[2n+1]（n = 0..15）→ 16 点 複素 DFT（proj013 の dft16 と同じ 4 × 4 の分解・同じ cmul の丸め、
+# ただし出力 16 本とも）→ 選んだ ch k だけ実数化の後処理:
+#   A = Z[k] + conj(Z[16−k])、B = Z[k] − conj(Z[16−k])、X_f[k] · 2 = A + (−j·W32^k) · B（cmul 1 個）
+# 仕様の exp(+j2πkr/32) は順変換の複素共役なので、最後に虚部の符号を返す。
+# 語幅（整数部の上限は Σ|h|·8192 = 1.65·8192 から）: u 22 bit → U 24 → Z 26 → A・B 27（cmul の入口 = DSP の A ポート 27 bit）
+
+def cmul_int(ar, ai, wr, wi):
+    """proj013 の cmul.v: y = floor((a·w + 2^15) / 2^16)、w は 18 bit・2^16 = 1.0。"""
+    return (ar * wr - ai * wi + (1 << 15)) >> 16, (ar * wi + ai * wr + (1 << 15)) >> 16
+
+
+def wq(e, n):
+    """exp(−j2π e / n) を 18 bit（2^16 = 1.0）に丸めた値。"""
+    return int(round(65536 * math.cos(2 * math.pi * e / n))), int(round(-65536 * math.sin(2 * math.pi * e / n)))
+
+
+def dft16_int(zr, zi):
+    """(nframes, 16) の整数 → 16 点 DFT（順変換、W16 = exp(−2πi/16)）。段 1: 4 点（加減算）/ 段 2: cmul W16^(b·c) / 段 3: 4 点。"""
+    ur = np.zeros(zr.shape[:1] + (4, 4), dtype=np.int64)
+    ui = np.zeros_like(ur)
+    for b in range(4):
+        x = [(zr[:, 4 * a + b], zi[:, 4 * a + b]) for a in range(4)]
+        # X_c = Σ_a W4^(a·c) x_a、W4 = −j
+        ur[:, b, 0] = x[0][0] + x[1][0] + x[2][0] + x[3][0]; ui[:, b, 0] = x[0][1] + x[1][1] + x[2][1] + x[3][1]
+        ur[:, b, 1] = x[0][0] + x[1][1] - x[2][0] - x[3][1]; ui[:, b, 1] = x[0][1] - x[1][0] - x[2][1] + x[3][0]
+        ur[:, b, 2] = x[0][0] - x[1][0] + x[2][0] - x[3][0]; ui[:, b, 2] = x[0][1] - x[1][1] + x[2][1] - x[3][1]
+        ur[:, b, 3] = x[0][0] - x[1][1] - x[2][0] + x[3][1]; ui[:, b, 3] = x[0][1] + x[1][0] - x[2][1] - x[3][0]
+    tr = np.empty_like(ur); ti = np.empty_like(ui)
+    for b in range(4):
+        for c in range(4):
+            wr, wi = wq(b * c, 16)
+            tr[:, b, c], ti[:, b, c] = cmul_int(ur[:, b, c], ui[:, b, c], wr, wi)
+    Zr = np.empty(zr.shape, dtype=np.int64); Zi = np.empty_like(Zr)
+    for c in range(4):
+        y = [(tr[:, b, c], ti[:, b, c]) for b in range(4)]
+        Zr[:, c + 0] = y[0][0] + y[1][0] + y[2][0] + y[3][0]; Zi[:, c + 0] = y[0][1] + y[1][1] + y[2][1] + y[3][1]
+        Zr[:, c + 4] = y[0][0] + y[1][1] - y[2][0] - y[3][1]; Zi[:, c + 4] = y[0][1] - y[1][0] - y[2][1] + y[3][0]
+        Zr[:, c + 8] = y[0][0] - y[1][0] + y[2][0] - y[3][0]; Zi[:, c + 8] = y[0][1] - y[1][1] + y[2][1] - y[3][1]
+        Zr[:, c + 12] = y[0][0] - y[1][1] - y[2][0] + y[3][1]; Zi[:, c + 12] = y[0][1] + y[1][0] - y[2][1] - y[3][0]
+    return Zr, Zi
+
+
+def rfft32_ch(u, k, cnt):
+    """u: (nframes, 32) 整数 → 2·Σ_r u_r exp(+j2πkr/32)（整数）。"""
+    Zr, Zi = dft16_int(u[:, 0::2], u[:, 1::2])
+    Zr = sat(Zr, 26, cnt, "z16"); Zi = sat(Zi, 26, cnt, "z16")
+    k1, k2 = k % 16, (16 - k) % 16
+    ar, ai = Zr[:, k1] + Zr[:, k2], Zi[:, k1] - Zi[:, k2]         # Z[k] + conj(Z[16−k])
+    br, bi = Zr[:, k1] - Zr[:, k2], Zi[:, k1] + Zi[:, k2]         # Z[k] − conj(Z[16−k])
+    wr, wi = wq(k, 32)
+    wr, wi = wi, -wr                                              # −j·W32^k
+    br, bi = sat(br, 27, cnt, "b27"), sat(bi, 27, cnt, "b27")
+    cr, ci = cmul_int(br, bi, wr, wi)
+    return ar + cr, -(ai + ci)                                    # 共役 → exp(+j…)
+
+
+def rot_mj(r, i, n):
+    """(r + j i)·(−j)^n、n は配列（0..3）。"""
+    out_r = np.where(n == 0, r, np.where(n == 1, i, np.where(n == 2, -r, -i)))
+    out_i = np.where(n == 0, i, np.where(n == 1, -r, np.where(n == 2, -i, r)))
+    return out_r, out_i
+
+
 def run(x, c, W, des, cfg, fixed, cnt=None):
     """連鎖を回して FFT の入力（複素、ADC の LSB を単位にした値）を返す。fixed=True なら段の境目で丸める。
     NCO の周波数は両方とも 32 bit に丸めた値（浮動小数点の側も同じ周波数で回し、位相の丸めだけを比べる）。"""
@@ -120,11 +185,11 @@ def run(x, c, W, des, cfg, fixed, cnt=None):
         hq_p = np.round(des["pfb"]["h"] * 2.0 ** des["sh_pfb"]).astype(np.int64)
         u, p = pfb_branches(x.astype(np.int64), hq_p)
         u = sat(rnd_shift(u, des["sh_pfb"] - cfg["U_F"]), cfg["U_W"], cnt, "u")
-        yc = (u.astype(float) @ tw)                               # 32 点の DFT の 1 ch（内部は 1 回の丸めで代表）
-        m_idx = np.arange(len(yc))
-        yc = yc * ROT[(k * m_idx) % 4] / 2.0 ** cfg["U_F"]                         # ADC の LSB を単位に
-        yr = sat(np.round(yc.real * 2 ** cfg["Y_F"]).astype(np.int64), cfg["Y_W"], cnt, "y")
-        yi = sat(np.round(yc.imag * 2 ** cfg["Y_F"]).astype(np.int64), cfg["Y_W"], cnt, "y")
+        xr, xi = rfft32_ch(u, k, cnt)                             # 2·Σ_r u_r exp(+j2πkr/32)（整数、Q = U_F）
+        m_idx = np.arange(len(xr))
+        xr, xi = rot_mj(xr, xi, (k * m_idx) % 4)                  # (−j)^(k·m)
+        yr = sat(rnd_shift(xr, cfg["U_F"] + 1 - cfg["Y_F"]), cfg["Y_W"], cnt, "y")
+        yi = sat(rnd_shift(xi, cfg["U_F"] + 1 - cfg["Y_F"]), cfg["Y_W"], cnt, "y")
         # NCO
         P, A = cfg["NCO_P"], (1 << (cfg["NCO_A"] - 1)) - 1
         theta = (m_idx.astype(np.uint64) * np.uint64(dphi)) & np.uint64(0xFFFFFFFF)

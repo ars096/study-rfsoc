@@ -69,6 +69,34 @@ def kaiser_beta(a):
     return 0.0
 
 
+METHOD = "minimax"      # minimax（Lawson の反復重み付き最小二乗 = 等リプル）/ kaiser（窓関数法。初版）
+
+
+def lawson(N, bands, desired, weights, fs, iters=400):
+    """対称な FIR（長さ N）の等リプル（最大誤差の最小化）設計。Lawson の反復重み付き最小二乗。numpy だけ。
+    scipy.signal.remez と同じ解に収束する（2026-09-29 に PFB 96 タップ・半帯域で突き合わせた）。"""
+    even = N % 2 == 0
+    M = N // 2 if even else (N - 1) // 2
+    k = (np.arange(M) + 0.5) if even else np.arange(M + 1)
+    fs_, ds, ws = [], [], []
+    for (a, b), d, q in zip(bands, desired, weights):
+        n = max(20, int(12 * N * (b - a) / (fs / 2)))
+        fs_.append(np.linspace(a, b, n)); ds.append(np.full(n, float(d))); ws.append(np.full(n, float(q)))
+    f, D, Wt = np.concatenate(fs_), np.concatenate(ds), np.concatenate(ws)
+    C = np.cos(2 * np.pi * np.outer(f, k) / fs)
+    if even:
+        C *= 2
+    else:
+        C[:, 1:] *= 2
+    v = np.ones(len(f)) / len(f)
+    for _ in range(iters):
+        sw = np.sqrt(v * Wt)
+        a, *_ = np.linalg.lstsq(C * sw[:, None], D * sw, rcond=None)
+        v = v * (np.abs(C @ a - D) * Wt)
+        v /= v.sum()
+    return np.concatenate([a[::-1], a]) if even else np.concatenate([a[:0:-1], a])
+
+
 def resp(h, f, rate):
     """対称な係数の零位相の応答（実数）。f と rate は同じ単位。"""
     n = np.arange(len(h)) - (len(h) - 1) / 2.0
@@ -102,16 +130,24 @@ def design_halfband(fp_n, a, ripple_pp, lmin=1, lmax=80):
     """半帯域（中心 0.5・偶数番目の係数 0）。fp_n = 通過の端 / レート。阻止の端は 0.5 − fp_n。
     長さ 4L − 1（0 でない係数は中心と ±1, ±3, …, ±(2L − 1)）。量子化した後でも要求を満たす最小の L。"""
     for L in range(lmin, lmax + 1):
+        N = 4 * L - 1
+        n = np.arange(N) - (N - 1) // 2
+        cands = []
+        if METHOD == "minimax":
+            # 半帯域の定石: 長さ 2L の g を通過 [0, 2·fp_n] で 1 に近づけ（型 II なので 0.5 で 0）、奇数番目に g/2、中心に 1/2
+            g = lawson(2 * L, [(0.0, 2 * fp_n)], [1.0], [1.0], 1.0)
+            h = np.zeros(N); h[0::2] = g / 2; h[(N - 1) // 2] = 0.5
+            cands.append((h / h.sum(), 0.0))
         for extra in np.arange(0.0, 25.0, 3.0):    # Kaiser の β を深めに振って、短い長さで通る形を探す（平坦さが律速の段がある）
-            N = 4 * L - 1
-            n = np.arange(N) - (N - 1) // 2
             h = 0.5 * np.sinc(n / 2.0) * np.kaiser(N, kaiser_beta(a + extra))
             h[(n % 2 == 0) & (n != 0)] = 0.0
-            h = h / h.sum()
+            cands.append((h / h.sum(), extra))
+        for h, extra in cands:
             hq, _, _ = quantize(h)
             ok, rip, att = meets(hq, 1.0, fp_n, 0.5 - fp_n, a, ripple_pp)
             if ok:
-                return {"h": hq, "L": L, "N": N, "ripple_pp": rip, "att": att, "beta_extra": extra}
+                return {"h": hq, "L": L, "N": N, "ripple_pp": rip, "att": att, "beta_extra": extra,
+                        "method": "minimax" if (METHOD == "minimax" and extra == 0.0 and h is cands[0][0]) else "kaiser"}
     raise RuntimeError("halfband: 要求を満たす長さが見つからない")
 
 
@@ -119,6 +155,14 @@ def design_pfb(fp, fst, a, ripple_pp, tmin=1, tmax=12):
     """原型の低域通過。長さ N = M·T（T = 分岐あたりのタップ数）。量子化の後でも要求を満たす最小の T。"""
     for T in range(tmin, tmax + 1):
         N = M * T
+        if METHOD == "minimax":
+            for wt in (1.0, 2.0, 3.0, 5.0):        # 阻止の重み（平坦さの予算との釣り合いで選ぶ）
+                h = lawson(N, [(0.0, fp), (fst, FS / 2)], [1.0, 0.0], [1.0, wt], FS)
+                hq, _, _ = quantize(h / h.sum())
+                ok, rip, att = meets(hq, FS, fp, fst, a, ripple_pp)
+                if ok:
+                    return {"h": hq, "T": T, "N": N, "fc": float("nan"), "ripple_pp": rip, "att": att,
+                            "beta_extra": 0.0, "method": f"minimax（阻止の重み {wt:g}）"}
         for extra in np.arange(0.0, 25.0, 3.0):
             for fc in np.linspace(fp, fst, 9)[1:-1]:
                 n = np.arange(N) - (N - 1) / 2.0
@@ -127,7 +171,8 @@ def design_pfb(fp, fst, a, ripple_pp, tmin=1, tmax=12):
                 hq, _, _ = quantize(h)
                 ok, rip, att = meets(hq, FS, fp, fst, a, ripple_pp)
                 if ok:
-                    return {"h": hq, "T": T, "N": N, "fc": fc, "ripple_pp": rip, "att": att, "beta_extra": extra}
+                    return {"h": hq, "T": T, "N": N, "fc": fc, "ripple_pp": rip, "att": att, "beta_extra": extra,
+                            "method": "kaiser"}
     raise RuntimeError("PFB: 要求を満たす長さが見つからない")
 
 
@@ -364,12 +409,16 @@ def alias_tone_test(worst, W, des, posctl=None, nfr=2):
 def resources(des):
     pfb, light, final = des["pfb"], des["light"], des["final"]
     frames_per_clk = (FS / D) / 256.0               # 2 フレーム / クロック（256 MHz）
-    pfb_mult = frames_per_clk * math.ceil(pfb["N"] / 2)   # 対称で前置加算
-    fin = 2 * final["L"]                              # 複素・対称・1 出力 / クロック（W = 256）
+    # **前置加算は使えない**: 対称の相手 h[N−1−n] は別の分岐（31 − r）の和に入るので、1 つの和の中で組にならない
+    pfb_mult = frames_per_clk * pfb["N"]
+    fin = 2 * final["L"]                              # 複素・対称（前置加算で L 個 / 成分）・1 出力 / クロック（W = 256）
     lig = 2 * light["L"] * 2                          # 1 + 1/2 + 1/4 + … ≒ 2 倍（時分割）
     nco = 2 * 3                                       # 2 サンプル / クロック × 複素乗算 3 DSP
-    return {"pfb_fir_dsp_per_adc": pfb_mult, "final_dsp": fin, "light_dsp": lig, "nco_dsp": nco,
-            "per_window_dsp_wo_fft": fin + lig + nco}
+    dft16 = frames_per_clk * 8 * 4                    # 16 点 複素 DFT: 自明でないひねり係数 8 個 × cmul 4 DSP、2 フレーム / クロック
+    post = frames_per_clk * 4                         # 窓 1 つにつき選んだ ch の実数化の後処理 cmul 1 個
+    return {"pfb_fir_dsp_per_adc": pfb_mult, "pfb_dft16_dsp_per_adc": dft16, "post_dsp_per_window": post,
+            "final_dsp": fin, "light_dsp": lig, "nco_dsp": nco,
+            "per_window_dsp_wo_fft": fin + lig + nco + post}
 
 
 # ------------------------------------------------------------------ 本体
@@ -382,7 +431,11 @@ def main():
     ap.add_argument("--json", default=None, help="係数を書き出す")
     ap.add_argument("--seed", type=int, default=14)
     ap.add_argument("--no-time", action="store_true", help="時間領域を省く")
+    ap.add_argument("--method", default=None, help="minimax（既定）/ kaiser（初版の窓関数法）")
     args = ap.parse_args()
+    global METHOD
+    if args.method:
+        METHOD = args.method
 
     if args.A:
         print("要求の深さ A と設計（情報。平坦さの要求は", RIPPLE_PP, "dB p-p）")
@@ -408,7 +461,8 @@ def main():
     des = design(args.a, RIPPLE_PP, args.posctl)
     pfb, light, final = des["pfb"], des["light"], des["final"]
     print(f"要求: 中央 90 % の平坦さ ≦ {RIPPLE_PP} dB p-p、主の経路以外 ≦ −{args.a:.0f} dB。係数 {COEF_BITS} bit")
-    print(f"PFB   : 通過 {des['fp_pfb']:.1f} / 阻止 {des['fst_pfb']:.1f} MHz → T = {pfb['T']}（N = {pfb['N']}）、"
+    print(f"設計法: {METHOD}")
+    print(f"PFB   : 通過 {des['fp_pfb']:.1f} / 阻止 {des['fst_pfb']:.1f} MHz → T = {pfb['T']}（N = {pfb['N']}、{pfb['method']}）、"
           f"fc {pfb.get('fc', float('nan')):.1f} MHz、平坦さ {pfb['ripple_pp']:.4f} dB、阻止 {pfb['att']:.1f} dB")
     print(f"light : 通過 {USE/4:.4f}·R / 阻止 {0.5-USE/4:.4f}·R → L = {light['L']}（N = {light['N']}）、"
           f"平坦さ {light['ripple_pp']:.4f} dB、阻止 {light['att']:.1f} dB")
@@ -458,9 +512,10 @@ def main():
                 print(line)
 
     r = resources(des)
-    print("\n資源の見当（情報）: PFB の FIR {:.0f} DSP / ADC（2 フレーム / クロック × N/2、前置加算）、"
-          "窓 1 つ（FFT 除く）{} DSP（final {} ＋ light {} ＋ NCO {}）".format(
-              r["pfb_fir_dsp_per_adc"], r["per_window_dsp_wo_fft"], r["final_dsp"], r["light_dsp"], r["nco_dsp"]))
+    print("\n資源の見当（情報）: PFB の FIR {:.0f} DSP / ADC（2 フレーム / クロック × N。前置加算は使えない）、"
+          "16 点 DFT {:.0f} / ADC、窓 1 つ（FFT 除く）{:.0f} DSP（final {} ＋ light {} ＋ NCO {} ＋ 実数化 {:.0f}）".format(
+              r["pfb_fir_dsp_per_adc"], r["pfb_dft16_dsp_per_adc"], r["per_window_dsp_wo_fft"], r["final_dsp"],
+              r["light_dsp"], r["nco_dsp"], r["post_dsp_per_window"]))
 
     if args.json:
         out = {}
