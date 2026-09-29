@@ -14,7 +14,7 @@ MODEL_A       ?= 60
 
 export PART
 
-.PHONY: model model-posctl model-sweep survey clean
+.PHONY: model model-posctl model-sweep fixed fixed-posctl survey clean
 
 # 仕様の模型（numpy だけ。Vivado もライセンスも要らない）。成否は「結果: 全部通過」の行で読む
 model:
@@ -29,6 +29,16 @@ model-posctl:
 # 要求の深さを振った設計の比較（情報）
 model-sweep:
 	$(PYTHON) model/win_model.py --A 50 55 60 65 70
+
+# 固定小数点の模型（語長・丸め・NCO）。同じ入力の浮動小数点と比べる。「結果: 全部通過」で読む
+fixed:
+	mkdir -p build-model
+	$(PYTHON) model/win_fixed.py | tee build-model/fixed.log
+
+# 陽性対照（FFT の入力の小数 G = 0 で N1 が落ちる）
+fixed-posctl:
+	mkdir -p build-model
+	$(PYTHON) model/win_fixed.py --posctl | tee build-model/fixed_posctl.log
 
 # FFT IP 単体の資源（ライセンスが要る。並列で 10〜20 分の見込み）。結果は build-survey/survey.txt
 survey:
