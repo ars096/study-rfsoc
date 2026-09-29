@@ -74,17 +74,34 @@ def main():
             print(f"    帯 {b:3d}（ch {c0}〜{c0 + CPB - 1}・IF {4096 - (c0 + CPB) * 0.5:.0f}〜{4096 - c0 * 0.5:.0f} MHz・"
                   f"ゾーン 1 {c0 * 0.5:.0f}〜{(c0 + CPB) * 0.5:.0f} MHz）: {cnt[b]} 個（{cnt[b] / nd * 100:.2f} %）")
         row = [path, minutes]
+        lev = []
         for name, a_, b_ in TAGS:
             bs = sorted(set(range(a_ // CPB, (b_ - 1) // CPB + 1)))
             n = int(np.any(H[:, bs], axis=1).sum())
             row.append(n)
-            print(f"  {name}（帯 {bs[0]}〜{bs[-1]}）: {n} 個（{n / nd * 100:.2f} %・{n / minutes:.1f} 個/分）")
+            # **強さそのもの**: 名前の帯の電力を、両隣 2 帯ずつ（名前の帯を除く）の平均と比べた超過。
+            # 続いて出る混信（通話中の携帯電話など）は 5 s の中央値に吸収されて上の数えに出ないので、こちらで見る
+            nb_ = [c for c in (bs[0] - 2, bs[0] - 1, bs[-1] + 1, bs[-1] + 2) if 0 <= c < NB]
+            ex = []
+            for lb in labs:
+                B = np.asarray(bands[lb][:nd], dtype=np.float64)
+                ex.append(B[:, bs].sum(axis=1) / (B[:, nb_].mean(axis=1) * len(bs)) - 1.0)
+            ex = np.mean(ex, axis=0)
+            lev.append((float(np.median(ex)), float(np.percentile(ex, 99))))
+            print(f"  {name}（帯 {bs[0]}〜{bs[-1]}）: {n} 個（{n / nd * 100:.2f} %・{n / minutes:.1f} 個/分）/ "
+                  f"両隣に対する超過 中央値 {lev[-1][0] * 100:+.2f} %・99 % 点 {lev[-1][1] * 100:+.2f} %")
+        row.append(lev)
         summary.append(row)
     print()
     print("==== まとめ（混信ありのダンプの数・1 分あたり）====")
     print("  " + " " * 34 + " ".join(f"{t[0][:10]:>12s}" for t in TAGS))
     for r in summary:
-        print(f"  {r[0]:34s}" + " ".join(f"{n:5d}（{n / r[1]:4.1f}/分）" for n in r[2:]))
+        print(f"  {r[0]:34s}" + " ".join(f"{n:5d}（{n / r[1]:4.1f}/分）" for n in r[2:-1]))
+    print()
+    print("==== まとめ（両隣の帯に対する超過: 中央値 / 99 % 点。帯の形は BPF で決まるので、同じ入力の記録どうしで比べる）====")
+    print("  " + " " * 34 + " ".join(f"{t[0][:10]:>16s}" for t in TAGS))
+    for r in summary:
+        print(f"  {r[0]:34s}" + " ".join(f"{m * 100:+6.2f}/{q * 100:+6.2f} %" for m, q in r[-1]))
 
 
 if __name__ == "__main__":
