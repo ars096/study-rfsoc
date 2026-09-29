@@ -113,8 +113,13 @@ s10 区切りの和（64 bit）  s11 リングバッファ（BRAM）へ
 | WNS / WHS `-2` | 正・動く | **+0.205 / +0.007 ns**（proj012 rev3 +0.169 / +0.003） | 当たり |
 | WNS / WHS `-1` | −0.05〜+0.15 ns | **+0.170 / +0.009 ns**（周期の 4.4 %。proj012 rev3 +0.070） | **外れ（楽観側に範囲の外）**。下の読み |
 | `-1` の最悪経路に tp_core | 出ない | **setup の slack < 0.30 ns の 218 本に u_tp は 0 本**（u_tp は hold の +0.012〜+0.016 に出るだけ） | 当たり |
-| DSP / BRAM / LUT / FF | 1984 / 324 / +2k〜+5k / +6k〜+10k | （未記入） | |
-| CDC・結線の照合 | 変わらない | （未記入） | |
+| DSP48E2 | 1984（+16 × 4） | **2016（+24 × 4）**。spec_core_i は 4 個とも 504（= 480 + 24）。FFT 64 × 21 = 1344 は変わらず | **外れ（+8 / ch）**。tp_core 1 個が 24。二乗 16 のほかに何が DSP に載ったかは下 |
+| BRAM | 324（+2 × 4） | **324**（tp_core 1 個が RAMB36 × 2） | 当たり |
+| LUT | +2k〜+5k | **180,396（42.4 %）= +2,307**。tp_core 1 個 1,367〜1,378（Logic 1,332〜1,343・SRL 35） | 当たり（全体の増分は tp_core 4 個の 5.5k より小さい。ほかの場所の最適化の揺れ） |
+| FF | +6k〜+10k | **348,665（41.0 %）= +2,591**。tp_core 1 個 945 | **外れ（多く見積もった）**。二乗の入口・出口のレジスタ（a1・a2・m・pp、1 個 1,312 bit）が DSP の中に吸われ、制御の遅延（c_fin 48 bit × 9 段など）が SRL 35 個になった。予言はどちらもファブリックの FF で数えていた |
+| CDC | CDC-3 78・CDC-6 8・CDC-15 3137・Critical 0 | **78・8・3137・Critical 0** | 当たり（構造の指紋が proj012 rev3 と一致） |
+| 結線の照合 | 80 行・問題 0 | **80 行・問題 0 件・陽性対照 OK** | 当たり |
+| tp_core の 4 個の一致 | — | LUT 1,367〜1,378・FF 945・RAMB36 2・DSP 24 で 4 個とも同じ（LUT の ±5 は配置の最適化） | |
 
 - `-1` の 1 回目は、PS の OOC 合成（`system_zynq_ultra_ps_e_0_0_synth_1`）が **0 errors で終わった後に Vivado が segfault**（`Abnormal program termination (11)`）して失敗扱いになり止まった。
   proj012 の 1 回目（gb_gate_2 の OOC）と同じ落ち方で **2 回目**。`make timing-check JOBS=16` でやり直して通った。runme.log の `^ERROR` は 0 件で、この落ち方は数えても見えない
@@ -146,7 +151,8 @@ setup の slack < 0.30 ns は **218 本・すべて配線型**。群は proj012 
 - [x] `make sim`（SHIFT 7 / 4、クラウドの作業環境の iverilog 12.0）: **全部通過**。6 試験とも区切りの和 = Σ(snap>>2)²（bit 単位）・TP_F0 = RUN_F0。パーセバルは 0.999982〜1.000009
 - [x] `make sim-all`（Vivado サーバ）: 8 本とも通過
 - [x] `make` / `make timing-check` / `make worst-paths`: `-2` +0.205・`-1` +0.170（1 回目は PS の OOC の segfault でやり直し）。tp_core は setup の上位に出ない
-- [ ] 資源（DSP・BRAM・LUT・FF）と CDC・結線の照合を上の表に書き写す
+- [x] 資源と CDC・結線の照合を上の表に書き写す（DSP 2016 は予言 1984 から +8 / ch 外れ。FF は多く見積もった）
+- [ ] tp_core の DSP 24 個の内訳（二乗 16 のほかの 8 個が何か）
 - [ ] build.tcl: OOC の run が「合成 0 errors の後の segfault」で落ちたら 1 回だけやり直す（2 回目なので型として扱う）。runbook にも
 - [ ] PS 側の total power の読み出しと判定
 - [ ] docs/block_design.py に tp_core を描き足す（spec_core の中の箱 1 個）
