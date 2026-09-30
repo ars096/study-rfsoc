@@ -21,6 +21,8 @@ RTL を書く段（手順 3）で `git ls-files proj013` の追跡ファイル�
 
 （`docs/block_design.svg` は `docs/block_design.py` で描いた。proj013 rev1 の 4 本はそのままで、ADC_B の gb_dn_1 の出口を gb_bc_1 で分けて win_core_0 に入れ、smc_ctrl の M05 で読む。build.tcl の配線を変えたらこちらも直す）
 
+窓の 3 段（pfb_core・ddc_core・wspec_core）の振る舞いのまとめ: [docs/win_chain.html](docs/win_chain.html)（式・振る舞いの約束・WNS ごとの幅と速さ・FLAGS・語長・確かめ方）
+
 ## 最終仕様（窓のモード。2026-09-29 に決定）
 
 | 幅 | 窓の数 / ADC | 分光点数 | ch 幅 | 系統 |
