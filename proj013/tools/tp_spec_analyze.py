@@ -135,11 +135,15 @@ def main():
         print(f"==== ch 間の比（1 区切り = {tp_n * 2e-3:g} ms、{n} 個）====")
         print("  相関（1 区切り）: " + " / ".join(f"{a}-{b} {np.corrcoef(p[a][:n], p[b][:n])[0, 1]:+.3f}"
                                             for i, a in enumerate(labs) for b in labs[i + 1:]))
-        ms = [m for m in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000) if n // m >= 10]
+        # 束ねた個数 n // m が 10 未満の τ は出さない（アラン偏差の差が 9 個未満では、それ自体の誤差が ≒ 1/√(2·(個数 − 1)) で 25 % を越える）。
+        # 30 分の記録なら 100 s まで、1 時間なら 200 s まで
+        ms = [m for m in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 300000)
+              if n // m >= 10]
         ideal = np.sqrt(2.0 / (NFFT * tp_n))
         print(f"  アラン偏差（単独。理想 = √(2 / (8192·TP_N·m)) = 1 区切りで {ideal:.2e}）:")
         print("      τ [ms]  " + " ".join(f"{m * tp_n * 2e-3:>9g}" for m in ms))
         print("      理想    " + " ".join(f"{ideal / np.sqrt(m):9.2e}" for m in ms))
+        print("      個数    " + " ".join(f"{n // m:>9d}" for m in ms))
         for a in labs:
             x = p[a][:n] / p[a][:n].mean() - 1.0
             print(f"      {a}   " + " ".join(f"{adev(x, m):9.2e}" for m in ms))

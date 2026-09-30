@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# proj012 のブロックデザインの図 docs/block_design.svg を作る。`cd docs && python3 block_design.py`。build.tcl の配線を変えたらここも直す
+# proj013 のブロックデザインの図 docs/block_design.svg を作る。`cd docs && python3 block_design.py`。build.tcl の配線を変えたらここも直す
 W, H = 1440, 1110
 o = []
 def a(s): o.append(s)
@@ -15,7 +15,7 @@ def path(d, cls):
 a(f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}"
      font-family="'Hiragino Sans','Noto Sans CJK JP','Yu Gothic',sans-serif">
   <!-- SPDX-License-Identifier: BSD-3-Clause -->
-  <!-- proj012 のブロックデザイン（build.tcl が組む配線）。手描き（生成スクリプトで描いた）。build.tcl を変えたらここも直す -->
+  <!-- proj013 のブロックデザイン（build.tcl が組む配線）。手描き（生成スクリプトで描いた）。build.tcl を変えたらここも直す -->
   <defs>
     <marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fb5"/></marker>
     <marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d9822b"/></marker>
@@ -45,8 +45,8 @@ a(f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" 
   </defs>
   <rect x="0" y="0" width="{W}" height="{H}" fill="#ffffff"/>''')
 
-t(20, 28, "proj012 ブロックデザイン（build.tcl の配線。1 本ずつは proj011 rev6 と同一）", style="font-size:17px;font-weight:bold;fill:#111")
-t(20, 48, "ADC_A〜D の 4 本 → ch ごとのギアボックス（gb_adc・gb_up・gb_fifo・gb_gate・gb_dn）→ ch ごとの spec_core（8192 点 FFT → 電力 → 積分）→ AXI4-Lite → PS。"
+t(20, 28, "proj013 ブロックデザイン（build.tcl の配線。proj012 rev3 の spec_core の中に tp_core を足したもの）", style="font-size:17px;font-weight:bold;fill:#111")
+t(20, 48, "ADC_A〜D の 4 本 → ch ごとのギアボックス（gb_adc・gb_up・gb_fifo・gb_gate・gb_dn）→ ch ごとの spec_core（8192 点 FFT → 電力 → 積分、中に total power の tp_core）→ AXI4-Lite → PS。"
           "セルの番号 i = 0..3 = ADC_A..D")
 
 # ---------------- PS / SmartConnect ----------------
@@ -153,13 +153,18 @@ for i in range(4):
         t(blocks[3][1] - 10, yc + 13, "gb_k・gb_dn_rstn / 状態は gb_stat・adc_stat で戻る", "lbP")
         t(blocks[2][1] + 4, by + bh + 20, "rd_count", "lbP")
     # spec_core
-    box(SX, top + 6, SW, 110, style="stroke:#2e8b57;stroke-width:2.2")
-    t(SX + 12, top + 26, f"spec_core_{i}（{labels[i]}）", "t")
-    t(SX + 12, top + 44, "8192 点 FFT（lane_fft × 16）→ 電力 → 積分", "s")
-    t(SX + 12, top + 60, "4096 ch × 0.5 MHz・既定 100 ms・二面", "xs")
-    t(SX + 12, top + 75, "起動の見張り・FLAGS・GRST・自動のやり直し", "xs")
-    t(SX + 12, top + 90, f"BUILD_TAG 0x6080000{i}（[23] 4ch・[1:0] ch = {i}）", "xs")
-    t(SX + 12, top + 105, "ID 0x0012_03CC（4 個とも同じ。rev3）", "xs")
+    box(SX, top + 4, SW, 140, style="stroke:#2e8b57;stroke-width:2.2")
+    t(SX + 12, top + 22, f"spec_core_{i}（{labels[i]}）", "t")
+    t(SX + 12, top + 39, "8192 点 FFT（lane_fft × 16）→ 電力 → 積分", "s")
+    t(SX + 12, top + 54, "4096 ch × 0.5 MHz・既定 100 ms・二面", "xs")
+    t(SX + 12, top + 68, "起動の見張り・FLAGS・GRST・自動のやり直し", "xs")
+    t(SX + 12, top + 82, f"BUILD_TAG 0x6080000{i}・ID 0x0013_01CC（4 個同じ）", "xs")
+    # tp_core（spec_core の中。FFT の前の x を分岐し、フレーム番号・RUN・AXI の窓を共有）
+    path(f"M{SX+5},{ry} L{SX+5},{top+104} L{SX+9},{top+104}", "wG")
+    box(SX + 10, top + 88, SW - 18, 52, "sub")
+    t(SX + 18, top + 103, f"tp_core（u_tp）total power", "tm")
+    t(SX + 18, top + 118, "Σx²（x = ADC >>> 2）・500 フレーム = 1 ms・F0 揃え", "xs")
+    t(SX + 18, top + 132, "リング 512 × 16 B（0x2000〜）・reg 0x100〜0x118", "xs")
     t(SX + SW - 6, top + 26, "s_axi ◀", "xs", "end")
 
 # ---------------- クロックとリセット ----------------

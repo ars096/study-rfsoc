@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 1110" width="1440" height="1110"
      font-family="'Hiragino Sans','Noto Sans CJK JP','Yu Gothic',sans-serif">
   <!-- SPDX-License-Identifier: BSD-3-Clause -->
-  <!-- proj012 のブロックデザイン（build.tcl が組む配線）。手描き（生成スクリプトで描いた）。build.tcl を変えたらここも直す -->
+  <!-- proj013 のブロックデザイン（build.tcl が組む配線）。手描き（生成スクリプトで描いた）。build.tcl を変えたらここも直す -->
   <defs>
     <marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fb5"/></marker>
     <marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d9822b"/></marker>
@@ -30,8 +30,8 @@
     </style>
   </defs>
   <rect x="0" y="0" width="1440" height="1110" fill="#ffffff"/>
-<text x="20" y="28" class="s" style="font-size:17px;font-weight:bold;fill:#111">proj012 ブロックデザイン（build.tcl の配線。1 本ずつは proj011 rev6 と同一）</text>
-<text x="20" y="48" class="s">ADC_A〜D の 4 本 → ch ごとのギアボックス（gb_adc・gb_up・gb_fifo・gb_gate・gb_dn）→ ch ごとの spec_core（8192 点 FFT → 電力 → 積分）→ AXI4-Lite → PS。セルの番号 i = 0..3 = ADC_A..D</text>
+<text x="20" y="28" class="s" style="font-size:17px;font-weight:bold;fill:#111">proj013 ブロックデザイン（build.tcl の配線。proj012 rev3 の spec_core の中に tp_core を足したもの）</text>
+<text x="20" y="48" class="s">ADC_A〜D の 4 本 → ch ごとのギアボックス（gb_adc・gb_up・gb_fifo・gb_gate・gb_dn）→ ch ごとの spec_core（8192 点 FFT → 電力 → 積分、中に total power の tp_core）→ AXI4-Lite → PS。セルの番号 i = 0..3 = ADC_A..D</text>
 <rect class="blk" x="40" y="70" width="230" height="120" style="stroke:#2f6fb5"/>
 <text x="52" y="92" class="t">zynq_ultra_ps_e_0</text>
 <text x="52" y="110" class="s">PS（PYNQ / Linux）</text>
@@ -115,13 +115,17 @@
 <text x="456" y="423" class="lbP">gb_hold・gb_adj（書き込み側の GRST）</text>
 <text x="796" y="423" class="lbP">gb_k・gb_dn_rstn / 状態は gb_stat・adc_stat で戻る</text>
 <text x="668" y="416" class="lbP">rd_count</text>
-<rect class="blk" x="1090" y="316" width="280" height="110" style="stroke:#2e8b57;stroke-width:2.2"/>
-<text x="1102" y="336" class="t">spec_core_0（ADC_A）</text>
-<text x="1102" y="354" class="s">8192 点 FFT（lane_fft × 16）→ 電力 → 積分</text>
-<text x="1102" y="370" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
-<text x="1102" y="385" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
-<text x="1102" y="400" class="xs">BUILD_TAG 0x60800000（[23] 4ch・[1:0] ch = 0）</text>
-<text x="1102" y="415" class="xs">ID 0x0012_03CC（4 個とも同じ。rev3）</text>
+<rect class="blk" x="1090" y="314" width="280" height="140" style="stroke:#2e8b57;stroke-width:2.2"/>
+<text x="1102" y="332" class="t">spec_core_0（ADC_A）</text>
+<text x="1102" y="349" class="s">8192 点 FFT（lane_fft × 16）→ 電力 → 積分</text>
+<text x="1102" y="364" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
+<text x="1102" y="378" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
+<text x="1102" y="392" class="xs">BUILD_TAG 0x60800000・ID 0x0013_01CC（4 個同じ）</text>
+<path class="wG" d="M1095,368 L1095,414 L1099,414"/>
+<rect class="sub" x="1100" y="398" width="262" height="52"/>
+<text x="1108" y="413" class="tm">tp_core（u_tp）total power</text>
+<text x="1108" y="428" class="xs">Σx²（x = ADC >>> 2）・500 フレーム = 1 ms・F0 揃え</text>
+<text x="1108" y="442" class="xs">リング 512 × 16 B（0x2000〜）・reg 0x100〜0x118</text>
 <text x="1364" y="336" class="xs" text-anchor="end">s_axi ◀</text>
 <rect class="ext" x="20" y="496" width="150" height="44"/>
 <text x="30" y="514" class="s">ADC_B（SMA）</text>
@@ -163,13 +167,17 @@
 <path class="wP" d="M854,560 L854,548"/>
 <path class="wP" d="M986,560 L986,548"/>
 <path class="wP" d="M764,546 L764,552 L820,552 L820,548"/>
-<rect class="blk" x="1090" y="466" width="280" height="110" style="stroke:#2e8b57;stroke-width:2.2"/>
-<text x="1102" y="486" class="t">spec_core_1（ADC_B）</text>
-<text x="1102" y="504" class="s">8192 点 FFT（lane_fft × 16）→ 電力 → 積分</text>
-<text x="1102" y="520" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
-<text x="1102" y="535" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
-<text x="1102" y="550" class="xs">BUILD_TAG 0x60800001（[23] 4ch・[1:0] ch = 1）</text>
-<text x="1102" y="565" class="xs">ID 0x0012_03CC（4 個とも同じ。rev3）</text>
+<rect class="blk" x="1090" y="464" width="280" height="140" style="stroke:#2e8b57;stroke-width:2.2"/>
+<text x="1102" y="482" class="t">spec_core_1（ADC_B）</text>
+<text x="1102" y="499" class="s">8192 点 FFT（lane_fft × 16）→ 電力 → 積分</text>
+<text x="1102" y="514" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
+<text x="1102" y="528" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
+<text x="1102" y="542" class="xs">BUILD_TAG 0x60800001・ID 0x0013_01CC（4 個同じ）</text>
+<path class="wG" d="M1095,518 L1095,564 L1099,564"/>
+<rect class="sub" x="1100" y="548" width="262" height="52"/>
+<text x="1108" y="563" class="tm">tp_core（u_tp）total power</text>
+<text x="1108" y="578" class="xs">Σx²（x = ADC >>> 2）・500 フレーム = 1 ms・F0 揃え</text>
+<text x="1108" y="592" class="xs">リング 512 × 16 B（0x2000〜）・reg 0x100〜0x118</text>
 <text x="1364" y="486" class="xs" text-anchor="end">s_axi ◀</text>
 <rect class="ext" x="20" y="646" width="150" height="44"/>
 <text x="30" y="664" class="s">ADC_C（SMA）</text>
@@ -211,13 +219,17 @@
 <path class="wP" d="M854,710 L854,698"/>
 <path class="wP" d="M986,710 L986,698"/>
 <path class="wP" d="M764,696 L764,702 L820,702 L820,698"/>
-<rect class="blk" x="1090" y="616" width="280" height="110" style="stroke:#2e8b57;stroke-width:2.2"/>
-<text x="1102" y="636" class="t">spec_core_2（ADC_C）</text>
-<text x="1102" y="654" class="s">8192 点 FFT（lane_fft × 16）→ 電力 → 積分</text>
-<text x="1102" y="670" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
-<text x="1102" y="685" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
-<text x="1102" y="700" class="xs">BUILD_TAG 0x60800002（[23] 4ch・[1:0] ch = 2）</text>
-<text x="1102" y="715" class="xs">ID 0x0012_03CC（4 個とも同じ。rev3）</text>
+<rect class="blk" x="1090" y="614" width="280" height="140" style="stroke:#2e8b57;stroke-width:2.2"/>
+<text x="1102" y="632" class="t">spec_core_2（ADC_C）</text>
+<text x="1102" y="649" class="s">8192 点 FFT（lane_fft × 16）→ 電力 → 積分</text>
+<text x="1102" y="664" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
+<text x="1102" y="678" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
+<text x="1102" y="692" class="xs">BUILD_TAG 0x60800002・ID 0x0013_01CC（4 個同じ）</text>
+<path class="wG" d="M1095,668 L1095,714 L1099,714"/>
+<rect class="sub" x="1100" y="698" width="262" height="52"/>
+<text x="1108" y="713" class="tm">tp_core（u_tp）total power</text>
+<text x="1108" y="728" class="xs">Σx²（x = ADC >>> 2）・500 フレーム = 1 ms・F0 揃え</text>
+<text x="1108" y="742" class="xs">リング 512 × 16 B（0x2000〜）・reg 0x100〜0x118</text>
 <text x="1364" y="636" class="xs" text-anchor="end">s_axi ◀</text>
 <rect class="ext" x="20" y="796" width="150" height="44"/>
 <text x="30" y="814" class="s">ADC_D（SMA）</text>
@@ -259,13 +271,17 @@
 <path class="wP" d="M854,860 L854,848"/>
 <path class="wP" d="M986,860 L986,848"/>
 <path class="wP" d="M764,846 L764,852 L820,852 L820,848"/>
-<rect class="blk" x="1090" y="766" width="280" height="110" style="stroke:#2e8b57;stroke-width:2.2"/>
-<text x="1102" y="786" class="t">spec_core_3（ADC_D）</text>
-<text x="1102" y="804" class="s">8192 点 FFT（lane_fft × 16）→ 電力 → 積分</text>
-<text x="1102" y="820" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
-<text x="1102" y="835" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
-<text x="1102" y="850" class="xs">BUILD_TAG 0x60800003（[23] 4ch・[1:0] ch = 3）</text>
-<text x="1102" y="865" class="xs">ID 0x0012_03CC（4 個とも同じ。rev3）</text>
+<rect class="blk" x="1090" y="764" width="280" height="140" style="stroke:#2e8b57;stroke-width:2.2"/>
+<text x="1102" y="782" class="t">spec_core_3（ADC_D）</text>
+<text x="1102" y="799" class="s">8192 点 FFT（lane_fft × 16）→ 電力 → 積分</text>
+<text x="1102" y="814" class="xs">4096 ch × 0.5 MHz・既定 100 ms・二面</text>
+<text x="1102" y="828" class="xs">起動の見張り・FLAGS・GRST・自動のやり直し</text>
+<text x="1102" y="842" class="xs">BUILD_TAG 0x60800003・ID 0x0013_01CC（4 個同じ）</text>
+<path class="wG" d="M1095,818 L1095,864 L1099,864"/>
+<rect class="sub" x="1100" y="848" width="262" height="52"/>
+<text x="1108" y="863" class="tm">tp_core（u_tp）total power</text>
+<text x="1108" y="878" class="xs">Σx²（x = ADC >>> 2）・500 フレーム = 1 ms・F0 揃え</text>
+<text x="1108" y="892" class="xs">リング 512 × 16 B（0x2000〜）・reg 0x100〜0x118</text>
 <text x="1364" y="786" class="xs" text-anchor="end">s_axi ◀</text>
 <path class="wK" d="M285,880 L285,918"/>
 <text x="292" y="904" class="lb">clk_adc2 256 MHz（fs/16）</text>
