@@ -1,7 +1,7 @@
 # proj015 — 狭帯域の窓に 4・2 MHz を足し（8 通りの幅）、4 ADC × 4 窓に広げる
 
 日付: 2026-09-30
-状態: **進行中**（複製と目的まで。手順 1 はこれから）
+状態: **進行中**（手順 1: 4・2 MHz を窓 1 つのまま足し、**模型・固定小数点・sim が 8 通りの幅で通過**。次は手順 2 = ddc の時分割）
 
 ## 目的
 
@@ -91,19 +91,54 @@ DSP（bit ③ = 4 ADC × 4 窓 ＋ 全帯域 1 本 ＋ tp 4 個）:
 - `build.tcl` の `set proj` と `Makefile` の DCP の場所を proj015 に（**proj014 と同じ名前の .bit を作らない**）
 - `pynq/spectrometer.py` の BITFILE を proj015.bit に
 - `program.tcl` の bitname を proj015 に。**proj014 の program.tcl は proj013 のまま**だった（`make prog` が build/proj013.bit を探す。proj014 は PYNQ で書き込んでいたので表に出なかった）
-- RTL の ID（spec_core 0x0014_01CC・win_core 0x0014_0200）と PS 側の期待値・各ファイルの冒頭の説明は**まだ proj014 のまま**。手順 1 で RTL を変えるときに直す
+- RTL の ID と PS 側の期待値は手順 1 で直した（win_core 0x0015_0100・spec_core 0x0015_01CC）。各ファイルの冒頭の「proj014 —」の説明は、中身を変えたものから順に直す
 
 ## やったこと
 
 - 2026-09-30: proj014 から複製。目的・決めたこと・資源の見当を書いた。模型の下見（上）
+- **手順 1: 4・2 MHz を窓 1 つのまま足した**（2026-09-30）
+  - 模型: `win_model.py` の WIDTHS に 4・2（**PFB の設計を `WIDTHS[0]` から `max(WIDTHS)` に**。値は同じ 256 で、`make coef` の生成物 `win_coef.vh`・`nco_rom.v` は proj014 と 1 byte も違わない）。
+    平坦さの予算の light の段数を 5 → 7 に（0.03 + 7 × 0.005 + 0.03 = 0.095 dB。light の実際の平坦さは 0.0017 dB）。
+    `win_fixed.py` に `G_HI = 5`・`G_NS = 7` と `gz(cfg, ns)`（陽性対照は G・G_HI とも 0）
+  - `ddc_core.v`: light を 7 段（`NL`）、`ns` を 4 bit（1..8）、**NS ≧ GNS（7）で z の丸めを G = GH（5）に**（静的な選択）。陽性対照の `-DDDC_POSCTL_G`（G の切り替えを外す）
+  - `win_core.v`: WNS を [3:0]（範囲外は WRST で 1）、PARAM を [11:8] NS・**[15:12] G**、WCUR を [11:8] NS。ID 0x0015_0100
+  - sim: sim-ddc を NS 1..8（入力を 4 倍にして NS 8 でも出力 472 個）、sim-win を NS 1..8（NS 7・8 は入力 4 倍）、
+    **sim-win-g（陽性対照: G の切り替えを外すと NS 7・8 だけ落ちる）** を sim-win-all に。
+    sim-top に**レジスタの読み返し**（WNS 7・8・9・0 を書いて WRST → WCUR・PARAM の NS と G。9・0 は 1 に丸まる）と ID の判定を足した
+  - sim の道具の誤り: tb_ddc の入力の後の待ちが 60 クロックで、**NS 8 の最後の 1 個が間に合わず「出力 471 / 模型 472」で落ちた**（値は全部一致）。
+    段ごとのレイテンシが 8 段ぶん積もるため。400 クロックに（tb_win も 100 → 400）
+  - PS 側: `window.py` の幅の表に 4・2、`g_of(ns)`・**`pred_ratio(ns, SHIFT_full, SHIFT_win)`（W-6 の予言 64·4^(G−4)·4^ΔSHIFT。G = 5 で 4 倍）**を
+    winlin・winresp・winsweep でも使う。WRST の後に PARAM の NS・G も照合。proj014 rev2 の .bit を載せたら止める。
+    `winwrst.py` の幅に 4・2、`winwidths.sh narrow`（4・2 MHz の 4 通り）
+  - **履歴の注意**: 手順 1 の変更は、同じ時間に proj014 を進めていた別のセッションのコミット（`dfd953e`・`4fdaf06`、題は proj014 の W-9）に
+    まとめて入って push された（`commit -a` の類）。中身は sim で確かめたものと md5 で一致。**proj015 の手順 1 の差分は `git diff 20f1d87 4fdaf06 -- proj015`** で見る
 
 ## 結果
 
--
+### 手順 1（2026-09-30、クラウドの作業環境: iverilog 12.0・numpy 2.4.4）
+
+| 試験 | 結果 |
+|---|---|
+| `make coef` | proj014 と同じ生成物（`cmp` で一致、Mac） |
+| `make model`（8 通りの幅） | **全部通過**。4 MHz: 平坦さ 0.021 dB・主以外 −61.0 dB、2 MHz: 0.020 dB・−61.0 dB（どちらも 89 か所）。層 2 も一致 |
+| `make fixed` | **全部通過**。N1 誤差 4 MHz 2.7〜2.8e-4・2 MHz 5.4〜5.5e-4（G = 5）、8 MHz 5.1〜5.2e-4（G = 4）。飽和 0。C1 の線 ≦ −85 dBc |
+| `make fixed-posctl` | 陽性対照: N1 が 24 件落ちた（G・G_HI = 0）→ 通過 |
+| `make sim-ddc` | **32 通り（NS 1..8 × d 2 × 途切れ 2）とも 1 LSB も違わない**。NS 7: 984 個・NS 8: 472 個 |
+| `make sim-ddc-p` | 陽性対照（NCO の番地をずらす）: 32 件とも不一致 → 通過 |
+| `make sim-win` | **8 通りとも一致**（NS 7: 216 個・NS 8: 88 個） |
+| `make sim-win-g` | 陽性対照（G の切り替えを外す）: 落ちたのは NS 7・8 だけ → 通過 |
+| `make sim-top`（NS 1、AXI 越し） | **総合: 全部通過**。z 52,682 個が一致・ダンプ 3 個が bit 単位・ID 0x00150100・WNS 7 / 8 → NS 7 / 8・G 5、9 / 0 → NS 1・G 4 |
+
+- NS 8 の出力が NS 6 と同じ数（入力 4 倍・幅 1/4）なので、2 MHz でも照合の点数は proj014 の 8 MHz と同じ
+- **資源（見当）**: 時分割なしの ddc は light 2 段ぶん +20 DSP（94 → 114）。ビルドはしていない（手順 2 の時分割と合わせてから）
 
 ## 結論・次にやること
 
-- [ ] 手順 1〜5
+- [x] 手順 1: 4・2 MHz（模型・固定小数点・sim。ビルドは手順 2 と合わせて）
+- [ ] 手順 2: ddc_core の時分割
+- [ ] 手順 3: pfb_core を共有部分と窓ごとの部分に分ける
+- [ ] 手順 4: 4 ADC × 4 窓・tp × 4・全帯域 1 本
+- [ ] 手順 5: ビルド → 実機
 - **proj016 以降の候補**（2026-09-30、西村さん）:
   - **窓を減らして分光点数を増やす**（例: 8 MHz × 16384 点 × 窓 1 つ / ADC）。1 ADC のメモリは「窓の数 × 点数」でほぼ決まる（16384 点で窓 1 つあたり BRAM ≒ 128・URAM 8 の見当）。FFT IP の 8192 / 16384 点は先に `make survey` で数える
   - **最小積分時間を 0.1 秒より短くする**（場合によっては分光点数を減らす）。読み出し（今は AXI4-Lite で 16 窓 ≒ 34 ms / 100 ms）が先に律速になる → DMA
