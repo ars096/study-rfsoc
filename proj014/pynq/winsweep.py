@@ -5,6 +5,8 @@
   W-2  窓の中の利得の形: 窓の中（|ν| < 0.5W）に CW を置き、ch の利得を ν ごとに測って模型（src/win_coef.vh の係数）と比べる
        W-2a 中央 90 %（|ν| ≦ 0.45W）の平らさ（p-p）/ W-2b 中央 90 % の模型との差 / W-2c 両端 5 % の落ち方の模型との差
   W-3  窓の外からの折り返し: 窓の外に CW を置き、窓の出力のレート W で折り返る先（中央 90 % の中）に出る量を測る（要求 −60 dB）
+  W-4  粗い ch の境目（c = 128k + 64）に窓を置く（--w4）。同じ窓を粗い ch k（d = +64）と k + 1（d = −64）の両方で作り、
+       それぞれ W-2 を測って模型と比べ（W-4a）、2 つの利得の差が中央 90 % で小さいこと（W-4b）を見る。PFB の通過域の縁を使う置き方
 
 測り方の約束:
   - **SG を切った基準（P_off）を最初と最後に測り、CW を入れたスペクトルから ch ごとに引く**。雑音の平均と、SG に依らない線（k·fs/8 など）が消える
@@ -21,6 +23,7 @@
 
   python3 winsweep.py --if 3000 --w 256 --clkin 0 --ref 10 --w3-dbm 0 --w3-shift-full 12    W-2 と W-3
   python3 winsweep.py --if 3010 --w 8 --clkin 0 --ref 10 --only w2        W-2 だけ
+  python3 winsweep.py --if 3008 --w 256 --clkin 0 --ref 10 --w4          W-4（IF 3008 = c 1088 = 128·8 + 64）
   python3 winsweep.py --if 3000 --w 256 --dry-run                         ボードに触らず、置く CW と模型の予言だけを出す
 """
 import argparse
@@ -70,9 +73,12 @@ def wrap(f, rate):
     return (f + rate / 2.0) % rate - rate / 2.0
 
 
-def chain(coef, f, c, w):
-    """入力の周波数 f（f の側、MHz、両側）→ 窓の出力の ν と振幅の利得（model/win_model.py の chain_gain と同じ流れ）。"""
-    k = int(round(c / S_CH)); d = c - S_CH * k
+def chain(coef, f, c, w, k=None):
+    """入力の周波数 f（f の側、MHz、両側）→ 窓の出力の ν と振幅の利得（model/win_model.py の chain_gain と同じ流れ）。
+    k を与えると粗い ch をそれに固定する（W-4。d = c − 128k）。"""
+    if k is None:
+        k = int(round(c / S_CH))
+    d = c - S_CH * k
     ns = int(round(np.log2(R0 / w)))
     f = np.atleast_1d(np.asarray(f, dtype=float))
     f1 = f - k * S_CH
@@ -86,11 +92,11 @@ def chain(coef, f, c, w):
     return f2, g
 
 
-def model_db(coef, f, c, w):
+def model_db(coef, f, c, w, k=None):
     """CW 1 本（実数なので ±f の両方）の、窓の出力での (ν, 電力の利得 dB)。+f の側と −f の側。"""
-    nu_p, g_p = chain(coef, f, c, w)
-    nu_m, g_m = chain(coef, -np.asarray(f), c, w)
-    _, g0 = chain(coef, [c], c, w)
+    nu_p, g_p = chain(coef, f, c, w, k)
+    nu_m, g_m = chain(coef, -np.asarray(f), c, w, k)
+    _, g0 = chain(coef, [c], c, w, round(c / S_CH) if k is None else k)
     return nu_p, 20 * np.log10(np.maximum(g_p / g0[0], 1e-12)), nu_m, 20 * np.log10(np.maximum(g_m / g0[0], 1e-12))
 
 
@@ -141,6 +147,8 @@ def main():
     p.add_argument("--w", type=float, default=256.0, help="窓の幅 [MHz]")
     p.add_argument("--no-grid", action="store_true")
     p.add_argument("--only", choices=("w2", "w3"), default=None)
+    p.add_argument("--w4", action="store_true", help="W-4: 粗い ch の境目の窓を k と k + 1 の両方で作って W-2 を比べる（W-2・W-3 の代わり）")
+    p.add_argument("--tol-w4", type=float, default=0.05, help="W-4b 2 つの k の利得の差（中央 90 %）[dB]")
     p.add_argument("--bitfile", default=None)
     p.add_argument("--clkin", default="stock", choices=("stock", "0", "1", "2"))
     p.add_argument("--ref", type=float, default=10.0)
@@ -184,14 +192,27 @@ def main():
     log(f"模型の係数: {coef_path}（PFB {len(coef['pfb'])}・light {len(coef['light'])}・final {len(coef['final'])} タップ）")
 
     do2 = a.only in (None, "w2")
-    do3 = a.only in (None, "w3")
+    do3 = a.only in (None, "w3") and not a.w4
+    ks = [k]
+    if a.w4:
+        kb = int(np.floor(c / S_CH))
+        if abs(c - S_CH * kb - 64.0) > 1e-9:
+            log(f"ERROR: --w4 は窓の中心が粗い ch の境目（c = 128k + 64）のとき。今は c = {c:.4f}（d = {c - 128 * k:+.4f}）。"
+                f"例: --if {4096 - (128 * kb + 64):.0f} か --if {4096 - (128 * kb + 192):.0f}"); sys.exit(1)
+        ks = [kb, kb + 1]
+        do2 = True
+        log(f"W-4: 境目 c = {c:.1f} = 128·{kb} + 64。粗い ch {kb}（d = +64）と {kb + 1}（d = −64）で同じ窓を作る")
     f_grid = w >= 64
     nus2 = plan_w2(c, w, a.w2_n, a.w2_edge, f_grid) if do2 else []
     w3 = plan_w3(c, w, [int(x) for x in a.w3_m.split(",") if x], a.w3_max,
                  [int(x) for x in a.w3_pfb.split(",") if x]) if do3 else []
     if do2:
-        _, m2, _, _ = model_db(coef, c + np.array(nus2), c, w)
+        m2s = {kk: model_db(coef, c + np.array(nus2), c, w, kk)[1] for kk in ks}
+        m2 = m2s[ks[0]]
         mid = np.abs(nus2) <= 0.45 * w
+        if a.w4:
+            log(f"W-4: 模型の 2 つの k の差（中央 90 %）の最大 {np.max(np.abs(m2s[ks[0]] - m2s[ks[1]])[mid]):.4f} dB / "
+                f"中央 90 % の p-p k {ks[0]}: {np.ptp(m2s[ks[0]][mid]):.3f}・k {ks[1]}: {np.ptp(m2s[ks[1]][mid]):.3f} dB")
         log(f"W-2: CW {len(nus2)} 点（{'全帯域の 0.5 MHz 格子にも揃える' if f_grid else '窓の ch の中心・全帯域は sinc² で戻す'}）。"
             f"模型の中央 90 % の p-p {np.ptp(m2[mid]):.3f} dB / 0.5W の手前 {m2[np.argmax(np.abs(nus2))]:+.2f} dB")
     if do3:
@@ -225,7 +246,9 @@ def main():
     atexit.register(sg.close)
     sg.set_dbm(a.sg_dbm)
     sg.set_output(False)
-    wn.set_window(k, dphi, ns)
+    def dphi_of(kk):
+        return int(round((c - S_CH * kk) / 512.0 * 2 ** 32)) % (1 << 32)
+    wn.set_window(ks[0], dphi_of(ks[0]), ns)
     spf = S.Spec(ol.spec_core_1.mmio, idx=1, label="ADC_B")
     shf3 = a.w3_shift_full if a.w3_shift_full is not None else a.shift_full
     dbm3 = a.w3_dbm if a.w3_dbm is not None else a.sg_dbm
@@ -276,7 +299,7 @@ def main():
         log(("  OK  " if cond else "  NG  ") + msg)
         ok &= bool(cond)
 
-    if do2:
+    def run_w2(kk, m2, pw0, pf0, tag):
         g2 = []
         for i, nu in enumerate(nus2):
             f = c + nu
@@ -288,21 +311,48 @@ def main():
             g = (pw[b] - pw0[b]) / ref / pred
             g2.append(10 * np.log10(max(g, 1e-12)))
             if i % 10 == 0 or abs(nu) > 0.45 * w:
-                log(f"  W-2 [{i + 1}/{len(nus2)}] ν {nu:+.5f} MHz（{nu / w:+.4f} W）: 窓 / 全帯域 {g2[-1]:+.3f} dB（模型 {m2[i]:+.3f}）")
+                log(f"  W-2{tag} [{i + 1}/{len(nus2)}] ν {nu:+.5f} MHz（{nu / w:+.4f} W）: 窓 / 全帯域 {g2[-1]:+.3f} dB（模型 {m2[i]:+.3f}）")
         g2 = np.array(g2); nus2a = np.array(nus2)
         mid = np.abs(nus2a) <= 0.45 * w
         edge = ~mid
         ctr = np.abs(nus2a) <= 0.1 * w
         rel = g2 - np.median(g2[ctr]); mrel = m2 - np.median(m2[ctr])
         dmid = np.max(np.abs(rel[mid] - mrel[mid]))
-        judge(np.ptp(g2[mid]) <= a.tol_pp, f"W-2a: 中央 90 % の平らさ p-p {np.ptp(g2[mid]):.3f} dB（模型 {np.ptp(m2[mid]):.3f}、許容 {a.tol_pp}）"
+        judge(np.ptp(g2[mid]) <= a.tol_pp, f"W-2a{tag}: 中央 90 % の平らさ p-p {np.ptp(g2[mid]):.3f} dB（模型 {np.ptp(m2[mid]):.3f}、許容 {a.tol_pp}）"
                                           f"・絶対値の中央値 {np.median(g2[mid]):+.3f} dB")
-        judge(dmid <= a.tol_mid, f"W-2b: 中央 90 % の模型との差の最大 {dmid:.3f} dB（許容 {a.tol_mid}。|ν| ≦ 0.1W の中央値で揃える）")
+        judge(dmid <= a.tol_mid, f"W-2b{tag}: 中央 90 % の模型との差の最大 {dmid:.3f} dB（許容 {a.tol_mid}。|ν| ≦ 0.1W の中央値で揃える）")
         if edge.any():
             de = np.abs(rel[edge] - mrel[edge]); j = int(np.argmax(de))
-            judge(de.max() <= a.tol_edge, f"W-2c: 両端 5 % の模型との差の最大 {de.max():.3f} dB（ν {nus2a[edge][j] / w:+.4f} W: "
+            judge(de.max() <= a.tol_edge, f"W-2c{tag}: 両端 5 % の模型との差の最大 {de.max():.3f} dB（ν {nus2a[edge][j] / w:+.4f} W: "
                                           f"実測 {rel[edge][j]:+.2f}・模型 {mrel[edge][j]:+.2f} dB、許容 {a.tol_edge}）")
+        return nus2a, g2, rel, mrel
+
+    if do2 and not a.w4:
+        nus2a, g2, rel, mrel = run_w2(ks[0], m2, pw0, pf0, "")
         res.update(w2_nu=nus2a, w2_db=g2, w2_model=m2)
+    if a.w4:
+        out4 = {}
+        for n_k, kk in enumerate(ks):
+            if n_k > 0:
+                sg.set_output(False)
+                wn.set_window(kk, dphi_of(kk), ns)
+                pw0k, pf0k, _, _ = measure(a.w3_tint, a.shift_full)
+                sg.set_output(True)
+            else:
+                pw0k, pf0k = pw0, pf0
+            log(f"W-4: 粗い ch {kk}（d = {c - S_CH * kk:+.0f} MHz、WDPHI {dphi_of(kk):#010x}）")
+            out4[kk] = run_w2(kk, m2s[kk], pw0k, pf0k, f"（k {kk}）")
+        nus2a = out4[ks[0]][0]
+        mid = np.abs(nus2a) <= 0.45 * w
+        dd = out4[ks[0]][1] - out4[ks[1]][1]
+        dm = m2s[ks[0]] - m2s[ks[1]]
+        worst = int(np.argmax(np.abs(dd - dm)[mid]))
+        judge(np.max(np.abs(dd - dm)[mid]) <= a.tol_w4,
+              f"W-4b: 2 つの k の利得の差（中央 90 %、模型の差を除く）の最大 {np.max(np.abs(dd - dm)[mid]):.3f} dB"
+              f"（ν {nus2a[mid][worst] / w:+.4f} W、許容 {a.tol_w4}）・差の平均 {np.mean(dd[mid]):+.3f} dB")
+        res.update(w4_k=np.array(ks), w2_nu=nus2a, w4_db0=out4[ks[0]][1], w4_db1=out4[ks[1]][1],
+                   w4_model0=m2s[ks[0]], w4_model1=m2s[ks[1]])
+        do2 = False                                      # 下の図は W-2 の 1 本ぶんを描くので、W-4 のときは描かない
 
     if do3:
         if dbm3 != a.sg_dbm:
@@ -380,12 +430,18 @@ def main():
             import matplotlib
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
-            n = int(do2) + int(do3)
+            n = int(do2) + int(do3) + int(a.w4)
             fig, ax = plt.subplots(n, 1, figsize=(8, 3.6 * n), squeeze=False)
             i = 0
             if do2:
                 ax[i][0].plot(nus2a / w, rel, "o", ms=3, label="measured"); ax[i][0].plot(nus2a / w, mrel, "-", label="model")
                 ax[i][0].set_xlabel("ν / W"); ax[i][0].set_ylabel("gain [dB]"); ax[i][0].legend(); ax[i][0].grid(alpha=.3)
+                i += 1
+            if a.w4:
+                for kk, key, mk in ((ks[0], "w4_db0", "w4_model0"), (ks[1], "w4_db1", "w4_model1")):
+                    ax[i][0].plot(nus2a / w, res[key], "o", ms=3, label=f"measured k={kk}")
+                    ax[i][0].plot(nus2a / w, res[mk], "-", lw=.8, label=f"model k={kk}")
+                ax[i][0].set_xlabel("nu / W"); ax[i][0].set_ylabel("gain [dB]"); ax[i][0].legend(); ax[i][0].grid(alpha=.3)
                 i += 1
             if do3:
                 r = res["w3"]
