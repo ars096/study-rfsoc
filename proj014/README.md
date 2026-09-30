@@ -116,10 +116,12 @@ bit ③（4 ADC × 4 窓、256 MHz 窓で規模が決まる）。**自作部分�
 |---|---|---|---|
 | DSP48E2 | ≒ 2400（+ 360〜420） | **2406（+ 390）**。spec_core は 4 個とも 504 のまま | 当たり。win_core 390 は見当 388（pfb 264 ＋ ddc 94 ＋ FFT 30）とほぼ同じ |
 | BRAM | 370〜380（+ 47〜55） | **359（+ 35）＋ URAM 2** | **外れ（少なく出た）**: 積分の二面（4096 × 64 bit × 2）が合成で URAM 2 個に載った。残りの +35 は溜め 8・スナップショット 8・FFT 15・NCO 4 の和そのもの |
-| CDC | CDC-3 78・CDC-6 8・CDC-15 3137・Critical 0（同じ） | **CDC-3 92**・CDC-6 8・CDC-15 3137・Critical 0 | **CDC-3 が +14 で外れ**。92 のうち 72 が smc_ctrl（SmartConnect）の中。M を 1 本足すと PS → DSP の乗り換えの同期段が増える、と読む（proj013 の smc_ctrl の件数と比べて確かめる）。**予言は win_core の中だけを見ていて、つなぎ側を数えていなかった** |
+| CDC | CDC-3 78・CDC-6 8・CDC-15 3137・Critical 0（同じ） | **CDC-3 92**・CDC-6 8・CDC-15 3137・Critical 0 | **CDC-3 が +14 で外れ**。92 のうち 72 が smc_ctrl（SmartConnect）の中で、**proj013 rev1 の smc_ctrl は 58 → +14 がちょうど SmartConnect の分と確かめた**（M を 1 本足すと PS → DSP の乗り換えの同期段が増える）。win_core の中の CDC は 0 のまま。**予言は win_core の中だけを見ていて、つなぎ側を数えていなかった** |
 | 結線の照合 | 行が増え、問題 0 | **82 行（80 → 82）・問題 0・陽性対照 OK** | 当たり（ch 1 の gb_dn → spec_core の 1 本が gb_bc 経由の 3 本になって +2） |
 | CRITICAL WARNING・asynchronous | なし・7 | なし・7 | 当たり |
-| LUT・FF | +15k〜30k / +25k〜45k | vivado.log に全体の値が出ていない（上の表は BRAM・DSP だけ） | build.tcl が utilization.rpt から全体の LUT・FF・URAM と win_core の DSP の内訳を出すように直した（次のビルドから） |
+| LUT | +15k〜30k | **198,726（46.7 %）= +18,330** | 当たり |
+| FF | +25k〜45k | **373,229（43.9 %）= +24,564** | **わずかに外れ（下限の 25k を 0.4k 下回った）**。proj013 と同じく、積の段のレジスタの一部が DSP の中に吸われたと読む |
+| （道具） | | vivado.log に全体の LUT・FF が出ていなかった（上の表は BRAM・DSP だけ） | build.tcl が utilization.rpt から全体の LUT・FF・URAM と win_core の DSP の内訳を出すように直した（次のビルドから） |
 
 - `make sim-all`（Vivado サーバ）: spec_core の 8 本（proj013 の 7 変種 ＋ gb）と窓の 7 本（pfb・ddc・win・wspec 3 変種・陽性対照 3 本）が全部「結果: 全部通過」。sim-top は sim-all に入れていない（30 分級。クラウドの作業環境で通過）
 
@@ -305,7 +307,7 @@ bit ③（4 ADC × 4 窓、256 MHz 窓で規模が決まる）。**自作部分�
 - [x] AXI4-Lite の上位（win_core）と、AXI 越しの sim（sim-top）
 - [x] proj013 への組み込み（build.tcl・ID・window.py・Makefile）
 - [x] Vivado サーバ: `make` → `make timing-check` → `make worst-paths`: `-2` +0.065・`-1` +0.086 ns で閉じた。win_core は最悪経路に出ない
-- [x] 資源・CDC・結線の照合・`make sim-all`（上の表。CDC-3 +14 は SmartConnect と読む。LUT・FF は次のビルドから出る）
+- [x] 資源・CDC・結線の照合・`make sim-all`（上の表。CDC-3 +14 は SmartConnect の分と確かめた。LUT +18k・FF +25k）
 - [ ] 実機: spectrometer.py の proj013 の判定の回帰（4 本）→ window.py の W-0・W-1・W-6（W = 256 と 8）
 - 設計のメモ（wspec_core で実装済み）: **FFT の前にフレームの溜め（4096 語 × 2 面）を置き、1 フレームを途切れなく流す**:
   realtime の FFT IP は入力の途切れを待たずに進む（proj011）が、窓の出力は W MSPS（W = 8 なら 32 クロックに 1 個）で必ず途切れる。
