@@ -1,0 +1,675 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: BSD-3-Clause -->
+<!-- proj014 の pfb_core の振る舞いの図解。src/pfb_core.v・src/win_coef.vh・README から。RTL を変えたらここも直す。応答の図は src/win_coef.vh の係数から、タイミングの図は LAT = 18 から計算して描いた -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pfb_core 図解</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* レイアウト: 1 段組の技術メモ（docs/win_chain.html と同じ色と書体）。式 → ブロック図 → 窓の位置 → タイミング → 段の表 → 原型の応答 → 約束 → 確かめ方 */
+:root {
+  --bg: #f6f7f5;
+  --panel: #ffffff;
+  --fg: #1d2421;
+  --muted: #5b6661;
+  --rule: #d5dbd7;
+  --dsp: #23795a;      /* DSP の段（ブロック図の緑） */
+  --win: #b23a2e;      /* フレーム m0・窓の流れ（赤） */
+  --axi: #2d65a8;      /* フレーム m1（青） */
+  --code-bg: #eef1ee;
+  --band: #eef2ef;
+  --pb: rgba(35, 121, 90, .10);
+  --sb: rgba(178, 58, 46, .08);
+  --warn-bg: #fbf3e4;
+  --warn-fg: #7a5410;
+  --f-body: "IBM Plex Sans JP", "Hiragino Sans", "Noto Sans CJK JP", "Yu Gothic", sans-serif;
+  --f-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151a18; --panel: #1c2320; --fg: #e3e8e5; --muted: #9aa6a0; --rule: #33403a;
+    --dsp: #5cc39a; --win: #ee7d70; --axi: #7fb0ec; --code-bg: #232c28; --band: #1f2724;
+    --pb: rgba(92, 195, 154, .12); --sb: rgba(238, 125, 112, .10); --warn-bg: #2e2716; --warn-fg: #e6c27a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151a18; --panel: #1c2320; --fg: #e3e8e5; --muted: #9aa6a0; --rule: #33403a;
+  --dsp: #5cc39a; --win: #ee7d70; --axi: #7fb0ec; --code-bg: #232c28; --band: #1f2724;
+  --pb: rgba(92, 195, 154, .12); --sb: rgba(238, 125, 112, .10); --warn-bg: #2e2716; --warn-fg: #e6c27a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 15px; line-height: 1.75; }
+.wrap { max-width: 1000px; margin: 0 auto; padding-inline: 20px; padding-block: 36px 64px; display: grid; gap: 44px; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+h1 { font-size: 30px; line-height: 1.3; margin: 0; text-wrap: balance; }
+h2 { font-size: 21px; margin: 0; text-wrap: balance; border-top: 3px solid var(--dsp); padding-top: 16px; }
+h3 { font-size: 15.5px; margin: 0; }
+p { margin: 0; max-width: 70ch; }
+.lead { color: var(--muted); max-width: 74ch; }
+code, .mono { font-family: var(--f-mono); font-size: .92em; }
+section { display: grid; gap: 16px; }
+section > * { min-width: 0; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.facts > div { background: var(--panel); padding: 12px 14px; display: grid; gap: 2px; align-content: start; }
+.facts dt { font-size: 12px; color: var(--muted); letter-spacing: .03em; }
+.facts dd { margin: 0; font-family: var(--f-mono); font-size: 14px; font-variant-numeric: tabular-nums; }
+.facts dd small { display: block; font-family: var(--f-body); font-size: 12.5px; color: var(--muted); }
+.eq { font-family: var(--f-mono); font-size: 13.5px; background: var(--code-bg); border-radius: 4px; padding: 12px 14px; overflow-x: auto; white-space: pre; line-height: 1.65; }
+.eq .c { color: var(--muted); }
+ul, ol { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+li { max-width: 70ch; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 20px; }
+.cols > * { min-width: 0; }
+.box { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; }
+.note { background: var(--warn-bg); color: var(--warn-fg); border-radius: 6px; padding: 10px 14px; font-size: 14px; max-width: 74ch; }
+figure { margin: 0; display: grid; gap: 8px; }
+figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
+.fig { overflow-x: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; }
+.fig svg { display: block; width: 100%; height: auto; }
+.fig.w1 svg { min-width: 900px; }
+.fig.w2 svg { min-width: 860px; }
+.fig.w3 svg { min-width: 900px; }
+.fig.w4 svg { min-width: 700px; }
+svg text { font-family: var(--f-body); fill: var(--fg); font-size: 13px; }
+svg .t { font-weight: 700; font-size: 13.5px; }
+svg .m, svg .ax, svg .cell { font-family: var(--f-mono); fill: var(--muted); font-size: 11.5px; }
+svg .cell { fill: var(--fg); font-size: 11px; }
+svg .clk { font-family: var(--f-mono); fill: var(--dsp); font-size: 11.5px; font-weight: 500; }
+svg .bx { fill: var(--panel); stroke: var(--dsp); stroke-width: 1.6; }
+svg .ln { stroke: var(--fg); stroke-width: 1.6; fill: none; }
+svg .ah { fill: var(--fg); }
+svg .lnd { stroke: var(--muted); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+svg .ahd { fill: var(--muted); }
+svg .beat { fill: var(--band); stroke: var(--rule); stroke-width: 1; }
+svg .beatnow { fill: var(--pb); stroke: var(--dsp); stroke-width: 1.2; }
+svg .tick { stroke: var(--muted); stroke-width: 1; }
+svg .f0 { fill: var(--win); opacity: .85; }
+svg .f1 { fill: var(--axi); opacity: .85; }
+svg .t0 { fill: var(--win); font-weight: 500; }
+svg .t1 { fill: var(--axi); font-weight: 500; }
+svg .dot { fill: var(--panel); stroke: var(--fg); stroke-width: 1.8; }
+svg .br { stroke: var(--fg); stroke-width: 1.2; fill: none; }
+svg .band { fill: var(--band); }
+svg .sig { font-family: var(--f-mono); font-size: 12px; fill: var(--fg); }
+svg .wv { stroke: var(--fg); stroke-width: 1.6; fill: none; }
+svg .cin { fill: var(--pb); stroke: var(--dsp); stroke-width: 1.2; }
+svg .cq { fill: var(--panel); stroke: var(--muted); stroke-width: 1; }
+svg .cout { fill: var(--sb); stroke: var(--win); stroke-width: 1.2; }
+svg .cout1 { fill: var(--panel); stroke: var(--axi); stroke-width: 1.2; }
+svg .cneg { fill: var(--panel); stroke: var(--rule); stroke-width: 1; stroke-dasharray: 3 2; }
+svg .cx { fill: var(--rule); stroke: var(--rule); stroke-width: 1; opacity: .7; }
+svg .lat { stroke: var(--dsp); stroke-width: 1.6; }
+svg .lath { fill: var(--dsp); }
+svg .latt { font-size: 12px; fill: var(--dsp); }
+svg .grid { stroke: var(--rule); stroke-width: 1; }
+svg .pb { fill: var(--pb); }
+svg .sb { fill: var(--sb); }
+svg .mark { stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 4 4; }
+svg .curve { stroke: var(--dsp); stroke-width: 2; fill: none; stroke-linejoin: round; }
+svg .pt { fill: var(--dsp); }
+svg .lab { font-size: 12.5px; fill: var(--fg); }
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-weight: 500; color: var(--muted); font-size: 12.5px; letter-spacing: .03em; }
+td.num, th.num { text-align: right; font-family: var(--f-mono); }
+td.mono { font-family: var(--f-mono); font-size: 13px; white-space: nowrap; }
+tfoot td { font-weight: 700; border-bottom: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">proj014 · src/pfb_core.v · rev2（ID 0x0014_0200）</div>
+  <h1>pfb_core：粗い PFB の 1 ch を取り出す</h1>
+  <p class="lead">ADC の実数サンプル（4096 MSPS、1 クロックに 16 個）から、ch 間隔 128 MHz・4 倍オーバーサンプリングの粗い PFB のうち
+  1 本の ch <code>k</code> だけを、複素 512 MSPS で取り出す。1 クロック（256 MHz）に 2 フレームを出す。後ろの ddc_core が、この ch の中から窓を切り出す。</p>
+</header>
+
+<section aria-labelledby="facts">
+  <h2 id="facts">要点</h2>
+  <dl class="facts">
+    <div><dt>入力</dt><dd>16 × 16 bit / clk<small>ギアボックスの出口。&gt;&gt;&gt; 2 して 14 bit で使う</small></dd></div>
+    <div><dt>出力</dt><dd>y0・y1（24 bit 複素）<small>2 フレーム / clk = 512 MSPS</small></dd></div>
+    <div><dt>ch</dt><dd>k = 0..16<small>中心 128k MHz（f の側）。RUN 中は変えない</small></dd></div>
+    <div><dt>原型フィルタ</dt><dd>N = 96（32 分岐 × 3）<small>係数 18 bit・Q20・左右対称</small></dd></div>
+    <div><dt>レイテンシ</dt><dd>18 clk 固定<small>valid なビート → y_valid</small></dd></div>
+    <div><dt>DSP</dt><dd>264<small>分岐の和 192・dft16f 64・実数化 8</small></dd></div>
+  </dl>
+</section>
+
+<section aria-labelledby="eq">
+  <h2 id="eq">仕様の式と、実装での分け方</h2>
+  <p>仕様は model/win_model.py の式そのもの。実装は、この式を「分岐の和」「32 点の実 DFT の 1 ch」「m で回る位相」の 3 つに分けて計算する。
+  どの段も model/win_fixed.py の <code>pfb_fixed</code> と bit 単位で同じ。</p>
+  <div class="eq">y_k[m] = Σ<sub>n=0..95</sub> h[n] · x[p − n] · exp(−j2πk(p − n)/32)        p = 8m + 95（ホップ 8 サンプル）
+
+<span class="c">① 分岐の和（n = r + 32t）</span>
+  u_r[m] = Σ<sub>t=0..2</sub> h[r + 32t] · x[p − r − 32t]            r = 0..31
+
+<span class="c">② 32 点の実 DFT の 1 ch（u は実数なので、+j の和は順変換の共役）</span>
+  Σ<sub>r</sub> u_r · exp(+j2πkr/32) = conj(U[k])            U = u の 32 点 DFT
+  z[n] = u[2n] + j·u[2n+1]、Z = z の 16 点 DFT（dft16f）
+  A = Z[k] + conj(Z[16−k])、B = Z[k] − conj(Z[16−k])
+  2·U[k] = A + (−j·W32<sup>k</sup>)·B                     W32 = exp(−2πi/32)
+
+<span class="c">③ m で変わる位相</span>
+  exp(−j2πkp/32) = (−j)<sup>k·m</sup> · exp(−j2πk·95/32)       <span class="c">後ろの定数は落とす（電力に効かない）</span>
+
+  y_k[m] = (−j)<sup>k·m</sup> · conj(U[k])   → 丸めて 24 bit（Q8）</div>
+</section>
+
+<section aria-labelledby="bd">
+  <h2 id="bd">ブロック図</h2>
+  <figure>
+    <div class="fig w1">
+      <svg viewBox="0 0 1180 330" role="img" aria-label="pfb_core のブロック図。窓、分岐の和、丸め、z に詰める、dft16f、2 本を選ぶ、cmul、X、回しと丸めの順に 18 クロックで流れる">
+        <defs>
+          <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        </defs>
+        <g style="color: var(--fg)">
+        <!-- 1 段目 -->
+        <text class="t" x="12" y="78">s_tdata</text>
+        <text class="m" x="12" y="96">16 × 16 bit</text>
+        <text class="m" x="12" y="112">s_tvalid</text>
+        <line class="ln" x1="90" y1="85" x2="118" y2="85" marker-end="url(#a)"/>
+
+        <rect class="bx" x="120" y="50" width="200" height="72" rx="4"/>
+        <text class="clk" x="316" y="44" text-anchor="end">1 clk</text>
+        <text class="t" x="132" y="72">窓（7 ビート）</text>
+        <text class="m" x="132" y="92">hist[0..5]・今 → xw[112]</text>
+        <text class="m" x="132" y="110">valid で進む・&gt;&gt;&gt; 2</text>
+
+        <line class="ln" x1="320" y1="85" x2="378" y2="85" marker-end="url(#a)"/>
+        <text class="m" x="349" y="78" text-anchor="middle">14b×112</text>
+
+        <rect class="bx" x="380" y="50" width="260" height="72" rx="4"/>
+        <text class="clk" x="636" y="44" text-anchor="end">3 clk（積・和・和）</text>
+        <text class="t" x="392" y="72">分岐の和 × 2 フレーム</text>
+        <text class="m" x="392" y="92">u_r = Σ_t h[r+32t]·xw[JP−r−32t]</text>
+        <text class="m" x="392" y="110">32 分岐 × 3 タップ（DSP 192）</text>
+
+        <line class="ln" x1="640" y1="85" x2="688" y2="85" marker-end="url(#a)"/>
+        <text class="m" x="664" y="78" text-anchor="middle">34b</text>
+
+        <rect class="bx" x="690" y="50" width="220" height="72" rx="4"/>
+        <text class="clk" x="906" y="44" text-anchor="end">1 clk</text>
+        <text class="t" x="702" y="72">丸め・飽和</text>
+        <text class="m" x="702" y="92">+2^9, &gt;&gt;&gt; 10 → 22 bit（Q10）</text>
+        <text class="m" x="702" y="110">飽和は sat_cnt へ</text>
+
+        <!-- 折り返し -->
+        <polyline class="ln" points="910,85 950,85 950,158 100,158 100,196" marker-end="url(#a)"/>
+        <text class="m" x="525" y="150" text-anchor="middle">u0[0..31]・u1[0..31]（22b）: フレーム m0・m1 の 32 本ずつ</text>
+
+        <!-- 2 段目 -->
+        <rect class="bx" x="20" y="200" width="180" height="72" rx="4"/>
+        <text class="clk" x="196" y="194" text-anchor="end">0 clk（配線）</text>
+        <text class="t" x="32" y="222">z に詰める</text>
+        <text class="m" x="32" y="242">z[n] = u[2n] + j·u[2n+1]</text>
+        <text class="m" x="32" y="260">n = 0..15</text>
+
+        <line class="ln" x1="200" y1="236" x2="228" y2="236" marker-end="url(#a)"/>
+
+        <rect class="bx" x="230" y="200" width="140" height="72" rx="4"/>
+        <text class="clk" x="366" y="194" text-anchor="end">6 clk</text>
+        <text class="t" x="242" y="222">dft16f</text>
+        <text class="m" x="242" y="242">16 点 複素 DFT</text>
+        <text class="m" x="242" y="260">16 本とも出す</text>
+
+        <line class="ln" x1="370" y1="236" x2="408" y2="236" marker-end="url(#a)"/>
+        <text class="m" x="389" y="229" text-anchor="middle">Z 26b</text>
+
+        <rect class="bx" x="410" y="200" width="210" height="72" rx="4"/>
+        <text class="clk" x="616" y="194" text-anchor="end">1 clk</text>
+        <text class="t" x="422" y="222">2 本を選ぶ（k で）</text>
+        <text class="m" x="422" y="242">A = Z[k] + conj Z[16−k]</text>
+        <text class="m" x="422" y="260">B = Z[k] − conj Z[16−k]</text>
+
+        <line class="ln" x1="620" y1="236" x2="658" y2="236" marker-end="url(#a)"/>
+        <text class="m" x="639" y="229" text-anchor="middle">B 27b</text>
+
+        <rect class="bx" x="660" y="200" width="170" height="72" rx="4"/>
+        <text class="clk" x="826" y="194" text-anchor="end">4 clk</text>
+        <text class="t" x="672" y="222">cmul</text>
+        <text class="m" x="672" y="242">c = B · (−j·W32^k)</text>
+        <text class="m" x="672" y="260">係数は ROM[k]</text>
+
+        <line class="ln" x1="830" y1="236" x2="858" y2="236" marker-end="url(#a)"/>
+
+        <rect class="bx" x="860" y="200" width="120" height="72" rx="4"/>
+        <text class="clk" x="976" y="194" text-anchor="end">1 clk</text>
+        <text class="t" x="872" y="222">X = A + c</text>
+        <text class="m" x="872" y="242">共役をとる</text>
+        <text class="m" x="872" y="260">28b（= 2·X）</text>
+
+        <polyline class="lnd" points="515,272 515,302 920,302 920,276" marker-end="url(#a)" style="color: var(--muted)"/>
+        <text class="m" x="718" y="320" text-anchor="middle">A は 4 段の遅延線で cmul と揃える</text>
+
+        <line class="ln" x1="980" y1="236" x2="1008" y2="236" marker-end="url(#a)"/>
+
+        <rect class="bx" x="1010" y="200" width="160" height="72" rx="4"/>
+        <text class="clk" x="1166" y="194" text-anchor="end">1 clk</text>
+        <text class="t" x="1022" y="222">回し・丸め</text>
+        <text class="m" x="1022" y="242">× (−j)^(k·m mod 4)</text>
+        <text class="m" x="1022" y="260">+4, &gt;&gt;&gt; 3 → 24b</text>
+
+        <line class="ln" x1="1090" y1="272" x2="1090" y2="300" marker-end="url(#a)"/>
+        <text class="t" x="1090" y="318" text-anchor="middle">y0・y1・y_valid・y*_ok</text>
+
+        <text class="clk" x="1170" y="24" text-anchor="end">合計 18 clk</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>2 フレームぶん（m0・m1）の同じ回路が並んでいる。分岐の和から後ろは 2 組。緑の数字は各段のクロック数で、合計が LAT = 18。
+    フレームの番号 m は q のタグ（valid と q_cnt）を 16 段運んで、最後の段で (−j)<sup>k·m</sup> の指数と ok に使う。</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="win">
+  <h2 id="win">窓とフレームの位置</h2>
+  <p>ビート q のクロックで、直近 7 ビート（112 サンプル）を <code>xw[0..111]</code> に並べる。<code>xw[j]</code> はサンプル番号 16(q − 6) + j で、j が大きいほど新しい。
+  96 タップのフレームを、末尾（p）が j = 103 と j = 111 の 2 か所に置く。ホップは 8 サンプルなので、1 ビート（16 サンプル）でちょうど 2 フレーム進む。</p>
+  <figure>
+    <div class="fig w2">
+      <svg viewBox="0 0 1000 250" role="img" aria-label="7 ビート 112 サンプルの窓。フレーム m0 は xw 8 から 103、フレーム m1 は xw 16 から 111 を使い、末尾が 8 サンプルずれる">
+        <text class="m" x="956" y="18" text-anchor="end">新しい →</text>
+        <g>
+          <rect class="beat" x="60"  y="38" width="128" height="30"/>
+          <rect class="beat" x="188" y="38" width="128" height="30"/>
+          <rect class="beat" x="316" y="38" width="128" height="30"/>
+          <rect class="beat" x="444" y="38" width="128" height="30"/>
+          <rect class="beat" x="572" y="38" width="128" height="30"/>
+          <rect class="beat" x="700" y="38" width="128" height="30"/>
+          <rect class="beatnow" x="828" y="38" width="128" height="30"/>
+          <text class="m" x="124" y="58" text-anchor="middle">hist[5]・q−6</text>
+          <text class="m" x="252" y="58" text-anchor="middle">hist[4]・q−5</text>
+          <text class="m" x="380" y="58" text-anchor="middle">hist[3]・q−4</text>
+          <text class="m" x="508" y="58" text-anchor="middle">hist[2]・q−3</text>
+          <text class="m" x="636" y="58" text-anchor="middle">hist[1]・q−2</text>
+          <text class="m" x="764" y="58" text-anchor="middle">hist[0]・q−1</text>
+          <text class="m" x="892" y="58" text-anchor="middle">今のビート・q</text>
+        </g>
+        <g>
+          <line class="tick" x1="60"  y1="68" x2="60"  y2="76"/><text class="ax" x="60"  y="90" text-anchor="middle">0</text>
+          <line class="tick" x1="188" y1="68" x2="188" y2="76"/><text class="ax" x="188" y="90" text-anchor="middle">16</text>
+          <line class="tick" x1="316" y1="68" x2="316" y2="76"/><text class="ax" x="316" y="90" text-anchor="middle">32</text>
+          <line class="tick" x1="444" y1="68" x2="444" y2="76"/><text class="ax" x="444" y="90" text-anchor="middle">48</text>
+          <line class="tick" x1="572" y1="68" x2="572" y2="76"/><text class="ax" x="572" y="90" text-anchor="middle">64</text>
+          <line class="tick" x1="700" y1="68" x2="700" y2="76"/><text class="ax" x="700" y="90" text-anchor="middle">80</text>
+          <line class="tick" x1="828" y1="68" x2="828" y2="76"/><text class="ax" x="828" y="90" text-anchor="middle">96</text>
+          <line class="tick" x1="956" y1="68" x2="956" y2="76"/><text class="ax" x="956" y="90" text-anchor="middle">112</text>
+          <text class="ax" x="30" y="90" text-anchor="middle">j</text>
+        </g>
+        <!-- m0: j 8..103 -->
+        <text class="t0" x="124" y="116">フレーム m0 = 2q − 11：xw[8..103]、p = 16q + 7</text>
+        <rect class="f0" x="124" y="122" width="768" height="16" rx="2"/>
+        <!-- m1: j 16..111 -->
+        <text class="t1" x="188" y="168">フレーム m1 = 2q − 10：xw[16..111]、p = 16q + 15</text>
+        <rect class="f1" x="188" y="174" width="768" height="16" rx="2"/>
+        <!-- ホップ -->
+        <polyline class="br" points="892,144 892,150 956,150 956,144"/>
+        <text class="m" x="924" y="164" text-anchor="middle">8</text>
+        <!-- 分岐 r = 0 の 3 タップ（m1） -->
+        <circle class="dot" cx="952" cy="182" r="5"/>
+        <circle class="dot" cx="696" cy="182" r="5"/>
+        <circle class="dot" cx="440" cy="182" r="5"/>
+        <text class="m" x="952" y="210" text-anchor="middle">h[0]</text>
+        <text class="m" x="696" y="210" text-anchor="middle">h[32]</text>
+        <text class="m" x="440" y="210" text-anchor="middle">h[64]</text>
+        <text class="m" x="440" y="236">m1 の分岐 r = 0 の 3 タップ（32 サンプルおき）。r = 1..31 は 1 サンプルずつ古い側へずれる</text>
+      </svg>
+    </div>
+    <figcaption>1 フレームは 96 サンプル（3 ビートと少し）を使い、2 つのフレームは 88 サンプル重なる。分岐 r は h[r]・h[r+32]・h[r+64] の 3 つの積の和。
+    rst の後の最初の valid なビートを q = 0 とすると、m0 = 0 になるのは q = 5.5 の位置なので、最初の ok は q = 5 の m1（m = 0）。</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="tm">
+  <h2 id="tm">タイミング</h2>
+  <p>入力に 2 クロックの途切れ（s_tvalid = 0）がある例。窓（hist）と q_cnt は valid なビートでしか進まないので、出力は途切れを含めて 18 クロック後に同じ形で出る。
+  途切れのクロックでも xw は毎クロック取り込むが、va = 0 のタグがついて運ばれ、y_valid が 0 になる。</p>
+  <figure>
+    <div class="fig w3">
+<svg viewBox="0 0 958 368" role="img" aria-label="s_tvalid に 2 クロックの途切れがあるときのタイミング。出力は 18 クロック後に同じ形で出て、y1_ok は q = 5、y0_ok は q = 6 のビートから 1 になる">
+<rect class="band" x="138" y="28" width="26" height="304"/>
+<rect class="band" x="190" y="28" width="26" height="304"/>
+<rect class="band" x="242" y="28" width="26" height="304"/>
+<rect class="band" x="294" y="28" width="26" height="304"/>
+<rect class="band" x="346" y="28" width="26" height="304"/>
+<rect class="band" x="398" y="28" width="26" height="304"/>
+<rect class="band" x="450" y="28" width="26" height="304"/>
+<rect class="band" x="502" y="28" width="26" height="304"/>
+<rect class="band" x="554" y="28" width="26" height="304"/>
+<rect class="band" x="606" y="28" width="26" height="304"/>
+<rect class="band" x="658" y="28" width="26" height="304"/>
+<rect class="band" x="710" y="28" width="26" height="304"/>
+<rect class="band" x="762" y="28" width="26" height="304"/>
+<rect class="band" x="814" y="28" width="26" height="304"/>
+<rect class="band" x="866" y="28" width="26" height="304"/>
+<rect class="band" x="918" y="28" width="26" height="304"/>
+<text class="ax" x="151.0" y="22" text-anchor="middle">0</text>
+<text class="ax" x="281.0" y="22" text-anchor="middle">5</text>
+<text class="ax" x="411.0" y="22" text-anchor="middle">10</text>
+<text class="ax" x="541.0" y="22" text-anchor="middle">15</text>
+<text class="ax" x="671.0" y="22" text-anchor="middle">20</text>
+<text class="ax" x="801.0" y="22" text-anchor="middle">25</text>
+<text class="ax" x="931.0" y="22" text-anchor="middle">30</text>
+<text class="ax" x="128" y="22" text-anchor="end">クロック</text>
+<text class="sig" x="128" y="51.0" text-anchor="end">clk</text>
+<text class="sig" x="128" y="81.0" text-anchor="end">s_tvalid</text>
+<text class="sig" x="128" y="111.0" text-anchor="end">s_tdata</text>
+<text class="sig" x="128" y="141.0" text-anchor="end">q_cnt</text>
+<text class="sig" x="128" y="201.0" text-anchor="end">y_valid</text>
+<text class="sig" x="128" y="231.0" text-anchor="end">y0（m0）</text>
+<text class="sig" x="128" y="261.0" text-anchor="end">y1（m1）</text>
+<text class="sig" x="128" y="291.0" text-anchor="end">y0_ok</text>
+<text class="sig" x="128" y="321.0" text-anchor="end">y1_ok</text>
+<polyline class="wv" points="138,56 138,40 151.0,40 151.0,56 164,56 164,40 177.0,40 177.0,56 190,56 190,40 203.0,40 203.0,56 216,56 216,40 229.0,40 229.0,56 242,56 242,40 255.0,40 255.0,56 268,56 268,40 281.0,40 281.0,56 294,56 294,40 307.0,40 307.0,56 320,56 320,40 333.0,40 333.0,56 346,56 346,40 359.0,40 359.0,56 372,56 372,40 385.0,40 385.0,56 398,56 398,40 411.0,40 411.0,56 424,56 424,40 437.0,40 437.0,56 450,56 450,40 463.0,40 463.0,56 476,56 476,40 489.0,40 489.0,56 502,56 502,40 515.0,40 515.0,56 528,56 528,40 541.0,40 541.0,56 554,56 554,40 567.0,40 567.0,56 580,56 580,40 593.0,40 593.0,56 606,56 606,40 619.0,40 619.0,56 632,56 632,40 645.0,40 645.0,56 658,56 658,40 671.0,40 671.0,56 684,56 684,40 697.0,40 697.0,56 710,56 710,40 723.0,40 723.0,56 736,56 736,40 749.0,40 749.0,56 762,56 762,40 775.0,40 775.0,56 788,56 788,40 801.0,40 801.0,56 814,56 814,40 827.0,40 827.0,56 840,56 840,40 853.0,40 853.0,56 866,56 866,40 879.0,40 879.0,56 892,56 892,40 905.0,40 905.0,56 918,56 918,40 931.0,40 931.0,56 944,56"/>
+<polyline class="wv" points="138,70 242,70 242,86 294,86 294,70 450,70 450,86 944,86"/>
+<polygon class="cin" points="141,108.0 144,99 158,99 161,108.0 158,117 144,117"/>
+<text class="cell" x="151.0" y="112.0" text-anchor="middle">q0</text>
+<polygon class="cin" points="167,108.0 170,99 184,99 187,108.0 184,117 170,117"/>
+<text class="cell" x="177.0" y="112.0" text-anchor="middle">q1</text>
+<polygon class="cin" points="193,108.0 196,99 210,99 213,108.0 210,117 196,117"/>
+<text class="cell" x="203.0" y="112.0" text-anchor="middle">q2</text>
+<polygon class="cin" points="219,108.0 222,99 236,99 239,108.0 236,117 222,117"/>
+<text class="cell" x="229.0" y="112.0" text-anchor="middle">q3</text>
+<polygon class="cx" points="245,108.0 248,99 288,99 291,108.0 288,117 248,117"/>
+<polygon class="cin" points="297,108.0 300,99 314,99 317,108.0 314,117 300,117"/>
+<text class="cell" x="307.0" y="112.0" text-anchor="middle">q4</text>
+<polygon class="cin" points="323,108.0 326,99 340,99 343,108.0 340,117 326,117"/>
+<text class="cell" x="333.0" y="112.0" text-anchor="middle">q5</text>
+<polygon class="cin" points="349,108.0 352,99 366,99 369,108.0 366,117 352,117"/>
+<text class="cell" x="359.0" y="112.0" text-anchor="middle">q6</text>
+<polygon class="cin" points="375,108.0 378,99 392,99 395,108.0 392,117 378,117"/>
+<text class="cell" x="385.0" y="112.0" text-anchor="middle">q7</text>
+<polygon class="cin" points="401,108.0 404,99 418,99 421,108.0 418,117 404,117"/>
+<text class="cell" x="411.0" y="112.0" text-anchor="middle">q8</text>
+<polygon class="cin" points="427,108.0 430,99 444,99 447,108.0 444,117 430,117"/>
+<text class="cell" x="437.0" y="112.0" text-anchor="middle">q9</text>
+<polygon class="cx" points="453,108.0 456,99 938,99 941,108.0 938,117 456,117"/>
+<polygon class="cq" points="141,138.0 144,129 158,129 161,138.0 158,147 144,147"/>
+<text class="cell" x="151.0" y="142.0" text-anchor="middle">0</text>
+<polygon class="cq" points="167,138.0 170,129 184,129 187,138.0 184,147 170,147"/>
+<text class="cell" x="177.0" y="142.0" text-anchor="middle">1</text>
+<polygon class="cq" points="193,138.0 196,129 210,129 213,138.0 210,147 196,147"/>
+<text class="cell" x="203.0" y="142.0" text-anchor="middle">2</text>
+<polygon class="cq" points="219,138.0 222,129 236,129 239,138.0 236,147 222,147"/>
+<text class="cell" x="229.0" y="142.0" text-anchor="middle">3</text>
+<polygon class="cq" points="245,138.0 248,129 262,129 265,138.0 262,147 248,147"/>
+<text class="cell" x="255.0" y="142.0" text-anchor="middle">4</text>
+<polygon class="cq" points="271,138.0 274,129 288,129 291,138.0 288,147 274,147"/>
+<text class="cell" x="281.0" y="142.0" text-anchor="middle">4</text>
+<polygon class="cq" points="297,138.0 300,129 314,129 317,138.0 314,147 300,147"/>
+<text class="cell" x="307.0" y="142.0" text-anchor="middle">4</text>
+<polygon class="cq" points="323,138.0 326,129 340,129 343,138.0 340,147 326,147"/>
+<text class="cell" x="333.0" y="142.0" text-anchor="middle">5</text>
+<polygon class="cq" points="349,138.0 352,129 366,129 369,138.0 366,147 352,147"/>
+<text class="cell" x="359.0" y="142.0" text-anchor="middle">6</text>
+<polygon class="cq" points="375,138.0 378,129 392,129 395,138.0 392,147 378,147"/>
+<text class="cell" x="385.0" y="142.0" text-anchor="middle">7</text>
+<polygon class="cq" points="401,138.0 404,129 418,129 421,138.0 418,147 404,147"/>
+<text class="cell" x="411.0" y="142.0" text-anchor="middle">8</text>
+<polygon class="cq" points="427,138.0 430,129 444,129 447,138.0 444,147 430,147"/>
+<text class="cell" x="437.0" y="142.0" text-anchor="middle">9</text>
+<polygon class="cq" points="453,138.0 456,129 470,129 473,138.0 470,147 456,147"/>
+<text class="cell" x="463.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="479,138.0 482,129 496,129 499,138.0 496,147 482,147"/>
+<text class="cell" x="489.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="505,138.0 508,129 522,129 525,138.0 522,147 508,147"/>
+<text class="cell" x="515.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="531,138.0 534,129 548,129 551,138.0 548,147 534,147"/>
+<text class="cell" x="541.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="557,138.0 560,129 574,129 577,138.0 574,147 560,147"/>
+<text class="cell" x="567.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="583,138.0 586,129 600,129 603,138.0 600,147 586,147"/>
+<text class="cell" x="593.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="609,138.0 612,129 626,129 629,138.0 626,147 612,147"/>
+<text class="cell" x="619.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="635,138.0 638,129 652,129 655,138.0 652,147 638,147"/>
+<text class="cell" x="645.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="661,138.0 664,129 678,129 681,138.0 678,147 664,147"/>
+<text class="cell" x="671.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="687,138.0 690,129 704,129 707,138.0 704,147 690,147"/>
+<text class="cell" x="697.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="713,138.0 716,129 730,129 733,138.0 730,147 716,147"/>
+<text class="cell" x="723.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="739,138.0 742,129 756,129 759,138.0 756,147 742,147"/>
+<text class="cell" x="749.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="765,138.0 768,129 782,129 785,138.0 782,147 768,147"/>
+<text class="cell" x="775.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="791,138.0 794,129 808,129 811,138.0 808,147 794,147"/>
+<text class="cell" x="801.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="817,138.0 820,129 834,129 837,138.0 834,147 820,147"/>
+<text class="cell" x="827.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="843,138.0 846,129 860,129 863,138.0 860,147 846,147"/>
+<text class="cell" x="853.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="869,138.0 872,129 886,129 889,138.0 886,147 872,147"/>
+<text class="cell" x="879.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="895,138.0 898,129 912,129 915,138.0 912,147 898,147"/>
+<text class="cell" x="905.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="921,138.0 924,129 938,129 941,138.0 938,147 924,147"/>
+<text class="cell" x="931.0" y="142.0" text-anchor="middle">10</text>
+<line class="lat" x1="151.0" x2="613.0" y1="169.0" y2="169.0"/>
+<polygon class="lath" points="619.0,169.0 611.0,165.0 611.0,173.0"/>
+<text class="latt" x="385.0" y="163.0" text-anchor="middle">LAT = 18 クロック（入力のビートと同じ形で出る。途切れも 18 クロック後に同じ位置）</text>
+<polyline class="wv" points="138,206 606,206 606,190 710,190 710,206 762,206 762,190 918,190 918,206 944,206"/>
+<polygon class="cx" points="141,228.0 144,219 600,219 603,228.0 600,237 144,237"/>
+<polygon class="cneg" points="609,228.0 612,219 626,219 629,228.0 626,237 612,237"/>
+<text class="cell" x="619.0" y="232.0" text-anchor="middle">−11</text>
+<polygon class="cneg" points="635,228.0 638,219 652,219 655,228.0 652,237 638,237"/>
+<text class="cell" x="645.0" y="232.0" text-anchor="middle">−9</text>
+<polygon class="cneg" points="661,228.0 664,219 678,219 681,228.0 678,237 664,237"/>
+<text class="cell" x="671.0" y="232.0" text-anchor="middle">−7</text>
+<polygon class="cneg" points="687,228.0 690,219 704,219 707,228.0 704,237 690,237"/>
+<text class="cell" x="697.0" y="232.0" text-anchor="middle">−5</text>
+<polygon class="cx" points="713,228.0 716,219 756,219 759,228.0 756,237 716,237"/>
+<polygon class="cneg" points="765,228.0 768,219 782,219 785,228.0 782,237 768,237"/>
+<text class="cell" x="775.0" y="232.0" text-anchor="middle">−3</text>
+<polygon class="cneg" points="791,228.0 794,219 808,219 811,228.0 808,237 794,237"/>
+<text class="cell" x="801.0" y="232.0" text-anchor="middle">−1</text>
+<polygon class="cout" points="817,228.0 820,219 834,219 837,228.0 834,237 820,237"/>
+<text class="cell" x="827.0" y="232.0" text-anchor="middle">1</text>
+<polygon class="cout" points="843,228.0 846,219 860,219 863,228.0 860,237 846,237"/>
+<text class="cell" x="853.0" y="232.0" text-anchor="middle">3</text>
+<polygon class="cout" points="869,228.0 872,219 886,219 889,228.0 886,237 872,237"/>
+<text class="cell" x="879.0" y="232.0" text-anchor="middle">5</text>
+<polygon class="cout" points="895,228.0 898,219 912,219 915,228.0 912,237 898,237"/>
+<text class="cell" x="905.0" y="232.0" text-anchor="middle">7</text>
+<polygon class="cx" points="921,228.0 924,219 938,219 941,228.0 938,237 924,237"/>
+<polygon class="cx" points="141,258.0 144,249 600,249 603,258.0 600,267 144,267"/>
+<polygon class="cneg" points="609,258.0 612,249 626,249 629,258.0 626,267 612,267"/>
+<text class="cell" x="619.0" y="262.0" text-anchor="middle">−10</text>
+<polygon class="cneg" points="635,258.0 638,249 652,249 655,258.0 652,267 638,267"/>
+<text class="cell" x="645.0" y="262.0" text-anchor="middle">−8</text>
+<polygon class="cneg" points="661,258.0 664,249 678,249 681,258.0 678,267 664,267"/>
+<text class="cell" x="671.0" y="262.0" text-anchor="middle">−6</text>
+<polygon class="cneg" points="687,258.0 690,249 704,249 707,258.0 704,267 690,267"/>
+<text class="cell" x="697.0" y="262.0" text-anchor="middle">−4</text>
+<polygon class="cx" points="713,258.0 716,249 756,249 759,258.0 756,267 716,267"/>
+<polygon class="cneg" points="765,258.0 768,249 782,249 785,258.0 782,267 768,267"/>
+<text class="cell" x="775.0" y="262.0" text-anchor="middle">−2</text>
+<polygon class="cout1" points="791,258.0 794,249 808,249 811,258.0 808,267 794,267"/>
+<text class="cell" x="801.0" y="262.0" text-anchor="middle">0</text>
+<polygon class="cout1" points="817,258.0 820,249 834,249 837,258.0 834,267 820,267"/>
+<text class="cell" x="827.0" y="262.0" text-anchor="middle">2</text>
+<polygon class="cout1" points="843,258.0 846,249 860,249 863,258.0 860,267 846,267"/>
+<text class="cell" x="853.0" y="262.0" text-anchor="middle">4</text>
+<polygon class="cout1" points="869,258.0 872,249 886,249 889,258.0 886,267 872,267"/>
+<text class="cell" x="879.0" y="262.0" text-anchor="middle">6</text>
+<polygon class="cout1" points="895,258.0 898,249 912,249 915,258.0 912,267 898,267"/>
+<text class="cell" x="905.0" y="262.0" text-anchor="middle">8</text>
+<polygon class="cx" points="921,258.0 924,249 938,249 941,258.0 938,267 924,267"/>
+<polyline class="wv" points="138,296 814,296 814,280 944,280"/>
+<polyline class="wv" points="138,326 788,326 788,310 944,310"/>
+<text class="ax" x="138" y="360">q = rst の後の valid なビートの番号。y0 / y1 の数字はそのビートが出すフレームの番号 m（負 = まだ窓が埋まっていない、y*_ok = 0）</text>
+</svg>
+    </div>
+    <figcaption>q_cnt はそのクロックの s_tdata の番号（クロックの終わりで 1 増える）。y0 は奇数の m、y1 は偶数の m で、時間の順は y0 → y1 → 次のビートの y0。
+    m &lt; 0 のフレームは値を出すが y*_ok = 0（窓がまだ rst の後のサンプルで埋まっていない）。</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="st">
+  <h2 id="st">段と語幅</h2>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>段</th><th class="num">clk</th><th>中身</th><th>出口の語幅</th></tr></thead>
+      <tbody>
+        <tr><td>xw</td><td class="num">1</td><td>7 ビートを並べる。ADC の 16 bit を &gt;&gt;&gt; 2</td><td class="mono">14 bit × 112</td></tr>
+        <tr><td>M</td><td class="num">1</td><td>h × x（3 タップ × 32 分岐 × 2 フレーム）</td><td class="mono">32 bit</td></tr>
+        <tr><td>S1・S2</td><td class="num">2</td><td>t0 + t1、+ t2</td><td class="mono">34 bit（PW）</td></tr>
+        <tr><td>R</td><td class="num">1</td><td>丸め（+2^9, &gt;&gt;&gt; 10 = PFB_SH − UF）・飽和</td><td class="mono">u 22 bit・Q10</td></tr>
+        <tr><td>dft16f</td><td class="num">6</td><td>4 点 DFT → ひねり（cmul 8 個）→ 4 点 DFT。自明な係数は遅延線</td><td class="mono">Z 26 bit</td></tr>
+        <tr><td>A / B</td><td class="num">1</td><td>Z[k] と Z[16−k] の和と差（共役つき）</td><td class="mono">27 bit</td></tr>
+        <tr><td>cmul</td><td class="num">4</td><td>B × (−j·W32^k)。A は同じ 4 段の遅延線</td><td class="mono">27 bit</td></tr>
+        <tr><td>X</td><td class="num">1</td><td>A + c、共役</td><td class="mono">28 bit（2·X）</td></tr>
+        <tr><td>回し・丸め</td><td class="num">1</td><td>(−j)^e（e = k·m mod 4、入れ替えと符号だけ）、+4 &gt;&gt;&gt; 3、飽和</td><td class="mono">y 24 bit・Q8</td></tr>
+      </tbody>
+      <tfoot><tr><td>計</td><td class="num">18</td><td colspan="2">LAT</td></tr></tfoot>
+    </table>
+  </div>
+  <div class="cols">
+    <div class="box">
+      <h3>小数部の流れ</h3>
+      <ul>
+        <li>係数は Q20（和 = 1）。積は x の LSB に対して小数 20 bit</li>
+        <li>R で 10 bit 落として u は Q10</li>
+        <li>最後の &gt;&gt;&gt; 3 は、2·X の 1/2 と Q10 → Q8 の 2 bit</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>(−j)<sup>e</sup> の指数</h3>
+      <ul>
+        <li>m0 = 2q − 11 ≡ 2q + 1、m1 ≡ 2q + 2（mod 4）</li>
+        <li>q の最下位 bit だけで m mod 4 が決まる</li>
+        <li>e = k[1:0] · (m mod 4) の下位 2 bit。掛け算器は使わない</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="rs">
+  <h2 id="rs">原型フィルタの応答</h2>
+  <p>ch k の応答は、原型の応答を 128k MHz だけずらしたもの。出力は 512 MSPS なので、f と f ± 512 が同じ所に折り返す。
+  窓（最大 256 MHz）は ch の中心から ±64 MHz ずれた所にも置くので、使う範囲は ±(64 + 0.45 × 256) = ±179.2 MHz。
+  そこへ折り返してくる周波数は 512 − 179.2 = 332.8 MHz より外なので、そこから阻止域にしてある。</p>
+  <figure>
+    <div class="fig w4">
+<svg viewBox="0 0 960 318" role="img" aria-label="原型フィルタの振幅特性。0 から 179.2 MHz は 0.012 dB 以内で平ら、256 MHz で −6 dB、332.8 MHz より上は 63 dB 以上落ちる">
+<rect class="pb" x="64.0" y="24" width="150.5" height="240"/>
+<rect class="sb" x="343.5" y="24" width="580.5" height="240"/>
+<line class="grid" x1="64" x2="924" y1="24.0" y2="24.0"/>
+<text class="ax" x="56" y="28.0" text-anchor="end">0</text>
+<line class="grid" x1="64" x2="924" y1="72.0" y2="72.0"/>
+<text class="ax" x="56" y="76.0" text-anchor="end">-20</text>
+<line class="grid" x1="64" x2="924" y1="120.0" y2="120.0"/>
+<text class="ax" x="56" y="124.0" text-anchor="end">-40</text>
+<line class="grid" x1="64" x2="924" y1="168.0" y2="168.0"/>
+<text class="ax" x="56" y="172.0" text-anchor="end">-60</text>
+<line class="grid" x1="64" x2="924" y1="216.0" y2="216.0"/>
+<text class="ax" x="56" y="220.0" text-anchor="end">-80</text>
+<line class="grid" x1="64" x2="924" y1="264.0" y2="264.0"/>
+<text class="ax" x="56" y="268.0" text-anchor="end">-100</text>
+<line class="grid" x1="64.0" x2="64.0" y1="24" y2="264"/>
+<text class="ax" x="64.0" y="282" text-anchor="middle">0</text>
+<line class="grid" x1="171.5" x2="171.5" y1="24" y2="264"/>
+<text class="ax" x="171.5" y="282" text-anchor="middle">128</text>
+<line class="grid" x1="279.0" x2="279.0" y1="24" y2="264"/>
+<text class="ax" x="279.0" y="282" text-anchor="middle">256</text>
+<line class="grid" x1="386.5" x2="386.5" y1="24" y2="264"/>
+<text class="ax" x="386.5" y="282" text-anchor="middle">384</text>
+<line class="grid" x1="494.0" x2="494.0" y1="24" y2="264"/>
+<text class="ax" x="494.0" y="282" text-anchor="middle">512</text>
+<line class="grid" x1="601.5" x2="601.5" y1="24" y2="264"/>
+<text class="ax" x="601.5" y="282" text-anchor="middle">640</text>
+<line class="grid" x1="709.0" x2="709.0" y1="24" y2="264"/>
+<text class="ax" x="709.0" y="282" text-anchor="middle">768</text>
+<line class="grid" x1="816.5" x2="816.5" y1="24" y2="264"/>
+<text class="ax" x="816.5" y="282" text-anchor="middle">896</text>
+<line class="grid" x1="924.0" x2="924.0" y1="24" y2="264"/>
+<text class="ax" x="924.0" y="282" text-anchor="middle">1024</text>
+<text class="ax" x="494.0" y="304" text-anchor="middle">ch の中心からの周波数 [MHz]</text>
+<text class="ax" x="16" y="144.0" text-anchor="middle" transform="rotate(-90 16 144.0)">利得 [dB]</text>
+<line class="mark" x1="279.0" x2="279.0" y1="24" y2="264"/>
+<line class="mark" x1="494.0" x2="494.0" y1="24" y2="264"/>
+<polyline class="curve" points="64.0,24.0 64.8,24.0 65.7,24.0 66.5,24.0 67.4,24.0 68.2,24.0 69.0,24.0 69.9,24.0 70.7,24.0 71.6,24.0 72.4,24.0 73.2,24.0 74.1,24.0 74.9,24.0 75.8,24.0 76.6,24.0 77.4,24.0 78.3,24.0 79.1,24.0 80.0,24.0 80.8,24.0 81.6,24.0 82.5,24.0 83.3,24.0 84.2,24.0 85.0,24.0 85.8,24.0 86.7,24.0 87.5,24.0 88.4,24.0 89.2,24.0 90.0,24.0 90.9,24.0 91.7,24.0 92.6,24.0 93.4,24.0 94.2,24.0 95.1,24.0 95.9,24.0 96.8,24.0 97.6,24.0 98.4,24.0 99.3,24.0 100.1,24.0 101.0,24.0 101.8,24.0 102.6,24.0 103.5,24.0 104.3,24.0 105.2,24.0 106.0,24.0 106.8,24.0 107.7,24.0 108.5,24.0 109.4,24.0 110.2,24.0 111.0,24.0 111.9,24.0 112.7,24.0 113.6,24.0 114.4,24.0 115.2,24.0 116.1,24.0 116.9,24.0 117.8,24.0 118.6,24.0 119.4,24.0 120.3,24.0 121.1,24.0 121.9,24.0 122.8,24.0 123.6,24.0 124.5,24.0 125.3,24.0 126.1,24.0 127.0,24.0 127.8,24.0 128.7,24.0 129.5,24.0 130.3,24.0 131.2,24.0 132.0,24.0 132.9,24.0 133.7,24.0 134.5,24.0 135.4,24.0 136.2,24.0 137.1,24.0 137.9,24.0 138.7,24.0 139.6,24.0 140.4,24.0 141.3,24.0 142.1,24.0 142.9,24.0 143.8,24.0 144.6,24.0 145.5,24.0 146.3,24.0 147.1,24.0 148.0,24.0 148.8,24.0 149.7,24.0 150.5,24.0 151.3,24.0 152.2,24.0 153.0,24.0 153.9,24.0 154.7,24.0 155.5,24.0 156.4,24.0 157.2,24.0 158.1,24.0 158.9,24.0 159.7,24.0 160.6,24.0 161.4,24.0 162.3,24.0 163.1,24.0 163.9,24.0 164.8,24.0 165.6,24.0 166.5,24.0 167.3,24.0 168.1,24.0 169.0,24.0 169.8,24.0 170.7,24.0 171.5,24.0 172.3,24.0 173.2,24.0 174.0,24.0 174.9,24.0 175.7,24.0 176.5,24.0 177.4,24.0 178.2,24.0 179.1,24.0 179.9,24.0 180.7,24.0 181.6,24.0 182.4,24.0 183.3,24.0 184.1,24.0 184.9,24.0 185.8,24.0 186.6,24.0 187.5,24.0 188.3,24.0 189.1,24.0 190.0,24.0 190.8,24.0 191.7,24.0 192.5,24.0 193.3,24.0 194.2,24.0 195.0,24.0 195.9,24.0 196.7,24.0 197.5,24.0 198.4,24.0 199.2,24.0 200.1,24.0 200.9,24.0 201.7,24.0 202.6,24.0 203.4,24.0 204.3,24.0 205.1,24.0 205.9,24.0 206.8,24.0 207.6,24.0 208.5,24.0 209.3,24.0 210.1,24.0 211.0,24.0 211.8,24.0 212.7,24.0 213.5,24.0 214.3,24.0 215.2,24.0 216.0,24.0 216.9,24.0 217.7,24.0 218.5,24.1 219.4,24.1 220.2,24.1 221.1,24.1 221.9,24.1 222.7,24.1 223.6,24.2 224.4,24.2 225.2,24.2 226.1,24.3 226.9,24.3 227.8,24.3 228.6,24.4 229.4,24.4 230.3,24.5 231.1,24.5 232.0,24.6 232.8,24.7 233.6,24.7 234.5,24.8 235.3,24.9 236.2,24.9 237.0,25.0 237.8,25.1 238.7,25.2 239.5,25.3 240.4,25.4 241.2,25.5 242.0,25.6 242.9,25.8 243.7,25.9 244.6,26.0 245.4,26.1 246.2,26.3 247.1,26.4 247.9,26.6 248.8,26.8 249.6,26.9 250.4,27.1 251.3,27.3 252.1,27.5 253.0,27.7 253.8,27.9 254.6,28.1 255.5,28.3 256.3,28.6 257.2,28.8 258.0,29.1 258.8,29.3 259.7,29.6 260.5,29.9 261.4,30.1 262.2,30.4 263.0,30.7 263.9,31.0 264.7,31.4 265.6,31.7 266.4,32.0 267.2,32.4 268.1,32.8 268.9,33.1 269.8,33.5 270.6,33.9 271.4,34.3 272.3,34.7 273.1,35.2 274.0,35.6 274.8,36.0 275.6,36.5 276.5,37.0 277.3,37.5 278.2,38.0 279.0,38.5 279.8,39.0 280.7,39.5 281.5,40.1 282.4,40.6 283.2,41.2 284.0,41.8 284.9,42.4 285.7,43.0 286.6,43.7 287.4,44.3 288.2,45.0 289.1,45.7 289.9,46.4 290.8,47.1 291.6,47.8 292.4,48.5 293.3,49.3 294.1,50.1 295.0,50.9 295.8,51.7 296.6,52.5 297.5,53.4 298.3,54.2 299.2,55.1 300.0,56.0 300.8,57.0 301.7,57.9 302.5,58.9 303.4,59.9 304.2,60.9 305.0,61.9 305.9,63.0 306.7,64.1 307.6,65.2 308.4,66.3 309.2,67.5 310.1,68.7 310.9,69.9 311.8,71.2 312.6,72.4 313.4,73.7 314.3,75.1 315.1,76.5 316.0,77.9 316.8,79.3 317.6,80.8 318.5,82.3 319.3,83.9 320.2,85.5 321.0,87.1 321.8,88.8 322.7,90.5 323.5,92.3 324.4,94.2 325.2,96.1 326.0,98.0 326.9,100.1 327.7,102.2 328.6,104.3 329.4,106.6 330.2,108.9 331.1,111.4 331.9,113.9 332.8,116.5 333.6,119.3 334.4,122.2 335.3,125.3 336.1,128.6 336.9,132.0 337.8,135.7 338.6,139.8 339.5,144.1 340.3,149.0 341.1,154.5 342.0,160.8 342.8,168.5 343.7,178.4 344.5,193.7 345.3,240.6 346.2,203.5 347.0,189.8 347.9,183.3 348.7,179.6 349.5,177.5 350.4,176.4 351.2,176.2 352.1,176.6 352.9,177.7 353.7,179.3 354.6,181.6 355.4,184.6 356.3,188.6 357.1,194.0 357.9,201.6 358.8,213.9 359.6,248.8 360.5,224.2 361.3,207.1 362.1,198.2 363.0,192.3 363.8,188.1 364.7,184.8 365.5,182.3 366.3,180.4 367.2,178.9 368.0,177.7 368.9,176.9 369.7,176.4 370.5,176.1 371.4,176.1 372.2,176.3 373.1,176.8 373.9,177.5 374.7,178.5 375.6,179.8 376.4,181.4 377.3,183.3 378.1,185.6 378.9,188.5 379.8,192.0 380.6,196.5 381.5,202.4 382.3,211.0 383.1,226.1 384.0,264.0 384.8,223.6 385.7,209.9 386.5,201.9 387.3,196.3 388.2,192.1 389.0,188.7 389.9,186.0 390.7,183.7 391.5,181.9 392.4,180.4 393.2,179.1 394.1,178.1 394.9,177.3 395.7,176.7 396.6,176.3 397.4,176.0 398.3,176.0 399.1,176.1 399.9,176.3 400.8,176.7 401.6,177.3 402.5,178.1 403.3,179.1 404.1,180.3 405.0,181.7 405.8,183.4 406.7,185.4 407.5,187.8 408.3,190.6 409.2,194.1 410.0,198.4 410.9,204.1 411.7,212.2 412.5,225.7 413.4,264.0 414.2,229.6 415.1,214.2 415.9,205.6 416.7,199.6 417.6,195.1 418.4,191.5 419.3,188.6 420.1,186.2 420.9,184.2 421.8,182.5 422.6,181.0 423.5,179.8 424.3,178.8 425.1,178.0 426.0,177.3 426.8,176.8 427.7,176.5 428.5,176.3 429.3,176.2 430.2,176.3 431.0,176.5 431.9,176.9 432.7,177.4 433.5,178.1 434.4,178.9 435.2,179.9 436.1,181.1 436.9,182.5 437.7,184.2 438.6,186.2 439.4,188.5 440.2,191.3 441.1,194.6 441.9,198.7 442.8,204.0 443.6,211.4 444.4,223.0 445.3,252.3 446.1,237.1 447.0,218.2 447.8,208.5 448.6,202.1 449.5,197.2 450.3,193.4 451.2,190.3 452.0,187.7 452.8,185.6 453.7,183.7 454.5,182.1 455.4,180.8 456.2,179.6 457.0,178.7 457.9,177.9 458.7,177.2 459.6,176.7 460.4,176.3 461.2,176.1 462.1,176.0 462.9,176.0 463.8,176.2 464.6,176.5 465.4,176.9 466.3,177.4 467.1,178.1 468.0,178.9 468.8,179.9 469.6,181.1 470.5,182.5 471.3,184.2 472.2,186.0 473.0,188.3 473.8,190.9 474.7,194.0 475.5,197.9 476.4,202.8 477.2,209.3 478.0,219.1 478.9,238.3 479.7,251.9 480.6,223.5 481.4,211.9 482.2,204.7 483.1,199.4 483.9,195.3 484.8,191.9 485.6,189.2 486.4,186.8 487.3,184.9 488.1,183.2 489.0,181.7 489.8,180.5 490.6,179.4 491.5,178.5 492.3,177.8 493.2,177.2 494.0,176.7 494.8,176.4 495.7,176.2 496.5,176.1 497.4,176.2 498.2,176.3 499.0,176.6 499.9,177.0 500.7,177.5 501.6,178.2 502.4,179.0 503.2,180.0 504.1,181.2 504.9,182.5 505.8,184.1 506.6,185.9 507.4,188.0 508.3,190.6 509.1,193.5 510.0,197.2 510.8,201.7 511.6,207.6 512.5,216.2 513.3,231.1 514.2,264.0 515.0,229.1 515.8,215.2 516.7,207.0 517.5,201.3 518.4,196.8 519.2,193.3 520.0,190.4 520.9,187.9 521.7,185.8 522.6,184.0 523.4,182.5 524.2,181.2 525.1,180.1 525.9,179.1 526.8,178.3 527.6,177.6 528.4,177.1 529.3,176.7 530.1,176.4 531.0,176.3 531.8,176.2 532.6,176.3 533.5,176.5 534.3,176.8 535.2,177.3 536.0,177.8 536.8,178.6 537.7,179.4 538.5,180.4 539.4,181.6 540.2,183.0 541.0,184.6 541.9,186.5 542.7,188.7 543.6,191.2 544.4,194.3 545.2,198.0 546.1,202.7 546.9,208.9 547.8,218.0 548.6,234.8 549.4,264.0 550.3,226.7 551.1,214.0 551.9,206.3 552.8,200.8 553.6,196.5 554.5,193.0 555.3,190.2 556.1,187.8 557.0,185.7 557.8,183.9 558.7,182.4 559.5,181.1 560.3,180.0 561.2,179.0 562.0,178.2 562.9,177.5 563.7,177.0 564.5,176.6 565.4,176.3 566.2,176.1 567.1,176.1 567.9,176.1 568.7,176.3 569.6,176.6 570.4,177.0 571.3,177.5 572.1,178.2 572.9,179.0 573.8,180.0 574.6,181.1 575.5,182.4 576.3,183.9 577.1,185.7 578.0,187.7 578.8,190.1 579.7,192.9 580.5,196.3 581.3,200.5 582.2,206.0 583.0,213.5 583.9,225.6 584.7,258.1 585.5,236.9 586.4,219.0 587.2,209.6 588.1,203.2 588.9,198.4 589.7,194.7 590.6,191.5 591.4,188.9 592.3,186.7 593.1,184.8 593.9,183.2 594.8,181.8 595.6,180.6 596.5,179.5 597.3,178.6 598.1,177.9 599.0,177.3 599.8,176.8 600.7,176.5 601.5,176.2 602.3,176.1 603.2,176.1 604.0,176.2 604.9,176.4 605.7,176.8 606.5,177.2 607.4,177.8 608.2,178.5 609.1,179.4 609.9,180.4 610.7,181.5 611.6,182.9 612.4,184.5 613.3,186.3 614.1,188.5 614.9,191.0 615.8,194.0 616.6,197.6 617.5,202.1 618.3,208.0 619.1,216.4 620.0,231.0 620.8,264.0 621.7,230.3 622.5,216.1 623.3,207.8 624.2,201.9 625.0,197.5 625.9,193.9 626.7,190.9 627.5,188.4 628.4,186.3 629.2,184.5 630.1,182.9 630.9,181.6 631.7,180.4 632.6,179.4 633.4,178.6 634.3,177.9 635.1,177.3 635.9,176.9 636.8,176.5 637.6,176.3 638.5,176.2 639.3,176.2 640.1,176.4 641.0,176.6 641.8,177.0 642.7,177.5 643.5,178.1 644.3,178.8 645.2,179.7 646.0,180.7 646.9,181.9 647.7,183.4 648.5,185.0 649.4,186.9 650.2,189.1 651.1,191.7 651.9,194.8 652.7,198.5 653.6,203.3 654.4,209.6 655.2,218.8 656.1,236.1 656.9,261.5 657.8,226.4 658.6,214.1 659.4,206.4 660.3,201.0 661.1,196.7 662.0,193.3 662.8,190.4 663.6,188.0 664.5,186.0 665.3,184.2 666.2,182.7 667.0,181.3 667.8,180.2 668.7,179.2 669.5,178.4 670.4,177.7 671.2,177.2 672.0,176.7 672.9,176.4 673.7,176.2 674.6,176.1 675.4,176.2 676.2,176.3 677.1,176.5 677.9,176.9 678.8,177.4 679.6,178.0 680.4,178.7 681.3,179.6 682.1,180.7 683.0,181.9 683.8,183.3 684.6,184.9 685.5,186.8 686.3,189.0 687.2,191.6 688.0,194.6 688.8,198.4 689.7,203.1 690.5,209.3 691.4,218.3 692.2,235.0 693.0,264.0 693.9,227.3 694.7,214.5 695.6,206.8 696.4,201.2 697.2,196.9 698.1,193.5 698.9,190.6 699.8,188.2 700.6,186.1 701.4,184.3 702.3,182.8 703.1,181.5 704.0,180.3 704.8,179.3 705.6,178.5 706.5,177.8 707.3,177.3 708.2,176.8 709.0,176.5 709.8,176.3 710.7,176.2 711.5,176.2 712.4,176.4 713.2,176.6 714.0,177.0 714.9,177.4 715.7,178.0 716.6,178.8 717.4,179.7 718.2,180.7 719.1,181.9 719.9,183.3 720.8,184.9 721.6,186.8 722.4,189.0 723.3,191.5 724.1,194.6 725.0,198.3 725.8,203.0 726.6,209.1 727.5,218.1 728.3,234.4 729.2,264.0 730.0,227.7 730.8,214.8 731.7,206.9 732.5,201.3 733.4,197.0 734.2,193.5 735.0,190.7 735.9,188.2 736.7,186.1 737.6,184.3 738.4,182.8 739.2,181.4 740.1,180.3 740.9,179.3 741.8,178.5 742.6,177.8 743.4,177.2 744.3,176.7 745.1,176.4 746.0,176.2 746.8,176.1 747.6,176.1 748.5,176.2 749.3,176.4 750.2,176.8 751.0,177.2 751.8,177.8 752.7,178.5 753.5,179.4 754.4,180.4 755.2,181.6 756.0,182.9 756.9,184.5 757.7,186.3 758.6,188.4 759.4,190.9 760.2,193.9 761.1,197.4 761.9,201.9 762.8,207.6 763.6,215.8 764.4,229.7 765.3,264.0 766.1,231.8 766.9,216.9 767.8,208.3 768.6,202.4 769.5,197.8 770.3,194.2 771.1,191.2 772.0,188.7 772.8,186.5 773.7,184.7 774.5,183.1 775.3,181.7 776.2,180.5 777.0,179.5 777.9,178.6 778.7,177.9 779.5,177.3 780.4,176.8 781.2,176.4 782.1,176.2 782.9,176.1 783.7,176.1 784.6,176.1 785.4,176.3 786.3,176.7 787.1,177.1 787.9,177.6 788.8,178.3 789.6,179.1 790.5,180.1 791.3,181.2 792.1,182.6 793.0,184.1 793.8,185.8 794.7,187.9 795.5,190.3 796.3,193.1 797.2,196.5 798.0,200.6 798.9,206.0 799.7,213.5 800.5,225.3 801.4,256.0 802.2,238.1 803.1,219.7 803.9,210.1 804.7,203.7 805.6,198.8 806.4,195.0 807.3,191.9 808.1,189.2 808.9,187.0 809.8,185.1 810.6,183.4 811.5,182.0 812.3,180.7 813.1,179.7 814.0,178.8 814.8,178.0 815.7,177.4 816.5,176.9 817.3,176.5 818.2,176.2 819.0,176.0 819.9,176.0 820.7,176.0 821.5,176.2 822.4,176.5 823.2,176.9 824.1,177.4 824.9,178.1 825.7,178.8 826.6,179.7 827.4,180.8 828.3,182.1 829.1,183.5 829.9,185.2 830.8,187.1 831.6,189.4 832.5,192.0 833.3,195.2 834.1,199.1 835.0,204.0 835.8,210.6 836.7,220.4 837.5,239.8 838.3,252.6 839.2,224.5 840.0,213.0 840.9,205.7 841.7,200.4 842.5,196.3 843.4,193.0 844.2,190.2 845.1,187.8 845.9,185.8 846.7,184.0 847.6,182.5 848.4,181.2 849.3,180.1 850.1,179.2 850.9,178.3 851.8,177.7 852.6,177.1 853.5,176.7 854.3,176.4 855.1,176.2 856.0,176.1 856.8,176.1 857.7,176.3 858.5,176.5 859.3,176.9 860.2,177.3 861.0,177.9 861.9,178.7 862.7,179.6 863.5,180.6 864.4,181.8 865.2,183.2 866.1,184.8 866.9,186.6 867.7,188.8 868.6,191.3 869.4,194.3 870.2,197.9 871.1,202.5 871.9,208.4 872.8,216.9 873.6,231.8 874.4,264.0 875.3,230.0 876.1,216.0 877.0,207.8 877.8,202.0 878.6,197.6 879.5,194.0 880.3,191.1 881.2,188.6 882.0,186.5 882.8,184.7 883.7,183.1 884.5,181.7 885.4,180.6 886.2,179.6 887.0,178.7 887.9,178.0 888.7,177.4 889.6,177.0 890.4,176.6 891.2,176.4 892.1,176.3 892.9,176.3 893.8,176.4 894.6,176.6 895.4,176.9 896.3,177.4 897.1,178.0 898.0,178.7 898.8,179.5 899.6,180.5 900.5,181.6 901.3,183.0 902.2,184.5 903.0,186.3 903.8,188.4 904.7,190.9 905.5,193.8 906.4,197.3 907.2,201.6 908.0,207.2 908.9,215.1 909.7,228.2 910.6,264.0 911.4,234.0 912.2,218.0 913.1,209.1 913.9,203.0 914.8,198.4 915.6,194.7 916.4,191.6 917.3,189.0 918.1,186.9 919.0,185.0 919.8,183.4 920.6,182.0 921.5,180.8 922.3,179.7 923.2,178.8 924.0,178.1"/>
+<circle class="pt" cx="279.0" cy="38.5" r="4"/>
+<text class="lab" x="271.0" y="56.5" text-anchor="end">256 MHz で −6.0 dB</text>
+<text class="lab" x="67.4" y="40">通過域 0〜179.2</text>
+<text class="lab" x="67.4" y="56">0.012 dB p-p</text>
+<text class="lab" x="567.9" y="40">阻止域 332.8〜（= 512 − 179.2）</text>
+<text class="lab" x="567.9" y="56">63.3 dB 以上</text>
+</svg>
+    </div>
+    <figcaption>src/win_coef.vh の 96 個の係数（18 bit）から計算した振幅。緑の帯が通過域、赤の帯が阻止域。
+    隣の ch の中心（128 MHz）は通過域の中にある（4 倍オーバーサンプリングなので、隣どうしが大きく重なる）。設計の要求は阻止 60 dB 以上、通過域の平らさは窓全体の予算 0.1 dB p-p のうち 3 割（0.03 dB）。</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="rule">
+  <h2 id="rule">振る舞いの約束</h2>
+  <div class="cols">
+    <div class="box">
+      <h3>入力の途切れ</h3>
+      <ul>
+        <li>s_tvalid = 0 のビートは窓も q_cnt も進めない。値は入力のサンプル列だけで決まる</li>
+        <li>途切れた所は、18 クロック後の y_valid = 0 として出る</li>
+        <li>後ろの ddc_core は y_valid の組ごとに進む（途切れに強い）</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>rst と k</h3>
+      <ul>
+        <li>rst は hist を 0 に、q_cnt を 0 にする。m = 0 は模型の y[0]（x の最初の 96 個で作るフレーム）</li>
+        <li>k は静的。変えたら rst を打ち直す（win_core の WRST がこれをする）</li>
+        <li>定数の位相 exp(−j2πk·95/32) は落としてある。ddc_core・電力には効かない</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>飽和の数え</h3>
+      <ul>
+        <li>sat_cnt は u（f = 0 の 32 本の OR）と y の出口の飽和を数え、0xFFFF で止まる</li>
+        <li>Z（26 bit）と A / B（27 bit）は語幅の上限から飽和しない（模型で確かめる）</li>
+        <li>win_core の 0x6C PFB_SAT で読む。W-0 はこれが 0 であること</li>
+      </ul>
+    </div>
+  </div>
+  <p class="note">X の段を YW（24 bit）で宣言すると、28 bit の値が切り詰められて巻き戻る。初版の誤りで、sim の満杯の区間で 2 フレームだけ合わなかった。今は ZW + 2 = 28 bit で持ち、最後の段で丸めてから飽和させる。</p>
+</section>
+
+<section aria-labelledby="vf">
+  <h2 id="vf">確かめ方</h2>
+  <div class="cols">
+    <div class="box">
+      <h3>sim（make sim-pfb）</h3>
+      <ul>
+        <li>iverilog で RTL と <code>pfb_fixed</code> を bit 単位で照合</li>
+        <li>k = 0 1 4 5 8 13 15 16（0・8・16 は実数化が自明な端、4・12 は 45°）× 入力の途切れ あり / なし</li>
+        <li>陽性対照 <code>SIM_PFB_POSCTL=1</code>：分岐の和の丸めを切り捨てにすると、1 LSB の違いで落ちる</li>
+        <li>模型の陽性対照 pfb-short（1 タップ / 分岐）・ppfb（位相 exp(−j2πkp/32) を落とす）も落ちる</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>実機（rev2）</h3>
+      <ul>
+        <li>W-0：PFB_SAT = 0（6 通りの幅・帯域の端とも）</li>
+        <li>W-2：窓の中の平らさが模型と 0.015 dB 以内（pfb・半帯域・FFT をまとめた値）</li>
+        <li>W-4：窓を粗い ch の境目（d = ±64）に置き、k と k + 1 で 0.014 dB</li>
+        <li>通過特性の掃引（winresp）も模型の曲線と一致</li>
+      </ul>
+    </div>
+  </div>
+</section>
+</div>
+
+</body>
+</html>
