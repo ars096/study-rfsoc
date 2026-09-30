@@ -27,6 +27,7 @@ import argparse
 import atexit
 import os
 import sys
+import threading
 import time
 
 import numpy as np
@@ -137,12 +138,16 @@ def main():
     minute_w = np.zeros(NFFT_W); minute_f = np.zeros(kf_hi - kf_lo + 1); n_min = 0
     spectra_w, spectra_f = [], []
     last_save = t0
+    lost_at = []                                   # 窓のダンプを飛ばした時刻 [s]（原因の切り分け用）
+    saver = None                                   # 途中の npz は別のスレッドで書く（1 回目の 1 時間で、書く時刻に合わせてダンプを飛ばした）
     half = None
     while time.time() - t0 < a.duration:
         s = wn.wait_dump(seq_w, a.tau0 * 5 + 2)
         if s is None:
             log("ERROR: 窓のダンプが閉じない"); break
-        lost_w += max(0, (s - seq_w) % (1 << 32) - 1); seq_w = s
+        dl = max(0, (s - seq_w) % (1 << 32) - 1); lost_w += dl; seq_w = s
+        if dl:
+            lost_at.append(time.time() - t0)
         m, pw_raw, _ = wn.read_dump()
         sfv = spf.wait_dump(seq_f, a.tau0 * 5 + 2)
         if sfv is None:
@@ -188,11 +193,18 @@ def main():
             yy = np.array(ysa) / np.array(ysb)
             log(f"  {ts[-1]:7.0f} s: ダンプ {len(ts)}・飛ばした 窓 {lost_w} / 全帯域 {lost_f}・小帯域の比 {yy[-1] / yy.mean():.5f}・"
                 f"窓 / 全帯域 {(ya[-1] / yb[-1]) / (np.mean(ya) / np.mean(yb)):.5f}")
-        if a.out and time.time() - last_save > 600:
-            np.savez(a.out + ".allan.npz", t=np.array(ts), win=np.array(ya), full=np.array(yb), sa=np.array(ysa), sb=np.array(ysb),
-                     fa=np.array(yfa), fb=np.array(yfb), fmask=fmask, mask=mask, spectra_win=np.array(spectra_w), spectra_full=np.array(spectra_f), tau0=a.tau0, c=c, w=w)
+        if a.out and time.time() - last_save > 600 and (saver is None or not saver.is_alive()):
+            snap = dict(t=np.array(ts), win=np.array(ya), full=np.array(yb), sa=np.array(ysa), sb=np.array(ysb),
+                        fa=np.array(yfa), fb=np.array(yfb), fmask=fmask, mask=mask, spectra_win=np.array(spectra_w),
+                        spectra_full=np.array(spectra_f), tau0=a.tau0, c=c, w=w, lost_at=np.array(lost_at))
+            saver = threading.Thread(target=np.savez, args=(a.out + ".allan.npz",), kwargs=snap, daemon=True)
+            saver.start()
             last_save = time.time()
     wn.wr(WN.R_CTRL, WN.CTRL_STOP); spf.stop()
+    if saver is not None:
+        saver.join()
+    if lost_at:
+        log("窓のダンプを飛ばした時刻 [s]: " + ", ".join(f"{v:.0f}" for v in lost_at))
     flags = wn.rd(WN.R_FLAGS)
     t = np.array(ts); A = np.array(ya); B = np.array(yb); SA = np.array(ysa); SB = np.array(ysb); FA = np.array(yfa); FB = np.array(yfb)
     ok = len(t) > 20
@@ -227,7 +239,7 @@ def main():
         f"・FLAGS {flags:#x}・(e) 全帯域の小帯域の比 / その予言 最大 {np.nanmax((av['(e) 全帯域の小帯域の比'] / theory['(e) 全帯域の小帯域の比'])[sel]):.2f}")
     if a.out:
         np.savez(a.out + ".allan.npz", t=t, win=A, full=B, sa=SA, sb=SB, fa=FA, fb=FB, fmask=fmask, mask=mask, spectra_win=np.array(spectra_w),
-                 spectra_full=np.array(spectra_f), tau0=a.tau0, c=c, w=w, taus=taus,
+                 spectra_full=np.array(spectra_f), tau0=a.tau0, c=c, w=w, taus=taus, lost_at=np.array(lost_at),
                  **{f"av_{i}": av[kname] for i, kname in enumerate(series)}, theory_d=theory["(d) 小帯域の比"],
                  theory_a=theory["(a) 窓"], theory_b=theory["(b) 全帯域"], theory_e=theory["(e) 全帯域の小帯域の比"], theory_f=theory["(f) (d) / (e)"], shift_w=sh_w, shift_f=sh_f, lost_w=lost_w, lost_f=lost_f)
         log(f"書いた: {a.out}.allan.npz")
