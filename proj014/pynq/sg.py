@@ -46,6 +46,17 @@ class SG:
         self.write("*CLS")
         self.ref = self.ref_state()
         self.log(f"SG: 基準 {self.ref}")
+        self.pmin, self.pmax = self.power_range()
+        self.log(f"SG: 設定できるレベル {self.pmin:+.2f} 〜 {self.pmax:+.2f} dBm")
+
+    def power_range(self):
+        # E8257D は機械式のステップ減衰器（オプション 1E1 など）が無いと下限が -20 dBm 前後。範囲外は黙って端に丸められる
+        try:
+            lo, hi = float(self.query(":POW? MIN")), float(self.query(":POW? MAX"))
+        except (socket.timeout, OSError, ValueError):
+            lo, hi = float("-inf"), float("inf")
+        self.read_errors()
+        return lo, hi
 
     WARN_CODES = ("+512", "512", "+513", "513")     # E8257D: 基準（10 MHz）のロック外れの類。出力は出ている
 
@@ -110,10 +121,14 @@ class SG:
         self.log(f"SG: 周波数 {got / 1e6:.6f} MHz")
 
     def set_dbm(self, dbm):
+        if not (self.pmin - 1e-6 <= dbm <= self.pmax + 1e-6):
+            raise RuntimeError(f"SG のレベル {dbm:+.2f} dBm は設定できる範囲 {self.pmin:+.2f} 〜 {self.pmax:+.2f} dBm の外"
+                               "（下げたいなら SG の出口に固定減衰器を入れ、その値を記録する）")
         self.write(f":POW {dbm:.2f} dBm")
         got = self.power()
         if abs(got - dbm) > 0.01:
-            raise RuntimeError(f"SG のレベルが {got} dBm（要求 {dbm} dBm）")
+            e = self.read_errors()
+            raise RuntimeError(f"SG のレベルが {got} dBm（要求 {dbm} dBm）" + (f"。SG のエラー: {' / '.join(e)}" if e else ""))
         self.check_err()
         self.log(f"SG: レベル {got:+.2f} dBm")
 

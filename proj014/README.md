@@ -172,6 +172,9 @@ bit ③（4 ADC × 4 窓、256 MHz 窓で規模が決まる）。**自作部分�
 - sim: FFT のモデルが tready を下げる（+FFT_RDLY・+FFT_STALL）。sim-wspec の変種に g0r（RDLY 6000、途切れなし）・g3s（STALL 40、GAP 3）を足した。
   **陽性対照 `make sim-wspec-r`（-DWSPEC_NOREADY = rev1）: 2 変種とも B が落ちる**（sim-win-all に入れた）
 - sg.py: つないだときに溜まっていたエラーを読んでログに残してから *CLS。基準の状態（:ROSC:SOUR?）をログと npz に。**Reference unlocked の類は止めずに警告**
+  - 追記: +512 Reference unlocked は前の操作の溜まり（2 回目には出なかった）。代わりに **`--sg-dbm -30` が -20 dBm に丸められて止まった**:
+    この E8257D はステップ減衰器が無く下限が -20 dBm 前後。sg.py はつないだときに `:POW? MIN` / `MAX` を読み、範囲外は送る前に止める。
+    -30 dBm 以下が要るときは SG の出口に固定減衰器を入れ、その値を入力の構成に書く
 - window.py: rev2 の ID を期待（rev1 の .bit なら止める）。WS_RDY0・WS_STALL を出す
 
 予言（rev2 の実機。測る前に書く）: `--golden` で **W-G 通過**・消してから 0.2 s の FLAGS = 0。WRST の後 50 ms は [4] が立ちうる（待たされただけ）。
