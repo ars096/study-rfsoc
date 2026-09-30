@@ -302,6 +302,13 @@ def main():
         pw03, pf03, _, _ = measure(a.w3_tint, shf3, sh3)
     else:
         pw03, pf03 = pw0, pf0
+    # 自動のときは、測った床が 16 に届くまで SHIFT をさらに下げて測り直す（真の雑音の見積もりは床が量子化に近いと粗い。
+    # 実機の 8 MHz・IF 4000 で、見積もりどおりに下げても床が 4 に届かず W-3 が全点「判定できない」になった）
+    while do3 and a.w3_shift is None and sh3 > 0 and float(np.median(pw03[np.abs(nb) <= 0.45 * w])) < 16.0:
+        sh3 -= 1
+        pred3 = 64.0 * 4.0 ** (shf3 - sh3)
+        pw03, pf03, _, _ = measure(a.w3_tint, shf3, sh3)
+        log(f"  床が 16 に届かないので W-3 の窓の SHIFT を {sh3} に下げた（床 {float(np.median(pw03[np.abs(nb) <= 0.45 * w])):.1f} LSB²）")
     floor_w = float(np.median(pw0[np.abs(nb) <= 0.45 * w]))
     floor_w3 = float(np.median(pw03[np.abs(nb) <= 0.45 * w]))
     log(f"  窓の雑音の床（中央 90 % の ch の中央値）{floor_w:.1f} LSB² / フレーム（SHIFT {a.shift}）"

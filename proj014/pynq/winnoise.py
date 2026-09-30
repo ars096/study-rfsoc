@@ -12,6 +12,10 @@
   - **量子化で雑音が消えないように SHIFT を自分で選ぶ**: SHIFT 11 で床を測り、量子化（約 0.67 LSB²）を除いた真の雑音から、
     床が --floor（既定 2000 LSB² / フレーム）前後になる SHIFT を出す（--shift で固定もできる）。雑音が 1 LSB 程度だと量子化の分だけ R が 1 からずれる
   - N が大きいと利得の揺らぎ（増幅器・温度）が出て R が 1 を超えうる。そこは判定に入れず、目安として出す（--judge-max の τ まで判定）
+  - **共通の揺らぎを分ける**（実機の帯域の端で τ 30〜70 ms から R/R₀ ≒ 1.08 が出たのを受けて）: ダンプごとに窓の中央 90 % の ch の平均で割った
+    g_i（帯域の電力の相対値）を出し、その揺れ g_rms（ラジオメータの分 1/√(N·ch) を引いたもの）を「共通の利得の揺らぎ」として出す。
+    **判定は g_i で割った後の R_cm / R₀**（分光計の ch ごとの性質。帯域全体が一緒に揺れるのはアナログか ADC の較正の揺らぎ）。割る前の R / R₀ も出す
+    ch ごとの R（割る前・後）を npz に残す（どの ch が揺れているかを IF に対して描ける）
   - 各ダンプは RUN を打ち直して独立にとる（N = 1 でもダンプの読み出しに追いつく）
 
   python3 winnoise.py --if 3000 --w 256 --clkin 0 --ref 10
@@ -120,6 +124,7 @@ def main():
     nsat = 0
     t0 = time.time()
     rng = np.random.default_rng(1)
+    per_ch = {}
     for n in [int(x) for x in a.n.split(",") if x]:
         tau = n * tf
         if tau > a.tau_max:
@@ -132,15 +137,26 @@ def main():
             nsat += bool(sat)
         R1, nuse, med, r = stats(d, nb, w)
         R = n * R1
+        use = (np.abs(nb) <= 0.45 * w)
+        mu = d.mean(axis=0); use &= (mu < 3 * np.median(mu[use])) & (mu > 0)
+        g = (d[:, use] / mu[use]).mean(axis=1)                   # ダンプごとの帯域の電力（相対）
+        g_rms = float(np.sqrt(max(np.var(g, ddof=1) - 1.0 / (n * use.sum()), 0.0)))
+        R1c, _, _, rc = stats(d / g[:, None], nb, w)
+        Rc = n * R1c
         err = n * np.std(r) / np.sqrt(nuse)               # ch の平均の揺れ（ch どうしは独立とみなす）
         sim = rng.gamma(shape=n, scale=1.0 / n, size=(m, 4000))   # 理想のラジオメータ: 1 ダンプ = 自由度 2N の χ²
         R0 = n * float(np.mean(sim.var(axis=0, ddof=1) / sim.mean(axis=0) ** 2))
         inj = tau <= a.judge_max
-        rows.append((n, tau, m, R, err, nuse, med, R0))
-        msg = (f"N {n:6d}（τ {tau * 1e3:9.3f} ms）× M {m:3d}: R = N·分散/平均² = {R:.4f} ± {err:.4f}・理想 R₀ {R0:.4f}"
-               f" → R/R₀ {R / R0:.4f}（ch {nuse}、床 {med:.0f} LSB²）")
+        rows.append((n, tau, m, R, err, nuse, med, R0, Rc, g_rms))
+        def full_r(x):                                   # 4096 ch ぶん（使わない ch は NaN）
+            out = np.full(NFFT_W, np.nan)
+            out[use] = n * x[:, use].var(axis=0, ddof=1) / x[:, use].mean(axis=0) ** 2
+            return out
+        per_ch[n] = (full_r(d), full_r(d / g[:, None]), g)
+        msg = (f"N {n:6d}（τ {tau * 1e3:9.3f} ms）× M {m:3d}: 共通の揺らぎを除いて R_cm/R₀ {Rc / R0:.4f}"
+               f"・除く前 R/R₀ {R / R0:.4f}（R₀ {R0:.4f}、±{err / R0:.4f}）・共通の利得の揺らぎ {g_rms * 100:.3f} %（ch {nuse}、床 {med:.0f} LSB²）")
         if inj:
-            judge(abs(R / R0 - 1) <= a.tol, "W-5: " + msg + f"（許容 ±{a.tol}）")
+            judge(abs(Rc / R0 - 1) <= a.tol, "W-5: " + msg + f"（許容 ±{a.tol}）")
         else:
             log("  --  " + msg + f"（τ > {a.judge_max} s は判定に入れない。R > 1 は利得の揺らぎの目安）")
     judge(nsat == 0, f"W-5: 飽和したダンプ {nsat}")
@@ -148,7 +164,13 @@ def main():
     judge((flags & 0x3EF) == 0, f"W-0: FLAGS {flags:#x}（{WN.flag_text(flags)}）")
     log(f"かかった時間 {time.time() - t0:.0f} s")
     if a.out:
-        np.savez(a.out + ".noise.npz", rows=np.array(rows), c=c, w=w, k=k, dphi=dphi, ns=ns, shift=shift)
+        extra = {}
+        for n_, (rr, rrc, gg) in per_ch.items():
+            extra[f"r_N{n_}"] = rr; extra[f"rcm_N{n_}"] = rrc; extra[f"g_N{n_}"] = gg
+        # r_N* / rcm_N* は ch ごとの R（中央 90 % で線を除いた ch だけ値、他は NaN）。横軸は if_win
+        np.savez(a.out + ".noise.npz", rows=np.array(rows), c=c, w=w, k=k, dphi=dphi, ns=ns, shift=shift,
+                 if_win=WN.ch_if(c, w),
+                 rows_cols="N, tau, M, R, err, nch, floor, R0, R_cm, g_rms", **extra)
         log(f"書いた: {a.out}.noise.npz")
     log("RESULT " + ("OK" if ok else "NG"))
     return 0 if ok else 1
