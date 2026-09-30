@@ -219,6 +219,9 @@ def main():
     wn = open_win(ol, args.allow_nopreset, args.allow_rev1)      # SG を触る前に、載っている .bit を確かめる
     sg = None
     sg_state = None
+    if args.tone is not None and not (args.sg or os.environ.get("RFSOC_SG")):
+        log("注意: --tone があるが SG の宛先が無い（--sg も 環境変数 RFSOC_SG も無い）→ **SG を操作しない**。"
+            "SG を手で " + f"{args.tone} MHz・ON にしてあること（--sg-dbm も効かない）")
     if (args.sg or os.environ.get("RFSOC_SG")) and args.tone is not None:
         if SGMOD is None:
             log("ERROR: sg.py が無い"); sys.exit(1)
