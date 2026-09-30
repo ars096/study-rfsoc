@@ -154,6 +154,7 @@ def main():
     p.add_argument("--w3-tint", type=float, default=0.5, help="W-3 の 1 点の積分と、SG を切った基準の積分 [s]")
     p.add_argument("--w3-dbm", type=float, default=None, help="W-3 の SG のレベル [dBm]（既定 --sg-dbm）")
     p.add_argument("--w3-shift-full", type=int, default=None, help="W-3 の全帯域の SHIFT（既定 --shift-full）")
+    p.add_argument("--w3-shift", type=int, default=None, help="W-3 の窓の SHIFT（既定 --shift）。狭い窓は雑音が小さいので下げる")
     p.add_argument("--w2-n", type=int, default=37, help="W-2 の中央 90 % の点の数")
     p.add_argument("--w2-edge", type=float, default=0.005, help="W-2 の両端 5 % の刻み（W に対する比）")
     p.add_argument("--w3-m", default="1,2,3,4,8,16,32,64", help="W-3 の窓の外の離れ（W の倍数）")
@@ -229,16 +230,17 @@ def main():
     shf3 = a.w3_shift_full if a.w3_shift_full is not None else a.shift_full
     dbm3 = a.w3_dbm if a.w3_dbm is not None else a.sg_dbm
     pred = 64.0 * 4.0 ** (a.shift_full - a.shift)
-    pred3 = 64.0 * 4.0 ** (shf3 - a.shift)
+    sh3 = a.w3_shift if a.w3_shift is not None else a.shift
+    pred3 = 64.0 * 4.0 ** (shf3 - sh3)
     quiet = lambda *x: None
 
     nsat = [0]
 
-    def measure(tint, shf):
+    def measure(tint, shf, shw=None):
         nw = WN.nacc_for(w, tint)
         nf = max(1, int(round(tint / S.T_FRAME)))
         sf = spf.run(nf, 1, shf)
-        s = wn.run(nw, 1, a.shift)
+        s = wn.run(nw, 1, a.shift if shw is None else shw)
         to = tint * 3 + 2
         if wn.wait_dump(s, to) is None or spf.wait_dump(sf, to) is None:
             raise RuntimeError("ダンプが閉じない")
@@ -255,10 +257,15 @@ def main():
     t0 = time.time()
     log(f"基準（SG を切る、{a.w3_tint} s）…")
     pw0, pf0, m0, _ = measure(a.w3_tint, a.shift_full)
-    pf03 = measure(a.w3_tint, shf3)[1] if (do3 and shf3 != a.shift_full) else pf0
+    if do3 and (shf3 != a.shift_full or sh3 != a.shift):
+        pw03, pf03, _, _ = measure(a.w3_tint, shf3, sh3)
+    else:
+        pw03, pf03 = pw0, pf0
     nb = np.where(np.arange(NFFT_W) < NFFT_W // 2, np.arange(NFFT_W), np.arange(NFFT_W) - NFFT_W) * dw
     floor_w = float(np.median(pw0[np.abs(nb) <= 0.45 * w]))
-    log(f"  窓の雑音の床（中央 90 % の ch の中央値）{floor_w:.1f} LSB² / フレーム（SHIFT {a.shift}）")
+    floor_w3 = float(np.median(pw03[np.abs(nb) <= 0.45 * w]))
+    log(f"  窓の雑音の床（中央 90 % の ch の中央値）{floor_w:.1f} LSB² / フレーム（SHIFT {a.shift}）"
+        + (f"・W-3 の SHIFT {sh3} で {floor_w3:.1f}" if do3 else ""))
     sg.set_output(True)
     sg.log = quiet
     ok = True
@@ -300,21 +307,21 @@ def main():
     if do3:
         if dbm3 != a.sg_dbm:
             sg.set_dbm(dbm3)
-        log(f"W-3: SG {dbm3:+.1f} dBm・全帯域の SHIFT {shf3}・{a.w3_tint} s / 点")
+        log(f"W-3: SG {dbm3:+.1f} dBm・窓の SHIFT {sh3}・全帯域の SHIFT {shf3}・{a.w3_tint} s / 点")
         rows = []
         for i, ((nu, al), gmod, nq) in enumerate(zip(w3, gp, nup)):
             f = c + nu
             sg.set_freq_mhz(4096.0 - f)
             time.sleep(a.sg_settle)
-            pw, pf, m, mf = measure(a.w3_tint, shf3)
+            pw, pf, m, mf = measure(a.w3_tint, shf3, sh3)
             ref, kf, df = full_ref(pf, pf03, f)
             ba = int(round(nq / dw)) % NFFT_W
-            diff = pw - pw0
+            diff = pw - pw03
             nub = np.where(np.arange(NFFT_W) < NFFT_W // 2, np.arange(NFFT_W), np.arange(NFFT_W) - NFFT_W) * dw
             use = (np.abs(nub) <= 0.45 * w) & (np.abs(np.arange(NFFT_W) - ba) > 3)
             sig = robust_sigma(diff[use])
             ex = diff[ba]
-            if floor_w < 4.0:
+            if floor_w3 < 4.0:
                 sig = np.inf                               # 雑音が量子化で消えている: 小さな折り返しも消えうる
             lim = 10 * np.log10(max(5 * sig, 1e-30) / (ref * pred3)) if np.isfinite(sig) else np.inf
             lev = 10 * np.log10(max(ex, 1e-30) / (ref * pred3)) if ex > 5 * sig else None
@@ -328,7 +335,8 @@ def main():
             rows.append((nu, nq, gmod, lev, lim, lev_full, adc))
             tag = ("ADC 側の線（全帯域でも同じ IF に " + f"{lev_full:+.1f} dB）" if adc else "")
             log(f"  W-3 [{i + 1}/{len(w3)}] ν {nu:+10.4f} MHz → {nq:+.4f}: "
-                + (f"{lev:+.1f} dB" if lev is not None else f"< {lim:+.1f} dB（検出限界）")
+                + (f"{lev:+.1f} dB" if lev is not None else
+                   (f"< {lim:+.1f} dB（検出限界）" if np.isfinite(lim) else "判定できない（窓の雑音の床 < 4 LSB²）"))
                 + f"（模型 {gmod:+.1f}）{tag}")
         worst = None; undec = 0; nadc = 0
         for nu, nq, gmod, lev, lim, lev_full, adc in rows:
@@ -345,8 +353,8 @@ def main():
               f"W-3: 折り返しの最大 {('%+.1f dB（ν %+.3f MHz）' % worst) if worst else '検出限界より下'} / 要求 −{a.alias_req:.0f} dB"
               f"（{ntot} 点、ADC 側の線として除いた {nadc}、検出限界が要求に届かず判定できない {undec}）")
         if undec:
-            if floor_w < 4.0:
-                log(f"    → 窓の雑音の床 {floor_w:.1f} LSB² が 4 を切っている: --shift を下げる")
+            if floor_w3 < 4.0:
+                log(f"    → 窓の雑音の床 {floor_w3:.1f} LSB² が 4 を切っている: --w3-shift を下げる（1 下げると床は 4 倍）")
             else:
                 log("    → --w3-dbm を上げる（全帯域が飽和しないよう --w3-shift-full も）か --w3-tint を延ばす。雑音源を外すとさらに下がる")
         res.update(w3=np.array([(r[0], r[1], r[2], np.nan if r[3] is None else r[3], r[4],
@@ -370,17 +378,17 @@ def main():
             fig, ax = plt.subplots(n, 1, figsize=(8, 3.6 * n), squeeze=False)
             i = 0
             if do2:
-                ax[i][0].plot(nus2a / w, rel, "o", ms=3, label="実測"); ax[i][0].plot(nus2a / w, mrel, "-", label="模型")
-                ax[i][0].set_xlabel("ν / W"); ax[i][0].set_ylabel("利得 [dB]"); ax[i][0].legend(); ax[i][0].grid(alpha=.3)
+                ax[i][0].plot(nus2a / w, rel, "o", ms=3, label="measured"); ax[i][0].plot(nus2a / w, mrel, "-", label="model")
+                ax[i][0].set_xlabel("ν / W"); ax[i][0].set_ylabel("gain [dB]"); ax[i][0].legend(); ax[i][0].grid(alpha=.3)
                 i += 1
             if do3:
                 r = res["w3"]
-                ax[i][0].plot(np.abs(r[:, 0]) / w, r[:, 3], "o", ms=4, label="実測")
-                ax[i][0].plot(np.abs(r[:, 0]) / w, r[:, 4], "v", ms=3, alpha=.5, label="検出限界")
-                ax[i][0].plot(np.abs(r[:, 0]) / w, r[:, 2], "x", ms=4, label="模型")
+                ax[i][0].plot(np.abs(r[:, 0]) / w, r[:, 3], "o", ms=4, label="measured")
+                ax[i][0].plot(np.abs(r[:, 0]) / w, r[:, 4], "v", ms=3, alpha=.5, label="detection limit")
+                ax[i][0].plot(np.abs(r[:, 0]) / w, r[:, 2], "x", ms=4, label="model")
                 ax[i][0].axhline(-a.alias_req, color="k", lw=.8); ax[i][0].set_xscale("log")
-                ax[i][0].set_xlabel("|ν_out| / W"); ax[i][0].set_ylabel("折り返し [dB]"); ax[i][0].legend(); ax[i][0].grid(alpha=.3)
-            fig.suptitle(f"窓 IF {if_c:.3f} MHz ± {w / 2}")
+                ax[i][0].set_xlabel("|ν_out| / W"); ax[i][0].set_ylabel("alias [dB]"); ax[i][0].legend(); ax[i][0].grid(alpha=.3)
+            fig.suptitle(f"window IF {if_c:.3f} MHz +/- {w / 2} MHz")
             fig.tight_layout(); fig.savefig(a.out + ".sweep.png", dpi=120)
             log(f"書いた: {a.out}.sweep.png")
         except ImportError:
