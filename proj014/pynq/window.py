@@ -285,7 +285,14 @@ def main():
     if True:                                  # W-0 は毎回
         cr = wn.rd(R_CTRL)
         judge(cr >> 3 & 1, "W-0: z が流れている（CTRL[3]）")
-        judge((flags & 0x3FF) == 0, f"W-0: FLAGS = {flags:#x}（{flag_text(flags)}）")
+        # FLAGS[4]（IP に待たされた）は rev2 ではデータを保って待つだけなので判定から外し、量（1 フレームあたりのクロック数）を出す。
+        # 実機 4 回目（W = 8 MHz）: 待たされたのは 1 フレームにほぼ 1 クロック（途切れの後の面の頭で IP が 1 クロック待たせると読む。未確認）
+        judge((flags & 0x3EF) == 0, f"W-0: FLAGS = {flags:#x}（{flag_text(flags)}）" + ("（[4] は判定に入れない）" if flags & 0x10 else ""))
+        if wn.rd(R_ID) == ID_WIN:
+            fin_now = wn.rd(R_FIN_LO) | (wn.rd(R_FIN_HI) << 32)
+            st = wn.rd(R_WS_STALL)
+            log(f"  FFT IP に待たされた {st} クロック / 溜め終えたフレーム {fin_now}（1 フレームあたり {st / max(fin_now, 1):.3f}）"
+                "。読み出しの遅れは FLAGS[1] が見る")
         judge(wn.rd(R_PFB_SAT) == 0 and wn.rd(R_DDC_SAT) == 0, f"W-0: 飽和 pfb {wn.rd(R_PFB_SAT)} / ddc {wn.rd(R_DDC_SAT)}")
         judge(len(dumps) == args.ndump and all(d[0]["n"] == nacc for d in dumps), f"W-0: ダンプ {len(dumps)} 個・各 {nacc} フレーム")
     if dumps and args.golden:
