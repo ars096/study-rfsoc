@@ -1,7 +1,7 @@
 # proj015 — 狭帯域の窓に 4・2 MHz を足し（8 通りの幅）、4 ADC × 4 窓に広げる
 
 日付: 2026-09-30
-状態: **進行中**（手順 1: 4・2 MHz を足し、模型・固定小数点・sim が 8 通りの幅で通過。**手順 2: ddc の時分割（hb2s）が sim で hb2 と bit 単位で一致**。次は `make ooc-ddc`（Vivado サーバ）で DSP を数え、手順 3 へ）
+状態: **進行中**（手順 1〜2 は sim で通過・ooc-ddc で DSP 72 / 窓を実測。**手順 3・4 の RTL（4 窓で共有の PFB・1 ADC × 4 窓の win_core・ADC の total power）と build.tcl（4 ADC × 4 窓・全帯域 1 本）を書いた**。sim の一部が回し中、build は未。PS 側はこれから）
 
 ## 目的
 
@@ -127,6 +127,37 @@ DSP（bit ③ = 4 ADC × 4 窓 ＋ 全帯域 1 本 ＋ tp 4 個）:
     (2) tb が hb2 の出力を溜めた配列と hb2s の出力を同じクロックで比べていて、C = 1・2（レイテンシが hb2 と同じか短い）で全部「不一致」になった → 両方溜めて最後に比べる
   - `tools/ooc_ddc.tcl`（`make ooc-ddc`）: ddc_core を TS = 0・1 で OOC 合成して DSP・LUT・FF・BRAM を数える（Vivado サーバ）
 
+- **手順 3: pfb_core を NW 窓で共有**（2026-09-30）
+  - 分岐の和（192）・16 点 DFT（64）は ADC ごとに 1 つ、ch の選択・実数化（8）・(−j)^(k·m')・丸めは窓ごと。ポートは窓ごとに束ねた（NW = 1 なら proj014 と同じ幅）
+  - **窓ごとの始まり**: 窓 w は w_rst[w] を下ろした後の最初の valid なビート（q ≧ 5、窓の 7 ビートが埋まってから）を q_s とし、m' = m − (2q_s − 10) で数える。
+    **窓 w の出力は x[8·m_s:] を模型に与えたものと bit 単位で同じ**。(−j)^(k·m') の偶奇も窓ごとに数える。rst と w_rst を同時に下ろせば q_s = 5 で proj014 と同じ
+  - **proj014 の潜在の誤り**: ok = (q ≧ 6)・(q ≧ 5) を 32 bit の q で比べていて、**256 MHz で 16.8 秒ごとに q が巻き戻ると 6 ビート（12 フレーム）の間 ok が落ちる**。
+    窓の z がそこで 12 フレームぶん途切れて糊付けされ、NCO の位相もずれる（1 フレームの FFT が乱れる程度。100 ms の積分では見えない大きさ）。
+    proj015 は ok と偶奇を窓ごとの飽和する数えで作り、q は q_start の報告だけに使う。**sim-pfbm の QW = 8 の変種（4096 ビートで 16 回巻き戻る）で通過**
+  - WRST は共有の PFB を止めない（窓の ddc・wspec と、pfb の窓 w の始まり待ちだけ）。w_rst の間は、運んでいる途中の印も消す
+- **手順 4（RTL）: win_core を 1 ADC × NW 窓に**（2026-09-30）
+  - 番地 20 bit = 1 MiB: 窓 w = 0x20000·w（proj014 の win_core と同じ並び）、ADC の共通 = 0x80000（ID 0x0015_A100・NW・SNAP_SEL・TP_RUN・TFIN・GB_K・FULL_SEL・GB_STAT・ADC_STAT、
+    total power のレジスタ 0x80100– とリング 0x82000–）。窓ごとに 0x8C WSTART（始まりのビート）・0x90 WIDX
+  - **スナップショットは ADC で 1 つ**（wspec_core の SNAP = 0 で書き込みを外へ）。SNAP_SEL の窓だけが書き、他の窓の範囲は 0 を返す
+  - **total power は ADC ごと**（tp_core をそのまま）。区切りの物差しは ADC のビートの数（8192 サンプル = 2 µs のフレーム）で、TP_RUN で F0 = TFIN + 2 に揃う。窓の WRST とは無関係
+  - **ギアボックスの制御は win_core_i**: gb_hold 0・gb_adj 0・gb_dn_rstn = aresetn を 1 段・gb_k = GB_K（既定 2）。GRST は無い（窓の経路は valid なビートだけで進むので起動の途切れに強い）
+  - `src/axis_sel4.v`（新規）: 4 本の ADC の流れから全帯域の分光（spec_core_0）へ 1 本。選ぶのは win_core_0 の FULL_SEL。gb_stat・adc_stat も同じ選びで spec_core_0 へ
+- **build.tcl（4 ADC × 4 窓・全帯域 1 本）を書いた**（2026-09-30、**Vivado で未実行**）: 変更点は build.tcl の冒頭。
+  win_core_i（NW = 4）・gb_bc_i（ch ごと）・full_sel（axis_sel4）・spec_core_0。SmartConnect の M は 6 本（RFDC・win_core × 4・spec_core_0）、win_core の窓 1 MiB。
+  結線の照合に win_core_i・gb_bc_i と共有のネット（full_sel）を足し、**spec_core_0 の gb_* の出口がどこにもつながっていないこと**も見る。陽性対照は win_core_0/gb_hold に
+
+### ビルドの予言（proj015 rev1 = 4 ADC × 4 窓 ＋ spec_core_0、測る前に書く）
+
+| | 予言 | 根拠 |
+|---|---|---|
+| DSP48E2 | **≒ 3290（77 %）**（± 5 %） | win_core 696 × 4（PFB 256 ＋ (実数化 8 ＋ ddc 72 ＋ FFT 30) × 4 ＋ tp 24）＋ spec_core_0 504 |
+| BRAM | **≒ 500〜600（46〜56 %）** | 窓ごとに 溜め 8・FFT 15・NCO 4 = 27 × 16 = 432、スナップショット 8 × 4、tp のリング 2 × 4、spec_core_0 ≒ 80 |
+| URAM | **≒ 32〜34** | 積分の二面 2 × 16（proj014 で URAM に載った）＋ spec_core_0 |
+| LUT | **≒ 60〜75 %** | proj014 の窓 1 つ ＋ 18k を 16 窓ぶん（PFB の共有で減る）＋ spec_core 1 本 ≒ 45k。**いちばん危ない** |
+| FF | **≒ 45〜60 %** | 同じ見当（proj014 の窓 1 つ ＋ 25k） |
+| WNS `-2` / `-1` | **閉じない恐れが大きい** | 窓が 16 倍・LUT が 6 割を超える。負なら `make worst-paths` で群を分ける（proj013 の A〜E か、win_core の中か、full_sel か） |
+| 結線の照合 | 問題 0・陽性対照 OK | ch ごとの表 ＋ 共有のネット |
+
 ## 結果
 
 ### 手順 1（2026-09-30、クラウドの作業環境: iverilog 12.0・numpy 2.4.4）
@@ -156,15 +187,16 @@ DSP（bit ③ = 4 ADC × 4 窓 ＋ 全帯域 1 本 ＋ tp 4 個）:
 | `make sim-top`（NS 1） | 総合: 全部通過（FLAGS[10] = 0 も含む。NS 1 は light を使わないので hb2s は通らない） |
 
 - TS パラメータ（既定 1）を足した後に sim-ddc（32 通り・追い越し 0）・sim-win（8 通り）を回し直して通過
-- **まだ数えていない**: 時分割の DSP（予言 114 → 72）。Vivado サーバで `make ooc-ddc`
+- **`make ooc-ddc`（Vivado サーバ、2026-09-30）: TS 0 = 114・TS 1 = 72 DSP で予言どおり**。1 回目の表は 1026・648 と出たが、合成後の DSP48E2 が 9 個の下位セル（DSP_ALU・DSP_MULTIPLIER など）に展開されていて、`ARITHMETIC.DSP.*` で数えると 1 個が 9 に出ていた（1026 / 9 = 114、648 / 9 = 72）。LUT・FF も 0 と出た → report_utilization の表から読むように直した（取り直せば LUT・FF も出る）
 - **資源（見当）**: 時分割なしの ddc は light 2 段ぶん +20 DSP（94 → 114）。ビルドはしていない（手順 2 の時分割と合わせてから）
 
 ## 結論・次にやること
 
 - [x] 手順 1: 4・2 MHz（模型・固定小数点・sim。ビルドは手順 2 と合わせて）
 - [x] 手順 2: ddc_core の時分割（sim。DSP は `make ooc-ddc` で数える）
-- [ ] 手順 3: pfb_core を共有部分と窓ごとの部分に分ける
-- [ ] 手順 4: 4 ADC × 4 窓・tp × 4・全帯域 1 本
+- [x] 手順 3: pfb_core を共有部分と窓ごとの部分に分ける（sim-pfbm。proj014 の 16.8 秒の巻き戻りも直した）
+- [ ] 手順 4: 4 ADC × 4 窓・tp × 4・全帯域 1 本（RTL と build.tcl は書いた。sim-win4・ビルド・PS 側がまだ）
+- [ ] PS 側: window.py などを win_core_i の窓 w（0x20000·w）に、spectrometer.py を spec_core_0 ＋ FULL_SEL に
 - [ ] 手順 5: ビルド → 実機
 - **proj016 以降の候補**（2026-09-30、西村さん）:
   - **窓を減らして分光点数を増やす**（例: 8 MHz × 16384 点 × 窓 1 つ / ADC）。1 ADC のメモリは「窓の数 × 点数」でほぼ決まる（16384 点で窓 1 つあたり BRAM ≒ 128・URAM 8 の見当）。FFT IP の 8192 / 16384 点は先に `make survey` で数える
