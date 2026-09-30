@@ -23,4 +23,7 @@ for spec in "$@"; do
         | tee "runs/$tag.noise.log" | grep -E "^  (OK|NG|--)|RESULT|SHIFT 11"
 done
 echo "==== まとめ"
-grep -H "RESULT" runs/*.log
+for f in runs/*.log; do
+    printf '%-32s %s\n' "$f" "$(grep -a 'RESULT' "$f" | tail -1)"
+    grep -a '^  NG' "$f"
+done

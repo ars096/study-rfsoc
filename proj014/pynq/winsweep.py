@@ -396,15 +396,23 @@ def main():
             lev = 10 * np.log10(max(ex, 1e-30) / (ref * pred3)) if ex > 5 * sig else None
             # 同じ IF に全帯域でも線があるか（ADC 側の線）
             fa = c + nq
-            ka = int(round(fa / DF_FULL))
+            ka = int(round(fa / DF_FULL)); dka = fa / DF_FULL - ka
             dfa = pf[ka] - pf03[ka]
             sigf = robust_sigma((pf - pf03)[max(0, ka - 40):ka + 40])
-            lev_full = 10 * np.log10(max(dfa, 1e-30) / ref) if dfa > 5 * sigf else None
+            # 全帯域の ch の端数の目減りを戻す（窓の ch の中心は全帯域の ch の中心と限らない。実機 7 回目の 32 MHz で −2.5 dB の目減りを戻さず見分けそこねた）
+            lev_full = 10 * np.log10(max(dfa, 1e-30) / ref / np.sinc(dka) ** 2) if dfa > 5 * sigf else None
+            # ADC のインターリーブの線の位置: CW の ±f に j·fs/8 を足したもの（折り返して 0..2048）。PFB の折り返し（512 の倍数）と同じ離れに出る
+            sp = np.array([(sgn * f + j * FS / 8) % FS for sgn in (1, -1) for j in range(8)])
+            sp = np.minimum(sp, FS - sp)
+            il = bool(np.any(np.abs(sp - fa) < 2 * dw)) and abs(f - fa) > 2 * dw
             # ADC 側の線なら窓でも利得 ≒ 1 で同じ量に見える。全帯域の ch（0.5 MHz）は窓の ch より 256 倍広く、別の線が同じ ch に入りうるので、
             # 量が 3 dB 以内で揃うときだけ ADC 側と見る（全帯域のほうが大きいだけなら、窓の ch とは別の周波数の線）
             adc = lev is not None and lev_full is not None and abs(lev_full - lev) <= 3.0
             rows.append((nu, nq, gmod, lev, lim, lev_full, adc))
             tag = ("ADC 側の線（全帯域でも同じ IF に " + f"{lev_full:+.1f} dB）" if adc else "")
+            if il and lev is not None and not adc:
+                tag += ("・ADC のインターリーブの線（f ± j·fs/8）の位置" +
+                        (f"（全帯域 {lev_full:+.1f} dB）" if lev_full is not None else "（全帯域では雑音より下）"))
             log(f"  W-3 [{i + 1}/{len(w3)}] ν {nu:+10.4f} MHz → {nq:+.4f}: "
                 + (f"{lev:+.1f} dB" if lev is not None else
                    (f"< {lim:+.1f} dB（検出限界）" if np.isfinite(lim) else "判定できない（窓の雑音の床 < 4 LSB²）"))
