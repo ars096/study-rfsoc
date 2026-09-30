@@ -147,11 +147,14 @@ class SG:
                     warnings=list(self.warnings))
 
     def close(self):
+        if self.s is None:
+            return
         try:
             if self._out0 is not None and self.output() != self._out0:
                 self.set_output(self._out0)
         finally:
             self.s.close()
+            self.s = None
 
     def __enter__(self):
         return self

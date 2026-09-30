@@ -23,6 +23,7 @@ SG を自動で: --sg HOST[:PORT]（または環境変数 RFSOC_SG）と --sg-db
 ch の並び: ch b ↔ ν = b·W/4096（b < 2048）/ (b − 4096)·W/4096、f = c + ν、**IF = 4096 − c − ν**（ゾーン 2 で反転する）。
 """
 import argparse
+import atexit
 import os
 import sys
 import time
@@ -210,18 +211,19 @@ def main():
     S.check_tiles(ol.rfdc, 2)
     if args.settle > 0:
         time.sleep(args.settle)
+    wn = open_win(ol, args.allow_nopreset)      # SG を触る前に、載っている .bit を確かめる
     sg = None
     sg_state = None
     if (args.sg or os.environ.get("RFSOC_SG")) and args.tone is not None:
         if SGMOD is None:
             log("ERROR: sg.py が無い"); sys.exit(1)
         sg = SGMOD.SG(args.sg, log=log)
+        atexit.register(sg.close)                 # 途中で止まっても SG の出力を元の状態に戻す
         sg.set_freq_mhz(args.tone)
         if args.sg_dbm is not None:
             sg.set_dbm(args.sg_dbm)
         sg.set_output(True)
         sg_state = sg.state()
-    wn = open_win(ol, args.allow_nopreset)
     wn.set_window(k, dphi, ns)
     # FLAGS の切り分け: WRST の直後に立っていたもの（起動の瞬間）と、消してから 0.2 s のあいだに立ったもの（動いているあいだ）を分けて読む
     time.sleep(0.05)
