@@ -7,9 +7,15 @@
       判定 W-0: ID・BUILD（窓のコア・ch 1）・WRST の後の WCUR・z が流れる・FLAGS 0・飽和 0
   sudo python3 window.py --if 3000 --w 64 --tone 3010.5
       判定 W-1: CW（IF 3010.5 MHz）が予言の ch に出るか。ch の格子の上に置けば 0.00 ch でずれる
+  sudo python3 window.py --if 3000 --w 256 --golden
+      判定 W-G: N_ACC = 1 のダンプを、同じフレームのスナップショット（FFT の入力 z）を numpy で FFT した電力と ch ごとに比べる。
+      **FFT IP がフレームの枠どおりに変換しているか**の直接の証拠（proj010 の --golden の型）。FLAGS[2]（IP の TLAST 事象）が立つときの切り分けに
   sudo python3 window.py --if 3000 --w 256 --tone 3010.5 --w6
       判定 W-6: 同じ ADC_B の spec_core_1（全帯域）と同じ CW を同時に測り、電力の比を予言と比べる:
         P_win / P_full（1 フレームあたり）= 64 · 4^(SHIFT_full − SHIFT_win)（窓の通過帯域の利得 1、18 bit の手前の桁の違いだけ）
+
+SG を自動で: --sg HOST[:PORT]（または環境変数 RFSOC_SG）と --sg-dbm を付けると、--tone の周波数・レベルを SG に設定し、読み返してから測る。
+  SG の *IDN?・周波数・レベルはログと --out の npz に残る（pynq/sg.py。**宛先はリポジトリに書かない**）
 
 窓の指定: --if（IF の中心 MHz、2048〜4096）と --w（幅 MHz: 256 / 128 / 64 / 32 / 16 / 8）。
   f の側の中心 c = 4096 − IF を **ch の格子（W / 4096 刻み）に丸める**（PS の既定。README の「中心の格子」）。--no-grid で丸めない。
@@ -17,12 +23,18 @@
 ch の並び: ch b ↔ ν = b·W/4096（b < 2048）/ (b − 4096)·W/4096、f = c + ν、**IF = 4096 − c − ν**（ゾーン 2 で反転する）。
 """
 import argparse
+import os
 import sys
 import time
 
 import numpy as np
 
 import spectrometer as S
+
+try:
+    import sg as SGMOD
+except ImportError:                      # sg.py を置いていなければ --sg は使えない
+    SGMOD = None
 
 ID_WIN = 0x0014_0100
 BUILD_WIN = 1 << 22
@@ -170,6 +182,9 @@ def main():
     p.add_argument("--tone", type=float, default=None, help="判定 W-1: CW の IF [MHz]")
     p.add_argument("--w6", action="store_true", help="判定 W-6: spec_core_1 と同時に測って電力の比を見る（--tone と一緒に）")
     p.add_argument("--shift-full", type=int, default=4, help="W-6 の spec_core_1 の SHIFT")
+    p.add_argument("--golden", action="store_true", help="判定 W-G（N_ACC = 1 のダンプ = スナップショットの numpy FFT）")
+    p.add_argument("--sg", default=None, help="SG の HOST[:PORT]（環境変数 RFSOC_SG でも可）。--tone を SG に設定する")
+    p.add_argument("--sg-dbm", type=float, default=None, help="SG のレベル [dBm]（--sg と一緒に）")
     p.add_argument("--allow-nopreset", action="store_true")
     p.add_argument("--out", default=None, help="ダンプを PREFIX.win.npz に")
     args = p.parse_args()
@@ -191,10 +206,29 @@ def main():
     S.check_tiles(ol.rfdc, 2)
     if args.settle > 0:
         time.sleep(args.settle)
+    sg = None
+    sg_state = None
+    if (args.sg or os.environ.get("RFSOC_SG")) and args.tone is not None:
+        if SGMOD is None:
+            log("ERROR: sg.py が無い"); sys.exit(1)
+        sg = SGMOD.SG(args.sg, log=log)
+        sg.set_freq_mhz(args.tone)
+        if args.sg_dbm is not None:
+            sg.set_dbm(args.sg_dbm)
+        sg.set_output(True)
+        sg_state = sg.state()
     wn = open_win(ol, args.allow_nopreset)
     wn.set_window(k, dphi, ns)
+    # FLAGS の切り分け: WRST の直後に立っていたもの（起動の瞬間）と、消してから 0.2 s のあいだに立ったもの（動いているあいだ）を分けて読む
     time.sleep(0.05)
-    nacc = nacc_for(w, args.tint)
+    f_start = wn.rd(R_FLAGS)
+    wn.wr(R_CTRL, CTRL_CLR)
+    time.sleep(0.2)
+    f_run = wn.rd(R_FLAGS)
+    log(f"FLAGS: WRST の後 50 ms = {f_start:#x}（{flag_text(f_start)}）/ 消してから 0.2 s = {f_run:#x}（{flag_text(f_run)}）")
+    nacc = 1 if args.golden else nacc_for(w, args.tint)
+    if args.golden:
+        args.ndump = 1
     ok = True
 
     def judge(cond, msg):
@@ -218,12 +252,27 @@ def main():
         dumps.append((m, spec))
         log(f"ダンプ {m['k']}: f0 {m['f0']} / n {m['n']} / 飽和 {m['sat']} / FLAGS {flag_text(m['flags'])}")
     flags = wn.rd(R_FLAGS)
-    if args.probe or True:
+    if True:                                  # W-0 は毎回
         cr = wn.rd(R_CTRL)
         judge(cr >> 3 & 1, "W-0: z が流れている（CTRL[3]）")
         judge((flags & 0x3FF) == 0, f"W-0: FLAGS = {flags:#x}（{flag_text(flags)}）")
         judge(wn.rd(R_PFB_SAT) == 0 and wn.rd(R_DDC_SAT) == 0, f"W-0: 飽和 pfb {wn.rd(R_PFB_SAT)} / ddc {wn.rd(R_DDC_SAT)}")
         judge(len(dumps) == args.ndump and all(d[0]["n"] == nacc for d in dumps), f"W-0: ダンプ {len(dumps)} 個・各 {nacc} フレーム")
+    if dumps and args.golden:
+        m, spec = dumps[0]
+        _, _, snap = wn.read_dump(with_snap=True)
+        judge(m["snap_f"] == m["f0"], f"W-G: スナップショットのフレーム {m['snap_f']} = ダンプの f0 {m['f0']}")
+        Y = np.fft.fft(snap.astype(complex))                     # IP と同じ順変換・unscaled（倍精度）
+        qr = np.floor(Y.real / 2 ** args.shift); qi = np.floor(Y.imag / 2 ** args.shift)
+        ok_ch = (np.abs(qr) < 2 ** 17 - 4) & (np.abs(qi) < 2 ** 17 - 4)      # 18 bit に飽和しない ch だけ比べる
+        a_np = np.hypot(qr, qi)
+        a_hw = np.sqrt(spec.astype(float))
+        d = np.abs(a_hw - a_np)
+        tol = 2.0 + 1e-4 * a_np[ok_ch].max()
+        nbad = int(np.count_nonzero(d[ok_ch] > tol))
+        worst = int(np.argmax(np.where(ok_ch, d / tol, 0)))
+        judge(nbad == 0, f"W-G: ダンプ = スナップショットの numpy FFT（{int(ok_ch.sum())} ch、許容 {tol:.1f}、超えた ch {nbad}、"
+                         f"最悪 ch {worst}: 差 {d[worst]:.1f} / 振幅 {a_np[worst]:.0f}）")
     if dumps and args.tone is not None:
         m, spec = dumps[-1]
         p = spec.astype(float) / m["n"]
@@ -243,9 +292,12 @@ def main():
             judge(abs(db) < 0.1, f"W-6: 窓 / 全帯域（ch {kf}）の電力の比 {ratio:.4g}、予言 {pred:.4g} → {db:+.3f} dB（許容 ±0.1 dB）")
     if args.out and dumps:
         np.savez(args.out + ".win.npz", spec=np.stack([d[1] for d in dumps]), if_mhz=ch_if(c, w),
+                 sg=str(sg_state), f_start=f_start, f_run=f_run,
                  f0=np.array([d[0]["f0"] for d in dumps]), n=np.array([d[0]["n"] for d in dumps]),
                  k=k, dphi=dphi, ns=ns, c=c, w=w, shift=args.shift)
         log(f"書いた: {args.out}.win.npz")
+    if sg is not None:
+        sg.close()
     log("RESULT " + ("OK" if ok else "NG"))
     return 0 if ok else 1
 
