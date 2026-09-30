@@ -331,7 +331,9 @@ def main():
             dfa = pf[ka] - pf03[ka]
             sigf = robust_sigma((pf - pf03)[max(0, ka - 40):ka + 40])
             lev_full = 10 * np.log10(max(dfa, 1e-30) / ref) if dfa > 5 * sigf else None
-            adc = lev is not None and lev_full is not None and lev_full >= lev - 3.0
+            # ADC 側の線なら窓でも利得 ≒ 1 で同じ量に見える。全帯域の ch（0.5 MHz）は窓の ch より 256 倍広く、別の線が同じ ch に入りうるので、
+            # 量が 3 dB 以内で揃うときだけ ADC 側と見る（全帯域のほうが大きいだけなら、窓の ch とは別の周波数の線）
+            adc = lev is not None and lev_full is not None and abs(lev_full - lev) <= 3.0
             rows.append((nu, nq, gmod, lev, lim, lev_full, adc))
             tag = ("ADC 側の線（全帯域でも同じ IF に " + f"{lev_full:+.1f} dB）" if adc else "")
             log(f"  W-3 [{i + 1}/{len(w3)}] ν {nu:+10.4f} MHz → {nq:+.4f}: "
