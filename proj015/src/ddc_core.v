@@ -28,6 +28,7 @@ module ddc_core #(
     parameter integer G  = 4,      // NS < GNS の FFT の入力の小数
     parameter integer GH = 5,      // NS ≧ GNS（4・2 MHz）の FFT の入力の小数（proj015）
     parameter integer GNS = 7,
+    parameter integer TS = 1,      // 1: light の 2 段目以降を時分割（hb2s）/ 0: 全段 hb2（手順 1 の形。make ooc-ddc の比べ）
     parameter integer P  = 14
 )(
     input  wire                 clk,
@@ -163,7 +164,7 @@ module ddc_core #(
         for (j = 1; j <= NL; j = j + 1) begin : g_l
             wire                 lv;
             wire signed [VW-1:0] lr, li;
-            if (j == 1) begin : g_par
+            if (j == 1 || TS == 0) begin : g_par
                 hb2 #(.N(HBL_N), .SH(HBL_SH), .H(HBL_H), .W(VW)) u_hb (
                     .clk(clk), .rst(rst), .in_v(pv_a[j-1]),
                     .e_re(pa_er[j-1]), .e_im(pa_ei[j-1]), .o_re(pa_or[j-1]), .o_im(pa_oi[j-1]),

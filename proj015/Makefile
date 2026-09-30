@@ -201,7 +201,7 @@ WSPEC_VARS    ?= g0:4:4:4:0:5:0 g3:2:4:7:3:5:0 g32:1:3:4:32:5:0 g0r:4:4:4:0:6000
 WSPEC_NR_VARS ?= g0r:4:4:4:0:6000:0 g3s:2:4:7:3:5:40
 
 
-.PHONY: model model-posctl model-sweep fixed fixed-posctl coef sim-pfb sim-ddc sim-win sim-win-g sim-win-ts sim-hb2s sim-win-all sim-pfb-p sim-ddc-p sim-wspec sim-wspec-p sim-wspec-r sim-top survey clean
+.PHONY: model model-posctl model-sweep fixed fixed-posctl coef sim-pfb sim-ddc sim-win sim-win-g sim-win-ts sim-hb2s sim-win-all sim-pfb-p sim-ddc-p sim-wspec sim-wspec-p sim-wspec-r sim-top survey ooc-ddc clean
 
 # 仕様の模型（numpy だけ。Vivado もライセンスも要らない）。成否は「結果: 全部通過」の行で読む
 model:
@@ -309,6 +309,11 @@ sim-pfb-p:
 	$(MAKE) --no-print-directory sim-pfb SIM_PFB_POSCTL=1
 sim-ddc-p:
 	$(MAKE) --no-print-directory sim-ddc SIM_DDC_POSCTL=1
+
+# ddc_core 単体の資源（proj015 手順 2）。時分割あり（TS = 1）となし（TS = 0）。結果は build-ooc-ddc/ooc.txt（ライセンスが要る）
+ooc-ddc:
+	mkdir -p build-ooc-ddc
+	$(VIVADO) -mode batch -nojournal -log build-ooc-ddc/vivado.log -source tools/ooc_ddc.tcl
 
 # FFT IP 単体の資源（ライセンスが要る。並列で 10〜20 分の見込み）。結果は build-survey/survey.txt
 survey:
