@@ -149,14 +149,16 @@ def flag_text(f):
     return "なし" if not s else " / ".join(s)
 
 
-def open_win(ol, allow_nopreset=False):
+def open_win(ol, allow_nopreset=False, allow_rev1=False):
     ip = getattr(ol, "win_core_0", None)
     if ip is None:
         log("ERROR: ol.win_core_0 が無い。proj014 の窓の .bit が載っていないか"); sys.exit(1)
     wn = Win(ip.mmio)
     ident, bt = wn.rd(R_ID), wn.rd(R_BUILD)
     log(f"win_core_0: ID {ident:08x} / BUILD {bt:08x}（プリセット {'あり' if bt >> 30 & 1 else '**なし**'} / -{bt >> 28 & 3} / 窓 {bt >> 22 & 1} / ch {bt & 3}）")
-    if ident in ID_WIN_OLD:
+    if ident in ID_WIN_OLD and allow_rev1:
+        log(f"注意: ID {ident:08x} は rev1。--allow-rev1 で続ける（W-G・W-0 の FLAGS は NG になる。W-1・W-6 は下見。rev2 でやり直す）")
+    elif ident in ID_WIN_OLD:
         log(f"ERROR: ID {ident:08x} は rev1（FFT IP の tready を見ない版。枠がずれる）。rev2（{ID_WIN:08x}）の .bit を載せる"); sys.exit(1)
     if ident != ID_WIN:
         log(f"ERROR: ID が {ID_WIN:08x} でない"); sys.exit(1)
@@ -191,6 +193,9 @@ def main():
     p.add_argument("--sg", default=None, help="SG の HOST[:PORT]（環境変数 RFSOC_SG でも可）。--tone を SG に設定する")
     p.add_argument("--sg-dbm", type=float, default=None, help="SG のレベル [dBm]（--sg と一緒に）")
     p.add_argument("--allow-nopreset", action="store_true")
+    p.add_argument("--allow-rev1", action="store_true",
+                   help="rev1 の .bit でも続ける（下見用）。IP の枠は起動の瞬間にずれるだけで、以後は途切れない 4096 点ずつなので、"
+                        "CW の電力スペクトル（W-1・W-6）は意味を持つ。W-G はスナップショットと枠が合わないので NG になる")
     p.add_argument("--out", default=None, help="ダンプを PREFIX.win.npz に")
     args = p.parse_args()
 
@@ -211,7 +216,7 @@ def main():
     S.check_tiles(ol.rfdc, 2)
     if args.settle > 0:
         time.sleep(args.settle)
-    wn = open_win(ol, args.allow_nopreset)      # SG を触る前に、載っている .bit を確かめる
+    wn = open_win(ol, args.allow_nopreset, args.allow_rev1)      # SG を触る前に、載っている .bit を確かめる
     sg = None
     sg_state = None
     if (args.sg or os.environ.get("RFSOC_SG")) and args.tone is not None:
@@ -232,7 +237,8 @@ def main():
     time.sleep(0.2)
     f_run = wn.rd(R_FLAGS)
     log(f"FLAGS: WRST の後 50 ms = {f_start:#x}（{flag_text(f_start)}）/ 消してから 0.2 s = {f_run:#x}（{flag_text(f_run)}）")
-    log(f"FFT IP: WRST の解除から tready が 1 になるまで {wn.rd(R_WS_RDY0)} クロック / 待たされた {wn.rd(R_WS_STALL)} クロック（WRST 以来）")
+    if wn.rd(R_ID) == ID_WIN:
+        log(f"FFT IP: WRST の解除から tready が 1 になるまで {wn.rd(R_WS_RDY0)} クロック / 待たされた {wn.rd(R_WS_STALL)} クロック（WRST 以来）")
     nacc = 1 if args.golden else nacc_for(w, args.tint)
     if args.golden:
         args.ndump = 1
