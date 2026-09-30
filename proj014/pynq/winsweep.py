@@ -176,6 +176,8 @@ def main():
     p.add_argument("--allow-nopreset", action="store_true")
     p.add_argument("--out", default=None, help="結果を PREFIX.sweep.npz（と matplotlib があれば PREFIX.sweep.png）に")
     p.add_argument("--dry-run", action="store_true", help="ボードと SG に触らず、置く CW と模型の予言だけ")
+    p.add_argument("--save-spectra", action="store_true",
+                   help="CW ごとの生スペクトル（窓 4096 ch・全帯域 4096 ch、1 フレームあたり）も npz に（W-2 55 点で約 2 MB / float32）")
     a = p.parse_args()
 
     import window as WN
@@ -292,7 +294,13 @@ def main():
     sg.set_output(True)
     sg.log = quiet
     ok = True
-    res = dict(c=c, w=w, k=k, dphi=dphi, ns=ns, shift=a.shift, shift_full=a.shift_full, sg_dbm=a.sg_dbm, sg=str(sg.state()))
+    res = dict(c=c, w=w, k=k, dphi=dphi, ns=ns, shift=a.shift, shift_full=a.shift_full, sg_dbm=a.sg_dbm, sg=str(sg.state()),
+               if_win=WN.ch_if(c, w), if_full=4096.0 - np.arange(NFFT_W) * DF_FULL)
+    raw = {}                       # --save-spectra: 名前 → [(SG の IF, 窓, 全帯域), ...]
+
+    def keep(name, if_sg, pw, pf):
+        if a.save_spectra:
+            raw.setdefault(name, []).append((if_sg, pw.astype(np.float32), pf.astype(np.float32)))
 
     def judge(cond, msg):
         nonlocal ok
@@ -306,6 +314,7 @@ def main():
             sg.set_freq_mhz(4096.0 - f)
             time.sleep(a.sg_settle)
             pw, pf, m, mf = measure(a.tint, a.shift_full)
+            keep(f"w2_k{kk}" if a.w4 else "w2", 4096.0 - f, pw, pf)
             b = int(round(nu / dw)) % NFFT_W
             ref, kf, df = full_ref(pf, pf0, f)
             g = (pw[b] - pw0[b]) / ref / pred
@@ -364,6 +373,7 @@ def main():
             sg.set_freq_mhz(4096.0 - f)
             time.sleep(a.sg_settle)
             pw, pf, m, mf = measure(a.w3_tint, shf3, sh3)
+            keep("w3", 4096.0 - f, pw, pf)
             ref, kf, df = full_ref(pf, pf03, f)
             ba = int(round(nq / dw)) % NFFT_W
             diff = pw - pw03
@@ -424,6 +434,12 @@ def main():
           f"W-0: FLAGS {flags:#x}（{WN.flag_text(flags)}）・飽和した点 {nsat[0]}・基準の雑音の前後の比 {drift:.4f}")
     log(f"かかった時間 {time.time() - t0:.0f} s")
     if a.out:
+        for name, lst in raw.items():
+            res[f"raw_{name}_if"] = np.array([x[0] for x in lst])
+            res[f"raw_{name}_win"] = np.stack([x[1] for x in lst])
+            res[f"raw_{name}_full"] = np.stack([x[2] for x in lst])
+        if do3 and (shf3 != a.shift_full or sh3 != a.shift):
+            res.update(pw03=pw03, pf03=pf03)
         np.savez(a.out + ".sweep.npz", pw0=pw0, pf0=pf0, pw1=pw1, pf1=pf1, **res)
         log(f"書いた: {a.out}.sweep.npz")
         try:
