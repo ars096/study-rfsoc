@@ -75,7 +75,7 @@ module tb_top;
         aresetn <= 1;
         repeat (8) @(posedge clk);
         axr(17'h00000);
-        if (rv !== 32'h0014_0100) $display("tb_top: ID が違う %08x", rv);
+        if (rv !== 32'h0014_0200) $display("tb_top: ID が違う %08x", rv);
         axw(17'h00058, kk); axw(17'h0005C, dp); axw(17'h00060, nsv);
         axw(17'h0000C, na); axw(17'h00010, ndm); axw(17'h00014, shv);
         axw(17'h00008, 32'h1000);                 // WRST
@@ -122,6 +122,8 @@ module tb_top;
         $fwrite(fm, "satflags %0d\n", (rv >> 8) & 3);
         axr(17'h00020); lo = rv; axr(17'h00028);
         $fwrite(fm, "fin %0d fout %0d\n", lo, rv);
+        axr(17'h00080); $fwrite(fm, "stall %0d\n", rv);
+        axr(17'h00084); $fwrite(fm, "rdy0 %0d\n", rv);
         $display("tb_top: K=%0d NS=%0d NACC=%0d NDUMP=%0d SHIFT=%0d ダンプ %0d 個、入力 %0d / %0d ビート", kk, nsv, na, ndm, shv, nd, b, nbeat);
         $fclose(fz); $fclose(ff); $fclose(fd); $fclose(fs); $fclose(fm);
         $finish;

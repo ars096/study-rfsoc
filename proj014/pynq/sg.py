@@ -9,6 +9,10 @@
   - 設定したら**必ず読み返して**一致を確かめる（周波数は 1 Hz、レベルは 0.01 dB）。違えば止める
   - 出力の ON / OFF も読み返す。**道具が SG を触ったことをログに残す**（*IDN?・周波数・レベル・ON/OFF）
   - 終わったら元の出力の状態（ON / OFF）に戻す（with 文）
+  - つないだときに、**溜まっていたエラーを読み出してログに残してから消す**（*CLS）。前の操作や前面パネルのエラーで止まらないように
+  - 基準（10 MHz）の状態（:ROSC:SOUR? = INT / EXT）を読んでログに残す。**「Reference unlocked」（+512 など）は止めずに警告**:
+    出力は出ているが周波数が基準にロックしていない。W-1 の ch 単位の位置（8 MHz 窓で 1.95 kHz / ch）は SG と RFSoC の基準が
+    同じ 10 MHz に載っていないと 1 ppm（3 GHz で 3 kHz）ずれうる。W-6（電力の比）には効かない
 
 単体で:
   python3 sg.py --sg HOST --idn
@@ -35,6 +39,32 @@ class SG:
         self.idn = self.query("*IDN?")
         self.log(f"SG: {self.idn}")
         self._out0 = None
+        self.warnings = []
+        old = self.read_errors()
+        if old:
+            self.log(f"SG: つないだ時点で溜まっていたエラー {len(old)} 件（消す）: " + " / ".join(old))
+        self.write("*CLS")
+        self.ref = self.ref_state()
+        self.log(f"SG: 基準 {self.ref}")
+
+    WARN_CODES = ("+512", "512", "+513", "513")     # E8257D: 基準（10 MHz）のロック外れの類。出力は出ている
+
+    def read_errors(self, nmax=32):
+        out = []
+        for _ in range(nmax):
+            e = self.query(":SYST:ERR?")
+            if e.startswith(("+0", "0")):
+                break
+            out.append(e)
+        return out
+
+    def ref_state(self):
+        try:
+            src = self.query(":ROSC:SOUR?")
+        except (socket.timeout, OSError):
+            return "不明（:ROSC:SOUR? に答えない）"
+        e = self.read_errors()
+        return f"{src}" + (f"（読んだときのエラー: {' / '.join(e)}）" if e else "")
 
     def write(self, cmd):
         self.s.sendall((cmd + "\n").encode())
@@ -50,9 +80,17 @@ class SG:
         return line.decode().strip()
 
     def check_err(self):
-        e = self.query(":SYST:ERR?")
-        if not e.startswith(("+0", "0")):
-            raise RuntimeError(f"SG のエラー: {e}")
+        errs = self.read_errors()
+        hard = []
+        for e in errs:
+            if e.split(",")[0].strip() in self.WARN_CODES or "Reference unlocked" in e:
+                if e not in self.warnings:
+                    self.warnings.append(e)
+                self.log(f"SG: 警告（止めない）: {e}")
+            else:
+                hard.append(e)
+        if hard:
+            raise RuntimeError("SG のエラー: " + " / ".join(hard))
 
     def freq(self):
         return float(self.query(":FREQ?"))          # Hz
@@ -90,7 +128,8 @@ class SG:
         self.log(f"SG: 出力 {'ON' if on else 'OFF'}")
 
     def state(self):
-        return dict(idn=self.idn, freq_hz=self.freq(), dbm=self.power(), on=self.output())
+        return dict(idn=self.idn, freq_hz=self.freq(), dbm=self.power(), on=self.output(), ref=self.ref,
+                    warnings=list(self.warnings))
 
     def close(self):
         try:

@@ -17,7 +17,7 @@
 //   0x08000–0x0FFFF  スナップショット: サンプル i の re が 0x08000 + 8i、im が +4（18 bit を 32 bit に符号拡張）
 //   0x10000–0x17FFF  スペクトル: ch b の 64 bit が 0x10000 + 8b（下位語）/ +4（上位語）。ch b ↔ ν = b·W/4096（b < 2048）/ (b − 4096)·W/4096
 //
-//   0x00 ID        R   0x0014_0100（proj014 rev1、窓）
+//   0x00 ID        R   0x0014_0200（proj014 rev2、窓。rev2 = wspec_core が FFT IP の tready を守る・0x80/0x84 を足した）
 //   0x04 PARAM     R   [7:0] log2 NFFT = 12 / [10:8] 今の WNS / [23:16] QW = 18 / [31:24] ZW = 18
 //   0x08 CTRL      W   [0] RUN / [1] STOP / [8] FLAGS を消す / [12] WRST（窓の設定を取り込んで最初から）（1 を書いた瞬間だけ）
 //                  R   [0] 積分中 / [1] 開始待ち / [3] z が流れ始めた / [4] WRST 中
@@ -42,6 +42,8 @@
 //   0x74 BUILD     R   ビルドの指紋（build.tcl が与える）
 //   0x78 WRST_T    RW  [15:0] WRST のリセットの長さ（クロック、0 は 1）。既定 64
 //   0x7C WRST_CNT  R   WRST を受けた回数
+//   0x80 WS_STALL  R   FFT IP に待たされたクロック数（WRST 以来、飽和）。FLAGS[4] の量
+//   0x84 WS_RDY0   R   WRST の解除から FFT IP の s_axis_data_tready が最初に 1 になるまでのクロック数
 //
 // **スナップショットはダンプの commit から (N_ACC − 2) フレーム以内に読む**（wspec_core の冒頭）
 
@@ -82,7 +84,7 @@ module win_core #(
     input  wire         s_axi_rready
 );
     localparam integer FW = 48;
-    localparam [31:0]  ID = 32'h0014_0100;
+    localparam [31:0]  ID = 32'h0014_0200;
     wire rst = ~aresetn;
     assign s_axis_tready = 1'b1;       // 上流に backpressure をかけない
 
@@ -165,6 +167,7 @@ module win_core #(
     wire          sched, acc_on, rd_bank;
     wire [31:0]   seq, rd_k, rd_n, rd_sat;
     wire [7:0]    wflags;
+    wire [31:0]   ws_stall, ws_rdy0;
     reg           ax_bank;
     reg  [11:0]   ax_ch;
     wire [63:0]   sp_data;
@@ -174,7 +177,7 @@ module win_core #(
         .r_nacc(r_nacc), .r_ndump(r_ndump), .r_shift(r_shift),
         .fin(fin), .fout(fout), .run_f0(run_f0), .sched(sched), .acc_on(acc_on),
         .seq(seq), .rd_k(rd_k), .rd_n(rd_n), .rd_sat(rd_sat), .rd_f0(rd_f0), .rd_bank(rd_bank),
-        .snap_f0(snap_f0), .snap_f1(snap_f1), .flags(wflags),
+        .snap_f0(snap_f0), .snap_f1(snap_f1), .flags(wflags), .stall_cnt(ws_stall), .rdy0(ws_rdy0),
         .rd_bk(ax_bank), .rd_ch(ax_ch), .rd_data(sp_data), .sn_bk(ax_bank), .sn_a(ax_ch), .sn_data(sn_data));
     reg z_seen;
     always @(posedge aclk) begin
@@ -224,6 +227,8 @@ module win_core #(
             6'h1D: reg_rd = BUILD_TAG;
             6'h1E: reg_rd = {16'd0, r_wt};
             6'h1F: reg_rd = wrst_n;
+            6'h20: reg_rd = ws_stall;
+            6'h21: reg_rd = ws_rdy0;
             default: reg_rd = 32'hDEAD_BEEF;
         endcase
     end

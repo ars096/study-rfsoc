@@ -189,14 +189,18 @@ PFB_DIR       := build-sim-pfb$(if $(filter 1,$(SIM_PFB_POSCTL)),-posctl)
 SIM_DDC_POSCTL ?= 0
 DDC_DIR       := build-sim-ddc$(if $(filter 1,$(SIM_DDC_POSCTL)),-posctl)
 DDC_RTL       := src/nco_rom.v src/hb2.v src/pair2.v src/ddc_core.v
-# SIM_WSPEC_POSCTL=1: 陽性対照（RTL の積分で初回のフレームでも読み値に足す）
+# SIM_WSPEC_POSCTL=1: 陽性対照（RTL の積分で初回のフレームでも読み値に足す）→ A が落ちること
+# SIM_WSPEC_POSCTL=2: 陽性対照（RTL が FFT IP の tready を見ない = rev1、-DWSPEC_NOREADY）→ B が落ちること
 SIM_WSPEC_POSCTL ?= 0
-WSPEC_DIR     := build-sim-wspec$(if $(filter 1,$(SIM_WSPEC_POSCTL)),-posctl)
-# 変種: 名前:NACC:NDUMP:SHIFT:GAP（GAP 0 = 途切れなし = 256 MHz 窓 / 3 / 32 = 8 MHz 窓の速さ）
-WSPEC_VARS    ?= g0:4:4:4:0 g3:2:4:7:3 g32:1:3:4:32
+WSPEC_DIR     := build-sim-wspec$(if $(filter 1,$(SIM_WSPEC_POSCTL)),-posctl)$(if $(filter 2,$(SIM_WSPEC_POSCTL)),-noready)
+# 変種: 名前:NACC:NDUMP:SHIFT:GAP:RDLY:STALL（GAP 0 = 途切れなし = 256 MHz 窓 / 3 / 32 = 8 MHz 窓の速さ。
+#   RDLY = FFT のモデルの tready が解除から 0 のクロック数（既定 5。6000 は最初のフレームが溜まっても IP が受けない = 実機 1 回目の形）/
+#   STALL = 3·4096 + 1234 クロックごとに tready を 0 にするクロック数）
+WSPEC_VARS    ?= g0:4:4:4:0:5:0 g3:2:4:7:3:5:0 g32:1:3:4:32:5:0 g0r:4:4:4:0:6000:0 g3s:2:4:7:3:5:40
+WSPEC_NR_VARS ?= g0r:4:4:4:0:6000:0 g3s:2:4:7:3:5:40
 
 
-.PHONY: model model-posctl model-sweep fixed fixed-posctl coef sim-pfb sim-ddc sim-win sim-win-all sim-pfb-p sim-ddc-p sim-wspec sim-wspec-p sim-top survey clean
+.PHONY: model model-posctl model-sweep fixed fixed-posctl coef sim-pfb sim-ddc sim-win sim-win-all sim-pfb-p sim-ddc-p sim-wspec sim-wspec-p sim-wspec-r sim-top survey clean
 
 # 仕様の模型（numpy だけ。Vivado もライセンスも要らない）。成否は「結果: 全部通過」の行で読む
 model:
@@ -260,22 +264,24 @@ sim-win:
 sim-wspec:
 	mkdir -p $(WSPEC_DIR)
 	$(PYTHON) sim/check_wspec.py gen $(WSPEC_DIR)
-	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_WSPEC_POSCTL)),-DWSPEC_POSCTL) -o $(WSPEC_DIR)/tb src/wspec_core.v sim/win_fft_model.v sim/tb_wspec.v
+	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_WSPEC_POSCTL)),-DWSPEC_POSCTL)$(if $(filter 2,$(SIM_WSPEC_POSCTL)),-DWSPEC_NOREADY) -o $(WSPEC_DIR)/tb src/wspec_core.v sim/win_fft_model.v sim/tb_wspec.v
 	rm -f $(WSPEC_DIR)/check.log
 	for v in $(WSPEC_VARS); do \
-	  nm=$${v%%:*}; r=$${v#*:}; na=$${r%%:*}; r=$${r#*:}; nd=$${r%%:*}; r=$${r#*:}; sh=$${r%%:*}; gp=$${r#*:}; \
+	  nm=$${v%%:*}; r=$${v#*:}; na=$${r%%:*}; r=$${r#*:}; nd=$${r%%:*}; r=$${r#*:}; sh=$${r%%:*}; r=$${r#*:}; gp=$${r%%:*}; r=$${r#*:}; rd=$${r%%:*}; st=$${r#*:}; \
 	  mkdir -p $(WSPEC_DIR)/$$nm; \
-	  $(VVP) -n $(WSPEC_DIR)/tb +NACC=$$na +NDUMP=$$nd +SHIFT=$$sh +GAP=$$gp +IN=$(WSPEC_DIR)/z.txt +DIR=$(WSPEC_DIR)/$$nm | grep '^wspec:' ; \
+	  $(VVP) -n $(WSPEC_DIR)/tb +NACC=$$na +NDUMP=$$nd +SHIFT=$$sh +GAP=$$gp +FFT_RDLY=$$rd +FFT_STALL=$$st +IN=$(WSPEC_DIR)/z.txt +DIR=$(WSPEC_DIR)/$$nm | grep '^wspec:' ; \
 	  echo "== $$nm" >> $(WSPEC_DIR)/check.log; \
-	  SIM_WSPEC_POSCTL=$(SIM_WSPEC_POSCTL) $(PYTHON) sim/check_wspec.py check $(WSPEC_DIR)/$$nm $$na $$nd $$sh >> $(WSPEC_DIR)/check.log; \
+	  SIM_WSPEC_POSCTL=$(SIM_WSPEC_POSCTL) $(PYTHON) sim/check_wspec.py check $(WSPEC_DIR)/$$nm $$na $$nd $$sh $$rd $$st >> $(WSPEC_DIR)/check.log; \
 	done
 	@cat $(WSPEC_DIR)/check.log | grep -v "  OK"
 sim-wspec-p:
-	$(MAKE) --no-print-directory sim-wspec SIM_WSPEC_POSCTL=1 WSPEC_VARS=g0:4:4:4:0
+	$(MAKE) --no-print-directory sim-wspec SIM_WSPEC_POSCTL=1 WSPEC_VARS=g0:4:4:4:0:5:0
+sim-wspec-r:
+	$(MAKE) --no-print-directory sim-wspec SIM_WSPEC_POSCTL=2 WSPEC_VARS="$(WSPEC_NR_VARS)"
 
 # sim を全部並べる（iverilog は 1 本 1 コア）。成否は各 check.log の「結果: 全部通過」で読む（make の成功を信用しない）
 sim-win-all:
-	$(MAKE) --no-print-directory -j7 sim-pfb sim-ddc sim-win sim-wspec sim-pfb-p sim-ddc-p sim-wspec-p
+	$(MAKE) --no-print-directory -j8 sim-pfb sim-ddc sim-win sim-wspec sim-pfb-p sim-ddc-p sim-wspec-p sim-wspec-r
 	@grep -H "結果" build-sim-*/check.log
 sim-pfb-p:
 	$(MAKE) --no-print-directory sim-pfb SIM_PFB_POSCTL=1

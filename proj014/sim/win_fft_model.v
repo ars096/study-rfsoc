@@ -9,6 +9,10 @@
 //   - 値は倍精度の DFT を丸めたもの。**IP と bit 単位では一致しない**（IP は内部で係数を丸める）。
 //     下流（電力・積分）の bit 単位の照合は、このモデルの出力を記録して sim/check_wspec.py の模型に通す
 //   - 入力の途切れ（フレームの途中の tvalid = 0）は data_in_channel_halt を立てる（wspec_core は溜めから途切れなく流すので起きないはず）
+//   - **s_axis_data_tready**（rev2。実機 1 回目で IP が WRST の直後に tready = 0 の間の語を受けなかったのを受けて）:
+//     IP は tvalid = tready = 1 の語だけを受けて数える。tready は aresetn の解除から +FFT_RDLY= クロック 0（既定 5）、
+//     +FFT_STALL=n（既定 0）なら、解除から 4100 クロック目を皮切りに +FFT_SPER= クロック（既定 3·4096 + 1234）ごとに n クロック 0 にする。
+//     tready を守らない送り手（rev1、-DWSPEC_NOREADY の陽性対照）では、受けなかった語のぶん IP の枠がずれる
 `timescale 1ns / 1ps
 module win_fft #(
     parameter integer LAT = 200
@@ -45,7 +49,15 @@ module win_fft #(
         end
     end
     assign s_axis_config_tready = 1'b1;
-    assign s_axis_data_tready   = 1'b1;
+    reg    rdy_r;
+    assign s_axis_data_tready   = rdy_r;
+    integer rdly, stall, sper, tclk;
+    initial begin
+        if (!$value$plusargs("FFT_RDLY=%d", rdly))  rdly  = 5;
+        if (!$value$plusargs("FFT_STALL=%d", stall)) stall = 0;
+        if (!$value$plusargs("FFT_SPER=%d", sper))  sper  = 3 * M + 1234;
+        rdy_r = 1'b0;
+    end
     assign event_frame_started  = 1'b0;
 
     real xr [0:M-1];
@@ -99,9 +111,12 @@ module win_fft #(
         m_axis_data_tvalid <= 1'b0;
         m_axis_data_tlast  <= 1'b0;
         if (!aresetn) begin
-            cnt = 0; q_w = 0; q_r = 0; lat_cnt = 0;
+            cnt = 0; q_w = 0; q_r = 0; lat_cnt = 0; tclk = 0;
+            rdy_r <= 1'b0;
         end else begin
-            if (s_axis_data_tvalid) begin
+            tclk = tclk + 1;
+            rdy_r <= !(tclk < rdly || (stall > 0 && tclk >= 4100 && ((tclk - 4100) % sper) < stall));
+            if (s_axis_data_tvalid && rdy_r) begin
                 ir = s_axis_data_tdata[23:0];
                 ii = s_axis_data_tdata[47:24];
                 xr[cnt] = ir; xi[cnt] = ii;
@@ -109,7 +124,7 @@ module win_fft #(
                 if (!s_axis_data_tlast && cnt == M - 1) event_tlast_missing <= 1'b1;
                 if (cnt == M - 1) begin cnt = 0; compute_frame; end
                 else cnt = cnt + 1;
-            end else if (cnt != 0) begin
+            end else if (!s_axis_data_tvalid && rdy_r && cnt != 0) begin
                 event_data_in_channel_halt <= 1'b1;
             end
             // 出力: 最初のフレームだけ LAT クロック待ち、以後は溜まっている限り 1 ch / クロックで途切れなく

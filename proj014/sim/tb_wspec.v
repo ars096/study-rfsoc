@@ -17,6 +17,7 @@ module tb_wspec;
     wire sched, acc_on, rd_bank;
     wire [31:0] seq, rd_k, rd_n, rd_sat;
     wire [7:0] flags;
+    wire [31:0] stall_cnt, rdy0;
     reg        rbk = 0, sbk = 0;
     reg [11:0] rch = 0, sa = 0;
     wire [63:0] rdat;
@@ -25,7 +26,7 @@ module tb_wspec;
         .cmd_run(run), .cmd_stop(stop), .cmd_clr(clr), .r_nacc(nacc), .r_ndump(ndump), .r_shift(shift),
         .fin(fin), .fout(fout), .run_f0(run_f0), .sched(sched), .acc_on(acc_on),
         .seq(seq), .rd_k(rd_k), .rd_n(rd_n), .rd_sat(rd_sat), .rd_f0(rd_f0), .rd_bank(rd_bank),
-        .snap_f0(snap_f0), .snap_f1(snap_f1), .flags(flags),
+        .snap_f0(snap_f0), .snap_f1(snap_f1), .flags(flags), .stall_cnt(stall_cnt), .rdy0(rdy0),
         .rd_bk(rbk), .rd_ch(rch), .rd_data(rdat), .sn_bk(sbk), .sn_a(sa), .sn_data(sdat));
 
     integer fi, ff, fd, fs, fm, r, a0, a1, gap, seed, nd, i, done;
@@ -90,7 +91,9 @@ module tb_wspec;
         end
         $fwrite(fm, "flags %0d\n", flags);
         $fwrite(fm, "fin %0d fout %0d\n", fin, fout);
-        $display("wspec: NACC=%0d NDUMP=%0d SHIFT=%0d GAP=%0d ダンプ %0d 個、FLAGS %02x、fin %0d fout %0d", nacc, ndump, shift, gap, nd, flags, fin, fout);
+        $fwrite(fm, "stall %0d\n", stall_cnt);
+        $fwrite(fm, "rdy0 %0d\n", rdy0);
+        $display("wspec: NACC=%0d NDUMP=%0d SHIFT=%0d GAP=%0d ダンプ %0d 個、FLAGS %02x、fin %0d fout %0d、待たされた %0d クロック、tready まで %0d クロック", nacc, ndump, shift, gap, nd, flags, fin, fout, stall_cnt, rdy0);
         $fclose(ff); $fclose(fd); $fclose(fs); $fclose(fm);
         $finish;
     end

@@ -36,7 +36,8 @@ try:
 except ImportError:                      # sg.py を置いていなければ --sg は使えない
     SGMOD = None
 
-ID_WIN = 0x0014_0100
+ID_WIN = 0x0014_0200             # rev2: wspec_core が FFT IP の tready を守る（rev1 = 0x0014_0100 は実機 1 回目で枠がずれた）
+ID_WIN_OLD = (0x0014_0100,)
 BUILD_WIN = 1 << 22
 WIN_CH = 1                       # ADC_B
 NFFT_W = 4096
@@ -45,9 +46,10 @@ R_FIN_LO, R_FIN_HI, R_FOUT_LO, R_FOUT_HI = 0x20, 0x24, 0x28, 0x2C
 R_DUMP_K, R_DUMP_N, R_DUMP_F0_LO, R_DUMP_F0_HI, R_DUMP_SAT = 0x30, 0x34, 0x38, 0x3C, 0x40
 R_SNAP_F_LO, R_SNAP_F_HI, R_BANK, R_RUN_F0_LO, R_RUN_F0_HI = 0x44, 0x48, 0x4C, 0x50, 0x54
 R_WK, R_WDPHI, R_WNS, R_WCUR, R_WCUR_DPHI, R_PFB_SAT, R_DDC_SAT, R_BUILD = 0x58, 0x5C, 0x60, 0x64, 0x68, 0x6C, 0x70, 0x74
+R_WS_STALL, R_WS_RDY0 = 0x80, 0x84    # rev2
 CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_WRST = 1 << 0, 1 << 1, 1 << 8, 1 << 12
 SNAP_BASE, SPEC_BASE = 0x08000, 0x10000
-FLAG_NAMES = ["XK_INDEX の飛び", "溜めの読み出しが間に合わない", "IP の TLAST 事象", "IP の入力の途切れ", "IP が入力を受けない"]
+FLAG_NAMES = ["XK_INDEX の飛び", "溜めの読み出しが間に合わない", "IP の TLAST 事象", "IP の入力の途切れ", "IP に待たされた（tready = 0）"]
 LINES_IF = (2560.0, 3072.0, 3584.0)
 
 
@@ -153,6 +155,8 @@ def open_win(ol, allow_nopreset=False):
     wn = Win(ip.mmio)
     ident, bt = wn.rd(R_ID), wn.rd(R_BUILD)
     log(f"win_core_0: ID {ident:08x} / BUILD {bt:08x}（プリセット {'あり' if bt >> 30 & 1 else '**なし**'} / -{bt >> 28 & 3} / 窓 {bt >> 22 & 1} / ch {bt & 3}）")
+    if ident in ID_WIN_OLD:
+        log(f"ERROR: ID {ident:08x} は rev1（FFT IP の tready を見ない版。枠がずれる）。rev2（{ID_WIN:08x}）の .bit を載せる"); sys.exit(1)
     if ident != ID_WIN:
         log(f"ERROR: ID が {ID_WIN:08x} でない"); sys.exit(1)
     if not (bt & BUILD_WIN) or (bt & 3) != WIN_CH:
@@ -226,6 +230,7 @@ def main():
     time.sleep(0.2)
     f_run = wn.rd(R_FLAGS)
     log(f"FLAGS: WRST の後 50 ms = {f_start:#x}（{flag_text(f_start)}）/ 消してから 0.2 s = {f_run:#x}（{flag_text(f_run)}）")
+    log(f"FFT IP: WRST の解除から tready が 1 になるまで {wn.rd(R_WS_RDY0)} クロック / 待たされた {wn.rd(R_WS_STALL)} クロック（WRST 以来）")
     nacc = 1 if args.golden else nacc_for(w, args.tint)
     if args.golden:
         args.ndump = 1

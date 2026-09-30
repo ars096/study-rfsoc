@@ -142,6 +142,41 @@ bit ③（4 ADC × 4 窓、256 MHz 窓で規模が決まる）。**自作部分�
 - **SG の自動操作 `pynq/sg.py`**（新規）: LAN の SCPI（raw socket、5025 番、標準の socket だけ）。設定は読み返して一致を確かめ、*IDN?・周波数・レベル・ON/OFF をログと npz に残す。
   終わったら出力の状態を戻す。**宛先はリポジトリに書かない**（--sg HOST[:PORT] か環境変数 RFSOC_SG）。window.py の --tone に --sg・--sg-dbm で連動
 
+### 実機 2 回目（2026-09-30、出荷時のクロック源）: W-G が NG → 原因は wspec_core が FFT IP の tready を見ていなかったこと（rev2 で直す）
+
+入力の構成（雑音 ＋ SG）:
+
+| 経路 | 構成 |
+|---|---|
+| SG | E8257D → ケーブル 70 cm → 分配器 A |
+| 雑音 | 終端 → AMP → 3 dB → AMP → 3 dB → BPF → 分配器 A |
+| 分配 | A → 3 dB → 分配器 B → C・D。C → 20 cm → ADC_B・ADC_D / D → 20 cm → ADC_A・ADC_C |
+
+- `window.py --if 3000 --w 256 --golden --shift 7`（雑音だけ）: **W-G が NG**。4096 ch のうち 2692 ch が許容（4.0）を超えた（最悪 ch 2087: 差 10.8 / 振幅 35）。
+  **データの枠が本当にずれている**（rev1 の見立て「TLAST の数えだけがずれる」ではない）
+  - FLAGS: WRST の後 50 ms = **0x14**（[2] IP の TLAST 事象 / [4] IP が入力を受けない）/ 消してから 0.2 s = **0x4**
+  - 読み: WRST の直後に IP の s_axis_data_tready が 0 の間、rev1 の wspec_core はそれを見ずに流した → IP が受けなかった語のぶん
+    **IP の中のフレームの枠が溜めの枠からずれ**、realtime で途切れなく回るのでずれたまま（TLAST 事象がフレームごとに立ち続ける）。
+    sim の FFT のモデルは tready = 1 に固定していたので sim では出なかった
+  - **sim で同じ形を再現した**: FFT のモデルに tready を足し（解除から RDLY クロック 0・周期的に STALL クロック 0）、rev1 の振る舞い（-DWSPEC_NOREADY）に
+    RDLY = 6000（最初の面が溜まっても IP が受けない）を与えると、**FLAGS = 0x14 で B（FFT の枠 = z の枠）が落ちる** — 実機 1・2 回目の FLAGS と同じ
+- `window.py --if 3000 --w 256 --tone 3010.5 --sg-dbm -30 --shift 9 --shift-full 6 --w6`: sg.py が **`+512,"Reference unlocked;…"`** で止まった
+  （SG の基準のロック外れ。溜まっていたエラーか、外部基準の抜き差し）。**W-1 の ch 単位の位置は、SG と RFSoC の基準が同じ 10 MHz に載っていないと
+  1 ppm（3 GHz で 3 kHz = 8 MHz 窓の 1.5 ch）ずれうる**。W-6（電力の比）には効かない
+
+直したこと（proj014 rev2、ID 0x0014_0200）:
+
+- **wspec_core が FFT IP の tready を守る**: 出口のレジスタ（fd・f_v・f_last）を「空いている か IP が受けた」ときだけ進める。待たされても 1 語も落とさず、
+  IP の枠 = 溜めの枠が保たれる。遅れて読み終わる面の次の面は pend で予約して遅れて始め、書き込みが未読の番地に追いついたときだけ FLAGS[1]。
+  FLAGS[4] は「待たされた（データは保った）」の意味に変わる。**見張り: 0x80 WS_STALL（待たされたクロック数）/ 0x84 WS_RDY0（WRST の解除から tready が 1 になるまで）**
+- sim: FFT のモデルが tready を下げる（+FFT_RDLY・+FFT_STALL）。sim-wspec の変種に g0r（RDLY 6000、途切れなし）・g3s（STALL 40、GAP 3）を足した。
+  **陽性対照 `make sim-wspec-r`（-DWSPEC_NOREADY = rev1）: 2 変種とも B が落ちる**（sim-win-all に入れた）
+- sg.py: つないだときに溜まっていたエラーを読んでログに残してから *CLS。基準の状態（:ROSC:SOUR?）をログと npz に。**Reference unlocked の類は止めずに警告**
+- window.py: rev2 の ID を期待（rev1 の .bit なら止める）。WS_RDY0・WS_STALL を出す
+
+予言（rev2 の実機。測る前に書く）: `--golden` で **W-G 通過**・消してから 0.2 s の FLAGS = 0。WRST の後 50 ms は [4] が立ちうる（待たされただけ）。
+WS_RDY0 は 4096 より大きい（rev1 で最初の面を流し始めた時点でまだ 0 だった）。資源・タイミングは rev1 とほぼ同じ（LUT が数十増える程度）
+
 ## 手順（予定）
 
 1. **numpy の模型**: 粗い PFB（タップ数・オーバーサンプリング・平らな帯域）、半帯域の段と係数、通過帯域のリップル、両端 5 % の外への折り返しの量。窓の位置を粗い ch の境目・中央・帯域の端に振る。**模型は RTL の写しではなく仕様から書く**（後で bit 単位の照合の正にする）
@@ -325,7 +360,8 @@ bit ③（4 ADC × 4 窓、256 MHz 窓で規模が決まる）。**自作部分�
 - [x] proj013 への組み込み（build.tcl・ID・window.py・Makefile）
 - [x] Vivado サーバ: `make` → `make timing-check` → `make worst-paths`: `-2` +0.065・`-1` +0.086 ns で閉じた。win_core は最悪経路に出ない
 - [x] 資源・CDC・結線の照合・`make sim-all`（上の表。CDC-3 +14 は SmartConnect の分と確かめた。LUT +18k・FF +25k）
-- [ ] 実機: spectrometer.py の proj013 の判定の回帰（4 本）→ window.py の W-0・W-1・W-6（W = 256 と 8）
+- [x] 実機 1・2 回目: spectrometer.py の回帰 4 本は通過。window.py の W-G が NG → wspec_core が FFT IP の tready を見ていなかった（rev2 で直した、sim で再現と陽性対照）
+- [ ] rev2 のビルド → 実機: window.py の W-0・W-G → W-1・W-6（W = 256 と 8）。SG と RFSoC の基準を揃えるか決める
 - 設計のメモ（wspec_core で実装済み）: **FFT の前にフレームの溜め（4096 語 × 2 面）を置き、1 フレームを途切れなく流す**:
   realtime の FFT IP は入力の途切れを待たずに進む（proj011）が、窓の出力は W MSPS（W = 8 なら 32 クロックに 1 個）で必ず途切れる。
   溜めれば realtime のまま使え、64 MHz 以下の窓 4 つで FFT 1 個を共有する時分割もこの溜めの上に載る（BRAM 36 × 4〜8 / 窓）。見送った案: nonrealtime の IP（待つが、proj010 の CE の大ファンアウト）

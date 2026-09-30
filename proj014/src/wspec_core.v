@@ -6,6 +6,12 @@
 // 必ず途切れるので、4096 語を 2 面の溜めに書き、溜まった面を 4096 クロック途切れなく IP へ流す。次のフレームが溜まるには
 // 4096 クロック以上かかる（入力は 1 / クロック以下）ので、読み出しは必ず間に合う（間に合わなければ FLAGS[1]）。
 //
+// **rev2: IP の s_axis_data_tready を守る**。rev1 は tready を見ずに流し、実機 1 回目で WRST の直後に tready = 0 の間の
+// サンプルを IP が受けず、IP の中のフレームの枠が溜めの枠からずれたまま回った（FLAGS[2] が立ち続け、--golden が NG）。
+// rev2 は出口のレジスタ（fd・f_v・f_last）を「空いている か IP が受けた」ときだけ進める（AXI の握手）。待たされても
+// 1 語も落とさないので、IP の枠 = 溜めの枠がいつも保たれる。待たされたぶん読み出しが遅れても、次の面の開始は pend で
+// 予約して遅れて始める（書き込みが未読の番地に追いついたときだけ FLAGS[1]）。
+//
 // ---- フレームと ch ----
 // フレーム f = z の 4096f … 4096f + 4095 番目（rst の後の最初の z を 0 番とする）。fin = 溜め終えたフレームの数。
 // FFT は順変換・unscaled（出力 31 bit = 18 + 12 + 1）・自然順。ch b（0..4095）は ν = b·W/4096（b < 2048）/ (b − 4096)·W/4096（b ≧ 2048）。
@@ -19,7 +25,8 @@
 //   **N_ACC = 1 ならスナップショットの FFT とダンプが 1 対 1**（PS 側の --golden の型）
 //
 // FLAGS（粘着、cmd_clr で消す）: [0] XK_INDEX が 1 ずつ進まなかった / [1] 溜めの読み出しが間に合わなかった /
-//   [2] IP の TLAST 事象 / [3] IP の data_in_channel_halt / [4] IP の入力を受けなかった（tready = 0）
+//   [2] IP の TLAST 事象 / [3] IP の data_in_channel_halt / [4] IP に待たされた（f_v = 1 で tready = 0。rev2 はデータを保って待つ）
+// 見張り（rst から）: stall_cnt = 待たされたクロック数（飽和）/ rdy0 = rst の解除から tready が最初に 1 になるまでのクロック数
 //
 // 段（FFT の出力を受けたクロックを S0）: S1 丸めと飽和 → S2 二乗の入口・積分の読み出し番地 → S3 二乗 → S4 電力・読み値
 // → S5 書き込み（初回は p、以降は 読み値 + p）。同じ ch は 4096 クロックおきにしか来ないので、読み書きの追い越しは起きない
@@ -48,6 +55,8 @@ module wspec_core #(
     output reg                  rd_bank,
     output reg  [FW-1:0]        snap_f0, snap_f1,
     output reg  [7:0]           flags,
+    output reg  [31:0]          stall_cnt,
+    output reg  [31:0]          rdy0,
     // 読み出し（2 クロック）: スペクトル（面 rd_bk の ch rd_ch）/ スナップショット（面 sn_bk の語 sn_a、{im, re}）
     input  wire                 rd_bk,
     input  wire [11:0]          rd_ch,
@@ -67,10 +76,22 @@ module wspec_core #(
     reg [2*ZW-1:0] fbuf [0:2*NF-1];
     reg [11:0]     wa;
     reg            wb;
-    reg            rd_go;                 // 読み出し中
+    reg            rd_go;                 // 読み出し中（ra = 次に出す番地）
     reg            rbk;
     reg [11:0]     ra;
-    reg            ovr;                   // 読み出し中に次の面が溜まった
+    reg            pend, pbk;             // 溜まったがまだ読み始めていない面
+    reg            ovr;                   // 書き込みが未読の番地に追いついた
+    reg            f_v, f_last;           // 出口（IP の入力）
+    wire           s_tready;
+`ifdef WSPEC_NOREADY
+    wire           adv = 1'b1;            // 陽性対照: rev1 と同じく tready を見ない
+`else
+    wire           adv = !f_v || s_tready;   // 出口が空いている / IP が今の語を受けた → 次の語を出してよい
+`endif
+    wire           issue  = rd_go && adv;
+    wire           rd_end = issue && (ra == 12'd4095);
+    wire           fdone  = z_valid && (wa == 12'd4095);
+    wire           can_st = !rd_go || rd_end;
     // スナップショットの予約（ダンプ k の最初のフレーム）
     reg            sn_on;                 // RUN から N_DUMP 回ぶん
     reg  [FW-1:0]  sn_next;
@@ -92,14 +113,24 @@ module wspec_core #(
         ovr <= 1'b0;
         if (rst) begin
             wa <= 12'd0; wb <= 1'b0; fin <= {FW{1'b0}};
-            rd_go <= 1'b0; rbk <= 1'b0; ra <= 12'd0;
+            rd_go <= 1'b0; rbk <= 1'b0; ra <= 12'd0; pend <= 1'b0; pbk <= 1'b0;
             sn_on <= 1'b0; sn_next <= {FW{1'b0}}; sn_k <= 32'd0; sn_act <= 1'b0; sn_buf <= 1'b0;
             snap_f0 <= {FW{1'b1}}; snap_f1 <= {FW{1'b1}};
         end else begin
-            if (rd_go) begin
+            if (issue) begin
                 ra <= ra + 12'd1;
                 if (ra == 12'd4095) rd_go <= 1'b0;
             end
+            // 面の読み始め: 予約（pend）が先、無ければ今溜まった面。読み中なら予約する
+            if (can_st && (pend || fdone)) begin
+                rd_go <= 1'b1; ra <= 12'd0; rbk <= pend ? pbk : wb;
+                pend  <= pend && fdone;
+            end else if (fdone) begin
+                pend <= 1'b1;
+            end
+            if (fdone) pbk <= wb;
+            // 書き込みが未読のところを潰す: 読み中の面の未読の番地（≧ ra）/ 予約中の面
+            if (z_valid && ((rd_go && wb == rbk && wa >= ra) || (pend && wb == pbk))) ovr <= 1'b1;
             if (z_valid) begin
                 wa <= wa + 12'd1;
                 if (wa == 12'd0) begin
@@ -116,8 +147,6 @@ module wspec_core #(
                     sn_act <= 1'b0;
                     wb  <= ~wb;
                     fin <= fin + 1'b1;
-                    if (rd_go && ra != 12'd4095) ovr <= 1'b1;
-                    rd_go <= 1'b1; rbk <= wb; ra <= 12'd0;
                 end
             end
             if (cmd_run) begin
@@ -128,18 +157,31 @@ module wspec_core #(
     end
 
     reg [2*ZW-1:0] fd;
-    reg            f_v, f_last;
+    always @(posedge clk) if (adv) fd <= fbuf[{rbk, ra}];
     always @(posedge clk) begin
-        fd     <= fbuf[{rbk, ra}];
-        f_v    <= rd_go & ~rst;
-        f_last <= rd_go && (ra == 12'd4095);
+        if (rst) begin
+            f_v <= 1'b0; f_last <= 1'b0;
+        end else if (adv) begin
+            f_v    <= rd_go;
+            f_last <= rd_go && (ra == 12'd4095);
+        end
+    end
+    // 見張り
+    reg rdy_seen;
+    always @(posedge clk) begin
+        if (rst) begin
+            stall_cnt <= 32'd0; rdy0 <= 32'd0; rdy_seen <= 1'b0;
+        end else begin
+            if (f_v && !s_tready && stall_cnt != 32'hFFFF_FFFF) stall_cnt <= stall_cnt + 32'd1;
+            if (s_tready) rdy_seen <= 1'b1;
+            else if (!rdy_seen && rdy0 != 32'hFFFF_FFFF) rdy0 <= rdy0 + 32'd1;
+        end
     end
 
     // =====================================================================
     // FFT（build では Xilinx FFT IP、sim では sim/win_fft_model.v。同じポート）
     // =====================================================================
     wire [47:0] s_td = {{(24-ZW){fd[2*ZW-1]}}, fd[2*ZW-1:ZW], {(24-ZW){fd[ZW-1]}}, fd[ZW-1:0]};
-    wire        s_tready;
     wire [63:0] m_td;
     wire [15:0] m_tu;
     wire        m_tv, m_tl;
