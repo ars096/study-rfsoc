@@ -13,6 +13,13 @@
       z（FFT の入力の 18 bit、スナップショット）: 20·log10(2^17 / max(|re|, |im|))
   - 飽和の数え: pfb（PFB_SAT）・ddc（DDC_SAT）・窓のダンプ（q の飽和）・全帯域のダンプ（q の飽和）。その点で増えた分
 判定 W-7: 飽和がどこにも無い点で、比 G の最大と最小の差 ≦ --tol（既定 0.05 dB）。どの段が最初に飽和したか（SG のレベル）を出す
+
+**SHIFT はレベルに合わせて動かす（既定 --shift-mode track）**。実機の W = 8 で SHIFT を 15 / 13 に固定したら、弱いレベルほど比が下がった
+（−20 dBm で −0.20 dB、+10 dBm で −0.001 dB。10 dB で約 3 倍 = 振幅に反比例）。電力の前の `>>> SHIFT` は切り捨てで、雑音がほとんど無い
+（狭い窓・大きい SHIFT）と揺らしが効かず、CW の ch の中心・フレームごとに位相が揃う CW では、切り捨ての偏り（1 成分 −0.5 LSB）が CW と同じ向きに
+残る: 電力の相対の誤り ≒ √2·cos(φ) / 振幅 [LSB]。振幅 40〜90 LSB で最大 0.07〜0.14 dB（窓と全帯域の両方で）。
+track は、終わりのレベルで決めた SHIFT から、6.02 dB 下がるごとに SHIFT を 1 下げる（振幅を 1000 LSB 以上に保つ → 誤り 0.006 dB 以下）。
+SG を切った基準は SHIFT の組ごとに測る。fixed は前の振る舞い（切り捨ての偏りを見る陽性対照にもなる）
 """
 import argparse
 import atexit
@@ -44,6 +51,8 @@ def main():
     p.add_argument("--shift", type=int, default=None, help="窓の SHIFT（既定: 終わりのレベルで q が飽和しない見当 = 11 + (終わり + 20) / 6）")
     p.add_argument("--shift-full", type=int, default=None, help="全帯域の SHIFT（既定: 8 + (終わり + 20) / 6）")
     p.add_argument("--tint", type=float, default=0.1)
+    p.add_argument("--shift-mode", choices=("track", "fixed"), default="track",
+                   help="track: レベルに合わせて SHIFT を下げる（既定）/ fixed: 全点で同じ SHIFT")
     p.add_argument("--tol", type=float, default=0.05, help="W-7 の比の最大と最小の差の許容 [dB]")
     p.add_argument("--sg", default=None)
     p.add_argument("--sg-settle", type=float, default=0.1)
@@ -78,9 +87,13 @@ def main():
     levels = np.arange(a.l_from, a.l_to + a.step / 2, a.step)
     sh = a.shift if a.shift is not None else int(min(15, 11 + np.ceil((a.l_to + 20.0) / 6.02)))
     shf = a.shift_full if a.shift_full is not None else int(min(15, 8 + np.ceil((a.l_to + 20.0) / 6.02)))
-    pred = 64.0 * 4.0 ** (shf - sh)
+    def shifts(lv):
+        if a.shift_mode == "fixed":
+            return sh, shf
+        dn = int(np.floor((a.l_to - lv) / 6.02 + 1e-9))
+        return max(0, sh - dn), max(0, shf - dn)
     log(f"窓: IF {if_c:.6f} MHz ± {w / 2} / WK {k} / WNS {ns}・CW IF {tone:.6f} MHz（ν {nu:+.5f}、窓の ch {b}・全帯域の ch {kf}、端数 {df:+.3f}）")
-    log(f"SG: {levels[0]:+.1f}〜{levels[-1]:+.1f} dBm を {a.step} dB 刻み（{len(levels)} 点）・SHIFT 窓 {sh} / 全帯域 {shf}・{a.tint} s / 点")
+    log(f"SG: {levels[0]:+.1f}〜{levels[-1]:+.1f} dBm を {a.step} dB 刻み（{len(levels)} 点）・SHIFT 窓 {sh} / 全帯域 {shf}（終わりのレベル、{a.shift_mode}）・{a.tint} s / 点")
 
     S.setup_clocks(a.clkin, a.ref)
     ol = Overlay(a.bitfile or S.BITFILE)
@@ -101,7 +114,7 @@ def main():
     wn.set_window(k, dphi, ns)
     spf = S.Spec(ol.spec_core_1.mmio, idx=1, label="ADC_B")
 
-    def measure():
+    def measure(sh, shf):
         nw = WN.nacc_for(w, a.tint)
         nf = max(1, int(round(a.tint / S.T_FRAME)))
         sf = spf.run(nf, 1, shf)
@@ -114,7 +127,11 @@ def main():
         return pw.astype(float) / m["n"], pf.astype(float) / mf["n"], snap, m["sat"], mf.get("sat", 0)
 
     t0 = time.time()
-    pw0, pf0, _, _, _ = measure()
+    base = {}
+    for lv in levels:
+        pr = shifts(lv)
+        if pr not in base:
+            base[pr] = measure(*pr)[:2]
     sg.set_output(True)
     sg.log = lambda *x: None
     rows = []
@@ -123,7 +140,10 @@ def main():
         sg.set_dbm(lv)
         time.sleep(a.sg_settle)
         s_p0, s_d0 = wn.rd(WN.R_PFB_SAT), wn.rd(WN.R_DDC_SAT)
-        pw, pf, snap, sat_w, sat_f = measure()
+        s_w, s_f = shifts(lv)
+        pred = 64.0 * 4.0 ** (s_f - s_w)
+        pw0, pf0 = base[(s_w, s_f)]
+        pw, pf, snap, sat_w, sat_f = measure(s_w, s_f)
         d_p, d_d = wn.rd(WN.R_PFB_SAT) - s_p0, wn.rd(WN.R_DDC_SAT) - s_d0
         pwin = pw[b] - pw0[b]
         pfull = (pf[kf] - pf0[kf]) / np.sinc(df) ** 2
@@ -135,9 +155,11 @@ def main():
         for kk, v in sat.items():
             if v and kk not in first:
                 first[kk] = lv
-        rows.append((lv, 10 * np.log10(max(pwin, 1e-30)), 10 * np.log10(max(pfull, 1e-30)), G, hq, hz, d_p, d_d, int(sat_w), int(sat_f)))
+        # 電力は SHIFT に依らない単位（SHIFT 0 の LSB²）に直して並べる。余裕 q はその点の SHIFT のもの
+        rows.append((lv, 10 * np.log10(max(pwin, 1e-30)) + 6.0206 * s_w, 10 * np.log10(max(pfull, 1e-30)) + 6.0206 * s_f, G, hq, hz,
+                     d_p, d_d, int(sat_w), int(sat_f), s_w, s_f))
         log(f"  SG {lv:+6.1f} dBm: 窓 {rows[-1][1]:7.2f}・全帯域 {rows[-1][2]:7.2f} dB → 比 {G:+.3f} dB・余裕 q {hq:5.1f} / z {hz:5.1f} dB"
-            + ("・飽和 " + " ".join(f"{kk} {v}" for kk, v in sat.items() if v) if any(sat.values()) else ""))
+            + f"（SHIFT {s_w} / {s_f}）" + ("・飽和 " + " ".join(f"{kk} {v}" for kk, v in sat.items() if v) if any(sat.values()) else ""))
     sg.set_output(False)
     r = np.array(rows)
     clean = (r[:, 6] == 0) & (r[:, 7] == 0) & (r[:, 8] == 0) & (r[:, 9] == 0)
@@ -154,7 +176,7 @@ def main():
     log("最初に飽和した段（SG のレベル）: " + (" / ".join(f"{kk} {v:+.1f} dBm" for kk, v in sorted(first.items(), key=lambda x: x[1])) if first else "なし"))
     log(f"かかった時間 {time.time() - t0:.0f} s")
     if a.out:
-        np.savez(a.out + ".lin.npz", rows=r, cols="dBm, win_dB, full_dB, ratio_dB, headroom_q_dB, headroom_z_dB, sat_pfb, sat_ddc, sat_win, sat_full",
+        np.savez(a.out + ".lin.npz", rows=r, cols="dBm, win_dB(SHIFT 0), full_dB(SHIFT 0), ratio_dB, headroom_q_dB, headroom_z_dB, sat_pfb, sat_ddc, sat_win, sat_full, shift, shift_full",
                  c=c, w=w, k=k, ns=ns, tone_if=tone, shift=sh, shift_full=shf)
         log(f"書いた: {a.out}.lin.npz")
         try:
@@ -174,7 +196,7 @@ def main():
             for i in np.where(~clean)[0]:
                 for axi in ax:
                     axi.axvspan(r[i, 0] - a.step / 2, r[i, 0] + a.step / 2, color="r", alpha=.08)
-            fig.suptitle(f"linearity: window IF {if_c:.1f} MHz, W = {w:g} MHz, CW {tone:.3f} MHz, SHIFT {sh} / {shf}")
+            fig.suptitle(f"linearity: window IF {if_c:.1f} MHz, W = {w:g} MHz, CW {tone:.3f} MHz, SHIFT {sh} / {shf} ({a.shift_mode})")
             fig.tight_layout(); fig.savefig(a.out + ".lin.png", dpi=120)
             log(f"書いた: {a.out}.lin.png")
         except ImportError:
