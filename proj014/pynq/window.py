@@ -74,6 +74,20 @@ def window_params(if_c, w, grid=True):
     return c, k, dphi, ns, 4096.0 - c
 
 
+def peak_frac(p, b, circular):
+    """矩形窓の FFT の CW: 山の ch b と隣の振幅の比から、ch の中心からの端数 δ（ch、−0.5..0.5）と山の ch の電力の目減り sinc²(δ) を出す。
+    隣の振幅 / 山の振幅 = |δ| / (1 − |δ|)（窓関数を掛けない FFT。窓の FFT も全帯域の 8192 点の FFT もそう）"""
+    n = len(p)
+    a = np.sqrt(np.maximum(p, 0.0))
+    lo = a[(b - 1) % n] if (circular or b > 0) else 0.0
+    hi = a[(b + 1) % n] if (circular or b < n - 1) else 0.0
+    if hi >= lo:
+        r = hi / a[b]; d = r / (1 + r)
+    else:
+        r = lo / a[b]; d = -r / (1 + r)
+    return d, float(np.sinc(d) ** 2)
+
+
 def ch_if(c, w):
     b = np.arange(NFFT_W)
     nu = np.where(b < NFFT_W // 2, b, b - NFFT_W) * (w / NFFT_W)
@@ -297,15 +311,29 @@ def main():
         off_pred = (4096.0 - args.tone - c) / (w / NFFT_W)
         b_meas = int(np.argmax(p))
         judge(b_meas == b_pred, f"W-1: CW IF {args.tone} MHz → ch 予言 {b_pred}（ν = {off_pred:+.3f} ch）/ 実測 {b_meas}（IF {ifs[b_meas]:.6f} MHz）")
+        dw, gw = peak_frac(p, b_meas, circular=True)
+        nu_b = b_meas if b_meas < NFFT_W // 2 else b_meas - NFFT_W
+        if_w = 4096.0 - c - (nu_b + dw) * (w / NFFT_W)
+        nb = "・".join(f"{10 * np.log10(max(p[(b_meas + j) % NFFT_W], 1e-30) / p[b_meas]):+.1f}" for j in (-2, -1, 1, 2))
+        log(f"  窓の山: ch {b_meas} の隣（−2・−1・+1・+2）{nb} dB → 端数 δ = {dw:+.3f} ch（f の側）/ 推定 IF {if_w:.6f} MHz"
+            f"（SG との差 {(if_w - args.tone) * 1e3:+.2f} kHz = {(if_w - args.tone) / args.tone * 1e6:+.2f} ppm）/ 山の ch の目減り {10 * np.log10(gw):+.3f} dB")
         if spf is not None:
             sf = spf.wait_dump(seqf, timeout=args.tint * args.ndump * 3 + 2)
             mf, specf, _ = spf.read_dump()
             pf = specf.astype(float) / mf["n"]
             kf = int(round(S.ch_of_if(args.tone)))
+            kf = kf - 3 + int(np.argmax(pf[kf - 3:kf + 4]))          # 全帯域の山（予言の ch ± 3 の中）
+            df, gf = peak_frac(pf, kf, circular=False)
+            if_f = 4096.0 - (kf + df) * (S.DF_HZ / 1e6)
+            log(f"  全帯域の山: ch {kf}・端数 δ = {df:+.3f} ch / 推定 IF {if_f:.6f} MHz（SG との差 {(if_f - args.tone) * 1e3:+.2f} kHz）/ 目減り {10 * np.log10(gf):+.3f} dB")
+            judge(abs(if_w - if_f) < 0.01, f"W-1b: 窓と全帯域の推定 IF の差 {(if_w - if_f) * 1e3:+.2f} kHz（許容 ±10 kHz。"
+                                           "同じ ADC のクロックで測るので基準のずれは打ち消す。窓の周波数軸そのものの確かめ）")
             ratio = p[b_meas] / pf[kf]
             pred = 64.0 * 4.0 ** (args.shift_full - args.shift)
-            db = 10 * np.log10(ratio / pred)
-            judge(abs(db) < 0.1, f"W-6: 窓 / 全帯域（ch {kf}）の電力の比 {ratio:.4g}、予言 {pred:.4g} → {db:+.3f} dB（許容 ±0.1 dB）")
+            db_raw = 10 * np.log10(ratio / pred)
+            db = 10 * np.log10(ratio / pred * gf / gw)
+            judge(abs(db) < 0.1, f"W-6: 窓 / 全帯域（ch {kf}）の電力の比 {ratio:.4g}、予言 {pred:.4g} → そのまま {db_raw:+.3f} dB /"
+                                 f" 山の ch の目減り（sinc²）を戻して {db:+.3f} dB（許容 ±0.1 dB）")
     if args.out and dumps:
         np.savez(args.out + ".win.npz", spec=np.stack([d[1] for d in dumps]), if_mhz=ch_if(c, w),
                  sg=str(sg_state), f_start=f_start, f_run=f_run,
