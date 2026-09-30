@@ -72,9 +72,12 @@ def main():
     p.add_argument("--bitfile", default=None)
     p.add_argument("--allow-nopreset", action="store_true")
     p.add_argument("--out", default=None, help="PREFIX.allan.npz と PREFIX.allan.png（途中でも 10 分ごとに npz を書き直す）")
+    p.add_argument("--adc", type=int, default=1, choices=(0, 1, 2, 3), help="窓の ADC（0..3 = ADC_A..D。proj015）")
+    p.add_argument("--win", type=int, default=0, choices=(0, 1, 2, 3), help="その ADC の窓の番号（proj015）")
     a = p.parse_args()
 
     import window as WN
+    WN.set_sel(a)
     import spectrometer as S
     from pynq import Overlay
     import xrfdc                                   # Overlay() より前に import する（VERSIONS.md）
@@ -107,7 +110,7 @@ def main():
     else:
         log("注意: SG の宛先が無い。**SG の出力が切れていること**を確かめてから")
     wn.set_window(k, dphi, ns)
-    spf = S.Spec(ol.spec_core_1.mmio, idx=1, label="ADC_B")
+    spf = WN.open_full(ol)
 
     def one(shw, shf):
         sf = spf.run(nacc_f, 1, shf); s = wn.run(nacc_w, 1, shw)

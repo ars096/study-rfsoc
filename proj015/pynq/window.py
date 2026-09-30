@@ -41,7 +41,13 @@ ID_WIN = 0x0015_0100             # proj015 rev1: WNS 1..8（4・2 MHz）・NS �
 ID_WIN_OLD = (0x0014_0100,)      # proj014 rev1（FFT IP の tready を見ない版。枠がずれる）
 ID_WIN_P14 = (0x0014_0200,)      # proj014 rev2（幅は 256〜8 MHz だけ。G は 4 固定）
 BUILD_WIN = 1 << 22
-WIN_CH = 1                       # ADC_B
+WIN_CH = 1                       # 既定の ADC（ADC_B。--adc で変える）
+WIN_STRIDE = 0x20000             # proj015: win_core の窓 w は 0x20000·w（1 ADC に NW 窓）
+A_BASE = 0x80000                 # proj015: ADC の共通
+R_A_ID, R_A_NW, R_A_SNAP_SEL, R_A_BUILD, R_A_TP_CTRL = 0x00, 0x04, 0x08, 0x0C, 0x10
+R_A_TFIN_LO, R_A_TFIN_HI, R_A_GB_K, R_A_FULL_SEL, R_A_GB_STAT, R_A_ADC_STAT = 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28
+ID_ADC = 0x0015_A100
+SEL = {"adc": WIN_CH, "win": 0}  # add_sel_args / set_sel で決める（open_win・open_full が使う）
 NFFT_W = 4096
 R_ID, R_PARAM, R_CTRL, R_NACC, R_NDUMP, R_SHIFT, R_FLAGS, R_SEQ = 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C
 R_FIN_LO, R_FIN_HI, R_FOUT_LO, R_FOUT_HI = 0x20, 0x24, 0x28, 0x2C
@@ -106,19 +112,29 @@ def ch_if(c, w):
 
 
 class Win:
-    """win_core の AXI4-Lite。読んだ中身は seqlock（SEQ → 中身 → SEQ）で 1 つのダンプのものと保証する。"""
+    """win_core の窓 1 つの AXI4-Lite（proj015: win_core_i の窓 w、base = 0x20000·w）。読んだ中身は seqlock（SEQ → 中身 → SEQ）で
+    1 つのダンプのものと保証する。ADC の共通（0x80000–）は ard / awr"""
 
-    def __init__(self, mmio):
+    def __init__(self, mmio, base=0, adc=None, win=0):
         self.m = mmio
+        self.base = base
+        self.adc = adc
+        self.win = win
 
     def rd(self, a):
-        return self.m.read(a)
+        return self.m.read(self.base + a)
 
     def wr(self, a, v):
-        self.m.write(a, int(v))
+        self.m.write(self.base + a, int(v))
+
+    def ard(self, a):
+        return self.m.read(A_BASE + a)
+
+    def awr(self, a, v):
+        self.m.write(A_BASE + a, int(v))
 
     def block(self, base, nwords):
-        i0 = base // 4
+        i0 = (self.base + base) // 4
         return np.array(self.m.array[i0:i0 + nwords], dtype=np.uint32)
 
     def set_window(self, k, dphi, ns):
@@ -177,13 +193,47 @@ def flag_text(f):
     return "なし" if not s else " / ".join(s)
 
 
+def add_sel_args(p):
+    """--adc（0..3 = ADC_A..D）と --win（その ADC の窓 0..3）。proj015"""
+    p.add_argument("--adc", type=int, default=WIN_CH, choices=(0, 1, 2, 3), help="窓の ADC（0..3 = ADC_A..D。既定 1 = ADC_B）")
+    p.add_argument("--win", type=int, default=0, choices=(0, 1, 2, 3), help="その ADC の窓の番号（既定 0）")
+
+
+def set_sel(a):
+    SEL["adc"], SEL["win"] = a.adc, a.win
+
+
+def open_full(ol):
+    """全帯域の分光（W-6・W-2・W-3 の基準）。proj015 は spec_core_0 の 1 本を FULL_SEL で窓と同じ ADC につなぎ、SRST で起動し直す"""
+    adc = SEL["adc"]
+    ip0 = ol.spec_core_0
+    if ip0.mmio.read(S.R_BUILD) & S.BUILD_SEL:
+        ol.win_core_0.mmio.write(A_BASE + R_A_FULL_SEL, adc)
+        if (ol.win_core_0.mmio.read(A_BASE + R_A_FULL_SEL) & 3) != adc:
+            raise RuntimeError("FULL_SEL が書けない")
+        time.sleep(0.01)
+        ip0.mmio.write(S.R_CTRL, S.CTRL_SRST)
+        time.sleep(0.1)
+        log(f"全帯域: spec_core_0 を FULL_SEL = ch {adc}（{S.CHANS[adc][0]}）につないで SRST")
+        return S.Spec(ip0.mmio, idx=adc, label=S.CHANS[adc][0])
+    return S.Spec(getattr(ol, f"spec_core_{adc}").mmio, idx=adc, label=S.CHANS[adc][0])
+
+
 def open_win(ol, allow_nopreset=False, allow_rev1=False):
-    ip = getattr(ol, "win_core_0", None)
+    adc, win = SEL["adc"], SEL["win"]
+    name = f"win_core_{adc}"
+    ip = getattr(ol, name, None)
     if ip is None:
-        log("ERROR: ol.win_core_0 が無い。proj014 の窓の .bit が載っていないか"); sys.exit(1)
-    wn = Win(ip.mmio)
+        log(f"ERROR: ol.{name} が無い。proj015 の窓の .bit（4 ADC × 4 窓）が載っていないか"); sys.exit(1)
+    wn = Win(ip.mmio, base=WIN_STRIDE * win, adc=adc, win=win)
+    ia, nw = wn.ard(R_A_ID), wn.ard(R_A_NW)
+    if ia != ID_ADC or not (0 <= win < nw):
+        log(f"ERROR: {name} の ADC の共通 ID {ia:08x}（期待 {ID_ADC:08x}）・NW {nw}（窓 {win}）"); sys.exit(1)
     ident, bt = wn.rd(R_ID), wn.rd(R_BUILD)
-    log(f"win_core_0: ID {ident:08x} / BUILD {bt:08x}（プリセット {'あり' if bt >> 30 & 1 else '**なし**'} / -{bt >> 28 & 3} / 窓 {bt >> 22 & 1} / ch {bt & 3}）")
+    log(f"{name} の窓 {win}: ID {ident:08x} / BUILD {bt:08x}（プリセット {'あり' if bt >> 30 & 1 else '**なし**'} / -{bt >> 28 & 3} / 窓 {bt >> 22 & 1} / ch {bt & 3}）/ NW {nw}")
+    if wn.rd(0x90) != win:
+        log(f"ERROR: 窓の WIDX {wn.rd(0x90)} が {win} でない"); sys.exit(1)
+    wn.awr(R_A_SNAP_SEL, win)                     # スナップショットはこの窓（ADC で 1 つ）
     if ident in ID_WIN_OLD and allow_rev1:
         log(f"注意: ID {ident:08x} は rev1。--allow-rev1 で続ける（W-G・W-0 の FLAGS は NG になる。W-1・W-6 は下見。rev2 でやり直す）")
     elif ident in ID_WIN_OLD:
@@ -192,8 +242,8 @@ def open_win(ol, allow_nopreset=False, allow_rev1=False):
         log(f"ERROR: ID {ident:08x} は proj014 rev2（4・2 MHz が無く、PARAM に G が無い）。proj015 の .bit（{ID_WIN:08x}）を載せる"); sys.exit(1)
     elif ident != ID_WIN:
         log(f"ERROR: ID が {ID_WIN:08x} でない"); sys.exit(1)
-    if not (bt & BUILD_WIN) or (bt & 3) != WIN_CH:
-        log(f"ERROR: BUILD が「窓・ch {WIN_CH}」でない"); sys.exit(1)
+    if not (bt & BUILD_WIN) or (bt & 3) != adc:
+        log(f"ERROR: BUILD が「窓・ch {adc}」でない"); sys.exit(1)
     if not (bt >> 30 & 1) and not allow_nopreset:
         log("ERROR: プリセットの無い検証ビルドが載っている"); sys.exit(1)
     return wn
@@ -227,7 +277,9 @@ def main():
                    help="rev1 の .bit でも続ける（下見用）。IP の枠は起動の瞬間にずれるだけで、以後は途切れない 4096 点ずつなので、"
                         "CW の電力スペクトル（W-1・W-6）は意味を持つ。W-G はスナップショットと枠が合わないので NG になる")
     p.add_argument("--out", default=None, help="ダンプを PREFIX.win.npz に")
+    add_sel_args(p)
     args = p.parse_args()
+    set_sel(args)
 
     c, k, dphi, ns, if_c = window_params(args.if_c, args.w, grid=not args.no_grid)
     w = args.w
@@ -284,7 +336,7 @@ def main():
 
     spf = None
     if args.w6:
-        spf = S.Spec(ol.spec_core_1.mmio, idx=1, label="ADC_B")
+        spf = open_full(ol)
         nacc_full = int(round(args.tint / S.T_FRAME))
         seqf = spf.run(nacc_full, args.ndump, args.shift_full)
     seq = wn.run(nacc, args.ndump, args.shift)

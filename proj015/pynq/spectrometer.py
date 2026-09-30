@@ -89,6 +89,8 @@ LMX_FREQ = 491.52
 #   ADC_C = Tile 224 / slice 2 = adc_tiles[0].blocks[1]   ADC_D = Tile 224 / slice 0 = adc_tiles[0].blocks[0]
 CHANS = [("ADC_A", 2, 1), ("ADC_B", 2, 0), ("ADC_C", 0, 1), ("ADC_D", 0, 0)]
 BUILD_4CH = 1 << 23               # BUILD の [23] 4ch のビルド / [1:0] ch の番号（build.tcl の BUILD_TAG）
+BUILD_SEL = 1 << 21               # proj015: spec_core_0 は 1 本だけで、4 ADC から選ぶ（win_core_0 の FULL_SEL）
+WIN_A_FULL_SEL = 0x80020          # proj015: win_core_i の ADC の共通の FULL_SEL（win_core_0 のものだけが効く）
 
 # ---- レジスタ（src/spec_core.v の冒頭と対）----
 R_ID, R_PARAM, R_CTRL, R_NACC, R_NDUMP, R_SHIFT = 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14
@@ -265,6 +267,9 @@ def open_specs(ol, args):
     同じ RTL の 4 個を見分けるのは BUILD の [1:0] だけ。セル名 spec_core_i と BUILD の ch = i が合わなければ、
     ch の取り違え（ラベルと中身が別の ch）なので止める。
     """
+    ip0 = getattr(ol, "spec_core_0", None)
+    if ip0 is not None and (ip0.mmio.read(R_BUILD) & BUILD_SEL):
+        return open_spec_sel(ol, ip0, args)
     specs = []
     for i, (lbl, _, _) in enumerate(CHANS):
         ip = getattr(ol, f"spec_core_{i}", None)
@@ -290,6 +295,34 @@ def open_specs(ol, args):
             sys.exit(1)
         specs.append(sp)
     return [specs[i] for i in args.chs]
+
+
+def open_spec_sel(ol, ip0, args):
+    """proj015: 全帯域の分光は spec_core_0 の 1 本だけ。win_core_0 の FULL_SEL で ch を選び、SRST で起動し直してから返す。
+    **1 回に 1 ch**（--ch で 1 つ）。Spec の idx は選んだ ch（タイル・blocks の対応に使う）"""
+    if len(args.chs) != 1:
+        log(f"ERROR: この .bit（proj015）の全帯域の分光は 1 本だけ。--ch で 1 つ選ぶ（今 {args.chs}）")
+        sys.exit(1)
+    i = args.chs[0]
+    lbl = CHANS[i][0]
+    sp = Spec(ip0.mmio, slow=args.slow_read, idx=i, label=lbl)
+    ident, bt = sp.rd(R_ID), sp.rd(R_BUILD)
+    if (ident & ID_MASK) != ID_EXPECT:
+        log(f"ERROR: spec_core_0 の ID {ident:08x} の上位 16 bit が {ID_EXPECT >> 16:04x} でない"); sys.exit(1)
+    if not (bt >> 30) & 1 and not args.allow_nopreset:
+        log("ERROR: プリセットの無い検証ビルドが載っている"); sys.exit(1)
+    wc0 = getattr(ol, "win_core_0", None)
+    if wc0 is None:
+        log("ERROR: ol.win_core_0 が無い（FULL_SEL を書けない）"); sys.exit(1)
+    wc0.mmio.write(WIN_A_FULL_SEL, i)
+    got = wc0.mmio.read(WIN_A_FULL_SEL) & 3
+    if got != i:
+        log(f"ERROR: FULL_SEL を {i} に書いたのに {got}"); sys.exit(1)
+    time.sleep(0.01)
+    sp.wr(R_CTRL, CTRL_SRST)                 # 流れを入れ替えたので、spec_core_0 の起動をやり直す
+    time.sleep(0.1)
+    log(f"spec_core_0（選べる全帯域）: ID {ident:08x} / {fft_cfg_str(ident)} / BUILD {bt:08x} → FULL_SEL = ch {i}（{lbl}）、SRST")
+    return [sp]
 
 
 def parse_ch(text):

@@ -62,9 +62,12 @@ def main():
     p.add_argument("--bitfile", default=None)
     p.add_argument("--allow-nopreset", action="store_true")
     p.add_argument("--out", default=None, help="PREFIX.lin.npz と PREFIX.lin.png")
+    p.add_argument("--adc", type=int, default=1, choices=(0, 1, 2, 3), help="窓の ADC（0..3 = ADC_A..D。proj015）")
+    p.add_argument("--win", type=int, default=0, choices=(0, 1, 2, 3), help="その ADC の窓の番号（proj015）")
     a = p.parse_args()
 
     import window as WN
+    WN.set_sel(a)
     import spectrometer as S
     import sg as SGMOD
     from pynq import Overlay
@@ -112,7 +115,7 @@ def main():
     sg.set_output(False)
     sg.set_freq_mhz(tone)
     wn.set_window(k, dphi, ns)
-    spf = S.Spec(ol.spec_core_1.mmio, idx=1, label="ADC_B")
+    spf = WN.open_full(ol)
 
     def measure(sh, shf):
         nw = WN.nacc_for(w, a.tint)

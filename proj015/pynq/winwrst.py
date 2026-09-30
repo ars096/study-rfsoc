@@ -68,9 +68,12 @@ def main():
     p.add_argument("--bitfile", default=None)
     p.add_argument("--allow-nopreset", action="store_true")
     p.add_argument("--out", default=None, help="PREFIX.wrst.npz に 1 回ごとの記録")
+    p.add_argument("--adc", type=int, default=1, choices=(0, 1, 2, 3), help="窓の ADC（0..3 = ADC_A..D。proj015）")
+    p.add_argument("--win", type=int, default=0, choices=(0, 1, 2, 3), help="その ADC の窓の番号（proj015）")
     a = p.parse_args()
 
     import window as WN
+    WN.set_sel(a)
     import spectrometer as S
     from pynq import Overlay
     import xrfdc                                   # Overlay() より前に import する（VERSIONS.md）

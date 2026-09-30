@@ -63,9 +63,12 @@ def main():
     p.add_argument("--allow-nopreset", action="store_true")
     p.add_argument("--out", default=None, help="PREFIX.resp.npz と PREFIX.resp.png")
     p.add_argument("--dry-run", action="store_true", help="ボードに触らず、模型のカーブだけを描く")
+    p.add_argument("--adc", type=int, default=1, choices=(0, 1, 2, 3), help="窓の ADC（0..3 = ADC_A..D。proj015）")
+    p.add_argument("--win", type=int, default=0, choices=(0, 1, 2, 3), help="その ADC の窓の番号（proj015）")
     a = p.parse_args()
 
     import window as WN
+    WN.set_sel(a)
     c, k, dphi, ns, if_c = WN.window_params(a.if_c, a.w, grid=not a.no_grid)
     w = a.w
     dw = w / NFFT_W
@@ -145,7 +148,7 @@ def main():
     sg.set_output(False)
     sg.set_dbm(dbm)
     wn.set_window(k, dphi, ns)
-    spf = S.Spec(ol.spec_core_1.mmio, idx=1, label="ADC_B")
+    spf = WN.open_full(ol)
     nb = np.where(np.arange(NFFT_W) < NFFT_W // 2, np.arange(NFFT_W), np.arange(NFFT_W) - NFFT_W) * dw
     mid = np.abs(nb) <= 0.45 * w
     nsat = [0]

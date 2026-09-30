@@ -179,9 +179,12 @@ def main():
     p.add_argument("--dry-run", action="store_true", help="ボードと SG に触らず、置く CW と模型の予言だけ")
     p.add_argument("--save-spectra", action="store_true",
                    help="CW ごとの生スペクトル（窓 4096 ch・全帯域 4096 ch、1 フレームあたり）も npz に（W-2 55 点で約 2 MB / float32）")
+    p.add_argument("--adc", type=int, default=1, choices=(0, 1, 2, 3), help="窓の ADC（0..3 = ADC_A..D。proj015）")
+    p.add_argument("--win", type=int, default=0, choices=(0, 1, 2, 3), help="その ADC の窓の番号（proj015）")
     a = p.parse_args()
 
     import window as WN
+    WN.set_sel(a)
     c, k, dphi, ns, if_c = WN.window_params(a.if_c, a.w, grid=not a.no_grid)
     w = a.w
     dw = w / NFFT_W
@@ -258,7 +261,7 @@ def main():
     def dphi_of(kk):
         return int(round((c - S_CH * kk) / 512.0 * 2 ** 32)) % (1 << 32)
     wn.set_window(ks[0], dphi_of(ks[0]), ns)
-    spf = S.Spec(ol.spec_core_1.mmio, idx=1, label="ADC_B")
+    spf = WN.open_full(ol)
     shf3 = a.w3_shift_full if a.w3_shift_full is not None else a.shift_full
     dbm3 = a.w3_dbm if a.w3_dbm is not None else a.sg_dbm
     pred = WN.pred_ratio(ns, a.shift_full, a.shift)
