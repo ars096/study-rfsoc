@@ -13,6 +13,12 @@
 
 土台は proj012 rev3（4 本とも判定 0・2・5 通過、`-1` WNS +0.070 ns）。1 本ずつの分光計は proj012 rev3 と同一で、proj012 の判定を回帰試験に使う。
 
+## ブロックデザイン
+
+![ブロックデザイン](docs/block_design.svg)
+
+（`docs/block_design.svg` は `docs/block_design.py` で描いた。配線は proj012 rev3 と同じで、tp_core は各 spec_core の中に入る。build.tcl の配線を変えたらこちらも直す）
+
 ## 着手の前に決めたこと（2026-09-28）
 
 | | 案 | 読み |
