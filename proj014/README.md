@@ -1,7 +1,7 @@
 # proj014 — 狭帯域の窓（256〜8 MHz）を粗い PFB ＋ 窓ごとの DDC で切り出す（まず 1 ADC・1 窓）
 
 日付: 2026-09-29
-状態: **進行中**（手順 1・2 済み。手順 3: **win_core（1 ADC・1 窓）を AXI 越しに端から端まで sim で通過**。proj013 に組み込んだ build.tcl を用意。**次は Vivado サーバでのビルド**）
+状態: **進行中**（rev1 をビルドして実機へ。W-G が NG → wspec_core が FFT IP の tready を守る rev2 を作り、sim で再現と陽性対照。rev1 の下見で W-1・W-6 は通過（ボードを SG と同じ 10 MHz に）。**次は rev2 のビルドと W-0・W-G**）
 
 ## 目的
 
@@ -14,6 +14,12 @@
 
 土台は proj013 rev1（全帯域 4 IF ＋ total power）。ギアボックス・RFDC・結線の照合・PS 側の道具を引き継ぐ。
 RTL を書く段（手順 3）で `git ls-files proj013` の追跡ファイルを複製する。
+
+## ブロックデザイン
+
+![ブロックデザイン](docs/block_design.svg)
+
+（`docs/block_design.svg` は `docs/block_design.py` で描いた。proj013 rev1 の 4 本はそのままで、ADC_B の gb_dn_1 の出口を gb_bc_1 で分けて win_core_0 に入れ、smc_ctrl の M05 で読む。build.tcl の配線を変えたらこちらも直す）
 
 ## 最終仕様（窓のモード。2026-09-29 に決定）
 
