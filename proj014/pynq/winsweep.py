@@ -354,7 +354,11 @@ def main():
               f"（{ntot} 点、ADC 側の線として除いた {nadc}、検出限界が要求に届かず判定できない {undec}）")
         if undec:
             if floor_w3 < 4.0:
-                log(f"    → 窓の雑音の床 {floor_w3:.1f} LSB² が 4 を切っている: --w3-shift を下げる（1 下げると床は 4 倍）")
+                # 床 = 真の雑音 ＋ 量子化（>>> は切り捨て: 偏り 0.25 × 2 ＋ 分散 1/12 × 2 ≒ 0.67 LSB²）。真の雑音は SHIFT を 1 下げると 4 倍
+                true = max(floor_w3 - 0.67, 0.05)
+                n_dn = int(np.ceil(np.log(8.0 / true) / np.log(4.0)))
+                log(f"    → 窓の雑音の床 {floor_w3:.1f} LSB²（量子化 0.67 を除くと {true:.2f}）が 4 を切っている:"
+                    f" --w3-shift {sh3 - n_dn}（{n_dn} 下げると床は約 {true * 4 ** n_dn + 0.67:.0f} LSB²）")
             else:
                 log("    → --w3-dbm を上げる（全帯域が飽和しないよう --w3-shift-full も）か --w3-tint を延ばす。雑音源を外すとさらに下がる")
         res.update(w3=np.array([(r[0], r[1], r[2], np.nan if r[3] is None else r[3], r[4],
