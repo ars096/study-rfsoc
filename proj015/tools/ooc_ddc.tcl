@@ -18,15 +18,23 @@ foreach ts {0 1} {
     create_clock -name clk -period 3.906 [get_ports clk]
     report_utilization -file $outdir/util_ts$ts.rpt
     report_utilization -hierarchical -file $outdir/util_ts${ts}_hier.rpt
-    set dsp  [llength [get_cells -hier -filter {PRIMITIVE_TYPE =~ ARITHMETIC.DSP.*}]]
-    set lut  [llength [get_cells -hier -filter {PRIMITIVE_GROUP == LUT}]]
-    set ff   [llength [get_cells -hier -filter {PRIMITIVE_GROUP == FLOP_LATCH}]]
-    set bram [llength [get_cells -hier -filter {PRIMITIVE_TYPE =~ BLOCKRAM.*}]]
+    # 数は report_utilization の表から読む（1 回目はセルを数えて外した: 合成後の DSP48E2 は DSP_ALU・DSP_MULTIPLIER など 9 個の
+    # 下位セルに展開されていて ARITHMETIC.DSP.* が 1 個あたり 9 と出た（114 → 1026・72 → 648）。LUT・FF の PRIMITIVE_GROUP は 0 と出た）
+    set u [report_utilization -return_string]
+    set get {{pat} {
+        upvar u u
+        if {[regexp "\\|\\s*${pat}\\s*\\|\\s*(\[0-9.\]+)" $u -> v]} { return $v }
+        return "?"
+    }}
+    set dsp  [apply $get {DSPs}]
+    set lut  [apply $get {CLB LUTs\*?}]
+    set ff   [apply $get {CLB Registers}]
+    set bram [apply $get {Block RAM Tile}]
     lappend rows [list $ts $dsp $lut $ff $bram]
     close_project
 }
 set fp [open $outdir/ooc.txt w]
-puts $fp "TS | DSP | LUT | FF | BRAM（セル数。RAMB36 と RAMB18 を区別しない）"
+puts $fp "TS | DSP | LUT | FF | BRAM（タイル。report_utilization の表）"
 foreach r $rows { puts $fp [join $r " | "] }
 close $fp
 puts [exec cat $outdir/ooc.txt]
