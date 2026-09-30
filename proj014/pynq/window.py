@@ -160,7 +160,7 @@ def open_win(ol, allow_nopreset=False, allow_rev1=False):
         log(f"注意: ID {ident:08x} は rev1。--allow-rev1 で続ける（W-G・W-0 の FLAGS は NG になる。W-1・W-6 は下見。rev2 でやり直す）")
     elif ident in ID_WIN_OLD:
         log(f"ERROR: ID {ident:08x} は rev1（FFT IP の tready を見ない版。枠がずれる）。rev2（{ID_WIN:08x}）の .bit を載せる"); sys.exit(1)
-    if ident != ID_WIN:
+    elif ident != ID_WIN:
         log(f"ERROR: ID が {ID_WIN:08x} でない"); sys.exit(1)
     if not (bt & BUILD_WIN) or (bt & 3) != WIN_CH:
         log(f"ERROR: BUILD が「窓・ch {WIN_CH}」でない"); sys.exit(1)
