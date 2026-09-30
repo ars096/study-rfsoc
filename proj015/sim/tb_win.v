@@ -11,7 +11,7 @@ module tb_win;
     reg          tvalid = 0;
     reg  [4:0]   k = 0;
     reg  [31:0]  dphi = 0;
-    reg  [2:0]   ns = 1;
+    reg  [3:0]   ns = 1;
     wire signed [23:0] y0r, y0i, y1r, y1i;
     wire y0ok, y1ok, yv;
     wire [15:0] s1, s2;

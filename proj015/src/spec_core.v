@@ -83,7 +83,7 @@
 //                  サンプルは ADC の 16 bit のまま（下位 2 bit は常に 0）
 //   0x8000–0xFFFF  スペクトル: ch k の 64 bit が 0x8000 + 8k（下位語）/ +4（上位語）
 //
-//   0x00 ID        R   0x0014_01CC（proj014 rev1。RTL は proj013 rev1 と同一で ID だけ）。proj013 rev1 は 0x0013_01CC。proj012 rev3 は 0x0012_03CC。0x0011_06CC（proj011 rev6。rev5 は 0x0011_05CC、rev4 は 0x0011_04CC、rev3 は 0x0011_03CC、rev2 は 0x0011_02CC、rev1 は 0x0011_01CC。CC = FFT_CFG: [0] realtime / [1] 乗算器 use_mults_resources /
+//   0x00 ID        R   0x0015_01CC（proj015。RTL は proj013 rev1 と同一で ID だけ）。proj014 は 0x0014_01CC。proj013 rev1 は 0x0013_01CC。proj012 rev3 は 0x0012_03CC。0x0011_06CC（proj011 rev6。rev5 は 0x0011_05CC、rev4 は 0x0011_04CC、rev3 は 0x0011_03CC、rev2 は 0x0011_02CC、rev1 は 0x0011_01CC。CC = FFT_CFG: [0] realtime / [1] 乗算器 use_mults_resources /
 //                      [2] バタフライ use_luts / [3] 乗算器 use_luts。build.tcl が src/fft_cfg.tcl から設定する）
 //   0x04 PARAM     R   [7:0] log2 NFFT = 13 / [15:8] log2 レーン = 4 / [23:16] QW = 18 / [31:24] IW = 14
 //   0x08 CTRL      W   [0] RUN（開始を予約）/ [1] STOP / [8] FLAGS を消す / [9] 診断（0x58–0x68）を消す / [10] SRST（起動のやり直し。rev4）/ [11] GRST（ギアボックスごとの起動のやり直し。rev6）（いずれも 1 を書いた瞬間だけ）
@@ -209,7 +209,7 @@ module spec_core #(
     localparam integer PW = 2 * QW + 1;
     localparam integer FW = 48;        // フレーム番号（2 µs × 2^48 = 17 年）
     localparam [7:0]   FFT_CFG8 = FFT_CFG;
-    localparam [31:0]  ID = {16'h0014, 8'h01, FFT_CFG8};
+    localparam [31:0]  ID = {16'h0015, 8'h01, FFT_CFG8};
 
     // 固定のパイプライン段数（S0 = レーン出力を受けたクロック）
     //   S0  +2 ROM → +4 cmul → V@6  +6 dft16 → Z@12  +1 飽和 → Q@13

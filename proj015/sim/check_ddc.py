@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""proj014 — ddc_core の単体の sim の照合（make sim-ddc）。
+"""proj014・proj015 — ddc_core の単体の sim の照合（make sim-ddc）。
 
   python3 check_ddc.py gen DIR       入力を作る: x（雑音 + CW + 満杯の区間）→ pfb_fixed（k = 5）→ y を pfb_core の出力の並びで DIR/y.txt に
   python3 check_ddc.py cases         照合する組（NS DPHI）を 1 行ずつ出す（Makefile が回す）
@@ -16,10 +16,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import win_fixed as F  # noqa: E402
 import win_model as WM  # noqa: E402
 
-NSAMP = 16 * 16384
+NSAMP = 16 * 65536       # proj015: 4 倍に（NS 8 = 2 MHz でも出力 512 個。proj014 の NS 6 と同じ数）
 K = 5
 # (NS, d [MHz])。d = 64 は粗い ch の境目（Δ = 2^29、番地の下位が 0）、−37.8123… は格子の外（位相の下位 bit まで使う）
-CASES = [(ns, d) for ns in range(1, 7) for d in (64.0, -37.81234567)]
+CASES = [(ns, d) for ns in range(1, 9) for d in (64.0, -37.81234567)]
 
 
 def dphi_of(d):

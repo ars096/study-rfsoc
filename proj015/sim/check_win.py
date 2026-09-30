@@ -4,7 +4,7 @@
   python3 check_win.py gen DIR      x（雑音 + CW 2 本 + 満杯の区間、低位 2 bit は乱数）を DIR/x.hex に
   python3 check_win.py cases        照合する組（K NS DPHI）
   python3 check_win.py check DIR    DIR/z_*.txt を pfb_fixed → ddc_fixed と bit 単位で照合
-つなぎ目の試験なので、組は少なめ（6 通りの幅 × 1、入力の途切れあり）。各段の中身の網羅は sim-pfb・sim-ddc が持つ。
+つなぎ目の試験なので、組は少なめ（8 通りの幅 × 1、入力の途切れあり）。各段の中身の網羅は sim-pfb・sim-ddc が持つ。
 """
 import os
 import sys
@@ -15,8 +15,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import win_fixed as F  # noqa: E402
 import win_model as WM  # noqa: E402
 
-NSAMP = 16 * 4096
-CASES = [(5, ns, -37.81234567) for ns in range(1, 7)]
+NSAMP = 16 * 16384       # x.hex の長さ（proj015: NS 7・8 のために 4 倍）
+
+
+def nsamp_of(ns):
+    """その組で RTL に流すサンプル数。NS ≦ 6 は proj014 と同じ 65536、NS 7・8 は 4 倍（出力 32 → 128 個）。"""
+    return 16 * 4096 if ns <= 6 else NSAMP
+CASES = [(5, ns, -37.81234567) for ns in range(1, 9)]
 
 
 def gen(d):
@@ -35,7 +40,7 @@ def gen(d):
 
 def cases():
     for k, ns, dd in CASES:
-        print(k, ns, F.nco_step(dd)[0])
+        print(k, ns, F.nco_step(dd)[0], nsamp_of(ns))
 
 
 def check(d):
@@ -46,7 +51,7 @@ def check(d):
     for k, ns, dd in CASES:
         dp = F.nco_step(dd)[0]
         cnt = {}
-        yr, yi = F.pfb_fixed(x, k, des, cfg, cnt)
+        yr, yi = F.pfb_fixed(x[:nsamp_of(ns)], k, des, cfg, cnt)   # RTL に流した長さだけ
         ne = 2 * (len(yr) // 2)
         zr, zi = F.ddc_fixed(yr[:ne], yi[:ne], dp, ns, des, cfg, cnt)
         got = np.loadtxt(os.path.join(d, f"z_k{k}_ns{ns}.txt"), dtype=np.int64, ndmin=2)

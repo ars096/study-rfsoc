@@ -17,7 +17,7 @@
 SG を自動で: --sg HOST[:PORT]（または環境変数 RFSOC_SG）と --sg-dbm を付けると、--tone の周波数・レベルを SG に設定し、読み返してから測る。
   SG の *IDN?・周波数・レベルはログと --out の npz に残る（pynq/sg.py。**宛先はリポジトリに書かない**）
 
-窓の指定: --if（IF の中心 MHz、2048〜4096）と --w（幅 MHz: 256 / 128 / 64 / 32 / 16 / 8）。
+窓の指定: --if（IF の中心 MHz、2048〜4096）と --w（幅 MHz: 256 / 128 / 64 / 32 / 16 / 8 / 4 / 2）。
   f の側の中心 c = 4096 − IF を **ch の格子（W / 4096 刻み）に丸める**（PS の既定。README の「中心の格子」）。--no-grid で丸めない。
   2560・3072・3584 MHz（k·fs/8 の線）が中央 90 % に入れば警告する（禁止はしない）。
 ch の並び: ch b ↔ ν = b·W/4096（b < 2048）/ (b − 4096)·W/4096、f = c + ν、**IF = 4096 − c − ν**（ゾーン 2 で反転する）。
@@ -37,8 +37,9 @@ try:
 except ImportError:                      # sg.py を置いていなければ --sg は使えない
     SGMOD = None
 
-ID_WIN = 0x0014_0200             # rev2: wspec_core が FFT IP の tready を守る（rev1 = 0x0014_0100 は実機 1 回目で枠がずれた）
-ID_WIN_OLD = (0x0014_0100,)
+ID_WIN = 0x0015_0100             # proj015 rev1: WNS 1..8（4・2 MHz）・NS ≧ 7 で FFT の入力の小数 G = 5
+ID_WIN_OLD = (0x0014_0100,)      # proj014 rev1（FFT IP の tready を見ない版。枠がずれる）
+ID_WIN_P14 = (0x0014_0200,)      # proj014 rev2（幅は 256〜8 MHz だけ。G は 4 固定）
 BUILD_WIN = 1 << 22
 WIN_CH = 1                       # ADC_B
 NFFT_W = 4096
@@ -60,9 +61,9 @@ def log(*a):
 
 def window_params(if_c, w, grid=True):
     """IF の中心 [MHz]・幅 [MHz] → (c, WK, WDPHI, WNS, 実際の IF の中心)。win_model.py の window_params / nco_step と同じ式。"""
-    ns = {256: 1, 128: 2, 64: 3, 32: 4, 16: 5, 8: 6}.get(int(w))
+    ns = {256: 1, 128: 2, 64: 3, 32: 4, 16: 5, 8: 6, 4: 7, 2: 8}.get(int(w))
     if ns is None:
-        raise SystemExit(f"--w は 256 / 128 / 64 / 32 / 16 / 8（MHz）: {w}")
+        raise SystemExit(f"--w は 256 / 128 / 64 / 32 / 16 / 8 / 4 / 2（MHz）: {w}")
     c = 4096.0 - if_c
     if grid:
         c = round(c / (w / NFFT_W)) * (w / NFFT_W)
@@ -72,6 +73,16 @@ def window_params(if_c, w, grid=True):
     d = c - 128.0 * k
     dphi = int(round(d / 512.0 * 2 ** 32)) % (1 << 32)
     return c, k, dphi, ns, 4096.0 - c
+
+
+def g_of(ns):
+    """FFT の入力の小数 G（ddc_core・win_fixed.py の gz と同じ。NS ≧ 7 = 4・2 MHz は 5）。"""
+    return 5 if ns >= 7 else 4
+
+
+def pred_ratio(ns, shift_full, shift_win):
+    """同じ CW の窓 / 全帯域の電力の比の予言。G = 4 で 64·4^(SHIFT_full − SHIFT_win)（proj014）、G が 1 増えるごとに ×4。"""
+    return 64.0 * 4.0 ** (g_of(ns) - 4) * 4.0 ** (shift_full - shift_win)
 
 
 def peak_frac(p, b, circular):
@@ -118,8 +129,11 @@ class Win:
             if time.time() - t0 > 1.0:
                 raise RuntimeError("WRST が終わらない")
         cur = self.rd(R_WCUR)
-        if (cur & 31) != k or ((cur >> 8) & 7) != ns or self.rd(R_WCUR_DPHI) != dphi:
+        if (cur & 31) != k or ((cur >> 8) & 15) != ns or self.rd(R_WCUR_DPHI) != dphi:
             raise RuntimeError(f"WRST の後の WCUR {cur:#x} / {self.rd(R_WCUR_DPHI):#x} が書いた値（k {k}・NS {ns}・Δ {dphi:#x}）と違う")
+        par = self.rd(R_PARAM)
+        if ((par >> 8) & 15) != ns or ((par >> 12) & 15) != g_of(ns):
+            raise RuntimeError(f"WRST の後の PARAM {par:#x} の NS・G が期待（NS {ns}・G {g_of(ns)}）と違う")
 
     def run(self, nacc, ndump, shift):
         self.wr(R_NACC, nacc); self.wr(R_NDUMP, ndump); self.wr(R_SHIFT, shift)
@@ -174,6 +188,8 @@ def open_win(ol, allow_nopreset=False, allow_rev1=False):
         log(f"注意: ID {ident:08x} は rev1。--allow-rev1 で続ける（W-G・W-0 の FLAGS は NG になる。W-1・W-6 は下見。rev2 でやり直す）")
     elif ident in ID_WIN_OLD:
         log(f"ERROR: ID {ident:08x} は rev1（FFT IP の tready を見ない版。枠がずれる）。rev2（{ID_WIN:08x}）の .bit を載せる"); sys.exit(1)
+    elif ident in ID_WIN_P14:
+        log(f"ERROR: ID {ident:08x} は proj014 rev2（4・2 MHz が無く、PARAM に G が無い）。proj015 の .bit（{ID_WIN:08x}）を載せる"); sys.exit(1)
     elif ident != ID_WIN:
         log(f"ERROR: ID が {ID_WIN:08x} でない"); sys.exit(1)
     if not (bt & BUILD_WIN) or (bt & 3) != WIN_CH:
@@ -336,7 +352,7 @@ def main():
             judge(abs(if_w - if_f) < 0.01, f"W-1b: 窓と全帯域の推定 IF の差 {(if_w - if_f) * 1e3:+.2f} kHz（許容 ±10 kHz。"
                                            "同じ ADC のクロックで測るので基準のずれは打ち消す。窓の周波数軸そのものの確かめ）")
             ratio = p[b_meas] / pf[kf]
-            pred = 64.0 * 4.0 ** (args.shift_full - args.shift)
+            pred = pred_ratio(ns, args.shift_full, args.shift)
             db_raw = 10 * np.log10(ratio / pred)
             db = 10 * np.log10(ratio / pred * gf / gw)
             judge(abs(db) < 0.1, f"W-6: 窓 / 全帯域（ch {kf}）の電力の比 {ratio:.4g}、予言 {pred:.4g} → そのまま {db_raw:+.3f} dB /"

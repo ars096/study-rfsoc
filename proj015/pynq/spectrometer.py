@@ -55,7 +55,7 @@ NFFT = 8192
 NCH_OUT = 4096
 DF_HZ = FS_HZ / NFFT              # 0.5 MHz
 T_FRAME = NFFT / FS_HZ            # 2.000 µs
-ID_EXPECT = 0x00140000            # proj014（spec_core は proj013 rev1 と同一で ID だけ）。[15:8] は rev（1 / 2）、[7:0] は FFT_CFG（変種）なので比べない
+ID_EXPECT = 0x00150000            # proj015（spec_core は proj013 rev1 と同一で ID だけ。proj014 は 0x0014）。[15:8] は rev（1 / 2）、[7:0] は FFT_CFG（変種）なので比べない
 ID_MASK = 0xFFFF0000
 
 
@@ -68,7 +68,7 @@ def feat_rev(ident):
     表示には生の rev（fft_cfg_str）を使う。
     """
     rev = (ident >> 8) & 0xFF
-    if (ident & ID_MASK) in (0x00120000, 0x00130000, 0x00140000):   # proj012・proj013・proj014 は proj011 rev6 の機能をすべて持つ
+    if (ident & ID_MASK) in (0x00120000, 0x00130000, 0x00140000, 0x00150000):   # proj012〜proj015 は proj011 rev6 の機能をすべて持つ
         return 6
     return rev
 

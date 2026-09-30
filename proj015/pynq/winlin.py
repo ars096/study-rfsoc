@@ -141,7 +141,7 @@ def main():
         time.sleep(a.sg_settle)
         s_p0, s_d0 = wn.rd(WN.R_PFB_SAT), wn.rd(WN.R_DDC_SAT)
         s_w, s_f = shifts(lv)
-        pred = 64.0 * 4.0 ** (s_f - s_w)
+        pred = WN.pred_ratio(ns, s_f, s_w)
         pw0, pf0 = base[(s_w, s_f)]
         pw, pf, snap, sat_w, sat_f = measure(s_w, s_f)
         d_p, d_d = wn.rd(WN.R_PFB_SAT) - s_p0, wn.rd(WN.R_DDC_SAT) - s_d0

@@ -185,7 +185,7 @@ def main():
         pw, pf, sat = measure(a.tint if hi[i] else a.tint_lo, shw, sh_full)
         sat_pt[i] = sat
         pw0 = pw_hi0 if hi[i] else pw_lo0
-        pred = 64.0 * 4.0 ** (sh_full - shw)
+        pred = WN.pred_ratio(ns, sh_full, shw)
         kf = int(round(fi / DF_FULL)); df = fi / DF_FULL - kf
         ref = (pf[kf] - pf0[kf]) / (np.sinc(df) ** 2)
         diff = pw - pw0

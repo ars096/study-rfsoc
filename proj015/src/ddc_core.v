@@ -4,8 +4,8 @@
 //
 // 仕様と丸め: model/win_fixed.py の ddc_fixed と bit 単位で同じ。
 //   v[m] = round((y[m] · (cos φ − j sin φ)) / 2^17)、φ = 2π(a + 1/2) / 2^14、a = (m·Δ mod 2^32) の上位 14 bit
-//   半帯域: light × (NS − 1) → final × 1（NS = 1..6 → 幅 256 / 128 / 64 / 32 / 16 / 8 MHz）
-//   z = sat18(round(v / 2^(VF − G)))
+//   半帯域: light × (NS − 1) → final × 1（NS = 1..8 → 幅 256 / 128 / 64 / 32 / 16 / 8 / 4 / 2 MHz。proj015 で 4・2 MHz を足した）
+//   z = sat18(round(v / 2^(VF − G)))、G = NS ≧ GNS なら GH（5）、それ以外は G（4）（win_fixed.py の gz）
 // m = 0 は pfb_core の最初の ok なフレーム（y1 側に出る m = 2q − 10 = 0）。NCO の位相はそこで 0。
 //
 // 流れ:
@@ -14,7 +14,7 @@
 //   最終段（final）の入力は NS で選ぶ: NS = 1 なら NCO の組そのもの、NS ≧ 2 なら light の (NS − 1) 段目の出力を組にしたもの
 // NS・Δ は RUN の間は変えない。変えたら rst。
 //
-// 資源（この版、時分割なし）: NCO の乗算 8、light 5 段 × 10、final 36 → 94 DSP。表は 2 口の ROM × 2（1/4 波 4096 語 × 18 bit）
+// 資源（この版、時分割なし）: NCO の乗算 8、light 7 段 × 10、final 36 → 114 DSP（proj014 は light 5 段で 94）。表は 2 口の ROM × 2（1/4 波 4096 語 × 18 bit）
 
 `timescale 1ns / 1ps
 
@@ -23,7 +23,9 @@ module ddc_core #(
     parameter integer VW = 24,
     parameter integer VF = 8,
     parameter integer ZW = 18,
-    parameter integer G  = 4,
+    parameter integer G  = 4,      // NS < GNS の FFT の入力の小数
+    parameter integer GH = 5,      // NS ≧ GNS（4・2 MHz）の FFT の入力の小数（proj015）
+    parameter integer GNS = 7,
     parameter integer P  = 14
 )(
     input  wire                 clk,
@@ -32,7 +34,7 @@ module ddc_core #(
     input  wire                 y0_ok, y1_ok,
     input  wire signed [YW-1:0] y0_re, y0_im, y1_re, y1_im,
     input  wire [31:0]          dphi,
-    input  wire [2:0]           ns,           // 1..6
+    input  wire [3:0]           ns,           // 1..8
     output reg                  z_valid,
     output reg  signed [ZW-1:0] z_re, z_im,
     output reg  [15:0]          sat_cnt
@@ -145,15 +147,16 @@ module ddc_core #(
     end
 
     // ---- 半帯域の縦続 ----
-    // pr*[0] = NCO の組、pr*[j] = light の j 段目の出力を組にしたもの（j = 1..5）
-    wire                 pv_a [0:5];
-    wire signed [VW-1:0] pa_er [0:5], pa_ei [0:5], pa_or [0:5], pa_oi [0:5];
+    // pr*[0] = NCO の組、pr*[j] = light の j 段目の出力を組にしたもの（j = 1..NL）
+    localparam integer NL = 7;
+    wire                 pv_a [0:NL];
+    wire signed [VW-1:0] pa_er [0:NL], pa_ei [0:NL], pa_or [0:NL], pa_oi [0:NL];
     assign pv_a[0] = vv;
     assign pa_er[0] = ver_r; assign pa_ei[0] = vei_r; assign pa_or[0] = vor_r; assign pa_oi[0] = voi_r;
-    wire [4:0] lsat;
+    wire [NL-1:0] lsat;
     genvar j;
     generate
-        for (j = 1; j <= 5; j = j + 1) begin : g_l
+        for (j = 1; j <= NL; j = j + 1) begin : g_l
             wire                 lv;
             wire signed [VW-1:0] lr, li;
             hb2 #(.N(HBL_N), .SH(HBL_SH), .H(HBL_H), .W(VW)) u_hb (
@@ -166,7 +169,7 @@ module ddc_core #(
         end
     endgenerate
     // 最終段の入力: pr[NS − 1]
-    wire [2:0] sel = (ns >= 3'd1 && ns <= 3'd6) ? ns - 3'd1 : 3'd0;
+    wire [2:0] sel = (ns >= 4'd1 && ns <= 4'd8) ? ns[2:0] - 3'd1 : 3'd0;   // ns = 8 → 3'b000 − 1 = 7
     wire                 fv;
     wire signed [VW-1:0] fr, fi;
     wire                 fsat;
@@ -175,10 +178,16 @@ module ddc_core #(
         .e_re(pa_er[sel]), .e_im(pa_ei[sel]), .o_re(pa_or[sel]), .o_im(pa_oi[sel]),
         .out_v(fv), .y_re(fr), .y_im(fi), .sat(fsat));
 
-    // ---- z = sat18(round(v / 2^(VF − G))) ----
+    // ---- z = sat18(round(v / 2^(VF − G)))。G は NS で選ぶ（静的。NS は RUN の間は変えない）----
     localparam integer SHZ = VF - G;
-    wire signed [VW:0] zr0 = ($signed({fr[VW-1], fr}) + (1 <<< (SHZ - 1))) >>> SHZ;
-    wire signed [VW:0] zi0 = ($signed({fi[VW-1], fi}) + (1 <<< (SHZ - 1))) >>> SHZ;
+    localparam integer SHH = VF - GH;
+    wire               zg  = (ns >= GNS);
+    wire signed [VW:0] zr0l = ($signed({fr[VW-1], fr}) + (1 <<< (SHZ - 1))) >>> SHZ;
+    wire signed [VW:0] zi0l = ($signed({fi[VW-1], fi}) + (1 <<< (SHZ - 1))) >>> SHZ;
+    wire signed [VW:0] zr0h = ($signed({fr[VW-1], fr}) + (1 <<< (SHH - 1))) >>> SHH;
+    wire signed [VW:0] zi0h = ($signed({fi[VW-1], fi}) + (1 <<< (SHH - 1))) >>> SHH;
+    wire signed [VW:0] zr0 = zg ? zr0h : zr0l;
+    wire signed [VW:0] zi0 = zg ? zi0h : zi0l;
     localparam signed [VW:0] ZMX = (1 <<< (ZW - 1)) - 1;
     localparam signed [VW:0] ZMN = -(1 <<< (ZW - 1));
     reg zsat;
@@ -190,7 +199,7 @@ module ddc_core #(
     end
 
     // 飽和の回数（NCO の出口・使っている light の段・final・z。使っていない light の段は数えない）
-    wire [4:0] lmask = (sel == 3'd0) ? 5'b00000 : ((5'b00001 << sel) - 5'b00001);
+    wire [NL-1:0] lmask = (sel == 3'd0) ? {NL{1'b0}} : (({{(NL-1){1'b0}}, 1'b1} << sel) - 1'b1);
     always @(posedge clk) begin
         if (rst) sat_cnt <= 16'd0;
         else if ((vsat | (|(lsat & lmask)) | fsat | zsat) && sat_cnt != 16'hFFFF) sat_cnt <= sat_cnt + 16'd1;

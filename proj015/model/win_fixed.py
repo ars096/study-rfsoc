@@ -20,6 +20,8 @@ RTL の bit 単位の照合は、後でこのファイルの式（段の境目�
 既定の語長の根拠（2026-09-29、--sweep で振った結果）:
   G = 4      N1 の誤差は 1/W で増え、W = 8 で G 3: 2.1e-3（NG）/ 4: 5.3e-4 / 5: 1.4e-4 / 6: 4.1e-5。G 6 は −1 dBFS の CW が
              FFT の入力で飽和する（18 bit）。G 4 は CW に 7 dB の余裕を残して N1 を 2 倍の余裕で通す。G はレジスタで変えられる形にする
+  G_HI = 5（NS ≧ G_NS = 7、つまり 4・2 MHz の窓）  proj015: G 4 のままでは N1 が W = 4: 1.02e-3・W = 2: 2.1e-3 で落ちる。
+             G 5 で ≦ 5.4e-4。−1 dBFS の CW の余裕は 7 → 約 1 dB（飽和 0）。ADC の頭打ちが先に来る
   NCO_P = 14 C1 の線（CW の ch を除く）の最悪: P 10: −59.3 / 11: −66.2 / 12: −79.4 / 13: −79.4 / 14: −85.2 dBc（2026-09-30）。
              **初版（2026-09-29）の「P 12: −62.3 … ≒ −6.0·P + 10」は判定の誤り**: CW の ch そのものの誤差（切り捨ての位相の
              平均のずれ = 定数の位相）を線として数えていた。直した後は P 12 でも要求（−70）を 9 dB で通る。
@@ -32,7 +34,7 @@ RTL の bit 単位の照合は、後でこのファイルの式（段の境目�
   N2  雑音 −10 dBFS（強い入力）: どの段も飽和 0、誤差 ≦ 1e-3
   C1  CW −1 dBFS（窓の中、乱数の位置・ch の格子の外の細かい NCO も含む）: 飽和 0、
       固定小数点が作る線（誤差のスペクトルの、CW の ch を除いた最大）≦ −70 dBc（ADC 自身のイメージ −53〜−66 dBc より 4 dB 以上下）
-  すべての幅（256〜8 MHz）× 窓の置き場所 2 か所（粗い ch の境目・乱数）
+  すべての幅（256〜2 MHz）× 窓の置き場所 2 か所（粗い ch の境目・乱数）
 
 使い方:
   python3 win_fixed.py                   # 既定の語長で N1・N2・C1。最後に「結果: 全部通過」
@@ -54,8 +56,14 @@ DEFAULT = {
     "V_W": 24, "V_F": 8,
     "NCO_P": 14, "NCO_A": 18,
     "Z_W": 18, "G": 4,
+    "G_HI": 5, "G_NS": 7,      # NS ≧ G_NS の窓（4・2 MHz）は G_HI（proj015）
 }
 FS_SINE_RMS = 8192 / math.sqrt(2)     # 0 dBFS = 14 bit の満杯の正弦波の電力
+
+
+def gz(cfg, ns):
+    """FFT の入力の小数 G（窓の段数 ns で選ぶ。RTL の ddc_core と同じ）。"""
+    return cfg["G_HI"] if ns >= cfg["G_NS"] else cfg["G"]
 
 
 def rnd_shift(a, k):
@@ -223,8 +231,8 @@ def ddc_fixed(yr, yi, dphi, ns, des, cfg, cnt):
         vr, vi = vr[:ne], vi[:ne]
         vr = sat(rnd_shift(fir_decim_int(vr, hq, 2), des["sh_" + key]), cfg["V_W"], cnt, f"hb{j}")
         vi = sat(rnd_shift(fir_decim_int(vi, hq, 2), des["sh_" + key]), cfg["V_W"], cnt, f"hb{j}")
-    zr = sat(rnd_shift(vr, cfg["V_F"] - cfg["G"]), cfg["Z_W"], cnt, "z")
-    zi = sat(rnd_shift(vi, cfg["V_F"] - cfg["G"]), cfg["Z_W"], cnt, "z")
+    zr = sat(rnd_shift(vr, cfg["V_F"] - gz(cfg, ns)), cfg["Z_W"], cnt, "z")
+    zi = sat(rnd_shift(vi, cfg["V_F"] - gz(cfg, ns)), cfg["Z_W"], cnt, "z")
     return zr, zi
 
 
@@ -246,7 +254,7 @@ def run(x, c, W, des, cfg, fixed, cnt=None):
     if fixed:
         yr, yi = pfb_fixed(x, k, des, cfg, cnt)
         zr, zi = ddc_fixed(yr, yi, dphi, WM.nstages(W), des, cfg, cnt)
-        return (zr + 1j * zi) / 2.0 ** cfg["G"]
+        return (zr + 1j * zi) / 2.0 ** gz(cfg, WM.nstages(W))
     # 浮動小数点（同じ式・同じ添字、丸めなし、NCO は厳密な exp）
     u, p = pfb_branches(x.astype(float), des["pfb"]["h"])
     yc = u @ tw
@@ -341,7 +349,7 @@ def main():
 
     if args.sweep:
         name, vals = args.sweep[0], [int(v) for v in args.sweep[1:]]
-        print(f"{name} を振る（情報。各行は 6 通りの幅 × 2 か所の最悪）")
+        print(f"{name} を振る（情報。各行はすべての幅 × 3 か所の最悪）")
         print(f"{name:>6} | N1 誤差（最悪） | N2 誤差（最悪） | 飽和（N2 + C1） | C1 の線（最悪）")
         for v in vals:
             c2 = dict(cfg, **{name: v})
@@ -352,6 +360,7 @@ def main():
 
     if args.posctl:
         cfg["G"] = 0
+        cfg["G_HI"] = 0
         print("陽性対照: G = 0（FFT の入力を整数に丸める）→ N1 が落ちるはず")
     fails, _ = run_checks(des, cfg, np.random.default_rng(args.seed))
     if args.posctl:

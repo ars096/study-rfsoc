@@ -7,7 +7,7 @@
   粗い PFB: ch 間隔 S = 128 MHz（M = 32）、4 倍のオーバーサンプリング（ホップ D = 8）、各 ch 複素 512 MSPS
       y_k[m] = Σ_n h[n] · x[p − n] · exp(−j2π k (p − n) / M)、 p = m·D + (N − 1)
       （k 番の粗い ch へ周波数を −k·S ずらし、原型の低域通過 h で絞って D で間引く。ポリフェーズ＋FFT はこの式の実装）
-  窓: 中心 c（f の側で。IF の中心 C なら c = 4096 − C）、幅 W = 512 / 2^s（s = 1..6 → 256〜8 MHz）
+  窓: 中心 c（f の側で。IF の中心 C なら c = 4096 − C）、幅 W = 512 / 2^s（s = 1..8 → 256〜2 MHz。proj015 で 4・2 MHz を足した）
       k = round(c / S)、d = c − k·S（|d| ≦ 64 MHz）
       v[m] = y_k[m] · exp(−j2π d m / 512)             NCO（細かいずらし）
       半帯域 ÷2 を s 段: 軽い段（light）× (s − 1) → 最終段（final）× 1。出力は複素 W MSPS
@@ -49,7 +49,7 @@ M = 32                 # FS / S
 O = 4                  # オーバーサンプリング
 D = M // O             # 8
 R0 = FS / D            # 512 MHz（粗い ch の出力レート、複素）
-WIDTHS = [256.0, 128.0, 64.0, 32.0, 16.0, 8.0]
+WIDTHS = [256.0, 128.0, 64.0, 32.0, 16.0, 8.0, 4.0, 2.0]
 NFFT = 4096
 EDGE = 0.05
 USE = 0.5 - EDGE       # 0.45
@@ -177,9 +177,9 @@ def design_pfb(fp, fst, a, ripple_pp, tmin=1, tmax=12):
 
 
 def design(a, ripple_pp, posctl=None):
-    # 平坦さの予算: PFB・light・final に分ける（dB の和で効く。light は最大 5 段）
+    # 平坦さの予算: PFB・light・final に分ける（dB の和で効く。light は最大 7 段: 0.03 + 7 × 0.005 + 0.03 = 0.095 dB）
     r_pfb, r_light, r_final = ripple_pp * 0.3, ripple_pp * 0.05, ripple_pp * 0.3
-    fp_pfb = DMAX + USE * WIDTHS[0]
+    fp_pfb = DMAX + USE * max(WIDTHS)     # proj015: WIDTHS[0] から max に（並びを変えても PFB が変わらないように。値は同じ 256）
     fst_pfb = R0 - fp_pfb
     pfb = design_pfb(fp_pfb, fst_pfb, a, r_pfb)
     light = design_halfband(USE / 4.0, a, r_light)

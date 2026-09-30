@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // proj014 — ddc_core の単体の sim。入力 y.txt（1 行 1 ビート: y0_ok y0_re y0_im y1_ok y1_re y1_im。pfb_core の出力と同じ並び）
 //   → z.txt（「実部 虚部」を出る順に）
-//   +NS=<1..6> +DPHI=<32 bit 符号なし> +GAP=<0|1> +IN= +OUT= +NBEAT=
+//   +NS=<1..8> +DPHI=<32 bit 符号なし> +GAP=<0|1> +IN= +OUT= +NBEAT=
 // 照合は sim/check_ddc.py（model/win_fixed.py の ddc_fixed と bit 単位で）
 `timescale 1ns / 1ps
 module tb_ddc;
@@ -11,7 +11,7 @@ module tb_ddc;
     reg yv = 0, y0ok = 0, y1ok = 0;
     reg signed [23:0] y0r = 0, y0i = 0, y1r = 0, y1i = 0;
     reg [31:0] dphi = 0;
-    reg [2:0]  ns = 1;
+    reg [3:0]  ns = 1;
     wire zv;
     wire signed [17:0] zr, zi;
     wire [15:0] satc;

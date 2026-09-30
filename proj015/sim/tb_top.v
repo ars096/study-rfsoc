@@ -51,6 +51,8 @@ module tb_top;
     reg pause = 1;
     reg [8*256-1:0] fin_s, dir;
     integer fz, ff, fd, fs, fm, i, nd, s0, hi;
+    integer rc;
+    reg [31:0] rc_w;
     reg [31:0] seq_seen, dk, dn, df0, dsat, dbk, dsnf, lo;
     initial begin
         if (!$value$plusargs("K=%d", kk)) kk = 5;
@@ -75,7 +77,17 @@ module tb_top;
         aresetn <= 1;
         repeat (8) @(posedge clk);
         axr(17'h00000);
-        if (rv !== 32'h0014_0200) $display("tb_top: ID が違う %08x", rv);
+        if (rv !== 32'h0015_0100) $display("tb_top: ID が違う %08x", rv);
+        $fwrite(fm, "id %0d\n", rv);
+        // proj015: WNS の 4 bit（7・8 = 4・2 MHz）と範囲外（9・0 → 1）、PARAM の G を読み返す（入力は止めたまま）
+        for (rc = 0; rc < 4; rc = rc + 1) begin
+            axw(17'h00060, (rc == 0) ? 7 : (rc == 1) ? 8 : (rc == 2) ? 9 : 0);
+            axw(17'h00008, 32'h1000);             // WRST
+            repeat (100) @(posedge clk);
+            axr(17'h00064); rc_w = rv;
+            axr(17'h00004);
+            $fwrite(fm, "regchk%0d %0d %0d\n", rc, rc_w, rv);
+        end
         axw(17'h00058, kk); axw(17'h0005C, dp); axw(17'h00060, nsv);
         axw(17'h0000C, na); axw(17'h00010, ndm); axw(17'h00014, shv);
         axw(17'h00008, 32'h1000);                 // WRST

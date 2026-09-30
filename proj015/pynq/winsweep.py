@@ -261,9 +261,9 @@ def main():
     spf = S.Spec(ol.spec_core_1.mmio, idx=1, label="ADC_B")
     shf3 = a.w3_shift_full if a.w3_shift_full is not None else a.shift_full
     dbm3 = a.w3_dbm if a.w3_dbm is not None else a.sg_dbm
-    pred = 64.0 * 4.0 ** (a.shift_full - a.shift)
+    pred = WN.pred_ratio(ns, a.shift_full, a.shift)
     sh3 = a.w3_shift if a.w3_shift is not None else a.shift      # 自動のときは基準を測ってから決め直す
-    pred3 = 64.0 * 4.0 ** (shf3 - sh3)
+    pred3 = WN.pred_ratio(ns, shf3, sh3)
     quiet = lambda *x: None
 
     nsat = [0]
@@ -296,7 +296,7 @@ def main():
         true = max(fl - 0.67, 0.02)
         n_dn = max(0, int(np.ceil(np.log(16.0 / true) / np.log(4.0))))
         sh3 = max(0, a.shift - n_dn)
-        pred3 = 64.0 * 4.0 ** (shf3 - sh3)
+        pred3 = WN.pred_ratio(ns, shf3, sh3)
         log(f"  W-3 の窓の SHIFT を自動で {sh3}（SHIFT {a.shift} の床 {fl:.2f}、量子化を除いて {true:.2f} LSB²）")
     if do3 and (shf3 != a.shift_full or sh3 != a.shift):
         pw03, pf03, _, _ = measure(a.w3_tint, shf3, sh3)
@@ -306,7 +306,7 @@ def main():
     # 実機の 8 MHz・IF 4000 で、見積もりどおりに下げても床が 4 に届かず W-3 が全点「判定できない」になった）
     while do3 and a.w3_shift is None and sh3 > 0 and float(np.median(pw03[np.abs(nb) <= 0.45 * w])) < 16.0:
         sh3 -= 1
-        pred3 = 64.0 * 4.0 ** (shf3 - sh3)
+        pred3 = WN.pred_ratio(ns, shf3, sh3)
         pw03, pf03, _, _ = measure(a.w3_tint, shf3, sh3)
         log(f"  床が 16 に届かないので W-3 の窓の SHIFT を {sh3} に下げた（床 {float(np.median(pw03[np.abs(nb) <= 0.45 * w])):.1f} LSB²）")
     floor_w = float(np.median(pw0[np.abs(nb) <= 0.45 * w]))

@@ -66,8 +66,18 @@ def check(d, ns, nacc, ndump, shift):
     np.save(os.path.join(run, "..", f"z_ns{ns}.npy"), np.stack([got[:, 0], got[:, 1]]))
     meta = dict(l.split(" ", 1) for l in open(os.path.join(run, "meta.txt")).read().splitlines())
     wcur = int(meta["wcur"])
-    ok5 = (wcur & 31) == K and ((wcur >> 8) & 7) == ns and int(meta["satflags"]) == 0
+    ok5 = (wcur & 31) == K and ((wcur >> 8) & 15) == ns and int(meta["satflags"]) == 0
     print(("  OK  " if ok5 else "  NG  ") + f"5: WCUR = {wcur:#x}（k {K}・NS {ns}）、飽和の印 {meta['satflags']}")
+    # proj015: ID・WNS の 4 bit と範囲外の丸め・PARAM の G（[15:12]）
+    ok6 = int(meta["id"]) == 0x0015_0100
+    for i, (wr, ns_x, g_x) in enumerate([(7, 7, 5), (8, 8, 5), (9, 1, 4), (0, 1, 4)]):
+        wc, pa = [int(v) for v in meta[f"regchk{i}"].split()]
+        got_ns, got_pns, got_g = (wc >> 8) & 15, (pa >> 8) & 15, (pa >> 12) & 15
+        ok = got_ns == ns_x and got_pns == ns_x and got_g == g_x
+        print(("  OK  " if ok else "  NG  ") + f"6: WNS {wr} を書いて WRST → WCUR の NS {got_ns}・PARAM の NS {got_pns}・G {got_g}（期待 {ns_x}・{ns_x}・{g_x}）")
+        ok6 = ok6 and ok
+    print(("  OK  " if int(meta["id"]) == 0x0015_0100 else "  NG  ") + f"6: ID = {int(meta['id']):#010x}（期待 0x00150100）")
+    ok5 = ok5 and ok6
     # check_wspec は DIR の 1 つ上の z.npy を読むので、一時にその名前で置く
     zpath = os.path.join(d, "z.npy")
     np.save(zpath, np.stack([got[:, 0], got[:, 1]]))

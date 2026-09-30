@@ -8,7 +8,7 @@
 // 書いただけでは効かない。**CTRL[12] = WRST** で、書いておいた値を取り込み、pfb・ddc・wspec を WRST_T クロックだけリセットして
 // 最初から回し直す（フレーム番号・積分も最初から）。ハードのリセットの後は既定値（WK = 0・WDPHI = 0・WNS = 1）で回る。
 //   窓の中心 c（f の側、ゾーン 2 の IF の中心 C なら c = 4096 − C）→ WK = round(c / 128)、d = c − 128·WK、WDPHI = round(d / 512 · 2^32) mod 2^32
-//   幅 W = 512 / 2^WNS MHz（WNS = 1..6 → 256..8 MHz）
+//   幅 W = 512 / 2^WNS MHz（WNS = 1..8 → 256..2 MHz。proj015 で 7・8 = 4・2 MHz を足した）
 // **入力の途切れ（ギアボックスの出口の tvalid = 0）は値を変えない**: pfb_core は valid なビートだけで窓を進め、以降は組ごとに進む。
 // realtime の FFT IP に直につながないので、proj011〜013 の起動の途切れの守り（見張り・GRST）はこの経路では要らない。
 //
@@ -17,8 +17,8 @@
 //   0x08000–0x0FFFF  スナップショット: サンプル i の re が 0x08000 + 8i、im が +4（18 bit を 32 bit に符号拡張）
 //   0x10000–0x17FFF  スペクトル: ch b の 64 bit が 0x10000 + 8b（下位語）/ +4（上位語）。ch b ↔ ν = b·W/4096（b < 2048）/ (b − 4096)·W/4096
 //
-//   0x00 ID        R   0x0014_0200（proj014 rev2、窓。rev2 = wspec_core が FFT IP の tready を守る・0x80/0x84 を足した）
-//   0x04 PARAM     R   [7:0] log2 NFFT = 12 / [10:8] 今の WNS / [23:16] QW = 18 / [31:24] ZW = 18
+//   0x00 ID        R   0x0015_0100（proj015 rev1、窓。WNS 1..8・NS ≧ 7 で FFT の入力の小数 G = 5）。proj014 rev2 は 0x0014_0200
+//   0x04 PARAM     R   [7:0] log2 NFFT = 12 / [11:8] 今の WNS / [15:12] 今の G / [23:16] QW = 18 / [31:24] ZW = 18
 //   0x08 CTRL      W   [0] RUN / [1] STOP / [8] FLAGS を消す / [12] WRST（窓の設定を取り込んで最初から）（1 を書いた瞬間だけ）
 //                  R   [0] 積分中 / [1] 開始待ち / [3] z が流れ始めた / [4] WRST 中
 //   0x0C N_ACC     RW  1 ダンプのフレーム数（0 は 1）。RUN の時点で取り込む。1 フレーム = 4096 / W µs（256 MHz で 16 µs、8 MHz で 512 µs）
@@ -34,8 +34,8 @@
 //   0x50 RUN_F0_LO / 0x54 RUN_F0_HI
 //   0x58 WK        RW  [4:0] 粗い ch（0..16）       次の WRST で効く。R は書いた値
 //   0x5C WDPHI     RW  NCO の 1 サンプルの位相の増分（32 bit）
-//   0x60 WNS       RW  [2:0] 半帯域の段数（1..6）
-//   0x64 WCUR      R   今効いている [4:0] WK / [10:8] WNS（WDPHI は 0x68）
+//   0x60 WNS       RW  [3:0] 半帯域の段数（1..8。範囲外は WRST で 1）
+//   0x64 WCUR      R   今効いている [4:0] WK / [11:8] WNS（WDPHI は 0x68）
 //   0x68 WCUR_DPHI R
 //   0x6C PFB_SAT   R   pfb_core の飽和の回数（WRST 以来、飽和して止まる）
 //   0x70 DDC_SAT   R   ddc_core の飽和の回数
@@ -84,7 +84,7 @@ module win_core #(
     input  wire         s_axi_rready
 );
     localparam integer FW = 48;
-    localparam [31:0]  ID = 32'h0014_0200;
+    localparam [31:0]  ID = 32'h0015_0100;
     wire rst = ~aresetn;
     assign s_axis_tready = 1'b1;       // 上流に backpressure をかけない
 
@@ -92,7 +92,7 @@ module win_core #(
     reg [31:0] r_nacc, r_ndump, r_dphi;
     reg [3:0]  r_shift;
     reg [4:0]  r_k;
-    reg [2:0]  r_ns;
+    reg [3:0]  r_ns;
     reg [15:0] r_wt;
     reg        cmd_run, cmd_stop, cmd_clr, cmd_wrst;
     wire wr_go = s_axi_awvalid && s_axi_wvalid && !s_axi_bvalid;
@@ -104,7 +104,7 @@ module win_core #(
         if (rst) begin
             s_axi_bvalid <= 1'b0;
             r_nacc <= N_ACC_DEFAULT; r_ndump <= 32'd0; r_shift <= SHIFT_DEFAULT;
-            r_k <= 5'd0; r_dphi <= 32'd0; r_ns <= 3'd1; r_wt <= 16'd64;
+            r_k <= 5'd0; r_dphi <= 32'd0; r_ns <= 4'd1; r_wt <= 16'd64;
         end else begin
             if (s_axi_bvalid && s_axi_bready) s_axi_bvalid <= 1'b0;
             if (wr_go) begin
@@ -121,7 +121,7 @@ module win_core #(
                     6'h05: r_shift <= s_axi_wdata[3:0];
                     6'h16: r_k     <= s_axi_wdata[4:0];
                     6'h17: r_dphi  <= s_axi_wdata;
-                    6'h18: r_ns    <= s_axi_wdata[2:0];
+                    6'h18: r_ns    <= s_axi_wdata[3:0];
                     6'h1E: r_wt    <= s_axi_wdata[15:0];
                     default: ;
                 endcase
@@ -132,16 +132,16 @@ module win_core #(
     // ---- WRST: 設定を取り込み、窓の経路を最初から ----
     reg [4:0]  c_k;
     reg [31:0] c_dphi;
-    reg [2:0]  c_ns;
+    reg [3:0]  c_ns;
     reg [15:0] wr_cnt;
     reg        w_rst;
     reg [31:0] wrst_n;
     always @(posedge aclk) begin
         if (rst) begin
-            c_k <= 5'd0; c_dphi <= 32'd0; c_ns <= 3'd1;
+            c_k <= 5'd0; c_dphi <= 32'd0; c_ns <= 4'd1;
             wr_cnt <= 16'd0; w_rst <= 1'b1; wrst_n <= 32'd0;
         end else if (cmd_wrst) begin
-            c_k <= r_k; c_dphi <= r_dphi; c_ns <= (r_ns >= 3'd1 && r_ns <= 3'd6) ? r_ns : 3'd1;
+            c_k <= r_k; c_dphi <= r_dphi; c_ns <= (r_ns >= 4'd1 && r_ns <= 4'd8) ? r_ns : 4'd1;
             wr_cnt <= (r_wt == 16'd0) ? 16'd1 : r_wt;
             w_rst <= 1'b1; wrst_n <= wrst_n + 32'd1;
         end else if (wr_cnt != 16'd0) begin
@@ -196,7 +196,7 @@ module win_core #(
     always @* begin
         case (ar_addr[7:2])
             6'h00: reg_rd = ID;
-            6'h01: reg_rd = {8'd18, 8'd18, 5'd0, c_ns, 8'd12};
+            6'h01: reg_rd = {8'd18, 8'd18, (c_ns >= 4'd7) ? 4'd5 : 4'd4, c_ns, 8'd12};
             6'h02: reg_rd = {27'd0, w_rst, z_seen, 1'b0, sched, acc_on};
             6'h03: reg_rd = r_nacc;
             6'h04: reg_rd = r_ndump;
@@ -219,8 +219,8 @@ module win_core #(
             6'h15: reg_rd = {{(64-FW){1'b0}}, run_f0[FW-1:32]};
             6'h16: reg_rd = {27'd0, r_k};
             6'h17: reg_rd = r_dphi;
-            6'h18: reg_rd = {29'd0, r_ns};
-            6'h19: reg_rd = {21'd0, c_ns, 3'd0, c_k};
+            6'h18: reg_rd = {28'd0, r_ns};
+            6'h19: reg_rd = {20'd0, c_ns, 3'd0, c_k};
             6'h1A: reg_rd = c_dphi;
             6'h1B: reg_rd = {16'd0, pfb_sat};
             6'h1C: reg_rd = {16'd0, ddc_sat};

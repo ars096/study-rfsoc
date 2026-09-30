@@ -240,7 +240,7 @@ sim-pfb:
 	done; done
 	SIM_PFB_POSCTL=$(SIM_PFB_POSCTL) $(PYTHON) sim/check_pfb.py check $(PFB_DIR) $(PFB_KS) | tee $(PFB_DIR)/check.log
 
-# ddc_core の単体の sim（NCO → 半帯域 × NS）。入力は pfb_fixed の y。NS 1..6 × d 2 通り × 途切れ あり / なし
+# ddc_core の単体の sim（NCO → 半帯域 × NS）。入力は pfb_fixed の y。NS 1..8 × d 2 通り × 途切れ あり / なし
 sim-ddc:
 	mkdir -p $(DDC_DIR)
 	$(PYTHON) sim/check_ddc.py gen $(DDC_DIR)
@@ -250,13 +250,13 @@ sim-ddc:
 	done; done
 	SIM_DDC_POSCTL=$(SIM_DDC_POSCTL) $(PYTHON) sim/check_ddc.py check $(DDC_DIR) | tee $(DDC_DIR)/check.log
 
-# pfb_core → ddc_core をつないだ sim（つなぎ目の試験。6 通りの幅、1 本 1 分級）
+# pfb_core → ddc_core をつないだ sim（つなぎ目の試験。8 通りの幅、NS ≦ 6 は 1 本 1 分級・NS 7・8 は 4 倍の長さ）
 sim-win:
 	mkdir -p build-sim-win
 	$(PYTHON) sim/check_win.py gen build-sim-win
 	$(IVERILOG) -g2005 -Isrc -o build-sim-win/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) sim/tb_win.v
-	$(PYTHON) sim/check_win.py cases | while read k ns dp; do \
-	  $(VVP) -n build-sim-win/tb +K=$$k +NS=$$ns +DPHI=$$dp +GAP=1 +NSAMP=65536 +IN=build-sim-win/x.hex +OUT=build-sim-win/z_k$${k}_ns$${ns}.txt | grep '^win:' ; \
+	$(PYTHON) sim/check_win.py cases | while read k ns dp nsamp; do \
+	  $(VVP) -n build-sim-win/tb +K=$$k +NS=$$ns +DPHI=$$dp +GAP=1 +NSAMP=$$nsamp +IN=build-sim-win/x.hex +OUT=build-sim-win/z_k$${k}_ns$${ns}.txt | grep '^win:' ; \
 	done
 	$(PYTHON) sim/check_win.py check build-sim-win | tee build-sim-win/check.log
 
