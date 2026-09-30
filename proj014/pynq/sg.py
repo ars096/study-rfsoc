@@ -8,7 +8,8 @@
 約束:
   - 設定したら**必ず読み返して**一致を確かめる（周波数は 1 Hz、レベルは 0.01 dB）。違えば止める
   - 出力の ON / OFF も読み返す。**道具が SG を触ったことをログに残す**（*IDN?・周波数・レベル・ON/OFF）
-  - 終わったら元の出力の状態（ON / OFF）に戻す（with 文）
+  - 終わったら（道具が出力に触っていれば）**出力を切る**（with 文・atexit）。つないだときに ON だったとしても戻さない:
+    実機 5 回目で、前の道具が戻した ON のまま次の雑音だけの測り（W-5）が始まりかけた。雑音だけの測りと取り違えないよう、既定は OFF
   - つないだときに、**溜まっていたエラーを読み出してログに残してから消す**（*CLS）。前の操作や前面パネルのエラーで止まらないように
   - 基準（10 MHz）の状態（:ROSC:SOUR? = INT / EXT）を読んでログに残す。**「Reference unlocked」（+512 など）は止めずに警告**:
     出力は出ているが周波数が基準にロックしていない。W-1 の ch 単位の位置（8 MHz 窓で 1.95 kHz / ch）は SG と RFSoC の基準が
@@ -150,8 +151,8 @@ class SG:
         if self.s is None:
             return
         try:
-            if self._out0 is not None and self.output() != self._out0:
-                self.set_output(self._out0)
+            if self._out0 is not None and self.output():
+                self.set_output(False)
         finally:
             self.s.close()
             self.s = None
@@ -176,8 +177,9 @@ def main():
     try:
         if a.freq is not None: sg.set_freq_mhz(a.freq)
         if a.dbm is not None: sg.set_dbm(a.dbm)
-        if a.on: sg.set_output(True); sg._out0 = True      # 単体で ON にしたときは戻さない
-        if a.off: sg.set_output(False); sg._out0 = False
+        if a.on: sg.set_output(True)
+        if a.off: sg.set_output(False)
+        sg._out0 = None                                     # 単体で ON / OFF にしたときは、そのままにする（close で切らない）
         print(sg.state())
     finally:
         sg.close()
