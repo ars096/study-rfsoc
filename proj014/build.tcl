@@ -1378,6 +1378,19 @@ for {set i 0} {$i < $nch} {incr i} {
     foreach x $dsp_names { if {[string first "/spec_core_${i}/" "/$x"] >= 0} { incr n } }
     puts "  DSP48E2 spec_core_$i（[lindex $ch_labels $i]） = $n"
 }
+# proj014: win_core_0 の DSP（上の「それ以外」「全体」には win_core の分も入っている）。中身の段ごとにも
+foreach {sub pred} {"" 388 u_pfb 264 u_ddc 94 u_ws 30} {
+    set pat [expr {$sub eq "" ? "/win_core_0/" : "/win_core_0/inst/$sub/"}]
+    set n 0
+    foreach x $dsp_names { if {[string first $pat "/$x"] >= 0} { incr n } }
+    puts [format "  DSP48E2 win_core_0%-7s = %d（予言 %d）" [expr {$sub eq "" ? "" : "/$sub"}] $n $pred]
+}
+# 全体の LUT・FF・URAM を utilization.rpt から（vivado.log の上の表は BRAM・DSP だけなので）
+if {![catch {set fh [open $outdir/utilization.rpt r]; set ut [read $fh]; close $fh}]} {
+    foreach line [split $ut "\n"] {
+        if {[regexp {^\|\s*(CLB LUTs|CLB Registers|URAM)\*?\s*\|} $line]} { puts "  全体: [string trim $line]" }
+    }
+}
 
 # ---- 一番きつい経路のクロック対を **必ず** 出す ----
 # **WNS が正でも出す。**通ったかどうかだけ見ていると、
