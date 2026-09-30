@@ -14,6 +14,8 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "model"))
 import win_fixed as F  # noqa: E402
 import win_model as WM  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import check_ddc as CD  # noqa: E402  （rtl_ovr）
 
 NSAMP = 16 * 16384       # x.hex の長さ（proj015: NS 7・8 のために 4 倍）
 
@@ -58,10 +60,16 @@ def check(d):
         got = np.loadtxt(os.path.join(d, f"z_k{k}_ns{ns}.txt"), dtype=np.int64, ndmin=2)
         n = min(len(zr), len(got))
         neq = int(np.count_nonzero((got[:n, 0] != zr[:n]) | (got[:n, 1] != zi[:n])))
-        st = "OK" if (neq == 0 and len(got) == len(zr) and not cnt) else "NG"
-        print(f"  k {k} NS {ns}（{WM.R0 / 2 ** ns:4.0f} MHz）: 出力 RTL {len(got)} / 模型 {len(zr)}、不一致 {neq}、模型の飽和 {cnt or 0} → {st}")
+        ovr = CD.rtl_ovr(os.path.join(d, f"z_k{k}_ns{ns}.txt"))
+        st = "OK" if (neq == 0 and len(got) == len(zr) and not cnt and ovr == 0) else "NG"
+        print(f"  k {k} NS {ns}（{WM.R0 / 2 ** ns:4.0f} MHz）: 出力 RTL {len(got)} / 模型 {len(zr)}、不一致 {neq}、模型の飽和 {cnt or 0}、時分割の追い越し {ovr} → {st}")
         bad += st == "NG"
         ng.append(ns) if st == "NG" else None
+    if os.environ.get("SIM_WIN_POSCTL", "0") == "ts":
+        # 陽性対照（-DDDC_POSCTL_TS: light の 2 段目の C を 3 に）: 2 段目を使う NS 3..8 だけが落ち、NS 1・2 は通ること
+        ok = sorted(ng) == [3, 4, 5, 6, 7, 8]
+        print(f"陽性対照（時分割の前提を破る）: 落ちた NS {sorted(ng)}（期待 [3..8]）→ " + ("結果: 全部通過" if ok else "結果: 失敗"))
+        return 0 if ok else 1
     if os.environ.get("SIM_WIN_POSCTL", "0") == "g":
         # 陽性対照（-DDDC_POSCTL_G: G を NS に依らず 4）: NS 7・8 だけが落ち、NS 1..6 は通ること
         ok = sorted(ng) == [7, 8]

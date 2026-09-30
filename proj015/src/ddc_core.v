@@ -14,7 +14,9 @@
 //   最終段（final）の入力は NS で選ぶ: NS = 1 なら NCO の組そのもの、NS ≧ 2 なら light の (NS − 1) 段目の出力を組にしたもの
 // NS・Δ は RUN の間は変えない。変えたら rst。
 //
-// 資源（この版、時分割なし）: NCO の乗算 8、light 7 段 × 10、final 36 → 114 DSP（proj014 は light 5 段で 94）。表は 2 口の ROM × 2（1/4 波 4096 語 × 18 bit）
+// 資源（時分割）: NCO の乗算 8、light 1 段目 10（hb2）・2 段目 6・3 段目 4・4〜7 段目 2 ずつ（hb2s）、final 36（hb2。NS = 1 は全レート）→ 72 DSP
+//   （proj015 の手順 1 の時分割なしは 114、proj014 は light 5 段で 94）。light の j 段目（j ≧ 2）には組が 2^(j−1) クロックに 1 回以下しか来ないので、
+//   hb2s を C = min(2^(j−1), L + 1) で使う（値は hb2 と bit 単位で同じ。前提が破れたら ovr）。表は 2 口の ROM × 2（1/4 波 4096 語 × 18 bit）
 
 `timescale 1ns / 1ps
 
@@ -37,7 +39,8 @@ module ddc_core #(
     input  wire [3:0]           ns,           // 1..8
     output reg                  z_valid,
     output reg  signed [ZW-1:0] z_re, z_im,
-    output reg  [15:0]          sat_cnt
+    output reg  [15:0]          sat_cnt,
+    output reg  [15:0]          ovr_cnt       // 時分割の段の追い越し（hb2s の ovr）の回数。0 のはず
 );
 `include "win_coef.vh"
 
@@ -154,15 +157,31 @@ module ddc_core #(
     assign pv_a[0] = vv;
     assign pa_er[0] = ver_r; assign pa_ei[0] = vei_r; assign pa_or[0] = vor_r; assign pa_oi[0] = voi_r;
     wire [NL-1:0] lsat;
+    wire [NL-1:0] lovr;
     genvar j;
     generate
         for (j = 1; j <= NL; j = j + 1) begin : g_l
             wire                 lv;
             wire signed [VW-1:0] lr, li;
-            hb2 #(.N(HBL_N), .SH(HBL_SH), .H(HBL_H), .W(VW)) u_hb (
-                .clk(clk), .rst(rst), .in_v(pv_a[j-1]),
-                .e_re(pa_er[j-1]), .e_im(pa_ei[j-1]), .o_re(pa_or[j-1]), .o_im(pa_oi[j-1]),
-                .out_v(lv), .y_re(lr), .y_im(li), .sat(lsat[j-1]));
+            if (j == 1) begin : g_par
+                hb2 #(.N(HBL_N), .SH(HBL_SH), .H(HBL_H), .W(VW)) u_hb (
+                    .clk(clk), .rst(rst), .in_v(pv_a[j-1]),
+                    .e_re(pa_er[j-1]), .e_im(pa_ei[j-1]), .o_re(pa_or[j-1]), .o_im(pa_oi[j-1]),
+                    .out_v(lv), .y_re(lr), .y_im(li), .sat(lsat[j-1]));
+                assign lovr[j-1] = 1'b0;
+            end else begin : g_ts
+                // 組の間隔 ≧ 2^(j−1)。項は L + 1 = (HBL_N + 1) / 4 + 1 個なので、それより大きい C は乗算を減らさない
+`ifdef DDC_POSCTL_TS
+                // 陽性対照: 2 段目の C を 1 つ大きく（3。組の間隔 2 より長い）→ 追い越しが立ち、NS ≧ 3 が模型と合わなくなるはず
+                localparam integer CJ = (j == 2) ? 3 : ((1 << (j - 1)) < (HBL_N + 1) / 4 + 1) ? (1 << (j - 1)) : (HBL_N + 1) / 4 + 1;
+`else
+                localparam integer CJ = ((1 << (j - 1)) < (HBL_N + 1) / 4 + 1) ? (1 << (j - 1)) : (HBL_N + 1) / 4 + 1;
+`endif
+                hb2s #(.N(HBL_N), .SH(HBL_SH), .H(HBL_H), .W(VW), .C(CJ)) u_hb (
+                    .clk(clk), .rst(rst), .in_v(pv_a[j-1]),
+                    .e_re(pa_er[j-1]), .e_im(pa_ei[j-1]), .o_re(pa_or[j-1]), .o_im(pa_oi[j-1]),
+                    .out_v(lv), .y_re(lr), .y_im(li), .sat(lsat[j-1]), .ovr(lovr[j-1]));
+            end
             pair2 #(.W(VW)) u_pair (
                 .clk(clk), .rst(rst), .in_v(lv), .x_re(lr), .x_im(li),
                 .out_v(pv_a[j]), .e_re(pa_er[j]), .e_im(pa_ei[j]), .o_re(pa_or[j]), .o_im(pa_oi[j]));
@@ -207,5 +226,10 @@ module ddc_core #(
     always @(posedge clk) begin
         if (rst) sat_cnt <= 16'd0;
         else if ((vsat | (|(lsat & lmask)) | fsat | zsat) && sat_cnt != 16'hFFFF) sat_cnt <= sat_cnt + 16'd1;
+    end
+    // 追い越し（使っている段だけ）。構造で起きないはずなので、見張りとして数える
+    always @(posedge clk) begin
+        if (rst) ovr_cnt <= 16'd0;
+        else if ((|(lovr & lmask)) && ovr_cnt != 16'hFFFF) ovr_cnt <= ovr_cnt + 16'd1;
     end
 endmodule

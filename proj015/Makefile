@@ -188,8 +188,8 @@ PFB_DIR       := build-sim-pfb$(if $(filter 1,$(SIM_PFB_POSCTL)),-posctl)
 # SIM_DDC_POSCTL=1: 陽性対照（RTL の NCO の番地を 1 つずらす）
 SIM_DDC_POSCTL ?= 0
 DDC_DIR       := build-sim-ddc$(if $(filter 1,$(SIM_DDC_POSCTL)),-posctl)
-DDC_RTL       := src/nco_rom.v src/hb2.v src/pair2.v src/ddc_core.v
-WIN_DIR       := build-sim-win$(if $(filter g,$(SIM_WIN_POSCTL)),-g)
+DDC_RTL       := src/nco_rom.v src/hb2.v src/hb2s.v src/pair2.v src/ddc_core.v
+WIN_DIR       := build-sim-win$(if $(SIM_WIN_POSCTL),-$(SIM_WIN_POSCTL))
 # SIM_WSPEC_POSCTL=1: 陽性対照（RTL の積分で初回のフレームでも読み値に足す）→ A が落ちること
 # SIM_WSPEC_POSCTL=2: 陽性対照（RTL が FFT IP の tready を見ない = rev1、-DWSPEC_NOREADY）→ B が落ちること
 SIM_WSPEC_POSCTL ?= 0
@@ -201,7 +201,7 @@ WSPEC_VARS    ?= g0:4:4:4:0:5:0 g3:2:4:7:3:5:0 g32:1:3:4:32:5:0 g0r:4:4:4:0:6000
 WSPEC_NR_VARS ?= g0r:4:4:4:0:6000:0 g3s:2:4:7:3:5:40
 
 
-.PHONY: model model-posctl model-sweep fixed fixed-posctl coef sim-pfb sim-ddc sim-win sim-win-g sim-win-all sim-pfb-p sim-ddc-p sim-wspec sim-wspec-p sim-wspec-r sim-top survey clean
+.PHONY: model model-posctl model-sweep fixed fixed-posctl coef sim-pfb sim-ddc sim-win sim-win-g sim-win-ts sim-hb2s sim-win-all sim-pfb-p sim-ddc-p sim-wspec sim-wspec-p sim-wspec-r sim-top survey clean
 
 # 仕様の模型（numpy だけ。Vivado もライセンスも要らない）。成否は「結果: 全部通過」の行で読む
 model:
@@ -255,14 +255,32 @@ sim-ddc:
 sim-win:
 	mkdir -p $(WIN_DIR)
 	$(PYTHON) sim/check_win.py gen $(WIN_DIR)
-	$(IVERILOG) -g2005 -Isrc $(if $(filter g,$(SIM_WIN_POSCTL)),-DDDC_POSCTL_G) -o $(WIN_DIR)/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) sim/tb_win.v
+	$(IVERILOG) -g2005 -Isrc $(if $(filter g,$(SIM_WIN_POSCTL)),-DDDC_POSCTL_G)$(if $(filter ts,$(SIM_WIN_POSCTL)),-DDDC_POSCTL_TS) -o $(WIN_DIR)/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) sim/tb_win.v
 	$(PYTHON) sim/check_win.py cases | while read k ns dp nsamp; do \
 	  $(VVP) -n $(WIN_DIR)/tb +K=$$k +NS=$$ns +DPHI=$$dp +GAP=1 +NSAMP=$$nsamp +IN=$(WIN_DIR)/x.hex +OUT=$(WIN_DIR)/z_k$${k}_ns$${ns}.txt | grep '^win:' ; \
 	done
 	SIM_WIN_POSCTL=$(SIM_WIN_POSCTL) $(PYTHON) sim/check_win.py check $(WIN_DIR) | tee $(WIN_DIR)/check.log
+# hb2s（時分割の半帯域）が hb2 と bit 単位で同じか（proj015）。light の C 1・2・4・5・8、final の C 2・4・18。
+# 陽性対照: 組の間隔を C より短く（前提を破る）→ ovr が立って一致しないこと。成否は build-sim-hb2s/check.log の「結果」
+HB2S_CASES := 1:0:1 2:0:2 4:0:4 5:0:5 8:0:8 2:1:2 4:1:4 18:1:18
+HB2S_NEG   := 4:0:3 2:0:1
+sim-hb2s:
+	mkdir -p build-sim-hb2s; rm -f build-sim-hb2s/check.log
+	for v in $(HB2S_CASES) $(HB2S_NEG); do c=$${v%%:*}; r=$${v#*:}; f=$${r%%:*}; g=$${r#*:}; \
+	  $(IVERILOG) -g2005 -Isrc -DHB_C=$$c $$( [ $$f = 1 ] && echo -DHB_FINAL ) -o build-sim-hb2s/tb_$${c}_$${f} src/hb2.v src/hb2s.v sim/tb_hb2s.v && \
+	  $(VVP) -n build-sim-hb2s/tb_$${c}_$${f} +GAP=$$g +NPAIR=20000 | grep '^hb2s:' | tr '\n' ' ' >> build-sim-hb2s/check.log; echo " [$$v]" >> build-sim-hb2s/check.log; done
+	@cat build-sim-hb2s/check.log
+	@n_ok=$$(for v in $(HB2S_CASES); do grep "\[$$v\]" build-sim-hb2s/check.log; done | grep -c 'hb2s: 一致'); \
+	 n_neg=$$(for v in $(HB2S_NEG); do grep "\[$$v\]" build-sim-hb2s/check.log; done | grep -c 'hb2s: 不一致'); \
+	 if [ $$n_ok -eq $(words $(HB2S_CASES)) ] && [ $$n_neg -eq $(words $(HB2S_NEG)) ]; then echo "結果: 全部通過（一致 $$n_ok・陽性対照 $$n_neg）" | tee -a build-sim-hb2s/check.log; \
+	 else echo "結果: 失敗（一致 $$n_ok / $(words $(HB2S_CASES))・陽性対照 $$n_neg / $(words $(HB2S_NEG))）" | tee -a build-sim-hb2s/check.log; fi
+
 # 陽性対照（proj015）: G の切り替え（NS ≧ 7 で G = 5）を外す → NS 7・8 だけが落ちること
 sim-win-g:
 	$(MAKE) --no-print-directory sim-win SIM_WIN_POSCTL=g
+# 陽性対照（proj015 手順 2）: light の 2 段目の時分割の C を 1 つ大きく → 追い越しが立ち、NS 3..8 だけが落ちること
+sim-win-ts:
+	$(MAKE) --no-print-directory sim-win SIM_WIN_POSCTL=ts
 
 # wspec_core の単体の sim（溜め → FFT のモデル → 電力 → 積分・スナップショット・帳簿）。4 層の判定（sim/check_wspec.py）
 sim-wspec:
@@ -285,7 +303,7 @@ sim-wspec-r:
 
 # sim を全部並べる（iverilog は 1 本 1 コア）。成否は各 check.log の「結果: 全部通過」で読む（make の成功を信用しない）
 sim-win-all:
-	$(MAKE) --no-print-directory -j8 sim-pfb sim-ddc sim-win sim-wspec sim-pfb-p sim-ddc-p sim-wspec-p sim-wspec-r sim-win-g
+	$(MAKE) --no-print-directory -j8 sim-pfb sim-ddc sim-win sim-wspec sim-pfb-p sim-ddc-p sim-wspec-p sim-wspec-r sim-win-g sim-win-ts sim-hb2s
 	@grep -H "結果" build-sim-*/check.log
 sim-pfb-p:
 	$(MAKE) --no-print-directory sim-pfb SIM_PFB_POSCTL=1

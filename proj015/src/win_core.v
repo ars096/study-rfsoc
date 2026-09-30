@@ -24,7 +24,7 @@
 //   0x0C N_ACC     RW  1 ダンプのフレーム数（0 は 1）。RUN の時点で取り込む。1 フレーム = 4096 / W µs（256 MHz で 16 µs、8 MHz で 512 µs）
 //   0x10 N_DUMP    RW  ダンプの回数。0 = 止めるまで
 //   0x14 SHIFT     RW  [3:0] 電力の前の右シフト（FFT の出力 31 bit → 18 bit）。既定 SHIFT_DEFAULT
-//   0x18 FLAGS     R   [7:0] wspec_core の FLAGS（粘着、CTRL[8] で消す）/ [8] pfb の飽和あり / [9] ddc の飽和あり（WRST で消える）
+//   0x18 FLAGS     R   [7:0] wspec_core の FLAGS（粘着、CTRL[8] で消す）/ [8] pfb の飽和あり / [9] ddc の飽和あり / [10] ddc の時分割の追い越しあり（proj015。0 のはず）（[8]〜[10] は WRST で消える）
 //   0x1C SEQ       R   閉じたダンプの通し番号
 //   0x20 FIN_LO    R   溜め終えたフレーム数。**LO を読むと HI を固定**   0x24 FIN_HI
 //   0x28 FOUT_LO   R   FFT を出たフレーム数（同上）                       0x2C FOUT_HI
@@ -44,6 +44,7 @@
 //   0x7C WRST_CNT  R   WRST を受けた回数
 //   0x80 WS_STALL  R   FFT IP に待たされたクロック数（WRST 以来、飽和）。FLAGS[4] の量
 //   0x84 WS_RDY0   R   WRST の解除から FFT IP の s_axis_data_tready が最初に 1 になるまでのクロック数
+//   0x88 DDC_OVR   R   ddc_core の時分割の段（hb2s）の追い越しの回数（WRST 以来、飽和）。構造で起きないはずの見張り（proj015）
 //
 // **スナップショットはダンプの commit から (N_ACC − 2) フレーム以内に読む**（wspec_core の冒頭）
 
@@ -154,7 +155,7 @@ module win_core #(
     // ---- 窓の経路 ----
     wire signed [23:0] y0r, y0i, y1r, y1i;
     wire y0ok, y1ok, yv;
-    wire [15:0] pfb_sat, ddc_sat;
+    wire [15:0] pfb_sat, ddc_sat, ddc_ovr;
     pfb_core u_pfb (.clk(aclk), .rst(core_rst), .s_tdata(s_axis_tdata), .s_tvalid(s_axis_tvalid), .k(c_k),
                     .y0_re(y0r), .y0_im(y0i), .y1_re(y1r), .y1_im(y1i),
                     .y0_ok(y0ok), .y1_ok(y1ok), .y_valid(yv), .sat_cnt(pfb_sat));
@@ -162,7 +163,7 @@ module win_core #(
     wire signed [17:0] zr, zi;
     ddc_core u_ddc (.clk(aclk), .rst(core_rst), .y_valid(yv), .y0_ok(y0ok), .y1_ok(y1ok),
                     .y0_re(y0r), .y0_im(y0i), .y1_re(y1r), .y1_im(y1i),
-                    .dphi(c_dphi), .ns(c_ns), .z_valid(zv), .z_re(zr), .z_im(zi), .sat_cnt(ddc_sat));
+                    .dphi(c_dphi), .ns(c_ns), .z_valid(zv), .z_re(zr), .z_im(zi), .sat_cnt(ddc_sat), .ovr_cnt(ddc_ovr));
     wire [FW-1:0] fin, fout, run_f0, rd_f0, snap_f0, snap_f1;
     wire          sched, acc_on, rd_bank;
     wire [31:0]   seq, rd_k, rd_n, rd_sat;
@@ -201,7 +202,7 @@ module win_core #(
             6'h03: reg_rd = r_nacc;
             6'h04: reg_rd = r_ndump;
             6'h05: reg_rd = {28'd0, r_shift};
-            6'h06: reg_rd = {22'd0, ddc_sat != 16'd0, pfb_sat != 16'd0, wflags};
+            6'h06: reg_rd = {21'd0, ddc_ovr != 16'd0, ddc_sat != 16'd0, pfb_sat != 16'd0, wflags};
             6'h07: reg_rd = seq;
             6'h08: reg_rd = fin_lat[31:0];
             6'h09: reg_rd = {{(64-FW){1'b0}}, fin_lat[FW-1:32]};
@@ -229,6 +230,7 @@ module win_core #(
             6'h1F: reg_rd = wrst_n;
             6'h20: reg_rd = ws_stall;
             6'h21: reg_rd = ws_rdy0;
+            6'h22: reg_rd = {16'd0, ddc_ovr};
             default: reg_rd = 32'hDEAD_BEEF;
         endcase
     end

@@ -131,7 +131,7 @@ module tb_top;
         pause <= 1;
         repeat (100) @(posedge clk);
         axr(17'h00018); $fwrite(fm, "flags %0d\n", rv & 32'hFF);
-        $fwrite(fm, "satflags %0d\n", (rv >> 8) & 3);
+        $fwrite(fm, "satflags %0d\n", (rv >> 8) & 7);     // proj015: [10] = 時分割の追い越し
         axr(17'h00020); lo = rv; axr(17'h00028);
         $fwrite(fm, "fin %0d fout %0d\n", lo, rv);
         axr(17'h00080); $fwrite(fm, "stall %0d\n", rv);

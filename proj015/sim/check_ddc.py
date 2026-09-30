@@ -22,6 +22,14 @@ K = 5
 CASES = [(ns, d) for ns in range(1, 9) for d in (64.0, -37.81234567)]
 
 
+def rtl_ovr(path):
+    """tb が z の末尾に書いた「# sat S ovr O」から、時分割の段の追い越しの回数（proj015）。行が無ければ −1（NG にする）。"""
+    for line in open(path):
+        if line.startswith("# sat"):
+            return int(line.split()[4])
+    return -1
+
+
 def dphi_of(d):
     return F.nco_step(d)[0]
 
@@ -67,13 +75,14 @@ def check(dd, posctl):
             n = min(len(zr), len(got))
             neq = int(np.count_nonzero((got[:n, 0] != zr[:n]) | (got[:n, 1] != zi[:n])))
             ok_len = len(got) == len(zr)
-            st = "OK" if (neq == 0 and ok_len and not cnt) else "NG"
+            ovr = rtl_ovr(os.path.join(dd, f"z_ns{ns}_d{dp}_g{gap}.txt"))
+            st = "OK" if (neq == 0 and ok_len and not cnt and ovr == 0) else "NG"
             extra = ""
             if neq:
                 f0 = int(np.flatnonzero((got[:n, 0] != zr[:n]) | (got[:n, 1] != zi[:n]))[0])
                 extra = f"（最初 {f0}: RTL {tuple(int(v) for v in got[f0])} / 模型 {(int(zr[f0]), int(zi[f0]))}）"
             print(f"  NS {ns}（{WM.R0 / 2 ** ns:5.0f} MHz）d {d:+10.5f} GAP {gap}: 出力 RTL {len(got)} / 模型 {len(zr)}、"
-                  f"不一致 {neq}{extra}、模型の飽和 {cnt or 0} → {st}")
+                  f"不一致 {neq}{extra}、模型の飽和 {cnt or 0}、時分割の追い越し {ovr} → {st}")
             bad += st == "NG"
     if posctl:
         if bad:

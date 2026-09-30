@@ -14,10 +14,10 @@ module tb_ddc;
     reg [3:0]  ns = 1;
     wire zv;
     wire signed [17:0] zr, zi;
-    wire [15:0] satc;
+    wire [15:0] satc, ovrc;
     ddc_core dut (.clk(clk), .rst(rst), .y_valid(yv), .y0_ok(y0ok), .y1_ok(y1ok),
                   .y0_re(y0r), .y0_im(y0i), .y1_re(y1r), .y1_im(y1i),
-                  .dphi(dphi), .ns(ns), .z_valid(zv), .z_re(zr), .z_im(zi), .sat_cnt(satc));
+                  .dphi(dphi), .ns(ns), .z_valid(zv), .z_re(zr), .z_im(zi), .sat_cnt(satc), .ovr_cnt(ovrc));
     integer fi, fo, nb, b, gap, seed, nsv, nout, r;
     integer a0, a3;
     integer b1, b2, b4, b5;
@@ -51,7 +51,8 @@ module tb_ddc;
         @(posedge clk);
         yv <= 0;
         repeat (400) @(posedge clk);         // proj015: 60 では NS 8 の最後の 1 個が間に合わなかった（段ごとのレイテンシ × 8 段）
-        $display("ddc: NS=%0d DPHI=%0d GAP=%0d 入力 %0d ビート → 出力 %0d、飽和 %0d", nsv, dp, gap, nb, nout, satc);
+        $display("ddc: NS=%0d DPHI=%0d GAP=%0d 入力 %0d ビート → 出力 %0d、飽和 %0d、時分割の追い越し %0d", nsv, dp, gap, nb, nout, satc, ovrc);
+        $fwrite(fo, "# sat %0d ovr %0d\n", satc, ovrc);   // 照合の側が読む（np.loadtxt は # の行を飛ばす）
         $fclose(fo);
         $finish;
     end
