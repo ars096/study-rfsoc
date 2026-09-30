@@ -18,8 +18,29 @@ TAGS = [("800 MHz 帯（ゾーン 1 の 815〜845 MHz）", 1630, 1690),
         ("Wi-Fi 1 ch 2412 MHz", 3350, 3385)]
 
 
+def tag_bands(a_, b_):
+    return sorted(set(range(a_ // CPB, (b_ - 1) // CPB + 1)))
+
+
+def tag_overlaps():
+    """帯（32 ch）を共有する名前の組。帯の単位では分けられないので、同じ事象を両方で数える（2026-09-30 の夜間の記録で踏んだ）"""
+    out = []
+    for i in range(len(TAGS)):
+        for j in range(i + 1, len(TAGS)):
+            sh = sorted(set(tag_bands(*TAGS[i][1:])) & set(tag_bands(*TAGS[j][1:])))
+            if sh:
+                out.append((i, j, sh))
+    return out
+
+
 def main():
     argv = sys.argv[1:]
+    ov = tag_overlaps()
+    shared = {k for i, j, _ in ov for k in (i, j)}
+    for i, j, sh in ov:
+        print(f"注: 「{TAGS[i][0]}」と「{TAGS[j][0]}」は帯 {sh} を共有する。帯の単位では分けられず、同じ事象を両方で数える（まとめでは * を付ける）")
+    if ov:
+        print("注: BLE の広告は 3 チャネルを巡るので、BLE かどうかは帯を共有しない 2480 MHz で見る")
     nsig = float(argv[argv.index("--nsig") + 1]) if "--nsig" in argv else 8.0
     only = argv[argv.index("--ch") + 1] if "--ch" in argv else None
     skip = {i + 1 for i, a in enumerate(argv) if a in ("--nsig", "--ch")}
@@ -76,7 +97,7 @@ def main():
         row = [path, minutes]
         lev = []
         for name, a_, b_ in TAGS:
-            bs = sorted(set(range(a_ // CPB, (b_ - 1) // CPB + 1)))
+            bs = tag_bands(a_, b_)
             n = int(np.any(H[:, bs], axis=1).sum())
             row.append(n)
             # **強さそのもの**: 名前の帯の電力を、両隣 2 帯ずつ（名前の帯を除く）の平均と比べた超過。
@@ -94,12 +115,12 @@ def main():
         summary.append(row)
     print()
     print("==== まとめ（混信ありのダンプの数・1 分あたり）====")
-    print("  " + " " * 34 + " ".join(f"{t[0][:10]:>12s}" for t in TAGS))
+    print("  " + " " * 34 + " ".join(f"{('*' if k in shared else '') + t[0][:10]:>12s}" for k, t in enumerate(TAGS)))
     for r in summary:
         print(f"  {r[0]:34s}" + " ".join(f"{n:5d}（{n / r[1]:4.1f}/分）" for n in r[2:-1]))
     print()
     print("==== まとめ（両隣の帯に対する超過: 中央値 / 99 % 点。帯の形は BPF で決まるので、同じ入力の記録どうしで比べる）====")
-    print("  " + " " * 34 + " ".join(f"{t[0][:10]:>16s}" for t in TAGS))
+    print("  " + " " * 34 + " ".join(f"{('*' if k in shared else '') + t[0][:10]:>16s}" for k, t in enumerate(TAGS)))
     for r in summary:
         print(f"  {r[0]:34s}" + " ".join(f"{m * 100:+6.2f}/{q * 100:+6.2f} %" for m, q in r[-1]))
 
