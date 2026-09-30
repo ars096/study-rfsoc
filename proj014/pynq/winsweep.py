@@ -114,7 +114,8 @@ def plan_w2(c, w, n_mid, edge_step, f_grid):
         else:
             f = c + round(nu / dw) * dw
         nu2 = f - c
-        if abs(nu2) < 0.5 * w - 1e-9:
+        # 全帯域の DC と fs/2 の近く（1 MHz = 2 ch）は基準にならない（実数の FFT の端の ch、±f の像が同じ ch に重なる）ので置かない
+        if abs(nu2) < 0.5 * w - 1e-9 and 2 * DF_FULL <= f <= FS / 2 - 2 * DF_FULL:
             out.add(round(nu2 / dw))
     return [b * dw for b in sorted(out)]
 
@@ -215,6 +216,12 @@ def main():
         if a.w4:
             log(f"W-4: 模型の 2 つの k の差（中央 90 %）の最大 {np.max(np.abs(m2s[ks[0]] - m2s[ks[1]])[mid]):.4f} dB / "
                 f"中央 90 % の p-p k {ks[0]}: {np.ptp(m2s[ks[0]][mid]):.3f}・k {ks[1]}: {np.ptp(m2s[ks[1]][mid]):.3f} dB")
+        if c - 0.5 * w < 2 * DF_FULL or c + 0.5 * w > FS / 2 - 2 * DF_FULL:
+            log("W-2: 窓が DC か fs/2 から 1 MHz 以内に掛かる。そこには CW を置かない（全帯域の基準にならない）。"
+                "**実数の入力の像（−f）が窓の両端 5 % に落ちる**（中央 90 % には落ちない。模型の予言を下の W-2' に出す）")
+            _, _, nu_i, g_i = model_db(coef, c + np.array(nus2), c, w)
+            inw = np.abs(nu_i) <= 0.45 * w
+            log(f"W-2': 窓の中の CW の −f の像: 中央 90 % に落ちる最大 {g_i[inw].max() if inw.any() else -999:+.1f} dB・両端 5 % を含めた最大 {g_i[np.abs(nu_i) < 0.5 * w].max() if (np.abs(nu_i) < 0.5 * w).any() else -999:+.1f} dB")
         log(f"W-2: CW {len(nus2)} 点（{'全帯域の 0.5 MHz 格子にも揃える' if f_grid else '窓の ch の中心・全帯域は sinc² で戻す'}）。"
             f"模型の中央 90 % の p-p {np.ptp(m2[mid]):.3f} dB / 0.5W の手前 {m2[np.argmax(np.abs(nus2))]:+.2f} dB")
     if do3:

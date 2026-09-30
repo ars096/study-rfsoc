@@ -51,7 +51,7 @@ R_WS_STALL, R_WS_RDY0 = 0x80, 0x84    # rev2
 CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_WRST = 1 << 0, 1 << 1, 1 << 8, 1 << 12
 SNAP_BASE, SPEC_BASE = 0x08000, 0x10000
 FLAG_NAMES = ["XK_INDEX の飛び", "溜めの読み出しが間に合わない", "IP の TLAST 事象", "IP の入力の途切れ", "IP に待たされた（tready = 0）"]
-LINES_IF = (2560.0, 3072.0, 3584.0)
+LINES_IF = (2048.0, 2560.0, 3072.0, 3584.0, 4096.0)   # k·fs/8（2048 = fs/2・4096 = DC も ADC の線が立つ）
 
 
 def log(*a):
