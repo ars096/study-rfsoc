@@ -15,6 +15,9 @@
   - **共通の揺らぎを分ける**（実機の帯域の端で τ 30〜70 ms から R/R₀ ≒ 1.08 が出たのを受けて）: ダンプごとに窓の中央 90 % の ch の平均で割った
     g_i（帯域の電力の相対値）を出し、その揺れ g_rms（ラジオメータの分 1/√(N·ch) を引いたもの）を「共通の利得の揺らぎ」として出す。
     **判定は g_i で割った後の R_cm / R₀**（分光計の ch ごとの性質。帯域全体が一緒に揺れるのはアナログか ADC の較正の揺らぎ）。割る前の R / R₀ も出す
+  - **時間で変わる線の ch を外す**（実機の IF 4000 で、ゾーン 1 から FM 放送・航空無線・VOR が混入し、59 / 3652 ch が R > 2 だった）:
+    理想の分布（同じ N・M のガンマ分布）の 99.9 % 点を超える ch を外した平均 R_cut を、理想を同じ点で切った R₀_cut と比べる（W-5 の判定）。
+    外した ch の数（理想なら 0.1 %）と、外す前の R_cm / R₀ も出す。外した ch が 5 % を超えたら NG（窓の中が線だらけで、分光計の性質を見られない）
     ch ごとの R（割る前・後）を npz に残す（どの ch が揺れているかを IF に対して描ける）
   - 各ダンプは RUN を打ち直して独立にとる（N = 1 でもダンプの読み出しに追いつく）
 
@@ -165,8 +168,12 @@ def main():
         ifw = WN.ch_if(c, w)
         msg += (f"・ch の中央値で {med_ratio:.4f}・理想の 99.9 % 点（{thr:.2f}）を超える ch {nbig}（理想なら {0.001 * nuse:.0f}）"
                 f"・大きい ch: " + " ".join(f"IF {ifw[i]:.2f}（ゾーン 1 {4096 - ifw[i]:.2f}）{rcf[i]:.1f}" for i in top))
+        good = ~np.isnan(rcf) & (rcf <= thr)
+        R_cut = float(np.mean(rcf[good])); R0_cut = float(np.mean(simr[simr <= thr]))
+        frac = nbig / max(nuse, 1)
+        msg = (f"時間で変わる線の ch {nbig}（{frac * 100:.1f} %、理想 0.1 %）を外して R_cut/R₀ {R_cut / R0_cut:.4f}・" + msg)
         if inj:
-            judge(abs(Rc / R0 - 1) <= a.tol, "W-5: " + msg + f"（許容 ±{a.tol}）")
+            judge(abs(R_cut / R0_cut - 1) <= a.tol and frac <= 0.05, "W-5: " + msg + f"（許容 ±{a.tol}、外す ch ≦ 5 %）")
         else:
             log("  --  " + msg + f"（τ > {a.judge_max} s は判定に入れない。R > 1 は利得の揺らぎの目安）")
     judge(nsat == 0, f"W-5: 飽和したダンプ {nsat}")
