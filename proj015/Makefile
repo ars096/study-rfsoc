@@ -189,6 +189,7 @@ PFB_DIR       := build-sim-pfb$(if $(filter 1,$(SIM_PFB_POSCTL)),-posctl)
 SIM_DDC_POSCTL ?= 0
 DDC_DIR       := build-sim-ddc$(if $(filter 1,$(SIM_DDC_POSCTL)),-posctl)
 DDC_RTL       := src/nco_rom.v src/hb2.v src/pair2.v src/ddc_core.v
+WIN_DIR       := build-sim-win$(if $(filter g,$(SIM_WIN_POSCTL)),-g)
 # SIM_WSPEC_POSCTL=1: 陽性対照（RTL の積分で初回のフレームでも読み値に足す）→ A が落ちること
 # SIM_WSPEC_POSCTL=2: 陽性対照（RTL が FFT IP の tready を見ない = rev1、-DWSPEC_NOREADY）→ B が落ちること
 SIM_WSPEC_POSCTL ?= 0
@@ -200,7 +201,7 @@ WSPEC_VARS    ?= g0:4:4:4:0:5:0 g3:2:4:7:3:5:0 g32:1:3:4:32:5:0 g0r:4:4:4:0:6000
 WSPEC_NR_VARS ?= g0r:4:4:4:0:6000:0 g3s:2:4:7:3:5:40
 
 
-.PHONY: model model-posctl model-sweep fixed fixed-posctl coef sim-pfb sim-ddc sim-win sim-win-all sim-pfb-p sim-ddc-p sim-wspec sim-wspec-p sim-wspec-r sim-top survey clean
+.PHONY: model model-posctl model-sweep fixed fixed-posctl coef sim-pfb sim-ddc sim-win sim-win-g sim-win-all sim-pfb-p sim-ddc-p sim-wspec sim-wspec-p sim-wspec-r sim-top survey clean
 
 # 仕様の模型（numpy だけ。Vivado もライセンスも要らない）。成否は「結果: 全部通過」の行で読む
 model:
@@ -252,13 +253,16 @@ sim-ddc:
 
 # pfb_core → ddc_core をつないだ sim（つなぎ目の試験。8 通りの幅、NS ≦ 6 は 1 本 1 分級・NS 7・8 は 4 倍の長さ）
 sim-win:
-	mkdir -p build-sim-win
-	$(PYTHON) sim/check_win.py gen build-sim-win
-	$(IVERILOG) -g2005 -Isrc -o build-sim-win/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) sim/tb_win.v
+	mkdir -p $(WIN_DIR)
+	$(PYTHON) sim/check_win.py gen $(WIN_DIR)
+	$(IVERILOG) -g2005 -Isrc $(if $(filter g,$(SIM_WIN_POSCTL)),-DDDC_POSCTL_G) -o $(WIN_DIR)/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) sim/tb_win.v
 	$(PYTHON) sim/check_win.py cases | while read k ns dp nsamp; do \
-	  $(VVP) -n build-sim-win/tb +K=$$k +NS=$$ns +DPHI=$$dp +GAP=1 +NSAMP=$$nsamp +IN=build-sim-win/x.hex +OUT=build-sim-win/z_k$${k}_ns$${ns}.txt | grep '^win:' ; \
+	  $(VVP) -n $(WIN_DIR)/tb +K=$$k +NS=$$ns +DPHI=$$dp +GAP=1 +NSAMP=$$nsamp +IN=$(WIN_DIR)/x.hex +OUT=$(WIN_DIR)/z_k$${k}_ns$${ns}.txt | grep '^win:' ; \
 	done
-	$(PYTHON) sim/check_win.py check build-sim-win | tee build-sim-win/check.log
+	SIM_WIN_POSCTL=$(SIM_WIN_POSCTL) $(PYTHON) sim/check_win.py check $(WIN_DIR) | tee $(WIN_DIR)/check.log
+# 陽性対照（proj015）: G の切り替え（NS ≧ 7 で G = 5）を外す → NS 7・8 だけが落ちること
+sim-win-g:
+	$(MAKE) --no-print-directory sim-win SIM_WIN_POSCTL=g
 
 # wspec_core の単体の sim（溜め → FFT のモデル → 電力 → 積分・スナップショット・帳簿）。4 層の判定（sim/check_wspec.py）
 sim-wspec:
@@ -281,7 +285,7 @@ sim-wspec-r:
 
 # sim を全部並べる（iverilog は 1 本 1 コア）。成否は各 check.log の「結果: 全部通過」で読む（make の成功を信用しない）
 sim-win-all:
-	$(MAKE) --no-print-directory -j8 sim-pfb sim-ddc sim-win sim-wspec sim-pfb-p sim-ddc-p sim-wspec-p sim-wspec-r
+	$(MAKE) --no-print-directory -j8 sim-pfb sim-ddc sim-win sim-wspec sim-pfb-p sim-ddc-p sim-wspec-p sim-wspec-r sim-win-g
 	@grep -H "結果" build-sim-*/check.log
 sim-pfb-p:
 	$(MAKE) --no-print-directory sim-pfb SIM_PFB_POSCTL=1

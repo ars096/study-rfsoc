@@ -181,7 +181,11 @@ module ddc_core #(
     // ---- z = sat18(round(v / 2^(VF − G)))。G は NS で選ぶ（静的。NS は RUN の間は変えない）----
     localparam integer SHZ = VF - G;
     localparam integer SHH = VF - GH;
+`ifdef DDC_POSCTL_G
+    wire               zg  = 1'b0;               // 陽性対照: NS に依らず G（4）。NS 7・8 だけ模型と合わなくなるはず
+`else
     wire               zg  = (ns >= GNS);
+`endif
     wire signed [VW:0] zr0l = ($signed({fr[VW-1], fr}) + (1 <<< (SHZ - 1))) >>> SHZ;
     wire signed [VW:0] zi0l = ($signed({fi[VW-1], fi}) + (1 <<< (SHZ - 1))) >>> SHZ;
     wire signed [VW:0] zr0h = ($signed({fr[VW-1], fr}) + (1 <<< (SHH - 1))) >>> SHH;

@@ -55,7 +55,7 @@ module tb_win;
         end
         @(posedge clk);
         tvalid <= 0;
-        repeat (100) @(posedge clk);
+        repeat (400) @(posedge clk);         // proj015: 段が 8 段になったので余裕を（tb_ddc は 60 で NS 8 の最後の 1 個を落とした）
         $display("win: K=%0d NS=%0d DPHI=%0d GAP=%0d 入力 %0d ビート → 出力 %0d、飽和 pfb %0d / ddc %0d", kk, nsv, dp, gap, nbeat, nout, s1, s2);
         $fclose(fo);
         $finish;

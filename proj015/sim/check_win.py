@@ -48,6 +48,7 @@ def check(d):
     des = F.prepare(WM.design(60.0, WM.RIPPLE_PP))
     cfg = dict(F.DEFAULT)
     bad = 0
+    ng = []
     for k, ns, dd in CASES:
         dp = F.nco_step(dd)[0]
         cnt = {}
@@ -60,6 +61,12 @@ def check(d):
         st = "OK" if (neq == 0 and len(got) == len(zr) and not cnt) else "NG"
         print(f"  k {k} NS {ns}（{WM.R0 / 2 ** ns:4.0f} MHz）: 出力 RTL {len(got)} / 模型 {len(zr)}、不一致 {neq}、模型の飽和 {cnt or 0} → {st}")
         bad += st == "NG"
+        ng.append(ns) if st == "NG" else None
+    if os.environ.get("SIM_WIN_POSCTL", "0") == "g":
+        # 陽性対照（-DDDC_POSCTL_G: G を NS に依らず 4）: NS 7・8 だけが落ち、NS 1..6 は通ること
+        ok = sorted(ng) == [7, 8]
+        print(f"陽性対照（G の切り替えを外す）: 落ちた NS {sorted(ng)}（期待 [7, 8]）→ " + ("結果: 全部通過" if ok else "結果: 失敗"))
+        return 0 if ok else 1
     print("結果: 全部通過" if bad == 0 else f"結果: 失敗 {bad} 件")
     return 1 if bad else 0
 

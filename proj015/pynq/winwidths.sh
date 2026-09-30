@@ -8,11 +8,16 @@
 # 既定の IF の中心は、k·fs/8 の線（2560・3072・3584 MHz）が窓に入らず、粗い ch の中の位置（d）がばらけるように選んだ:
 #   128 MHz: 2900（c 1196・k 9・d +44）/ 64 MHz: 3200（c 896・k 7・d 0）/ 32 MHz: 3100（c 996・k 8・d −28）/ 16 MHz: 2950（c 1146・k 9・d −6）
 #   RFSOC_SG=<SG の宛先> sh winwidths.sh edges              帯域の端の 9 通り（20 分前後）
+#   RFSOC_SG=<SG の宛先> sh winwidths.sh narrow             4・2 MHz の 4 通り（proj015）
 # W-3 の窓の SHIFT は winsweep.py が SG を切った床から自動で選ぶ。W-5 の SHIFT は winnoise.py が選ぶ
 set -u
 CLK="--clkin 0 --ref 10"
 if [ $# -eq 0 ]; then set -- "128 2900" "64 3200" "32 3100" "16 2950"; fi
 # edges: 帯域の端（IF 2048〜4096 のうち fs/2 と DC の近く）。窓の端が DC・fs/2 に接する 4 通りと、粗い ch 0・16（DC と fs/2 の ch）を含む
+# narrow（proj015）: 4・2 MHz の窓。中央寄り 2 通り（d = +22・−36）と、DC・fs/2 の粗い ch（k = 0・16）に置く 2 通り
+if [ "$1" = "narrow" ]; then
+    set -- "4 3050" "2 2980" "4 4090" "2 2050"
+fi
 if [ "$1" = "edges" ]; then
     set -- "256 2176" "256 3968" "64 2100" "8 2100" "128 4000" "8 4000" "64 4050" "8 2052" "8 4092"
 fi
