@@ -1,0 +1,728 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: BSD-3-Clause -->
+<!-- proj014 の ddc_core の振る舞いの図解。src/ddc_core.v・hb2.v・pair2.v・nco_rom.v・win_coef.vh・README から。RTL を変えたらここも直す。応答の図は win_coef.vh の係数から、タイミングの図は各段のレジスタの数から計算して描いた -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ddc_core 図解</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* レイアウト: 1 段組の技術メモ（docs/win_chain.html と同じ色と書体）。式 → ブロック図 → 窓の位置 → タイミング → 段の表 → 原型の応答 → 約束 → 確かめ方 */
+:root {
+  --bg: #f6f7f5;
+  --panel: #ffffff;
+  --fg: #1d2421;
+  --muted: #5b6661;
+  --rule: #d5dbd7;
+  --dsp: #23795a;      /* DSP の段（ブロック図の緑） */
+  --win: #b23a2e;      /* フレーム m0・窓の流れ（赤） */
+  --axi: #2d65a8;      /* フレーム m1（青） */
+  --code-bg: #eef1ee;
+  --band: #eef2ef;
+  --pb: rgba(35, 121, 90, .10);
+  --sb: rgba(178, 58, 46, .08);
+  --warn-bg: #fbf3e4;
+  --warn-fg: #7a5410;
+  --f-body: "IBM Plex Sans JP", "Hiragino Sans", "Noto Sans CJK JP", "Yu Gothic", sans-serif;
+  --f-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151a18; --panel: #1c2320; --fg: #e3e8e5; --muted: #9aa6a0; --rule: #33403a;
+    --dsp: #5cc39a; --win: #ee7d70; --axi: #7fb0ec; --code-bg: #232c28; --band: #1f2724;
+    --pb: rgba(92, 195, 154, .12); --sb: rgba(238, 125, 112, .10); --warn-bg: #2e2716; --warn-fg: #e6c27a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151a18; --panel: #1c2320; --fg: #e3e8e5; --muted: #9aa6a0; --rule: #33403a;
+  --dsp: #5cc39a; --win: #ee7d70; --axi: #7fb0ec; --code-bg: #232c28; --band: #1f2724;
+  --pb: rgba(92, 195, 154, .12); --sb: rgba(238, 125, 112, .10); --warn-bg: #2e2716; --warn-fg: #e6c27a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 15px; line-height: 1.75; }
+.wrap { max-width: 1000px; margin: 0 auto; padding-inline: 20px; padding-block: 36px 64px; display: grid; gap: 44px; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+h1 { font-size: 30px; line-height: 1.3; margin: 0; text-wrap: balance; }
+h2 { font-size: 21px; margin: 0; text-wrap: balance; border-top: 3px solid var(--dsp); padding-top: 16px; }
+h3 { font-size: 15.5px; margin: 0; }
+p { margin: 0; max-width: 70ch; }
+.lead { color: var(--muted); max-width: 74ch; }
+code, .mono { font-family: var(--f-mono); font-size: .92em; }
+section { display: grid; gap: 16px; }
+section > * { min-width: 0; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.facts > div { background: var(--panel); padding: 12px 14px; display: grid; gap: 2px; align-content: start; }
+.facts dt { font-size: 12px; color: var(--muted); letter-spacing: .03em; }
+.facts dd { margin: 0; font-family: var(--f-mono); font-size: 14px; font-variant-numeric: tabular-nums; }
+.facts dd small { display: block; font-family: var(--f-body); font-size: 12.5px; color: var(--muted); }
+.eq { font-family: var(--f-mono); font-size: 13.5px; background: var(--code-bg); border-radius: 4px; padding: 12px 14px; overflow-x: auto; white-space: pre; line-height: 1.65; }
+.eq .c { color: var(--muted); }
+ul, ol { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+li { max-width: 70ch; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 20px; }
+.cols > * { min-width: 0; }
+.box { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; }
+.note { background: var(--warn-bg); color: var(--warn-fg); border-radius: 6px; padding: 10px 14px; font-size: 14px; max-width: 74ch; }
+figure { margin: 0; display: grid; gap: 8px; }
+figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
+.fig { overflow-x: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; }
+.fig svg { display: block; width: 100%; height: auto; }
+.fig.w1 svg { min-width: 900px; }
+.fig.w2 svg { min-width: 860px; }
+.fig.w3 svg { min-width: 900px; }
+.fig.w4 svg { min-width: 700px; }
+svg text { font-family: var(--f-body); fill: var(--fg); font-size: 13px; }
+svg .t { font-weight: 700; font-size: 13.5px; }
+svg .m, svg .ax, svg .cell { font-family: var(--f-mono); fill: var(--muted); font-size: 11.5px; }
+svg .cell { fill: var(--fg); font-size: 11px; }
+svg .clk { font-family: var(--f-mono); fill: var(--dsp); font-size: 11.5px; font-weight: 500; }
+svg .bx { fill: var(--panel); stroke: var(--dsp); stroke-width: 1.6; }
+svg .ln { stroke: var(--fg); stroke-width: 1.6; fill: none; }
+svg .ah { fill: var(--fg); }
+svg .lnd { stroke: var(--muted); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+svg .ahd { fill: var(--muted); }
+svg .beat { fill: var(--band); stroke: var(--rule); stroke-width: 1; }
+svg .beatnow { fill: var(--pb); stroke: var(--dsp); stroke-width: 1.2; }
+svg .tick { stroke: var(--muted); stroke-width: 1; }
+svg .f0 { fill: var(--win); opacity: .85; }
+svg .f1 { fill: var(--axi); opacity: .85; }
+svg .t0 { fill: var(--win); font-weight: 500; }
+svg .t1 { fill: var(--axi); font-weight: 500; }
+svg .dot { fill: var(--panel); stroke: var(--fg); stroke-width: 1.8; }
+svg .br { stroke: var(--fg); stroke-width: 1.2; fill: none; }
+svg .band { fill: var(--band); }
+svg .sig { font-family: var(--f-mono); font-size: 12px; fill: var(--fg); }
+svg .wv { stroke: var(--fg); stroke-width: 1.6; fill: none; }
+svg .cin { fill: var(--pb); stroke: var(--dsp); stroke-width: 1.2; }
+svg .cq { fill: var(--panel); stroke: var(--muted); stroke-width: 1; }
+svg .cout { fill: var(--sb); stroke: var(--win); stroke-width: 1.2; }
+svg .cout1 { fill: var(--panel); stroke: var(--axi); stroke-width: 1.2; }
+svg .cneg { fill: var(--panel); stroke: var(--rule); stroke-width: 1; stroke-dasharray: 3 2; }
+svg .cx { fill: var(--rule); stroke: var(--rule); stroke-width: 1; opacity: .7; }
+svg .lat { stroke: var(--dsp); stroke-width: 1.6; }
+svg .lath { fill: var(--dsp); }
+svg .latt { font-size: 12px; fill: var(--dsp); }
+svg .grid { stroke: var(--rule); stroke-width: 1; }
+svg .pb { fill: var(--pb); }
+svg .sb { fill: var(--sb); }
+svg .mark { stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 4 4; }
+svg .curve { stroke: var(--dsp); stroke-width: 2; fill: none; stroke-linejoin: round; }
+svg .pt { fill: var(--dsp); }
+svg .curve2 { stroke: var(--axi); stroke-width: 1.6; fill: none; stroke-dasharray: 6 4; }
+svg .lab { font-size: 12.5px; fill: var(--fg); }
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-weight: 500; color: var(--muted); font-size: 12.5px; letter-spacing: .03em; }
+td.num, th.num { text-align: right; font-family: var(--f-mono); }
+td.mono { font-family: var(--f-mono); font-size: 13px; white-space: nowrap; }
+tfoot td { font-weight: 700; border-bottom: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">proj014 · src/ddc_core.v · rev2（ID 0x0014_0200）</div>
+  <h1>ddc_core：粗い ch から窓を切り出す</h1>
+  <p class="lead">pfb_core が出す粗い ch k（複素 512 MSPS）を、NCO で窓の中心 d だけ下げて 0 に寄せ、半帯域フィルタで ÷2 を NS 回くり返して、
+  幅 W = 512 / 2<sup>NS</sup> MHz（256〜8 MHz）の複素 W MSPS にする。出口の z は 18 bit で wspec_core の 4096 点 FFT に入る。</p>
+</header>
+
+<section aria-labelledby="facts">
+  <h2 id="facts">要点</h2>
+  <dl class="facts">
+    <div><dt>入力</dt><dd>y0・y1（24 bit 複素）<small>pfb_core の出口。1 ビートに 2 フレーム</small></dd></div>
+    <div><dt>出力</dt><dd>z（18 bit 複素・Q4）<small>W MSPS。z_valid が立つときだけ</small></dd></div>
+    <div><dt>設定</dt><dd>dphi（Δ）・ns（NS）<small>WDPHI = round(d / 512 · 2^32)・WNS = 1..6。静的</small></dd></div>
+    <div><dt>NCO</dt><dd>位相 14 bit・振幅 18 bit<small>1/4 波の表 4096 語 × 2 口 × 2</small></dd></div>
+    <div><dt>半帯域</dt><dd>light 15 タップ × (NS − 1) → final 67 タップ<small>係数 18 bit・左右対称・偶数番目が 0</small></dd></div>
+    <div><dt>DSP</dt><dd>94<small>NCO 8・light 5 段 × 10・final 36（時分割なし）</small></dd></div>
+  </dl>
+</section>
+
+<section aria-labelledby="eq">
+  <h2 id="eq">仕様の式</h2>
+  <p>model/win_fixed.py の <code>ddc_fixed</code> と bit 単位で同じ。m は pfb_core のフレームの番号で、m = 0（最初の ok なフレーム）で NCO の位相が 0。</p>
+  <div class="eq"><span class="c">① NCO（窓の中心 d を 0 へ）</span>
+  v[m] = round( y[m] · (cos φ<sub>m</sub> − j sin φ<sub>m</sub>) / 2<sup>17</sup> )          <span class="c">24 bit・Q8（y と同じ小数部）</span>
+  φ<sub>m</sub> = 2π (a<sub>m</sub> + 1/2) / 2<sup>14</sup>      a<sub>m</sub> = (m·Δ mod 2<sup>32</sup>) の上位 14 bit
+  Δ = round(d / 512 · 2<sup>32</sup>)                        <span class="c">1 フレームあたりの位相の進み（512 MSPS で d MHz）</span>
+
+<span class="c">② 半帯域で ÷2（hb2。N = 4L − 1。0 でない係数は偶数番目と中心だけ）</span>
+  y[q] = Σ<sub>j=0..N−1</sub> h[j] · x[2q + j]
+       = Σ<sub>i=0..2L−1</sub> h[2i] · e[q + i] + h[2L − 1] · o[q + L − 1]      e[n] = x[2n]、o[n] = x[2n + 1]
+  対称 h[2i] = h[2(2L − 1 − i)] → 前置加算で、乗算は成分あたり L + 1 個
+
+<span class="c">③ 縦続（NS = 1..6）</span>
+  light × (NS − 1) → final × 1        W = 512 / 2<sup>NS</sup> MHz        light: L = 4（N = 15）、final: L = 17（N = 67）
+
+<span class="c">④ 出口</span>
+  z = sat18( round( v' / 2<sup>4</sup> ) )                          <span class="c">v' = final の出力（Q8）→ z は Q4（G = 4）</span></div>
+</section>
+
+<section aria-labelledby="bd">
+  <h2 id="bd">ブロック図</h2>
+  <figure>
+    <div class="fig w1">
+      <svg viewBox="0 0 1180 430" role="img" aria-label="ddc_core のブロック図。組にまとめ直し、NCO、light と pair2 の 5 段の縦続、NS − 1 で選ぶ、final、丸めて z">
+        <defs>
+          <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        </defs>
+        <g style="color: var(--fg)">
+        <!-- 1 段目: 組と NCO -->
+        <text class="t" x="12" y="72">pfb_core</text>
+        <text class="m" x="12" y="90">y0（奇 m）</text>
+        <text class="m" x="12" y="106">y1（偶 m）</text>
+        <text class="m" x="12" y="122">y_valid・y*_ok</text>
+        <line class="ln" x1="112" y1="85" x2="148" y2="85" marker-end="url(#a)"/>
+
+        <rect class="bx" x="150" y="50" width="200" height="72" rx="4"/>
+        <text class="clk" x="346" y="44" text-anchor="end">1 clk</text>
+        <text class="t" x="162" y="72">組にまとめ直す</text>
+        <text class="m" x="162" y="92">y1 を保持 → 次の y0 と</text>
+        <text class="m" x="162" y="110">（偶 m, 奇 m）＝ 1 組 / ビート</text>
+
+        <line class="ln" x1="350" y1="85" x2="378" y2="85" marker-end="url(#a)"/>
+
+        <rect class="bx" x="380" y="50" width="190" height="72" rx="4"/>
+        <text class="clk" x="566" y="44" text-anchor="end">1 clk</text>
+        <text class="t" x="392" y="72">NCO の位相</text>
+        <text class="m" x="392" y="92">θe = acc、θo = acc + Δ</text>
+        <text class="m" x="392" y="110">acc += 2Δ（32 bit）</text>
+
+        <line class="ln" x1="570" y1="85" x2="598" y2="85" marker-end="url(#a)"/>
+        <text class="m" x="584" y="78" text-anchor="middle">14b</text>
+
+        <rect class="bx" x="600" y="50" width="200" height="72" rx="4"/>
+        <text class="clk" x="796" y="44" text-anchor="end">2 clk（表・象限）</text>
+        <text class="t" x="612" y="72">1/4 波の表 × 2</text>
+        <text class="m" x="612" y="92">T[r]・T[4095 − r] を 2 口で</text>
+        <text class="m" x="612" y="110">上位 2 bit で象限 → cos・sin</text>
+
+        <line class="ln" x1="800" y1="85" x2="828" y2="85" marker-end="url(#a)"/>
+        <text class="m" x="814" y="78" text-anchor="middle">18b</text>
+
+        <rect class="bx" x="830" y="50" width="220" height="72" rx="4"/>
+        <text class="clk" x="1046" y="44" text-anchor="end">3 clk（積・和・丸め）</text>
+        <text class="t" x="842" y="72">混合 × 2（偶・奇）</text>
+        <text class="m" x="842" y="92">y · (cos φ − j sin φ)、乗算 8</text>
+        <text class="m" x="842" y="110">+2^16, &gt;&gt;&gt; 17 → 24b（Q8）</text>
+
+        <polyline class="ln" points="1050,85 1090,85 1090,150 70,150 70,204" marker-end="url(#a)"/>
+        <text class="m" x="580" y="142" text-anchor="middle">v の組 = pa[0]（1 組 / clk = 512 MSPS）。組にまとめてから v まで 7 clk</text>
+
+        <!-- 2 段目: light の縦続 -->
+        <circle cx="70" cy="215" r="4" fill="currentColor"/>
+        <text class="m" x="70" y="240" text-anchor="middle">pa[0]</text>
+        <line class="ln" x1="74" y1="215" x2="98" y2="215" marker-end="url(#a)"/>
+
+        <rect class="bx" x="100" y="185" width="140" height="60" rx="4"/>
+        <text class="t" x="112" y="206">light 1</text>
+        <text class="m" x="112" y="224">hb2 ÷2 + pair2</text>
+        <text class="clk" x="236" y="179" text-anchor="end">6 + 1</text>
+        <line class="ln" x1="240" y1="215" x2="261" y2="215"/>
+        <circle cx="265" cy="215" r="4" fill="currentColor"/>
+        <text class="m" x="265" y="240" text-anchor="middle">pa[1]</text>
+        <line class="ln" x1="269" y1="215" x2="288" y2="215" marker-end="url(#a)"/>
+
+        <rect class="bx" x="290" y="185" width="140" height="60" rx="4"/>
+        <text class="t" x="302" y="206">light 2</text>
+        <text class="m" x="302" y="224">hb2 ÷2 + pair2</text>
+        <text class="clk" x="426" y="179" text-anchor="end">6 + 1</text>
+        <line class="ln" x1="430" y1="215" x2="451" y2="215"/>
+        <circle cx="455" cy="215" r="4" fill="currentColor"/>
+        <text class="m" x="455" y="240" text-anchor="middle">pa[2]</text>
+        <line class="ln" x1="459" y1="215" x2="478" y2="215" marker-end="url(#a)"/>
+
+        <rect class="bx" x="480" y="185" width="140" height="60" rx="4"/>
+        <text class="t" x="492" y="206">light 3</text>
+        <text class="m" x="492" y="224">hb2 ÷2 + pair2</text>
+        <text class="clk" x="616" y="179" text-anchor="end">6 + 1</text>
+        <line class="ln" x1="620" y1="215" x2="641" y2="215"/>
+        <circle cx="645" cy="215" r="4" fill="currentColor"/>
+        <text class="m" x="645" y="240" text-anchor="middle">pa[3]</text>
+        <line class="ln" x1="649" y1="215" x2="668" y2="215" marker-end="url(#a)"/>
+
+        <rect class="bx" x="670" y="185" width="140" height="60" rx="4"/>
+        <text class="t" x="682" y="206">light 4</text>
+        <text class="m" x="682" y="224">hb2 ÷2 + pair2</text>
+        <text class="clk" x="806" y="179" text-anchor="end">6 + 1</text>
+        <line class="ln" x1="810" y1="215" x2="831" y2="215"/>
+        <circle cx="835" cy="215" r="4" fill="currentColor"/>
+        <text class="m" x="835" y="240" text-anchor="middle">pa[4]</text>
+        <line class="ln" x1="839" y1="215" x2="858" y2="215" marker-end="url(#a)"/>
+
+        <rect class="bx" x="860" y="185" width="140" height="60" rx="4"/>
+        <text class="t" x="872" y="206">light 5</text>
+        <text class="m" x="872" y="224">hb2 ÷2 + pair2</text>
+        <text class="clk" x="996" y="179" text-anchor="end">6 + 1</text>
+        <line class="ln" x1="1000" y1="215" x2="1021" y2="215"/>
+        <circle cx="1025" cy="215" r="4" fill="currentColor"/>
+        <text class="m" x="1025" y="240" text-anchor="middle">pa[5]</text>
+
+        <!-- 取り出し線 -->
+        <line class="lnd" x1="70"   y1="246" x2="70"   y2="290"/>
+        <line class="lnd" x1="265"  y1="246" x2="265"  y2="290"/>
+        <line class="lnd" x1="455"  y1="246" x2="455"  y2="290"/>
+        <line class="lnd" x1="645"  y1="246" x2="645"  y2="290"/>
+        <line class="lnd" x1="835"  y1="246" x2="835"  y2="290"/>
+        <line class="lnd" x1="1025" y1="246" x2="1025" y2="290"/>
+        <text class="m" x="76"   y="272">512</text>
+        <text class="m" x="271"  y="272">256</text>
+        <text class="m" x="461"  y="272">128</text>
+        <text class="m" x="651"  y="272">64</text>
+        <text class="m" x="841"  y="272">32</text>
+        <text class="m" x="1031" y="272">16 MSPS</text>
+
+        <rect class="bx" x="50" y="290" width="995" height="26" rx="4"/>
+        <text class="t" x="547" y="308" text-anchor="middle">pa[NS − 1] を選ぶ（NS = 1 なら v の組そのもの）</text>
+
+        <!-- 3 段目: final と z -->
+        <line class="ln" x1="547" y1="316" x2="547" y2="341" marker-end="url(#a)"/>
+        <rect class="bx" x="437" y="343" width="220" height="64" rx="4"/>
+        <text class="clk" x="653" y="337" text-anchor="end">6 clk</text>
+        <text class="t" x="449" y="365">final（hb2 ÷2）</text>
+        <text class="m" x="449" y="385">67 タップ・乗算 36・出力 W MSPS</text>
+
+        <line class="ln" x1="657" y1="375" x2="698" y2="375" marker-end="url(#a)"/>
+        <rect class="bx" x="700" y="343" width="220" height="64" rx="4"/>
+        <text class="clk" x="916" y="337" text-anchor="end">1 clk</text>
+        <text class="t" x="712" y="365">丸め・飽和</text>
+        <text class="m" x="712" y="385">+8, &gt;&gt;&gt; 4 → 18 bit（Q4）</text>
+
+        <line class="ln" x1="920" y1="375" x2="958" y2="375" marker-end="url(#a)"/>
+        <text class="t" x="964" y="370">z・z_valid</text>
+        <text class="m" x="964" y="388">→ wspec_core</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>light の 5 段はいつも全部動いていて、NS で final の入力だけを選ぶ（使わない段の飽和は数えない）。取り出し線の数字は、その点の複素サンプルのレート。
+    緑の数字は各段のクロック数（hb2 は入力の組から 6、pair2 は 1）。</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="ns">
+  <h2 id="ns">NS と幅</h2>
+  <div class="tbl">
+    <table>
+      <thead><tr><th class="num">NS（WNS）</th><th class="num">W [MHz]</th><th class="num">light の段</th><th class="num">final の入力 [MSPS]</th><th class="num">z の間隔</th><th class="num">1 フレーム（4096 点）</th></tr></thead>
+      <tbody>
+        <tr><td class="num">1</td><td class="num">256</td><td class="num">0</td><td class="num">512</td><td class="num">毎 clk</td><td class="num">16 µs</td></tr>
+        <tr><td class="num">2</td><td class="num">128</td><td class="num">1</td><td class="num">256</td><td class="num">2 clk</td><td class="num">32 µs</td></tr>
+        <tr><td class="num">3</td><td class="num">64</td><td class="num">2</td><td class="num">128</td><td class="num">4 clk</td><td class="num">64 µs</td></tr>
+        <tr><td class="num">4</td><td class="num">32</td><td class="num">3</td><td class="num">64</td><td class="num">8 clk</td><td class="num">128 µs</td></tr>
+        <tr><td class="num">5</td><td class="num">16</td><td class="num">4</td><td class="num">32</td><td class="num">16 clk</td><td class="num">256 µs</td></tr>
+        <tr><td class="num">6</td><td class="num">8</td><td class="num">5</td><td class="num">16</td><td class="num">32 clk</td><td class="num">512 µs</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>W &lt; 256 では z が途切れて届くので、wspec_core の FFT IP は 1 フレームに 1 クロック待たせる（FLAGS[4]・WS_STALL。W-8 で 6 通りの幅とも 17.9 ms に 1 クロックずつと確かめた）。</p>
+</section>
+
+<section aria-labelledby="pair">
+  <h2 id="pair">組にまとめ直す（タイミング）</h2>
+  <p>pfb_core は 1 ビートに（y0 = 奇 m、y1 = 偶 m）を出すが、後ろは（偶 m, 奇 m）の組で進めたい。そこで y1 を保持しておき、次の valid なビートの y0 と組にする。
+  最初の組は y1 の m = 0（q = 5）と y0 の m = 1（q = 6）で、ここで NCO の acc = 0 から始まる。途切れ（下の例のクロック 6）をまたいでも組はずれない。</p>
+  <figure>
+    <div class="fig w3">
+<svg viewBox="0 0 1032 334" role="img" aria-label="pfb_core の y1 を保持して次のビートの y0 と組にする。最初の組は (0, 1)。途切れをまたいでも組は崩れない">
+<rect class="band" x="150" y="28" width="62" height="274"/>
+<rect class="band" x="274" y="28" width="62" height="274"/>
+<rect class="band" x="398" y="28" width="62" height="274"/>
+<rect class="band" x="522" y="28" width="62" height="274"/>
+<rect class="band" x="646" y="28" width="62" height="274"/>
+<rect class="band" x="770" y="28" width="62" height="274"/>
+<rect class="band" x="894" y="28" width="62" height="274"/>
+<text class="ax" x="181.0" y="22" text-anchor="middle">0</text>
+<text class="ax" x="305.0" y="22" text-anchor="middle">2</text>
+<text class="ax" x="429.0" y="22" text-anchor="middle">4</text>
+<text class="ax" x="553.0" y="22" text-anchor="middle">6</text>
+<text class="ax" x="677.0" y="22" text-anchor="middle">8</text>
+<text class="ax" x="801.0" y="22" text-anchor="middle">10</text>
+<text class="ax" x="925.0" y="22" text-anchor="middle">12</text>
+<text class="ax" x="140" y="22" text-anchor="end">クロック</text>
+<text class="sig" x="140" y="51.0" text-anchor="end">clk</text>
+<text class="sig" x="140" y="81.0" text-anchor="end">y_valid</text>
+<text class="sig" x="140" y="111.0" text-anchor="end">y0（m）</text>
+<text class="sig" x="140" y="141.0" text-anchor="end">y1（m）</text>
+<text class="sig" x="140" y="171.0" text-anchor="end">保持 hr（m）</text>
+<text class="sig" x="140" y="201.0" text-anchor="end">pv</text>
+<text class="sig" x="140" y="231.0" text-anchor="end">組（偶, 奇）</text>
+<text class="sig" x="140" y="261.0" text-anchor="end">NCO の acc</text>
+<text class="sig" x="140" y="291.0" text-anchor="end">θe・θo</text>
+<polyline class="wv" points="150,56 150,40 181.0,40 181.0,56 212,56 212,40 243.0,40 243.0,56 274,56 274,40 305.0,40 305.0,56 336,56 336,40 367.0,40 367.0,56 398,56 398,40 429.0,40 429.0,56 460,56 460,40 491.0,40 491.0,56 522,56 522,40 553.0,40 553.0,56 584,56 584,40 615.0,40 615.0,56 646,56 646,40 677.0,40 677.0,56 708,56 708,40 739.0,40 739.0,56 770,56 770,40 801.0,40 801.0,56 832,56 832,40 863.0,40 863.0,56 894,56 894,40 925.0,40 925.0,56 956,56 956,40 987.0,40 987.0,56 1018,56"/>
+<polyline class="wv" points="150,70 522,70 522,86 584,86 584,70 1018,70"/>
+<polygon class="cneg" points="153,108.0 156,99 206,99 209,108.0 206,117 156,117"/>
+<text class="cell" x="181.0" y="112.0" text-anchor="middle">−5</text>
+<polygon class="cneg" points="215,108.0 218,99 268,99 271,108.0 268,117 218,117"/>
+<text class="cell" x="243.0" y="112.0" text-anchor="middle">−3</text>
+<polygon class="cneg" points="277,108.0 280,99 330,99 333,108.0 330,117 280,117"/>
+<text class="cell" x="305.0" y="112.0" text-anchor="middle">−1</text>
+<polygon class="cout" points="339,108.0 342,99 392,99 395,108.0 392,117 342,117"/>
+<text class="cell" x="367.0" y="112.0" text-anchor="middle">1</text>
+<polygon class="cout" points="401,108.0 404,99 454,99 457,108.0 454,117 404,117"/>
+<text class="cell" x="429.0" y="112.0" text-anchor="middle">3</text>
+<polygon class="cout" points="463,108.0 466,99 516,99 519,108.0 516,117 466,117"/>
+<text class="cell" x="491.0" y="112.0" text-anchor="middle">5</text>
+<polygon class="cx" points="525,108.0 528,99 578,99 581,108.0 578,117 528,117"/>
+<polygon class="cout" points="587,108.0 590,99 640,99 643,108.0 640,117 590,117"/>
+<text class="cell" x="615.0" y="112.0" text-anchor="middle">7</text>
+<polygon class="cout" points="649,108.0 652,99 702,99 705,108.0 702,117 652,117"/>
+<text class="cell" x="677.0" y="112.0" text-anchor="middle">9</text>
+<polygon class="cout" points="711,108.0 714,99 764,99 767,108.0 764,117 714,117"/>
+<text class="cell" x="739.0" y="112.0" text-anchor="middle">11</text>
+<polygon class="cout" points="773,108.0 776,99 826,99 829,108.0 826,117 776,117"/>
+<text class="cell" x="801.0" y="112.0" text-anchor="middle">13</text>
+<polygon class="cout" points="835,108.0 838,99 888,99 891,108.0 888,117 838,117"/>
+<text class="cell" x="863.0" y="112.0" text-anchor="middle">15</text>
+<polygon class="cout" points="897,108.0 900,99 950,99 953,108.0 950,117 900,117"/>
+<text class="cell" x="925.0" y="112.0" text-anchor="middle">17</text>
+<polygon class="cout" points="959,108.0 962,99 1012,99 1015,108.0 1012,117 962,117"/>
+<text class="cell" x="987.0" y="112.0" text-anchor="middle">19</text>
+<polygon class="cneg" points="153,138.0 156,129 206,129 209,138.0 206,147 156,147"/>
+<text class="cell" x="181.0" y="142.0" text-anchor="middle">−4</text>
+<polygon class="cneg" points="215,138.0 218,129 268,129 271,138.0 268,147 218,147"/>
+<text class="cell" x="243.0" y="142.0" text-anchor="middle">−2</text>
+<polygon class="cout1" points="277,138.0 280,129 330,129 333,138.0 330,147 280,147"/>
+<text class="cell" x="305.0" y="142.0" text-anchor="middle">0</text>
+<polygon class="cout1" points="339,138.0 342,129 392,129 395,138.0 392,147 342,147"/>
+<text class="cell" x="367.0" y="142.0" text-anchor="middle">2</text>
+<polygon class="cout1" points="401,138.0 404,129 454,129 457,138.0 454,147 404,147"/>
+<text class="cell" x="429.0" y="142.0" text-anchor="middle">4</text>
+<polygon class="cout1" points="463,138.0 466,129 516,129 519,138.0 516,147 466,147"/>
+<text class="cell" x="491.0" y="142.0" text-anchor="middle">6</text>
+<polygon class="cx" points="525,138.0 528,129 578,129 581,138.0 578,147 528,147"/>
+<polygon class="cout1" points="587,138.0 590,129 640,129 643,138.0 640,147 590,147"/>
+<text class="cell" x="615.0" y="142.0" text-anchor="middle">8</text>
+<polygon class="cout1" points="649,138.0 652,129 702,129 705,138.0 702,147 652,147"/>
+<text class="cell" x="677.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cout1" points="711,138.0 714,129 764,129 767,138.0 764,147 714,147"/>
+<text class="cell" x="739.0" y="142.0" text-anchor="middle">12</text>
+<polygon class="cout1" points="773,138.0 776,129 826,129 829,138.0 826,147 776,147"/>
+<text class="cell" x="801.0" y="142.0" text-anchor="middle">14</text>
+<polygon class="cout1" points="835,138.0 838,129 888,129 891,138.0 888,147 838,147"/>
+<text class="cell" x="863.0" y="142.0" text-anchor="middle">16</text>
+<polygon class="cout1" points="897,138.0 900,129 950,129 953,138.0 950,147 900,147"/>
+<text class="cell" x="925.0" y="142.0" text-anchor="middle">18</text>
+<polygon class="cout1" points="959,138.0 962,129 1012,129 1015,138.0 1012,147 962,147"/>
+<text class="cell" x="987.0" y="142.0" text-anchor="middle">20</text>
+<line class="wv" x1="150" x2="212" y1="168.0" y2="168.0"/>
+<polygon class="cneg" points="215,168.0 218,159 268,159 271,168.0 268,177 218,177"/>
+<text class="cell" x="243.0" y="172.0" text-anchor="middle">−4</text>
+<polygon class="cneg" points="277,168.0 280,159 330,159 333,168.0 330,177 280,177"/>
+<text class="cell" x="305.0" y="172.0" text-anchor="middle">−2</text>
+<polygon class="cq" points="339,168.0 342,159 392,159 395,168.0 392,177 342,177"/>
+<text class="cell" x="367.0" y="172.0" text-anchor="middle">0</text>
+<polygon class="cq" points="401,168.0 404,159 454,159 457,168.0 454,177 404,177"/>
+<text class="cell" x="429.0" y="172.0" text-anchor="middle">2</text>
+<polygon class="cq" points="463,168.0 466,159 516,159 519,168.0 516,177 466,177"/>
+<text class="cell" x="491.0" y="172.0" text-anchor="middle">4</text>
+<polygon class="cq" points="525,168.0 528,159 578,159 581,168.0 578,177 528,177"/>
+<text class="cell" x="553.0" y="172.0" text-anchor="middle">6</text>
+<polygon class="cq" points="587,168.0 590,159 640,159 643,168.0 640,177 590,177"/>
+<text class="cell" x="615.0" y="172.0" text-anchor="middle">6</text>
+<polygon class="cq" points="649,168.0 652,159 702,159 705,168.0 702,177 652,177"/>
+<text class="cell" x="677.0" y="172.0" text-anchor="middle">8</text>
+<polygon class="cq" points="711,168.0 714,159 764,159 767,168.0 764,177 714,177"/>
+<text class="cell" x="739.0" y="172.0" text-anchor="middle">10</text>
+<polygon class="cq" points="773,168.0 776,159 826,159 829,168.0 826,177 776,177"/>
+<text class="cell" x="801.0" y="172.0" text-anchor="middle">12</text>
+<polygon class="cq" points="835,168.0 838,159 888,159 891,168.0 888,177 838,177"/>
+<text class="cell" x="863.0" y="172.0" text-anchor="middle">14</text>
+<polygon class="cq" points="897,168.0 900,159 950,159 953,168.0 950,177 900,177"/>
+<text class="cell" x="925.0" y="172.0" text-anchor="middle">16</text>
+<polygon class="cq" points="959,168.0 962,159 1012,159 1015,168.0 1012,177 962,177"/>
+<text class="cell" x="987.0" y="172.0" text-anchor="middle">18</text>
+<polyline class="wv" points="150,206 398,206 398,190 584,190 584,206 646,206 646,190 1018,190"/>
+<line class="wv" x1="150" x2="398" y1="228.0" y2="228.0"/>
+<polygon class="cin" points="401,228.0 404,219 454,219 457,228.0 454,237 404,237"/>
+<text class="cell" x="429.0" y="232.0" text-anchor="middle">0, 1</text>
+<polygon class="cin" points="463,228.0 466,219 516,219 519,228.0 516,237 466,237"/>
+<text class="cell" x="491.0" y="232.0" text-anchor="middle">2, 3</text>
+<polygon class="cin" points="525,228.0 528,219 578,219 581,228.0 578,237 528,237"/>
+<text class="cell" x="553.0" y="232.0" text-anchor="middle">4, 5</text>
+<line class="wv" x1="584" x2="646" y1="228.0" y2="228.0"/>
+<polygon class="cin" points="649,228.0 652,219 702,219 705,228.0 702,237 652,237"/>
+<text class="cell" x="677.0" y="232.0" text-anchor="middle">6, 7</text>
+<polygon class="cin" points="711,228.0 714,219 764,219 767,228.0 764,237 714,237"/>
+<text class="cell" x="739.0" y="232.0" text-anchor="middle">8, 9</text>
+<polygon class="cin" points="773,228.0 776,219 826,219 829,228.0 826,237 776,237"/>
+<text class="cell" x="801.0" y="232.0" text-anchor="middle">10, 11</text>
+<polygon class="cin" points="835,228.0 838,219 888,219 891,228.0 888,237 838,237"/>
+<text class="cell" x="863.0" y="232.0" text-anchor="middle">12, 13</text>
+<polygon class="cin" points="897,228.0 900,219 950,219 953,228.0 950,237 900,237"/>
+<text class="cell" x="925.0" y="232.0" text-anchor="middle">14, 15</text>
+<polygon class="cin" points="959,228.0 962,219 1012,219 1015,228.0 1012,237 962,237"/>
+<text class="cell" x="987.0" y="232.0" text-anchor="middle">16, 17</text>
+<polygon class="cq" points="153,258.0 156,249 206,249 209,258.0 206,267 156,267"/>
+<text class="cell" x="181.0" y="262.0" text-anchor="middle">0</text>
+<polygon class="cq" points="215,258.0 218,249 268,249 271,258.0 268,267 218,267"/>
+<text class="cell" x="243.0" y="262.0" text-anchor="middle">0</text>
+<polygon class="cq" points="277,258.0 280,249 330,249 333,258.0 330,267 280,267"/>
+<text class="cell" x="305.0" y="262.0" text-anchor="middle">0</text>
+<polygon class="cq" points="339,258.0 342,249 392,249 395,258.0 392,267 342,267"/>
+<text class="cell" x="367.0" y="262.0" text-anchor="middle">0</text>
+<polygon class="cq" points="401,258.0 404,249 454,249 457,258.0 454,267 404,267"/>
+<text class="cell" x="429.0" y="262.0" text-anchor="middle">0</text>
+<polygon class="cq" points="463,258.0 466,249 516,249 519,258.0 516,267 466,267"/>
+<text class="cell" x="491.0" y="262.0" text-anchor="middle">2Δ</text>
+<polygon class="cq" points="525,258.0 528,249 578,249 581,258.0 578,267 528,267"/>
+<text class="cell" x="553.0" y="262.0" text-anchor="middle">4Δ</text>
+<polygon class="cq" points="587,258.0 590,249 640,249 643,258.0 640,267 590,267"/>
+<text class="cell" x="615.0" y="262.0" text-anchor="middle">6Δ</text>
+<polygon class="cq" points="649,258.0 652,249 702,249 705,258.0 702,267 652,267"/>
+<text class="cell" x="677.0" y="262.0" text-anchor="middle">6Δ</text>
+<polygon class="cq" points="711,258.0 714,249 764,249 767,258.0 764,267 714,267"/>
+<text class="cell" x="739.0" y="262.0" text-anchor="middle">8Δ</text>
+<polygon class="cq" points="773,258.0 776,249 826,249 829,258.0 826,267 776,267"/>
+<text class="cell" x="801.0" y="262.0" text-anchor="middle">10Δ</text>
+<polygon class="cq" points="835,258.0 838,249 888,249 891,258.0 888,267 838,267"/>
+<text class="cell" x="863.0" y="262.0" text-anchor="middle">12Δ</text>
+<polygon class="cq" points="897,258.0 900,249 950,249 953,258.0 950,267 900,267"/>
+<text class="cell" x="925.0" y="262.0" text-anchor="middle">14Δ</text>
+<polygon class="cq" points="959,258.0 962,249 1012,249 1015,258.0 1012,267 962,267"/>
+<text class="cell" x="987.0" y="262.0" text-anchor="middle">16Δ</text>
+<line class="wv" x1="150" x2="460" y1="288.0" y2="288.0"/>
+<polygon class="cin" points="463,288.0 466,279 516,279 519,288.0 516,297 466,297"/>
+<text class="cell" x="491.0" y="292.0" text-anchor="middle">0・Δ</text>
+<polygon class="cin" points="525,288.0 528,279 578,279 581,288.0 578,297 528,297"/>
+<text class="cell" x="553.0" y="292.0" text-anchor="middle">2Δ・3Δ</text>
+<polygon class="cin" points="587,288.0 590,279 640,279 643,288.0 640,297 590,297"/>
+<text class="cell" x="615.0" y="292.0" text-anchor="middle">4Δ・5Δ</text>
+<line class="wv" x1="646" x2="708" y1="288.0" y2="288.0"/>
+<polygon class="cin" points="711,288.0 714,279 764,279 767,288.0 764,297 714,297"/>
+<text class="cell" x="739.0" y="292.0" text-anchor="middle">6Δ・7Δ</text>
+<polygon class="cin" points="773,288.0 776,279 826,279 829,288.0 826,297 776,297"/>
+<text class="cell" x="801.0" y="292.0" text-anchor="middle">8Δ・9Δ</text>
+<polygon class="cin" points="835,288.0 838,279 888,279 891,288.0 888,297 838,297"/>
+<text class="cell" x="863.0" y="292.0" text-anchor="middle">10Δ・11Δ</text>
+<polygon class="cin" points="897,288.0 900,279 950,279 953,288.0 950,297 900,297"/>
+<text class="cell" x="925.0" y="292.0" text-anchor="middle">12Δ・13Δ</text>
+<polygon class="cin" points="959,288.0 962,279 1012,279 1015,288.0 1012,297 962,297"/>
+<text class="cell" x="987.0" y="292.0" text-anchor="middle">14Δ・15Δ</text>
+<text class="ax" x="150" y="326">m = pfb_core のフレームの番号（負 = ok でない）。組 n の位相 θe = 2nΔ（m = 2n）、θo = 2nΔ + Δ（m = 2n + 1）</text>
+</svg>
+    </div>
+    <figcaption>pv は組ができたことを示す 1 クロックの strobe。acc はそのクロックの値（更新前）で、組 n を受けたクロックの終わりに 2Δ 進む。
+    θe・θo は表を引く番地の元（1 クロック後）。組の番号と m の対応は m = 2n（偶）・2n + 1（奇）で、式の a<sub>m</sub> = m·Δ と一致する。</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="cad">
+  <h2 id="cad">段ごとの間隔（タイミング）</h2>
+  <p>NS = 3（W = 64 MHz）の例。hb2 は組を 1 つ受けるたびに 1 サンプルを出し（÷2）、pair2 が 2 サンプルを組にするので、段を進むたびに strobe の間隔が倍になる。
+  どの段も in_v が来たときだけ履歴を進めるので、間隔が一定でなくても値は変わらない。</p>
+  <figure>
+    <div class="fig w3">
+<svg viewBox="0 0 1074 304" role="img" aria-label="NS = 3（W = 64 MHz）の定常状態。NCO の組は毎クロック、light 1 の出力は毎クロック、pa[1] と light 2 は 2 クロックに 1 回、pa[2] と final と z は 4 クロックに 1 回">
+<rect class="band" x="150" y="28" width="30" height="244"/>
+<rect class="band" x="210" y="28" width="30" height="244"/>
+<rect class="band" x="270" y="28" width="30" height="244"/>
+<rect class="band" x="330" y="28" width="30" height="244"/>
+<rect class="band" x="390" y="28" width="30" height="244"/>
+<rect class="band" x="450" y="28" width="30" height="244"/>
+<rect class="band" x="510" y="28" width="30" height="244"/>
+<rect class="band" x="570" y="28" width="30" height="244"/>
+<rect class="band" x="630" y="28" width="30" height="244"/>
+<rect class="band" x="690" y="28" width="30" height="244"/>
+<rect class="band" x="750" y="28" width="30" height="244"/>
+<rect class="band" x="810" y="28" width="30" height="244"/>
+<text class="ax" x="165.0" y="22" text-anchor="middle">0</text>
+<text class="ax" x="285.0" y="22" text-anchor="middle">4</text>
+<text class="ax" x="405.0" y="22" text-anchor="middle">8</text>
+<text class="ax" x="525.0" y="22" text-anchor="middle">12</text>
+<text class="ax" x="645.0" y="22" text-anchor="middle">16</text>
+<text class="ax" x="765.0" y="22" text-anchor="middle">20</text>
+<text class="ax" x="140" y="22" text-anchor="end">クロック</text>
+<text class="sig" x="140" y="51.0" text-anchor="end">clk</text>
+<text class="sig" x="140" y="81.0" text-anchor="end">pa[0] 組</text>
+<text class="sig" x="140" y="111.0" text-anchor="end">light 1 出力</text>
+<text class="sig" x="140" y="141.0" text-anchor="end">pa[1] 組</text>
+<text class="sig" x="140" y="171.0" text-anchor="end">light 2 出力</text>
+<text class="sig" x="140" y="201.0" text-anchor="end">pa[2] 組</text>
+<text class="sig" x="140" y="231.0" text-anchor="end">final 出力</text>
+<text class="sig" x="140" y="261.0" text-anchor="end">z_valid</text>
+<polyline class="wv" points="150,56 150,40 165.0,40 165.0,56 180,56 180,40 195.0,40 195.0,56 210,56 210,40 225.0,40 225.0,56 240,56 240,40 255.0,40 255.0,56 270,56 270,40 285.0,40 285.0,56 300,56 300,40 315.0,40 315.0,56 330,56 330,40 345.0,40 345.0,56 360,56 360,40 375.0,40 375.0,56 390,56 390,40 405.0,40 405.0,56 420,56 420,40 435.0,40 435.0,56 450,56 450,40 465.0,40 465.0,56 480,56 480,40 495.0,40 495.0,56 510,56 510,40 525.0,40 525.0,56 540,56 540,40 555.0,40 555.0,56 570,56 570,40 585.0,40 585.0,56 600,56 600,40 615.0,40 615.0,56 630,56 630,40 645.0,40 645.0,56 660,56 660,40 675.0,40 675.0,56 690,56 690,40 705.0,40 705.0,56 720,56 720,40 735.0,40 735.0,56 750,56 750,40 765.0,40 765.0,56 780,56 780,40 795.0,40 795.0,56 810,56 810,40 825.0,40 825.0,56 840,56 840,40 855.0,40 855.0,56 870,56"/>
+<polyline class="wv" points="150,70 870,70"/>
+<polyline class="wv" points="150,100 870,100"/>
+<polyline class="wv" points="150,146 180,146 180,130 210,130 210,146 240,146 240,130 270,130 270,146 300,146 300,130 330,130 330,146 360,146 360,130 390,130 390,146 420,146 420,130 450,130 450,146 480,146 480,130 510,130 510,146 540,146 540,130 570,130 570,146 600,146 600,130 630,130 630,146 660,146 660,130 690,130 690,146 720,146 720,130 750,130 750,146 780,146 780,130 810,130 810,146 840,146 840,130 870,130"/>
+<polyline class="wv" points="150,176 180,176 180,160 210,160 210,176 240,176 240,160 270,160 270,176 300,176 300,160 330,160 330,176 360,176 360,160 390,160 390,176 420,176 420,160 450,160 450,176 480,176 480,160 510,160 510,176 540,176 540,160 570,160 570,176 600,176 600,160 630,160 630,176 660,176 660,160 690,160 690,176 720,176 720,160 750,160 750,176 780,176 780,160 810,160 810,176 840,176 840,160 870,160"/>
+<polyline class="wv" points="150,206 270,206 270,190 300,190 300,206 390,206 390,190 420,190 420,206 510,206 510,190 540,190 540,206 630,206 630,190 660,190 660,206 750,206 750,190 780,190 780,206 870,206"/>
+<polyline class="wv" points="150,236 210,236 210,220 240,220 240,236 330,236 330,220 360,220 360,236 450,236 450,220 480,220 480,236 570,236 570,220 600,220 600,236 690,236 690,220 720,220 720,236 810,236 810,220 840,220 840,236 870,236"/>
+<polyline class="wv" points="150,266 240,266 240,250 270,250 270,266 360,266 360,250 390,250 390,266 480,266 480,250 510,250 510,266 600,266 600,250 630,250 630,266 720,266 720,250 750,250 750,266 840,266 840,250 870,250"/>
+<text class="ax" x="882" y="81.0">512 MSPS（1 組 / clk）</text>
+<text class="ax" x="882" y="111.0">256 MSPS</text>
+<text class="ax" x="882" y="141.0">256 MSPS（1 組 / 2 clk）</text>
+<text class="ax" x="882" y="171.0">128 MSPS</text>
+<text class="ax" x="882" y="201.0">128 MSPS（1 組 / 4 clk）</text>
+<text class="ax" x="882" y="231.0">64 MSPS = W</text>
+<text class="ax" x="882" y="261.0">64 MSPS</text>
+<text class="ax" x="150" y="296">途中の 24 クロック（起動の後）。strobe の位相は各段のレイテンシ（hb2 6・pair2 1・z 1）で決まる一例。値の流れは valid が来た時だけ進む</text>
+</svg>
+    </div>
+    <figcaption>右の数字はその点の複素サンプルのレート（組の場合はサンプル数で数えた値）。z は 4 クロックに 1 個 = 64 MSPS = W。</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="nco">
+  <h2 id="nco">NCO の中身</h2>
+  <div class="cols">
+    <div class="box">
+      <h3>表の引き方</h3>
+      <ul>
+        <li>番地 a（14 bit）の上位 2 bit が象限、下位 12 bit が r</li>
+        <li>表は T[r] = round(131071 · sin(2π(r + 1/2) / 2<sup>14</sup>))、r = 0..4095</li>
+        <li>2 口で T[r] と T[4095 − r] を同時に引き、象限で入れ替えと符号を決める</li>
+        <li>半番地ずらし（+1/2）なので sin = 0 の番地がなく、4 象限が完全に対称</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>象限の割り当て</h3>
+      <div class="tbl">
+        <table>
+          <thead><tr><th>象限</th><th>sin</th><th>cos</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">0</td><td class="mono">T[r]</td><td class="mono">T[4095 − r]</td></tr>
+            <tr><td class="mono">1</td><td class="mono">T[4095 − r]</td><td class="mono">−T[r]</td></tr>
+            <tr><td class="mono">2</td><td class="mono">−T[r]</td><td class="mono">−T[4095 − r]</td></tr>
+            <tr><td class="mono">3</td><td class="mono">−T[4095 − r]</td><td class="mono">T[r]</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="box">
+      <h3>周波数と位相</h3>
+      <ul>
+        <li>Δ は 32 bit。周波数の刻みは 512 / 2<sup>32</sup> MHz ≒ 0.12 Hz</li>
+        <li>表を引くのは上位 14 bit。位相の切り捨てのスプリアスの見当は −6.02 × 14 ≒ −84 dBc</li>
+        <li>d = ±64（粗い ch の境目）は Δ = ±2<sup>29</sup> で、番地の下位がいつも 0</li>
+        <li>偶と奇で表を 1 組ずつ持つ（2 組 × 2 口）。1 組 / クロックで回せる</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="rs">
+  <h2 id="rs">半帯域の縦続の応答</h2>
+  <p>出口のレートは W なので、窓の中心から ν の成分には ν ± W, ± 2W … が折り返してくる。使うのは中央 90 %（|ν| ≦ 0.45W）なので、
+  そこへ落ちる 0.55W〜1.45W を final で落とす。light の各段は、自分の入力レートの 0.1125 倍まで平らで（0.0017 dB p-p）、0.3875 倍より外を 80 dB 落とす。
+  その外（粗い ch の外）は pfb_core の阻止域の受け持ち。</p>
+  <figure>
+    <div class="fig w4">
+<svg viewBox="0 0 960 318" role="img" aria-label="半帯域の縦続の振幅。0.45W まで 0.02 dB 以内で平ら、0.5W で −6 dB、0.55W から 1.45W まで 60.9 dB 以上落ちる。NS = 1 と 6 でほぼ重なる">
+<rect class="pb" x="64.0" y="24" width="258.0" height="240"/>
+<rect class="sb" x="379.3" y="24" width="516.0" height="240"/>
+<line class="grid" x1="64" x2="924" y1="24.0" y2="24.0"/>
+<text class="ax" x="56" y="28.0" text-anchor="end">0</text>
+<line class="grid" x1="64" x2="924" y1="72.0" y2="72.0"/>
+<text class="ax" x="56" y="76.0" text-anchor="end">-20</text>
+<line class="grid" x1="64" x2="924" y1="120.0" y2="120.0"/>
+<text class="ax" x="56" y="124.0" text-anchor="end">-40</text>
+<line class="grid" x1="64" x2="924" y1="168.0" y2="168.0"/>
+<text class="ax" x="56" y="172.0" text-anchor="end">-60</text>
+<line class="grid" x1="64" x2="924" y1="216.0" y2="216.0"/>
+<text class="ax" x="56" y="220.0" text-anchor="end">-80</text>
+<line class="grid" x1="64" x2="924" y1="264.0" y2="264.0"/>
+<text class="ax" x="56" y="268.0" text-anchor="end">-100</text>
+<line class="grid" x1="64.0" x2="64.0" y1="24" y2="264"/>
+<line class="grid" x1="207.3" x2="207.3" y1="24" y2="264"/>
+<line class="grid" x1="322.0" x2="322.0" y1="24" y2="264"/>
+<line class="grid" x1="350.7" x2="350.7" y1="24" y2="264"/>
+<line class="grid" x1="379.3" x2="379.3" y1="24" y2="264"/>
+<line class="grid" x1="494.0" x2="494.0" y1="24" y2="264"/>
+<line class="grid" x1="637.3" x2="637.3" y1="24" y2="264"/>
+<line class="grid" x1="780.7" x2="780.7" y1="24" y2="264"/>
+<line class="grid" x1="895.3" x2="895.3" y1="24" y2="264"/>
+<line class="grid" x1="924.0" x2="924.0" y1="24" y2="264"/>
+<text class="ax" x="64.0" y="282" text-anchor="middle">0</text>
+<text class="ax" x="207.3" y="282" text-anchor="middle">0.25</text>
+<text class="ax" x="350.7" y="282" text-anchor="middle">0.5</text>
+<text class="ax" x="494.0" y="282" text-anchor="middle">0.75</text>
+<text class="ax" x="637.3" y="282" text-anchor="middle">1</text>
+<text class="ax" x="780.7" y="282" text-anchor="middle">1.25</text>
+<text class="ax" x="924.0" y="282" text-anchor="middle">1.5</text>
+<text class="ax" x="494.0" y="304" text-anchor="middle">窓の中心からの周波数 / W</text>
+<text class="ax" x="16" y="144.0" text-anchor="middle" transform="rotate(-90 16 144.0)">利得 [dB]</text>
+<line class="mark" x1="350.7" x2="350.7" y1="24" y2="264"/>
+<line class="mark" x1="637.3" x2="637.3" y1="24" y2="264"/>
+<polyline class="curve2" points="64.0,24.0 64.6,24.0 65.1,24.0 65.7,24.0 66.3,24.0 66.9,24.0 67.4,24.0 68.0,24.0 68.6,24.0 69.2,24.0 69.7,24.0 70.3,24.0 70.9,24.0 71.5,24.0 72.0,24.0 72.6,24.0 73.2,24.0 73.7,24.0 74.3,24.0 74.9,24.0 75.5,24.0 76.0,24.0 76.6,24.0 77.2,24.0 77.8,24.0 78.3,24.0 78.9,24.0 79.5,24.0 80.1,24.0 80.6,24.0 81.2,24.0 81.8,24.0 82.3,24.0 82.9,24.0 83.5,24.0 84.1,24.0 84.6,24.0 85.2,24.0 85.8,24.0 86.4,24.0 86.9,24.0 87.5,24.0 88.1,24.0 88.7,24.0 89.2,24.0 89.8,24.0 90.4,24.0 90.9,24.0 91.5,24.0 92.1,24.0 92.7,24.0 93.2,24.0 93.8,24.0 94.4,24.0 95.0,24.0 95.5,24.0 96.1,24.0 96.7,24.0 97.3,24.0 97.8,24.0 98.4,24.0 99.0,24.0 99.5,24.0 100.1,24.0 100.7,24.0 101.3,24.0 101.8,24.0 102.4,24.0 103.0,24.0 103.6,24.0 104.1,24.0 104.7,24.0 105.3,24.0 105.9,24.0 106.4,24.0 107.0,24.0 107.6,24.0 108.1,24.0 108.7,24.0 109.3,24.0 109.9,24.0 110.4,24.0 111.0,24.0 111.6,24.0 112.2,24.0 112.7,24.0 113.3,24.0 113.9,24.0 114.5,24.0 115.0,24.0 115.6,24.0 116.2,24.0 116.7,24.0 117.3,24.0 117.9,24.0 118.5,24.0 119.0,24.0 119.6,24.0 120.2,24.0 120.8,24.0 121.3,24.0 121.9,24.0 122.5,24.0 123.1,24.0 123.6,24.0 124.2,24.0 124.8,24.0 125.3,24.0 125.9,24.0 126.5,24.0 127.1,24.0 127.6,24.0 128.2,24.0 128.8,24.0 129.4,24.0 129.9,24.0 130.5,24.0 131.1,24.0 131.7,24.0 132.2,24.0 132.8,24.0 133.4,24.0 133.9,24.0 134.5,24.0 135.1,24.0 135.7,24.0 136.2,24.0 136.8,24.0 137.4,24.0 138.0,24.0 138.5,24.0 139.1,24.0 139.7,24.0 140.3,24.0 140.8,24.0 141.4,24.0 142.0,24.0 142.5,24.0 143.1,24.0 143.7,24.0 144.3,24.0 144.8,24.0 145.4,24.0 146.0,24.0 146.6,24.0 147.1,24.0 147.7,24.0 148.3,24.0 148.9,24.0 149.4,24.0 150.0,24.0 150.6,24.0 151.1,24.0 151.7,24.0 152.3,24.0 152.9,24.0 153.4,24.0 154.0,24.0 154.6,24.0 155.2,24.0 155.7,24.0 156.3,24.0 156.9,24.0 157.5,24.0 158.0,24.0 158.6,24.0 159.2,24.0 159.7,24.0 160.3,24.0 160.9,24.0 161.5,24.0 162.0,24.0 162.6,24.0 163.2,24.0 163.8,24.0 164.3,24.0 164.9,24.0 165.5,24.0 166.1,24.0 166.6,24.0 167.2,24.0 167.8,24.0 168.3,24.0 168.9,24.0 169.5,24.0 170.1,24.0 170.6,24.0 171.2,24.0 171.8,24.0 172.4,24.0 172.9,24.0 173.5,24.0 174.1,24.0 174.7,24.0 175.2,24.0 175.8,24.0 176.4,24.0 176.9,24.0 177.5,24.0 178.1,24.0 178.7,24.0 179.2,24.0 179.8,24.0 180.4,24.0 181.0,24.0 181.5,24.0 182.1,24.0 182.7,24.0 183.3,24.0 183.8,24.0 184.4,24.0 185.0,24.0 185.5,24.0 186.1,24.0 186.7,24.0 187.3,24.0 187.8,24.0 188.4,24.0 189.0,24.0 189.6,24.0 190.1,24.0 190.7,24.0 191.3,24.0 191.9,24.0 192.4,24.0 193.0,24.0 193.6,24.0 194.1,24.0 194.7,24.0 195.3,24.0 195.9,24.0 196.4,24.0 197.0,24.0 197.6,24.0 198.2,24.0 198.7,24.0 199.3,24.0 199.9,24.0 200.5,24.0 201.0,24.0 201.6,24.0 202.2,24.0 202.7,24.0 203.3,24.0 203.9,24.0 204.5,24.0 205.0,24.0 205.6,24.0 206.2,24.0 206.8,24.0 207.3,24.0 207.9,24.0 208.5,24.0 209.1,24.0 209.6,24.0 210.2,24.0 210.8,24.0 211.3,24.0 211.9,24.0 212.5,24.0 213.1,24.0 213.6,24.0 214.2,24.0 214.8,24.0 215.4,24.0 215.9,24.0 216.5,24.0 217.1,24.0 217.7,24.0 218.2,24.0 218.8,24.0 219.4,24.0 219.9,24.0 220.5,24.0 221.1,24.0 221.7,24.0 222.2,24.0 222.8,24.0 223.4,24.0 224.0,24.0 224.5,24.0 225.1,24.0 225.7,24.0 226.3,24.0 226.8,24.0 227.4,24.0 228.0,24.0 228.5,24.0 229.1,24.0 229.7,24.0 230.3,24.0 230.8,24.0 231.4,24.0 232.0,24.0 232.6,24.0 233.1,24.0 233.7,24.0 234.3,24.0 234.9,24.0 235.4,24.0 236.0,24.0 236.6,24.0 237.1,24.0 237.7,24.0 238.3,24.0 238.9,24.0 239.4,24.0 240.0,24.0 240.6,24.0 241.2,24.0 241.7,24.0 242.3,24.0 242.9,24.0 243.5,24.0 244.0,24.0 244.6,24.0 245.2,24.0 245.7,24.0 246.3,24.0 246.9,24.0 247.5,24.0 248.0,24.0 248.6,24.0 249.2,24.0 249.8,24.0 250.3,24.0 250.9,24.0 251.5,24.0 252.1,24.0 252.6,24.0 253.2,24.0 253.8,24.0 254.3,24.0 254.9,24.0 255.5,24.0 256.1,24.0 256.6,24.0 257.2,24.0 257.8,24.0 258.4,24.0 258.9,24.0 259.5,24.0 260.1,24.0 260.7,24.0 261.2,24.0 261.8,24.0 262.4,24.0 262.9,24.0 263.5,24.0 264.1,24.0 264.7,24.0 265.2,24.0 265.8,24.0 266.4,24.0 267.0,24.0 267.5,24.0 268.1,24.0 268.7,24.0 269.3,24.0 269.8,24.0 270.4,24.0 271.0,24.0 271.5,24.0 272.1,24.0 272.7,24.0 273.3,24.0 273.8,24.0 274.4,24.0 275.0,24.0 275.6,24.0 276.1,24.0 276.7,24.0 277.3,24.0 277.9,24.0 278.4,24.0 279.0,24.0 279.6,24.0 280.1,24.0 280.7,24.0 281.3,24.0 281.9,24.0 282.4,24.0 283.0,24.0 283.6,24.0 284.2,24.0 284.7,24.0 285.3,24.0 285.9,24.0 286.5,24.0 287.0,24.0 287.6,24.0 288.2,24.0 288.7,24.0 289.3,24.0 289.9,24.0 290.5,24.0 291.0,24.0 291.6,24.0 292.2,24.0 292.8,24.0 293.3,24.0 293.9,24.0 294.5,24.0 295.1,24.0 295.6,24.0 296.2,24.0 296.8,24.0 297.3,24.0 297.9,24.0 298.5,24.0 299.1,24.0 299.6,24.0 300.2,24.0 300.8,24.0 301.4,24.0 301.9,24.0 302.5,24.0 303.1,24.0 303.7,24.0 304.2,24.0 304.8,24.0 305.4,24.0 305.9,24.0 306.5,24.0 307.1,24.0 307.7,24.0 308.2,24.0 308.8,24.0 309.4,24.0 310.0,24.0 310.5,24.0 311.1,24.0 311.7,24.0 312.3,24.0 312.8,24.0 313.4,24.0 314.0,24.0 314.5,24.0 315.1,24.0 315.7,24.0 316.3,24.0 316.8,24.0 317.4,24.0 318.0,24.0 318.6,24.0 319.1,24.0 319.7,24.0 320.3,24.0 320.9,24.0 321.4,24.0 322.0,24.0 322.6,24.0 323.1,24.1 323.7,24.1 324.3,24.1 324.9,24.1 325.4,24.2 326.0,24.2 326.6,24.3 327.2,24.3 327.7,24.4 328.3,24.5 328.9,24.5 329.5,24.6 330.0,24.7 330.6,24.8 331.2,25.0 331.7,25.1 332.3,25.2 332.9,25.4 333.5,25.5 334.0,25.7 334.6,25.9 335.2,26.1 335.8,26.3 336.3,26.5 336.9,26.8 337.5,27.0 338.1,27.3 338.6,27.6 339.2,27.9 339.8,28.2 340.3,28.6 340.9,28.9 341.5,29.3 342.1,29.7 342.6,30.2 343.2,30.6 343.8,31.1 344.4,31.5 344.9,32.1 345.5,32.6 346.1,33.1 346.7,33.7 347.2,34.3 347.8,35.0 348.4,35.6 348.9,36.3 349.5,37.0 350.1,37.7 350.7,38.5 351.2,39.3 351.8,40.1 352.4,41.0 353.0,41.8 353.5,42.8 354.1,43.7 354.7,44.7 355.3,45.7 355.8,46.7 356.4,47.8 357.0,49.0 357.5,50.1 358.1,51.3 358.7,52.6 359.3,53.9 359.8,55.2 360.4,56.6 361.0,58.0 361.6,59.5 362.1,61.0 362.7,62.6 363.3,64.2 363.9,65.9 364.4,67.6 365.0,69.4 365.6,71.3 366.1,73.3 366.7,75.3 367.3,77.4 367.9,79.6 368.4,81.8 369.0,84.2 369.6,86.6 370.2,89.2 370.7,91.9 371.3,94.7 371.9,97.7 372.5,100.8 373.0,104.1 373.6,107.5 374.2,111.2 374.7,115.2 375.3,119.4 375.9,124.0 376.5,129.1 377.0,134.7 377.6,141.1 378.2,148.6 378.8,157.8 379.3,170.3 379.9,192.3 380.5,209.8 381.1,184.1 381.6,175.9 382.2,172.2 382.8,170.8 383.3,170.9 383.9,172.4 384.5,175.0 385.1,179.1 385.6,185.2 386.2,194.7 386.8,213.7 387.4,228.9 387.9,200.2 388.5,189.2 389.1,182.6 389.7,178.2 390.2,175.2 390.8,173.0 391.4,171.7 391.9,170.9 392.5,170.7 393.1,171.0 393.7,171.7 394.2,173.1 394.8,174.9 395.4,177.5 396.0,180.9 396.5,185.5 397.1,191.9 397.7,201.7 398.3,221.7 398.8,231.8 399.4,205.2 400.0,194.2 400.5,187.3 401.1,182.5 401.7,178.9 402.3,176.2 402.8,174.1 403.4,172.6 404.0,171.5 404.6,170.9 405.1,170.6 405.7,170.6 406.3,171.0 406.9,171.7 407.4,172.8 408.0,174.4 408.6,176.4 409.1,178.9 409.7,182.2 410.3,186.5 410.9,192.3 411.4,200.8 412.0,215.9 412.6,264.0 413.2,213.1 413.7,199.5 414.3,191.6 414.9,186.2 415.5,182.1 416.0,179.0 416.6,176.6 417.2,174.7 417.7,173.2 418.3,172.1 418.9,171.4 419.5,171.0 420.0,170.9 420.6,171.0 421.2,171.5 421.8,172.3 422.3,173.4 422.9,174.9 423.5,176.8 424.1,179.2 424.6,182.3 425.2,186.2 425.8,191.4 426.3,198.7 426.9,210.5 427.5,241.3 428.1,223.1 428.6,204.9 429.2,195.5 429.8,189.2 430.4,184.6 430.9,181.1 431.5,178.4 432.1,176.2 432.7,174.5 433.2,173.1 433.8,172.1 434.4,171.4 434.9,171.0 435.5,170.9 436.1,171.0 436.7,171.4 437.2,172.1 437.8,173.1 438.4,174.4 439.0,176.0 439.5,178.1 440.1,180.8 440.7,184.1 441.3,188.4 441.8,194.0 442.4,202.3 443.0,216.5 443.5,264.0 444.1,217.0 444.7,202.6 445.3,194.3 445.8,188.6 446.4,184.4 447.0,181.1 447.6,178.5 448.1,176.4 448.7,174.7 449.3,173.4 449.9,172.4 450.4,171.7 451.0,171.3 451.6,171.2 452.1,171.3 452.7,171.6 453.3,172.3 453.9,173.2 454.4,174.4 455.0,175.9 455.6,177.9 456.2,180.3 456.7,183.4 457.3,187.2 457.9,192.3 458.5,199.2 459.0,210.2 459.6,235.5 460.2,228.9 460.7,208.1 461.3,198.1 461.9,191.5 462.5,186.7 463.0,183.1 463.6,180.2 464.2,177.9 464.8,176.0 465.3,174.5 465.9,173.4 466.5,172.6 467.1,172.0 467.6,171.7 468.2,171.6 468.8,171.8 469.3,172.3 469.9,173.0 470.5,173.9 471.1,175.2 471.6,176.9 472.2,178.9 472.8,181.4 473.4,184.6 473.9,188.6 474.5,193.8 475.1,201.1 475.7,212.9 476.2,243.7 476.8,225.6 477.4,207.3 477.9,197.9 478.5,191.7 479.1,187.1 479.7,183.5 480.2,180.7 480.8,178.4 481.4,176.6 482.0,175.2 482.5,174.1 483.1,173.3 483.7,172.7 484.3,172.4 484.8,172.4 485.4,172.6 486.0,173.0 486.5,173.7 487.1,174.7 487.7,176.0 488.3,177.6 488.8,179.6 489.4,182.1 490.0,185.2 490.6,189.2 491.1,194.3 491.7,201.5 492.3,212.8 492.9,240.6 493.4,228.5 494.0,209.0 494.6,199.3 495.1,192.9 495.7,188.2 496.3,184.6 496.9,181.7 497.4,179.4 498.0,177.6 498.6,176.1 499.2,175.0 499.7,174.1 500.3,173.6 500.9,173.2 501.5,173.2 502.0,173.3 502.6,173.7 503.2,174.4 503.7,175.3 504.3,176.6 504.9,178.1 505.5,180.1 506.0,182.5 506.6,185.5 507.2,189.3 507.8,194.2 508.3,200.9 508.9,211.3 509.5,233.6 510.1,235.3 510.6,211.9 511.2,201.3 511.8,194.5 512.3,189.6 512.9,185.8 513.5,182.9 514.1,180.5 514.6,178.5 515.2,177.0 515.8,175.8 516.4,174.9 516.9,174.2 517.5,173.8 518.1,173.6 518.7,173.7 519.2,174.0 519.8,174.6 520.4,175.4 520.9,176.5 521.5,177.9 522.1,179.7 522.7,181.9 523.2,184.6 523.8,187.9 524.4,192.2 525.0,197.8 525.5,205.9 526.1,219.6 526.7,264.0 527.3,222.3 527.8,207.3 528.4,198.8 529.0,193.1 529.5,188.7 530.1,185.4 530.7,182.7 531.3,180.5 531.8,178.8 532.4,177.4 533.0,176.4 533.6,175.6 534.1,175.1 534.7,174.8 535.3,174.8 535.9,175.0 536.4,175.4 537.0,176.1 537.6,177.1 538.1,178.3 538.7,179.9 539.3,181.8 539.9,184.3 540.4,187.3 541.0,191.1 541.6,196.0 542.2,202.7 542.7,213.0 543.3,234.7 543.9,238.2 544.5,214.2 545.0,203.5 545.6,196.6 546.2,191.7 546.7,187.9 547.3,184.9 547.9,182.5 548.5,180.6 549.0,179.0 549.6,177.8 550.2,176.9 550.8,176.2 551.3,175.8 551.9,175.6 552.5,175.7 553.1,176.0 553.6,176.5 554.2,177.3 554.8,178.4 555.3,179.8 555.9,181.4 556.5,183.5 557.1,186.1 557.6,189.3 558.2,193.4 558.8,198.6 559.4,206.0 559.9,217.9 560.5,249.1 561.1,230.4 561.7,212.2 562.2,202.8 562.8,196.6 563.4,192.0 563.9,188.5 564.5,185.6 565.1,183.4 565.7,181.6 566.2,180.1 566.8,179.0 567.4,178.2 568.0,177.6 568.5,177.3 569.1,177.2 569.7,177.3 570.3,177.7 570.8,178.3 571.4,179.2 572.0,180.3 572.5,181.8 573.1,183.6 573.7,185.9 574.3,188.6 574.8,192.1 575.4,196.5 576.0,202.3 576.6,210.7 577.1,225.4 577.7,264.0 578.3,224.4 578.9,210.4 579.4,202.3 580.0,196.7 580.6,192.4 581.1,189.2 581.7,186.6 582.3,184.5 582.9,182.8 583.4,181.4 584.0,180.4 584.6,179.7 585.2,179.2 585.7,178.9 586.3,178.9 586.9,179.2 587.5,179.6 588.0,180.4 588.6,181.3 589.2,182.6 589.7,184.2 590.3,186.2 590.9,188.6 591.5,191.6 592.0,195.4 592.6,200.3 593.2,207.0 593.8,217.2 594.3,238.4 594.9,243.8 595.5,219.1 596.1,208.3 596.6,201.4 597.2,196.4 597.8,192.7 598.3,189.7 598.9,187.3 599.5,185.3 600.1,183.8 600.6,182.6 601.2,181.7 601.8,181.0 602.4,180.6 602.9,180.5 603.5,180.5 604.1,180.8 604.7,181.4 605.2,182.2 605.8,183.2 606.4,184.6 606.9,186.3 607.5,188.3 608.1,190.9 608.7,194.0 609.2,198.0 609.8,203.2 610.4,210.3 611.0,221.6 611.5,248.2 612.1,238.6 612.7,218.6 613.3,208.8 613.8,202.4 614.4,197.7 615.0,194.1 615.5,191.2 616.1,188.9 616.7,187.1 617.3,185.6 617.8,184.5 618.4,183.6 619.0,183.0 619.6,182.7 620.1,182.6 620.7,182.7 621.3,183.1 621.9,183.7 622.4,184.6 623.0,185.7 623.6,187.1 624.1,188.9 624.7,191.1 625.3,193.8 625.9,197.2 626.4,201.4 627.0,207.0 627.6,214.9 628.2,228.1 628.7,264.0 629.3,233.4 629.9,217.8 630.5,209.1 631.0,203.2 631.6,198.9 632.2,195.5 632.7,192.8 633.3,190.7 633.9,188.9 634.5,187.6 635.0,186.5 635.6,185.7 636.2,185.2 636.8,185.0 637.3,184.9 637.9,185.1 638.5,185.6 639.1,186.2 639.6,187.2 640.2,188.4 640.8,189.9 641.3,191.8 641.9,194.1 642.5,197.0 643.1,200.5 643.6,205.1 644.2,211.1 644.8,219.9 645.4,235.7 645.9,264.0 646.5,230.8 647.1,217.7 647.7,210.0 648.2,204.6 648.8,200.5 649.4,197.3 649.9,194.8 650.5,192.7 651.1,191.1 651.7,189.8 652.2,188.9 652.8,188.2 653.4,187.7 654.0,187.5 654.5,187.6 655.1,187.8 655.7,188.3 656.3,189.1 656.8,190.1 657.4,191.4 658.0,193.0 658.5,195.0 659.1,197.5 659.7,200.5 660.3,204.3 660.8,209.2 661.4,215.8 662.0,225.8 662.6,245.9 663.1,255.7 663.7,229.2 664.3,218.1 664.9,211.1 665.4,206.1 666.0,202.3 666.6,199.4 667.1,197.0 667.7,195.1 668.3,193.5 668.9,192.4 669.4,191.5 670.0,190.8 670.6,190.5 671.2,190.3 671.7,190.4 672.3,190.8 672.9,191.3 673.5,192.2 674.0,193.2 674.6,194.6 675.2,196.3 675.7,198.4 676.3,201.0 676.9,204.2 677.5,208.1 678.0,213.3 678.6,220.3 679.2,231.3 679.8,256.2 680.3,251.0 680.9,229.9 681.5,219.9 682.1,213.3 682.6,208.6 683.2,205.0 683.8,202.2 684.3,199.9 684.9,198.1 685.5,196.7 686.1,195.6 686.6,194.8 687.2,194.2 687.8,193.9 688.4,193.9 688.9,194.0 689.5,194.5 690.1,195.1 690.7,196.0 691.2,197.2 691.8,198.7 692.4,200.6 692.9,202.9 693.5,205.6 694.1,209.1 694.7,213.5 695.2,219.3 695.8,227.5 696.4,241.7 697.0,264.0 697.5,243.1 698.1,228.6 698.7,220.3 699.3,214.7 699.8,210.5 700.4,207.2 701.0,204.6 701.5,202.5 702.1,200.9 702.7,199.6 703.3,198.6 703.8,197.9 704.4,197.5 705.0,197.3 705.6,197.3 706.1,197.6 706.7,198.1 707.3,198.9 707.9,199.9 708.4,201.2 709.0,202.8 709.6,204.8 710.1,207.2 710.7,210.2 711.3,213.9 711.9,218.7 712.4,225.1 713.0,234.7 713.6,253.0 714.2,264.0 714.7,240.9 715.3,229.2 715.9,222.0 716.5,216.9 717.0,213.1 717.6,210.0 718.2,207.7 718.7,205.7 719.3,204.2 719.9,203.0 720.5,202.2 721.0,201.6 721.6,201.2 722.2,201.1 722.8,201.2 723.3,201.6 723.9,202.2 724.5,203.0 725.1,204.1 725.6,205.5 726.2,207.3 726.8,209.4 727.3,212.0 727.9,215.2 728.5,219.1 729.1,224.3 729.6,231.3 730.2,242.2 730.8,264.0 731.4,263.1 731.9,241.5 732.5,231.4 733.1,224.9 733.7,220.2 734.2,216.6 734.8,213.8 735.4,211.5 735.9,209.8 736.5,208.4 737.1,207.3 737.7,206.6 738.2,206.1 738.8,205.8 739.4,205.8 740.0,206.0 740.5,206.5 741.1,207.2 741.7,208.2 742.3,209.4 742.8,211.0 743.4,212.9 744.0,215.3 744.5,218.2 745.1,221.7 745.7,226.2 746.3,232.2 746.8,240.9 747.4,256.0 748.0,264.0 748.6,253.8 749.1,240.2 749.7,232.4 750.3,226.9 750.9,222.9 751.4,219.7 752.0,217.2 752.6,215.3 753.1,213.7 753.7,212.5 754.3,211.6 754.9,211.0 755.4,210.6 756.0,210.5 756.6,210.6 757.2,211.0 757.7,211.6 758.3,212.5 758.9,213.6 759.5,215.0 760.0,216.7 760.6,218.9 761.2,221.5 761.7,224.7 762.3,228.7 762.9,233.8 763.5,240.8 764.0,251.6 764.6,264.0 765.2,264.0 765.8,251.6 766.3,241.4 766.9,234.9 767.5,230.2 768.1,226.6 768.6,223.8 769.2,221.6 769.8,219.9 770.3,218.6 770.9,217.6 771.5,216.8 772.1,216.4 772.6,216.2 773.2,216.2 773.8,216.5 774.4,217.1 774.9,217.9 775.5,218.9 776.1,220.3 776.7,222.0 777.2,224.0 777.8,226.6 778.4,229.6 778.9,233.5 779.5,238.4 780.1,245.0 780.7,255.0 781.2,264.0 781.8,264.0 782.4,259.5 783.0,248.3 783.5,241.4 784.1,236.5 784.7,232.7 785.3,229.9 785.8,227.6 786.4,225.8 787.0,224.4 787.5,223.4 788.1,222.6 788.7,222.1 789.3,221.9 789.8,222.0 790.4,222.3 791.0,222.8 791.6,223.6 792.1,224.6 792.7,226.0 793.3,227.6 793.9,229.7 794.4,232.2 795.0,235.2 795.6,239.0 796.1,243.9 796.7,250.4 797.3,260.0 797.9,264.0 798.4,264.0 799.0,264.0 799.6,254.8 800.2,247.7 800.7,242.7 801.3,238.9 801.9,236.0 802.5,233.8 803.0,232.0 803.6,230.6 804.2,229.6 804.7,228.8 805.3,228.4 805.9,228.2 806.5,228.2 807.0,228.5 807.6,229.1 808.2,229.9 808.8,231.0 809.3,232.4 809.9,234.1 810.5,236.2 811.1,238.8 811.6,242.0 812.2,245.9 812.8,250.9 813.3,257.7 813.9,264.0 814.5,264.0 815.1,264.0 815.6,264.0 816.2,260.2 816.8,253.5 817.4,248.8 817.9,245.2 818.5,242.4 819.1,240.2 819.7,238.5 820.2,237.3 820.8,236.3 821.4,235.7 821.9,235.3 822.5,235.2 823.1,235.4 823.7,235.8 824.2,236.5 824.8,237.5 825.4,238.7 826.0,240.3 826.5,242.3 827.1,244.6 827.7,247.5 828.3,251.1 828.8,255.7 829.4,261.6 830.0,264.0 830.5,264.0 831.1,264.0 831.7,264.0 832.3,264.0 832.8,263.1 833.4,257.7 834.0,253.7 834.6,250.7 835.1,248.4 835.7,246.5 836.3,245.2 836.9,244.2 837.4,243.5 838.0,243.1 838.6,243.0 839.1,243.2 839.7,243.6 840.3,244.3 840.9,245.3 841.4,246.6 842.0,248.3 842.6,250.3 843.2,252.8 843.7,255.9 844.3,259.7 844.9,264.0 845.5,264.0 846.0,264.0 846.6,264.0 847.2,264.0 847.7,264.0 848.3,264.0 848.9,264.0 849.5,264.0 850.0,260.5 850.6,257.8 851.2,255.7 851.8,254.1 852.3,253.0 852.9,252.2 853.5,251.7 854.1,251.6 854.6,251.7 855.2,252.2 855.8,252.9 856.3,254.0 856.9,255.4 857.5,257.2 858.1,259.5 858.6,262.3 859.2,264.0 859.8,264.0 860.4,264.0 860.9,264.0 861.5,264.0 862.1,264.0 862.7,264.0 863.2,264.0 863.8,264.0 864.4,264.0 864.9,264.0 865.5,264.0 866.1,264.0 866.7,262.6 867.2,261.4 867.8,260.7 868.4,260.3 869.0,260.3 869.5,260.6 870.1,261.3 870.7,262.4 871.3,263.8 871.8,264.0 872.4,264.0 873.0,264.0 873.5,264.0 874.1,264.0 874.7,264.0 875.3,264.0 875.8,264.0 876.4,264.0 877.0,264.0 877.6,264.0 878.1,264.0 878.7,264.0 879.3,264.0 879.9,264.0 880.4,264.0 881.0,264.0 881.6,264.0 882.1,264.0 882.7,264.0 883.3,264.0 883.9,264.0 884.4,264.0 885.0,264.0 885.6,264.0 886.2,264.0 886.7,264.0 887.3,264.0 887.9,264.0 888.5,264.0 889.0,264.0 889.6,264.0 890.2,264.0 890.7,264.0 891.3,264.0 891.9,264.0 892.5,264.0 893.0,264.0 893.6,264.0 894.2,264.0 894.8,264.0 895.3,264.0 895.9,264.0 896.5,258.5 897.1,251.5 897.6,245.6 898.2,240.5 898.8,235.9 899.3,231.8 899.9,228.0 900.5,224.6 901.1,221.4 901.6,218.4 902.2,215.7 902.8,213.1 903.4,210.6 903.9,208.3 904.5,206.2 905.1,204.1 905.7,202.2 906.2,200.4 906.8,198.7 907.4,197.0 907.9,195.5 908.5,194.0 909.1,192.6 909.7,191.3 910.2,190.0 910.8,188.9 911.4,187.8 912.0,186.7 912.5,185.7 913.1,184.8 913.7,183.9 914.3,183.1 914.8,182.3 915.4,181.6 916.0,180.9 916.5,180.3 917.1,179.7 917.7,179.2 918.3,178.7 918.8,178.2 919.4,177.8 920.0,177.5 920.6,177.2 921.1,176.9 921.7,176.6 922.3,176.4 922.9,176.3 923.4,176.1 924.0,176.1"/>
+<polyline class="curve" points="64.0,24.0 64.6,24.0 65.1,24.0 65.7,24.0 66.3,24.0 66.9,24.0 67.4,24.0 68.0,24.0 68.6,24.0 69.2,24.0 69.7,24.0 70.3,24.0 70.9,24.0 71.5,24.0 72.0,24.0 72.6,24.0 73.2,24.0 73.7,24.0 74.3,24.0 74.9,24.0 75.5,24.0 76.0,24.0 76.6,24.0 77.2,24.0 77.8,24.0 78.3,24.0 78.9,24.0 79.5,24.0 80.1,24.0 80.6,24.0 81.2,24.0 81.8,24.0 82.3,24.0 82.9,24.0 83.5,24.0 84.1,24.0 84.6,24.0 85.2,24.0 85.8,24.0 86.4,24.0 86.9,24.0 87.5,24.0 88.1,24.0 88.7,24.0 89.2,24.0 89.8,24.0 90.4,24.0 90.9,24.0 91.5,24.0 92.1,24.0 92.7,24.0 93.2,24.0 93.8,24.0 94.4,24.0 95.0,24.0 95.5,24.0 96.1,24.0 96.7,24.0 97.3,24.0 97.8,24.0 98.4,24.0 99.0,24.0 99.5,24.0 100.1,24.0 100.7,24.0 101.3,24.0 101.8,24.0 102.4,24.0 103.0,24.0 103.6,24.0 104.1,24.0 104.7,24.0 105.3,24.0 105.9,24.0 106.4,24.0 107.0,24.0 107.6,24.0 108.1,24.0 108.7,24.0 109.3,24.0 109.9,24.0 110.4,24.0 111.0,24.0 111.6,24.0 112.2,24.0 112.7,24.0 113.3,24.0 113.9,24.0 114.5,24.0 115.0,24.0 115.6,24.0 116.2,24.0 116.7,24.0 117.3,24.0 117.9,24.0 118.5,24.0 119.0,24.0 119.6,24.0 120.2,24.0 120.8,24.0 121.3,24.0 121.9,24.0 122.5,24.0 123.1,24.0 123.6,24.0 124.2,24.0 124.8,24.0 125.3,24.0 125.9,24.0 126.5,24.0 127.1,24.0 127.6,24.0 128.2,24.0 128.8,24.0 129.4,24.0 129.9,24.0 130.5,24.0 131.1,24.0 131.7,24.0 132.2,24.0 132.8,24.0 133.4,24.0 133.9,24.0 134.5,24.0 135.1,24.0 135.7,24.0 136.2,24.0 136.8,24.0 137.4,24.0 138.0,24.0 138.5,24.0 139.1,24.0 139.7,24.0 140.3,24.0 140.8,24.0 141.4,24.0 142.0,24.0 142.5,24.0 143.1,24.0 143.7,24.0 144.3,24.0 144.8,24.0 145.4,24.0 146.0,24.0 146.6,24.0 147.1,24.0 147.7,24.0 148.3,24.0 148.9,24.0 149.4,24.0 150.0,24.0 150.6,24.0 151.1,24.0 151.7,24.0 152.3,24.0 152.9,24.0 153.4,24.0 154.0,24.0 154.6,24.0 155.2,24.0 155.7,24.0 156.3,24.0 156.9,24.0 157.5,24.0 158.0,24.0 158.6,24.0 159.2,24.0 159.7,24.0 160.3,24.0 160.9,24.0 161.5,24.0 162.0,24.0 162.6,24.0 163.2,24.0 163.8,24.0 164.3,24.0 164.9,24.0 165.5,24.0 166.1,24.0 166.6,24.0 167.2,24.0 167.8,24.0 168.3,24.0 168.9,24.0 169.5,24.0 170.1,24.0 170.6,24.0 171.2,24.0 171.8,24.0 172.4,24.0 172.9,24.0 173.5,24.0 174.1,24.0 174.7,24.0 175.2,24.0 175.8,24.0 176.4,24.0 176.9,24.0 177.5,24.0 178.1,24.0 178.7,24.0 179.2,24.0 179.8,24.0 180.4,24.0 181.0,24.0 181.5,24.0 182.1,24.0 182.7,24.0 183.3,24.0 183.8,24.0 184.4,24.0 185.0,24.0 185.5,24.0 186.1,24.0 186.7,24.0 187.3,24.0 187.8,24.0 188.4,24.0 189.0,24.0 189.6,24.0 190.1,24.0 190.7,24.0 191.3,24.0 191.9,24.0 192.4,24.0 193.0,24.0 193.6,24.0 194.1,24.0 194.7,24.0 195.3,24.0 195.9,24.0 196.4,24.0 197.0,24.0 197.6,24.0 198.2,24.0 198.7,24.0 199.3,24.0 199.9,24.0 200.5,24.0 201.0,24.0 201.6,24.0 202.2,24.0 202.7,24.0 203.3,24.0 203.9,24.0 204.5,24.0 205.0,24.0 205.6,24.0 206.2,24.0 206.8,24.0 207.3,24.0 207.9,24.0 208.5,24.0 209.1,24.0 209.6,24.0 210.2,24.0 210.8,24.0 211.3,24.0 211.9,24.0 212.5,24.0 213.1,24.0 213.6,24.0 214.2,24.0 214.8,24.0 215.4,24.0 215.9,24.0 216.5,24.0 217.1,24.0 217.7,24.0 218.2,24.0 218.8,24.0 219.4,24.0 219.9,24.0 220.5,24.0 221.1,24.0 221.7,24.0 222.2,24.0 222.8,24.0 223.4,24.0 224.0,24.0 224.5,24.0 225.1,24.0 225.7,24.0 226.3,24.0 226.8,24.0 227.4,24.0 228.0,24.0 228.5,24.0 229.1,24.0 229.7,24.0 230.3,24.0 230.8,24.0 231.4,24.0 232.0,24.0 232.6,24.0 233.1,24.0 233.7,24.0 234.3,24.0 234.9,24.0 235.4,24.0 236.0,24.0 236.6,24.0 237.1,24.0 237.7,24.0 238.3,24.0 238.9,24.0 239.4,24.0 240.0,24.0 240.6,24.0 241.2,24.0 241.7,24.0 242.3,24.0 242.9,24.0 243.5,24.0 244.0,24.0 244.6,24.0 245.2,24.0 245.7,24.0 246.3,24.0 246.9,24.0 247.5,24.0 248.0,24.0 248.6,24.0 249.2,24.0 249.8,24.0 250.3,24.0 250.9,24.0 251.5,24.0 252.1,24.0 252.6,24.0 253.2,24.0 253.8,24.0 254.3,24.0 254.9,24.0 255.5,24.0 256.1,24.0 256.6,24.0 257.2,24.0 257.8,24.0 258.4,24.0 258.9,24.0 259.5,24.0 260.1,24.0 260.7,24.0 261.2,24.0 261.8,24.0 262.4,24.0 262.9,24.0 263.5,24.0 264.1,24.0 264.7,24.0 265.2,24.0 265.8,24.0 266.4,24.0 267.0,24.0 267.5,24.0 268.1,24.0 268.7,24.0 269.3,24.0 269.8,24.0 270.4,24.0 271.0,24.0 271.5,24.0 272.1,24.0 272.7,24.0 273.3,24.0 273.8,24.0 274.4,24.0 275.0,24.0 275.6,24.0 276.1,24.0 276.7,24.0 277.3,24.0 277.9,24.0 278.4,24.0 279.0,24.0 279.6,24.0 280.1,24.0 280.7,24.0 281.3,24.0 281.9,24.0 282.4,24.0 283.0,24.0 283.6,24.0 284.2,24.0 284.7,24.0 285.3,24.0 285.9,24.0 286.5,24.0 287.0,24.0 287.6,24.0 288.2,24.0 288.7,24.0 289.3,24.0 289.9,24.0 290.5,24.0 291.0,24.0 291.6,24.0 292.2,24.0 292.8,24.0 293.3,24.0 293.9,24.0 294.5,24.0 295.1,24.0 295.6,24.0 296.2,24.0 296.8,24.0 297.3,24.0 297.9,24.0 298.5,24.0 299.1,24.0 299.6,24.0 300.2,24.0 300.8,24.0 301.4,24.0 301.9,24.0 302.5,24.0 303.1,24.0 303.7,24.0 304.2,24.0 304.8,24.0 305.4,24.0 305.9,24.0 306.5,24.0 307.1,24.0 307.7,24.0 308.2,24.0 308.8,24.0 309.4,24.0 310.0,24.0 310.5,24.0 311.1,24.0 311.7,24.0 312.3,24.0 312.8,24.0 313.4,24.0 314.0,24.0 314.5,24.0 315.1,24.0 315.7,24.0 316.3,24.0 316.8,24.0 317.4,24.0 318.0,24.0 318.6,24.0 319.1,24.0 319.7,24.0 320.3,24.0 320.9,24.0 321.4,24.0 322.0,24.0 322.6,24.1 323.1,24.1 323.7,24.1 324.3,24.1 324.9,24.2 325.4,24.2 326.0,24.2 326.6,24.3 327.2,24.3 327.7,24.4 328.3,24.5 328.9,24.6 329.5,24.6 330.0,24.7 330.6,24.8 331.2,25.0 331.7,25.1 332.3,25.2 332.9,25.4 333.5,25.5 334.0,25.7 334.6,25.9 335.2,26.1 335.8,26.3 336.3,26.5 336.9,26.8 337.5,27.0 338.1,27.3 338.6,27.6 339.2,27.9 339.8,28.2 340.3,28.6 340.9,28.9 341.5,29.3 342.1,29.7 342.6,30.1 343.2,30.6 343.8,31.1 344.4,31.5 344.9,32.0 345.5,32.6 346.1,33.1 346.7,33.7 347.2,34.3 347.8,34.9 348.4,35.6 348.9,36.3 349.5,37.0 350.1,37.7 350.7,38.5 351.2,39.3 351.8,40.1 352.4,40.9 353.0,41.8 353.5,42.7 354.1,43.7 354.7,44.7 355.3,45.7 355.8,46.7 356.4,47.8 357.0,48.9 357.5,50.1 358.1,51.3 358.7,52.5 359.3,53.8 359.8,55.1 360.4,56.5 361.0,57.9 361.6,59.4 362.1,60.9 362.7,62.5 363.3,64.1 363.9,65.8 364.4,67.6 365.0,69.4 365.6,71.3 366.1,73.2 366.7,75.2 367.3,77.3 367.9,79.5 368.4,81.8 369.0,84.1 369.6,86.6 370.2,89.1 370.7,91.8 371.3,94.6 371.9,97.6 372.5,100.7 373.0,104.0 373.6,107.4 374.2,111.1 374.7,115.1 375.3,119.3 375.9,123.9 376.5,129.0 377.0,134.6 377.6,141.0 378.2,148.5 378.8,157.7 379.3,170.2 379.9,192.2 380.5,209.7 381.1,184.0 381.6,175.8 382.2,172.1 382.8,170.7 383.3,170.8 383.9,172.2 384.5,174.9 385.1,179.0 385.6,185.0 386.2,194.5 386.8,213.5 387.4,228.8 387.9,200.1 388.5,189.0 389.1,182.5 389.7,178.0 390.2,175.0 390.8,172.9 391.4,171.5 391.9,170.7 392.5,170.5 393.1,170.8 393.7,171.5 394.2,172.9 394.8,174.7 395.4,177.3 396.0,180.7 396.5,185.3 397.1,191.7 397.7,201.5 398.3,221.5 398.8,231.5 399.4,204.9 400.0,193.9 400.5,187.1 401.1,182.2 401.7,178.7 402.3,175.9 402.8,173.9 403.4,172.4 404.0,171.3 404.6,170.6 405.1,170.3 405.7,170.3 406.3,170.7 406.9,171.4 407.4,172.5 408.0,174.0 408.6,176.0 409.1,178.6 409.7,181.9 410.3,186.2 410.9,192.0 411.4,200.4 412.0,215.6 412.6,264.0 413.2,212.7 413.7,199.2 414.3,191.3 414.9,185.8 415.5,181.7 416.0,178.6 416.6,176.2 417.2,174.2 417.7,172.8 418.3,171.7 418.9,171.0 419.5,170.5 420.0,170.4 420.6,170.6 421.2,171.1 421.8,171.8 422.3,172.9 422.9,174.4 423.5,176.3 424.1,178.7 424.6,181.8 425.2,185.7 425.8,190.9 426.3,198.2 426.9,210.0 427.5,240.7 428.1,222.6 428.6,204.3 429.2,194.9 429.8,188.6 430.4,184.1 430.9,180.5 431.5,177.8 432.1,175.6 432.7,173.8 433.2,172.5 433.8,171.5 434.4,170.8 434.9,170.4 435.5,170.2 436.1,170.3 436.7,170.7 437.2,171.4 437.8,172.4 438.4,173.7 439.0,175.3 439.5,177.4 440.1,180.0 440.7,183.3 441.3,187.6 441.8,193.3 442.4,201.5 443.0,215.7 443.5,264.0 444.1,216.2 444.7,201.8 445.3,193.5 445.8,187.8 446.4,183.5 447.0,180.2 447.6,177.6 448.1,175.5 448.7,173.8 449.3,172.5 449.9,171.5 450.4,170.8 451.0,170.4 451.6,170.2 452.1,170.3 452.7,170.7 453.3,171.3 453.9,172.2 454.4,173.4 455.0,174.9 455.6,176.8 456.2,179.3 456.7,182.3 457.3,186.1 457.9,191.1 458.5,198.1 459.0,209.1 459.6,234.4 460.2,227.7 460.7,206.9 461.3,196.9 461.9,190.3 462.5,185.5 463.0,181.8 463.6,178.9 464.2,176.6 464.8,174.7 465.3,173.2 465.9,172.1 466.5,171.2 467.1,170.7 467.6,170.3 468.2,170.3 468.8,170.4 469.3,170.9 469.9,171.5 470.5,172.5 471.1,173.8 471.6,175.4 472.2,177.4 472.8,179.9 473.4,183.0 473.9,187.0 474.5,192.2 475.1,199.6 475.7,211.4 476.2,242.1 476.8,224.0 477.4,205.7 477.9,196.3 478.5,190.0 479.1,185.4 479.7,181.8 480.2,179.0 480.8,176.7 481.4,174.9 482.0,173.4 482.5,172.3 483.1,171.4 483.7,170.9 484.3,170.6 484.8,170.5 485.4,170.7 486.0,171.1 486.5,171.8 487.1,172.7 487.7,174.0 488.3,175.6 488.8,177.6 489.4,180.1 490.0,183.2 490.6,187.1 491.1,192.2 491.7,199.3 492.3,210.7 492.9,238.4 493.4,226.3 494.0,206.8 494.6,197.1 495.1,190.6 495.7,185.9 496.3,182.3 496.9,179.4 497.4,177.1 498.0,175.2 498.6,173.7 499.2,172.6 499.7,171.7 500.3,171.1 500.9,170.7 501.5,170.6 502.0,170.8 502.6,171.2 503.2,171.8 503.7,172.7 504.3,173.9 504.9,175.5 505.5,177.4 506.0,179.8 506.6,182.7 507.2,186.5 507.8,191.4 508.3,198.1 508.9,208.4 509.5,230.7 510.1,232.4 510.6,209.0 511.2,198.4 511.8,191.6 512.3,186.6 512.9,182.8 513.5,179.8 514.1,177.4 514.6,175.4 515.2,173.8 515.8,172.6 516.4,171.6 516.9,171.0 517.5,170.5 518.1,170.3 518.7,170.4 519.2,170.7 519.8,171.2 520.4,172.0 520.9,173.1 521.5,174.4 522.1,176.2 522.7,178.3 523.2,181.0 523.8,184.3 524.4,188.5 525.0,194.1 525.5,202.2 526.1,215.9 526.7,264.0 527.3,218.5 527.8,203.5 528.4,195.0 529.0,189.2 529.5,184.8 530.1,181.4 530.7,178.7 531.3,176.5 531.8,174.7 532.4,173.3 533.0,172.2 533.6,171.4 534.1,170.9 534.7,170.5 535.3,170.5 535.9,170.6 536.4,171.0 537.0,171.7 537.6,172.6 538.1,173.8 538.7,175.4 539.3,177.3 539.9,179.7 540.4,182.7 541.0,186.4 541.6,191.3 542.2,197.9 542.7,208.2 543.3,229.9 543.9,233.4 544.5,209.3 545.0,198.6 545.6,191.7 546.2,186.7 546.7,182.9 547.3,179.8 547.9,177.4 548.5,175.4 549.0,173.8 549.6,172.6 550.2,171.6 550.8,170.9 551.3,170.5 551.9,170.3 552.5,170.3 553.1,170.5 553.6,171.0 554.2,171.8 554.8,172.8 555.3,174.1 555.9,175.8 556.5,177.8 557.1,180.3 557.6,183.5 558.2,187.5 558.8,192.7 559.4,200.1 559.9,211.9 560.5,243.0 561.1,224.3 561.7,206.1 562.2,196.7 562.8,190.4 563.4,185.7 563.9,182.1 564.5,179.3 565.1,177.0 565.7,175.1 566.2,173.6 566.8,172.4 567.4,171.6 568.0,170.9 568.5,170.6 569.1,170.4 569.7,170.5 570.3,170.8 570.8,171.4 571.4,172.2 572.0,173.3 572.5,174.8 573.1,176.5 573.7,178.7 574.3,181.4 574.8,184.8 575.4,189.2 576.0,194.9 576.6,203.3 577.1,217.9 577.7,264.0 578.3,216.8 578.9,202.8 579.4,194.6 580.0,188.9 580.6,184.7 581.1,181.3 581.7,178.7 582.3,176.5 582.9,174.8 583.4,173.4 584.0,172.3 584.6,171.5 585.2,171.0 585.7,170.7 586.3,170.6 586.9,170.8 587.5,171.2 588.0,171.9 588.6,172.8 589.2,174.0 589.7,175.5 590.3,177.5 590.9,179.8 591.5,182.8 592.0,186.5 592.6,191.4 593.2,198.0 593.8,208.1 594.3,229.3 594.9,234.6 595.5,209.8 596.1,199.0 596.6,192.0 597.2,187.0 597.8,183.1 598.3,180.1 598.9,177.6 599.5,175.6 600.1,174.0 600.6,172.8 601.2,171.8 601.8,171.1 602.4,170.6 602.9,170.4 603.5,170.4 604.1,170.6 604.7,171.1 605.2,171.8 605.8,172.8 606.4,174.1 606.9,175.7 607.5,177.7 608.1,180.2 608.7,183.3 609.2,187.2 609.8,192.3 610.4,199.4 611.0,210.6 611.5,237.1 612.1,227.5 612.7,207.4 613.3,197.5 613.8,191.0 614.4,186.3 615.0,182.6 615.5,179.6 616.1,177.3 616.7,175.4 617.3,173.8 617.8,172.6 618.4,171.7 619.0,171.1 619.6,170.6 620.1,170.5 620.7,170.5 621.3,170.8 621.9,171.4 622.4,172.1 623.0,173.2 623.6,174.6 624.1,176.3 624.7,178.4 625.3,181.0 625.9,184.3 626.4,188.5 627.0,194.0 627.6,201.8 628.2,215.0 628.7,261.0 629.3,220.1 629.9,204.3 630.5,195.6 631.0,189.7 631.6,185.2 632.2,181.8 632.7,179.0 633.3,176.8 633.9,175.0 634.5,173.5 635.0,172.4 635.6,171.5 636.2,170.9 636.8,170.6 637.3,170.5 637.9,170.6 638.5,170.9 639.1,171.5 639.6,172.4 640.2,173.5 640.8,175.0 641.3,176.8 641.9,179.0 642.5,181.8 643.1,185.2 643.6,189.7 644.2,195.6 644.8,204.3 645.4,220.1 645.9,261.0 646.5,215.0 647.1,201.8 647.7,194.0 648.2,188.5 648.8,184.3 649.4,181.0 649.9,178.4 650.5,176.3 651.1,174.6 651.7,173.2 652.2,172.1 652.8,171.4 653.4,170.8 654.0,170.5 654.5,170.5 655.1,170.6 655.7,171.1 656.3,171.7 656.8,172.6 657.4,173.8 658.0,175.4 658.5,177.3 659.1,179.6 659.7,182.6 660.3,186.3 660.8,191.0 661.4,197.5 662.0,207.4 662.6,227.5 663.1,237.1 663.7,210.6 664.3,199.4 664.9,192.3 665.4,187.2 666.0,183.3 666.6,180.2 667.1,177.7 667.7,175.7 668.3,174.1 668.9,172.8 669.4,171.8 670.0,171.1 670.6,170.6 671.2,170.4 671.7,170.4 672.3,170.6 672.9,171.1 673.5,171.8 674.0,172.8 674.6,174.0 675.2,175.6 675.7,177.6 676.3,180.1 676.9,183.1 677.5,187.0 678.0,192.0 678.6,199.0 679.2,209.8 679.8,234.6 680.3,229.3 680.9,208.1 681.5,198.0 682.1,191.4 682.6,186.5 683.2,182.8 683.8,179.8 684.3,177.5 684.9,175.5 685.5,174.0 686.1,172.8 686.6,171.9 687.2,171.2 687.8,170.8 688.4,170.6 688.9,170.7 689.5,171.0 690.1,171.5 690.7,172.3 691.2,173.4 691.8,174.8 692.4,176.5 692.9,178.7 693.5,181.3 694.1,184.7 694.7,188.9 695.2,194.6 695.8,202.8 696.4,216.8 697.0,264.0 697.5,217.9 698.1,203.3 698.7,194.9 699.3,189.2 699.8,184.8 700.4,181.4 701.0,178.7 701.5,176.5 702.1,174.8 702.7,173.3 703.3,172.2 703.8,171.4 704.4,170.8 705.0,170.5 705.6,170.4 706.1,170.6 706.7,170.9 707.3,171.6 707.9,172.4 708.4,173.6 709.0,175.1 709.6,177.0 710.1,179.3 710.7,182.1 711.3,185.7 711.9,190.4 712.4,196.7 713.0,206.1 713.6,224.3 714.2,243.0 714.7,211.9 715.3,200.1 715.9,192.7 716.5,187.5 717.0,183.5 717.6,180.3 718.2,177.8 718.7,175.8 719.3,174.1 719.9,172.8 720.5,171.8 721.0,171.0 721.6,170.5 722.2,170.3 722.8,170.3 723.3,170.5 723.9,170.9 724.5,171.6 725.1,172.6 725.6,173.8 726.2,175.4 726.8,177.4 727.3,179.8 727.9,182.9 728.5,186.7 729.1,191.7 729.6,198.6 730.2,209.3 730.8,233.4 731.4,229.9 731.9,208.2 732.5,197.9 733.1,191.3 733.7,186.4 734.2,182.7 734.8,179.7 735.4,177.3 735.9,175.4 736.5,173.8 737.1,172.6 737.7,171.7 738.2,171.0 738.8,170.6 739.4,170.5 740.0,170.5 740.5,170.9 741.1,171.4 741.7,172.2 742.3,173.3 742.8,174.7 743.4,176.5 744.0,178.7 744.5,181.4 745.1,184.8 745.7,189.2 746.3,195.0 746.8,203.5 747.4,218.5 748.0,264.0 748.6,215.9 749.1,202.2 749.7,194.1 750.3,188.5 750.9,184.3 751.4,181.0 752.0,178.3 752.6,176.2 753.1,174.4 753.7,173.1 754.3,172.0 754.9,171.2 755.4,170.7 756.0,170.4 756.6,170.3 757.2,170.5 757.7,171.0 758.3,171.6 758.9,172.6 759.5,173.8 760.0,175.4 760.6,177.4 761.2,179.8 761.7,182.8 762.3,186.6 762.9,191.6 763.5,198.4 764.0,209.0 764.6,232.4 765.2,230.7 765.8,208.4 766.3,198.1 766.9,191.4 767.5,186.5 768.1,182.7 768.6,179.8 769.2,177.4 769.8,175.5 770.3,173.9 770.9,172.7 771.5,171.8 772.1,171.2 772.6,170.8 773.2,170.6 773.8,170.7 774.4,171.1 774.9,171.7 775.5,172.6 776.1,173.7 776.7,175.2 777.2,177.1 777.8,179.4 778.4,182.3 778.9,185.9 779.5,190.6 780.1,197.1 780.7,206.8 781.2,226.3 781.8,238.4 782.4,210.7 783.0,199.3 783.5,192.2 784.1,187.1 784.7,183.2 785.3,180.1 785.8,177.6 786.4,175.6 787.0,174.0 787.5,172.7 788.1,171.8 788.7,171.1 789.3,170.7 789.8,170.5 790.4,170.6 791.0,170.9 791.6,171.4 792.1,172.3 792.7,173.4 793.3,174.9 793.9,176.7 794.4,179.0 795.0,181.8 795.6,185.4 796.1,190.0 796.7,196.3 797.3,205.7 797.9,224.0 798.4,242.1 799.0,211.4 799.6,199.6 800.2,192.2 800.7,187.0 801.3,183.0 801.9,179.9 802.5,177.4 803.0,175.4 803.6,173.8 804.2,172.5 804.7,171.5 805.3,170.9 805.9,170.4 806.5,170.3 807.0,170.3 807.6,170.7 808.2,171.2 808.8,172.1 809.3,173.2 809.9,174.7 810.5,176.6 811.1,178.9 811.6,181.8 812.2,185.5 812.8,190.3 813.3,196.9 813.9,206.9 814.5,227.7 815.1,234.4 815.6,209.1 816.2,198.1 816.8,191.1 817.4,186.1 817.9,182.3 818.5,179.3 819.1,176.8 819.7,174.9 820.2,173.4 820.8,172.2 821.4,171.3 821.9,170.7 822.5,170.3 823.1,170.2 823.7,170.4 824.2,170.8 824.8,171.5 825.4,172.5 826.0,173.8 826.5,175.5 827.1,177.6 827.7,180.2 828.3,183.5 828.8,187.8 829.4,193.5 830.0,201.8 830.5,216.2 831.1,264.0 831.7,215.7 832.3,201.5 832.8,193.3 833.4,187.6 834.0,183.3 834.6,180.0 835.1,177.4 835.7,175.3 836.3,173.7 836.9,172.4 837.4,171.4 838.0,170.7 838.6,170.3 839.1,170.2 839.7,170.4 840.3,170.8 840.9,171.5 841.4,172.5 842.0,173.8 842.6,175.6 843.2,177.8 843.7,180.5 844.3,184.1 844.9,188.6 845.5,194.9 846.0,204.3 846.6,222.6 847.2,240.7 847.7,210.0 848.3,198.2 848.9,190.9 849.5,185.7 850.0,181.8 850.6,178.7 851.2,176.3 851.8,174.4 852.3,172.9 852.9,171.8 853.5,171.1 854.1,170.6 854.6,170.4 855.2,170.5 855.8,171.0 856.3,171.7 856.9,172.8 857.5,174.2 858.1,176.2 858.6,178.6 859.2,181.7 859.8,185.8 860.4,191.3 860.9,199.2 861.5,212.7 862.1,264.0 862.7,215.6 863.2,200.4 863.8,192.0 864.4,186.2 864.9,181.9 865.5,178.6 866.1,176.0 866.7,174.0 867.2,172.5 867.8,171.4 868.4,170.7 869.0,170.3 869.5,170.3 870.1,170.6 870.7,171.3 871.3,172.4 871.8,173.9 872.4,175.9 873.0,178.7 873.5,182.2 874.1,187.1 874.7,193.9 875.3,204.9 875.8,231.5 876.4,221.5 877.0,201.5 877.6,191.7 878.1,185.3 878.7,180.7 879.3,177.3 879.9,174.7 880.4,172.9 881.0,171.5 881.6,170.8 882.1,170.5 882.7,170.7 883.3,171.5 883.9,172.9 884.4,175.0 885.0,178.0 885.6,182.5 886.2,189.0 886.7,200.1 887.3,228.8 887.9,213.5 888.5,194.5 889.0,185.0 889.6,179.0 890.2,174.9 890.7,172.2 891.3,170.8 891.9,170.7 892.5,172.1 893.0,175.8 893.6,184.0 894.2,209.7 894.8,192.2 895.3,170.2 895.9,157.7 896.5,148.5 897.1,141.0 897.6,134.6 898.2,129.0 898.8,123.9 899.3,119.3 899.9,115.1 900.5,111.1 901.1,107.4 901.6,104.0 902.2,100.7 902.8,97.6 903.4,94.6 903.9,91.8 904.5,89.1 905.1,86.6 905.7,84.1 906.2,81.8 906.8,79.5 907.4,77.3 907.9,75.2 908.5,73.2 909.1,71.3 909.7,69.4 910.2,67.6 910.8,65.8 911.4,64.1 912.0,62.5 912.5,60.9 913.1,59.4 913.7,57.9 914.3,56.5 914.8,55.1 915.4,53.8 916.0,52.5 916.5,51.3 917.1,50.1 917.7,48.9 918.3,47.8 918.8,46.7 919.4,45.7 920.0,44.7 920.6,43.7 921.1,42.7 921.7,41.8 922.3,40.9 922.9,40.1 923.4,39.3 924.0,38.5"/>
+<circle class="pt" cx="350.7" cy="38.5" r="4"/>
+<text class="lab" x="358.7" y="32.5">0.5W で −6.0 dB</text>
+<text class="lab" x="69.7" y="234">通過域 0〜0.45W</text>
+<text class="lab" x="69.7" y="250">0.016〜0.020 dB p-p</text>
+<text class="lab" x="396.5" y="80">0.55W〜1.45W</text>
+<text class="lab" x="396.5" y="96">60.9 dB 以上（出力で 0.45W の内へ折り返す範囲）</text>
+<line class="curve" x1="75.5" x2="104.1" y1="120.0" y2="120.0"/><text class="lab" x="112.7" y="124.0">NS = 1（final だけ）</text>
+<line class="curve2" x1="75.5" x2="104.1" y1="156.0" y2="156.0"/><text class="lab" x="112.7" y="160.0">NS = 6（light × 5 + final）</text>
+</svg>
+    </div>
+    <figcaption>win_coef.vh の係数から計算した、NCO の後の半帯域の縦続全体の振幅（周波数を W で割った軸）。NS = 1 と NS = 6 はほぼ重なる。
+    0.5W で −6 dB なのは半帯域の性質（0.5W の上下がちょうど対になる）。1.45W より上で上がるのは NS = 1 の final の像（入力 512 MSPS = 2W の周期）で、そこは pfb_core の阻止域が落とす。W = 8 MHz の実機の W-3 の最大 −61.4 dB（模型 −61.4 dB）は、ここの −61 dB に当たる。</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="rule">
+  <h2 id="rule">振る舞いの約束</h2>
+  <div class="cols">
+    <div class="box">
+      <h3>途切れと起動</h3>
+      <ul>
+        <li>組・NCO・hb2・pair2 はどれも valid が来たときだけ進む。入力の間隔が変わっても値は変わらない</li>
+        <li>最初の組は hv（y1_ok）と y0_ok がそろったときで、m = 0 で位相 0</li>
+        <li>hb2 の最初の出力は 2L − 1 組目（light は 8 組目、final は 34 組目）。それより前は出さない</li>
+        <li>pair2 は rst の後の最初のサンプルを偶とする</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>設定</h3>
+      <ul>
+        <li>dphi・ns は RUN 中は変えない。win_core の WRST で取り込んで rst を打つ</li>
+        <li>ns が 1..6 の外なら NS = 1 と同じ（sel = 0）</li>
+        <li>NS を変えても light の 5 段は動いたまま。final の入力の切り替えだけ</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>丸めと飽和</h3>
+      <ul>
+        <li>丸めはどこも +2<sup>SH−1</sup> してから &gt;&gt;&gt; SH（端数 0.5 は +∞ 側へ）</li>
+        <li>sat_cnt は NCO の出口・使っている light の段・final・z の飽和を数え、0xFFFF で止まる</li>
+        <li>win_core の 0x70 DDC_SAT で読む。W-0 はこれが 0 であること</li>
+      </ul>
+    </div>
+  </div>
+  <p class="note">hb2.v の冒頭の注記は「レイテンシ 5」だが、部分和の段（v3b）を足した後のレジスタは 6 段（in_v → v1 → v2 → v3 → v3b → v4 → out_v）。この図は 6 で描いた。値と照合には効かない（valid で運ぶので）。</p>
+</section>
+
+<section aria-labelledby="vf">
+  <h2 id="vf">確かめ方</h2>
+  <div class="cols">
+    <div class="box">
+      <h3>sim（make sim-ddc）</h3>
+      <ul>
+        <li>iverilog で RTL と <code>ddc_fixed</code> を bit 単位で照合。出力の数も模型と同じこと、飽和 0</li>
+        <li>NS = 1..6 × d = 64（境目、Δ = 2<sup>29</sup>）/ −37.81234567（格子の外、位相の下位 bit まで使う）× 入力の途切れ あり / なし</li>
+        <li>入力は pfb_fixed の出口（雑音・CW 2 本・飽和ぎりぎりの区間）</li>
+        <li>陽性対照 <code>SIM_DDC_POSCTL=1</code>：偶の側の NCO の番地を 1 つずらすと落ちる。模型の陽性対照 hb-short・nco-sign も落ちる</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>実機（rev2）</h3>
+      <ul>
+        <li>W-1：CW の ch の位置が予言どおり（ボードと SG を同じ 10 MHz に載せて）。W-1b：窓と全帯域の推定 IF の差 +2.2 kHz（読みの床）</li>
+        <li>W-2：窓の中の平らさが模型と 0.015 dB 以内。W-3：折り返し −61 dB 前後で模型どおり</li>
+        <li>W-7：線形性 0.011 / 0.005 dB（256 / 8 MHz）。W-8：WRST を 150 回くり返して全部通過</li>
+      </ul>
+    </div>
+  </div>
+</section>
+</div>
+
+</body>
+</html>
