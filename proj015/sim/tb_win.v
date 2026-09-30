@@ -17,7 +17,7 @@ module tb_win;
     wire [15:0] s1, s2, ovrc;
     wire zv;
     wire signed [17:0] zr, zi;
-    pfb_core u_pfb (.clk(clk), .rst(rst), .s_tdata(tdata), .s_tvalid(tvalid), .k(k),
+    pfb_core u_pfb (.clk(clk), .rst(rst), .w_rst(rst), .s_tdata(tdata), .s_tvalid(tvalid), .k(k),
                     .y0_re(y0r), .y0_im(y0i), .y1_re(y1r), .y1_im(y1i),
                     .y0_ok(y0ok), .y1_ok(y1ok), .y_valid(yv), .sat_cnt(s1));
     ddc_core u_ddc (.clk(clk), .rst(rst), .y_valid(yv), .y0_ok(y0ok), .y1_ok(y1ok),

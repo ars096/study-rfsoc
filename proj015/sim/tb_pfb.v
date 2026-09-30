@@ -16,7 +16,7 @@ module tb_pfb;
     wire y0ok, y1ok, yv;
     wire [15:0] satc;
 
-    pfb_core dut (.clk(clk), .rst(rst), .s_tdata(tdata), .s_tvalid(tvalid), .k(k),
+    pfb_core dut (.clk(clk), .rst(rst), .w_rst(rst), .s_tdata(tdata), .s_tvalid(tvalid), .k(k),
                   .y0_re(y0r), .y0_im(y0i), .y1_re(y1r), .y1_im(y1i),
                   .y0_ok(y0ok), .y1_ok(y1ok), .y_valid(yv), .sat_cnt(satc));
 

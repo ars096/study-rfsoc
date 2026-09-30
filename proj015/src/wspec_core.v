@@ -35,7 +35,8 @@
 
 module wspec_core #(
     parameter integer FW = 48,
-    parameter integer ZW = 18
+    parameter integer ZW = 18,
+    parameter integer SNAP = 1     // 1: スナップショットの記憶を中に持つ / 0: 持たず、書き込みを sn_w* に出す（ADC ごとに 1 つを共有する。proj015）
 )(
     input  wire                 clk,
     input  wire                 rst,
@@ -63,7 +64,11 @@ module wspec_core #(
     output wire [63:0]          rd_data,
     input  wire                 sn_bk,
     input  wire [11:0]          sn_a,
-    output wire [2*ZW-1:0]      sn_data
+    output wire [2*ZW-1:0]      sn_data,
+    // スナップショットの書き込み（SNAP = 0 のとき外の記憶が使う。SNAP = 1 でも出る）: 面・番地 {sn_wbank, sn_waddr}、{im, re}
+    output wire                 sn_wen,
+    output wire [12:0]          sn_waddr,
+    output wire [2*ZW-1:0]      sn_wdata
 );
     localparam integer NF = 4096;
     localparam integer YW = ZW + 13;       // 31
@@ -99,15 +104,16 @@ module wspec_core #(
     reg            sn_act, sn_buf;
     reg  [31:0]    run_n, run_ndump;
     wire [31:0]    n_eff = (run_n == 0) ? 32'd1 : run_n;
-    reg [2*ZW-1:0] snap_mem [0:2*NF-1];
     wire           sn_hit = sn_on && (fin == sn_next);        // wa == 0 のときだけ意味を持つ
     wire           sn_we  = z_valid && ((wa == 12'd0) ? sn_hit : sn_act);
     wire           sn_wb  = (wa == 12'd0) ? sn_k[0] : sn_buf;
 
     always @(posedge clk) begin
         if (z_valid) fbuf[{wb, wa}] <= {z_im, z_re};
-        if (sn_we)   snap_mem[{sn_wb, wa}] <= {z_im, z_re};
     end
+    assign sn_wen   = sn_we;
+    assign sn_waddr = {sn_wb, wa};
+    assign sn_wdata = {z_im, z_re};
 
     always @(posedge clk) begin
         ovr <= 1'b0;
@@ -406,12 +412,20 @@ module wspec_core #(
     end
 
     // ---- スナップショットの読み出し ----
-    reg [2*ZW-1:0] sn1, sn2;
-    always @(posedge clk) begin
-        sn1 <= snap_mem[{sn_bk, sn_a}];
-        sn2 <= sn1;
-    end
-    assign sn_data = sn2;
+    generate
+        if (SNAP != 0) begin : g_snap
+            reg [2*ZW-1:0] snap_mem [0:2*NF-1];
+            reg [2*ZW-1:0] sn1, sn2;
+            always @(posedge clk) begin
+                if (sn_we) snap_mem[{sn_wb, wa}] <= {z_im, z_re};
+                sn1 <= snap_mem[{sn_bk, sn_a}];
+                sn2 <= sn1;
+            end
+            assign sn_data = sn2;
+        end else begin : g_nosnap
+            assign sn_data = {2*ZW{1'b0}};
+        end
+    endgenerate
 
     // ---- FLAGS ----
     wire [7:0] f_now = {3'd0, f_v && !s_tready, ev_halt, ev_tu | ev_tm, ovr, o_valid && (o_k != k_exp)};

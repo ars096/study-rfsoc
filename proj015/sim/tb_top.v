@@ -11,7 +11,7 @@ module tb_top;
     reg aresetn = 0;
     reg  [255:0] tdata = 0;
     reg          tvalid = 0;
-    reg  [16:0] awaddr = 0, araddr = 0;
+    reg  [19:0] awaddr = 0, araddr = 0;       // proj015: win_core の番地は 20 bit（窓 0 = 0x00000–）
     reg         awvalid = 0, wvalid = 0, bready = 1, arvalid = 0, rready = 1;
     reg  [31:0] wdata = 0;
     wire        awready, wready, bvalid, arready, rvalid;
@@ -26,7 +26,7 @@ module tb_top;
         .s_axi_araddr(araddr), .s_axi_arprot(3'd0), .s_axi_arvalid(arvalid), .s_axi_arready(arready),
         .s_axi_rdata(rdata), .s_axi_rresp(rresp), .s_axi_rvalid(rvalid), .s_axi_rready(rready));
 
-    task axw(input [16:0] a, input [31:0] d);
+    task axw(input [19:0] a, input [31:0] d);
         begin
             @(posedge clk); awaddr <= a; wdata <= d; awvalid <= 1; wvalid <= 1;
             @(posedge clk); while (!(awready && wready)) @(posedge clk);
@@ -35,7 +35,7 @@ module tb_top;
         end
     endtask
     reg [31:0] rv;
-    task axr(input [16:0] a);
+    task axr(input [19:0] a);
         begin
             @(posedge clk); araddr <= a; arvalid <= 1;
             @(posedge clk); while (!arready) @(posedge clk);
@@ -151,7 +151,7 @@ module tb_top;
         end
     end
     always @(posedge clk) begin
-        if (dut.zv) $fwrite(fz, "%0d %0d\n", dut.zr, dut.zi);
-        if (dut.u_ws.m_tv) $fwrite(ff, "%0d %0d %0d\n", dut.u_ws.m_tu[11:0], $signed(dut.u_ws.m_td[30:0]), $signed(dut.u_ws.m_td[62:32]));
+        if (dut.g_w[0].zv) $fwrite(fz, "%0d %0d\n", dut.g_w[0].zr, dut.g_w[0].zi);
+        if (dut.g_w[0].u_ws.m_tv) $fwrite(ff, "%0d %0d %0d\n", dut.g_w[0].u_ws.m_tu[11:0], $signed(dut.g_w[0].u_ws.m_td[30:0]), $signed(dut.g_w[0].u_ws.m_td[62:32]));
     end
 endmodule

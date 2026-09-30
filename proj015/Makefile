@@ -201,7 +201,7 @@ WSPEC_VARS    ?= g0:4:4:4:0:5:0 g3:2:4:7:3:5:0 g32:1:3:4:32:5:0 g0r:4:4:4:0:6000
 WSPEC_NR_VARS ?= g0r:4:4:4:0:6000:0 g3s:2:4:7:3:5:40
 
 
-.PHONY: model model-posctl model-sweep fixed fixed-posctl coef sim-pfb sim-ddc sim-win sim-win-g sim-win-ts sim-hb2s sim-win-all sim-pfb-p sim-ddc-p sim-wspec sim-wspec-p sim-wspec-r sim-top survey ooc-ddc clean
+.PHONY: model model-posctl model-sweep fixed fixed-posctl coef sim-pfb sim-ddc sim-win sim-win-g sim-win-ts sim-hb2s sim-pfbm sim-pfbm-p sim-win-all sim-pfb-p sim-ddc-p sim-wspec sim-wspec-p sim-wspec-r sim-top sim-win4 survey ooc-ddc clean
 
 # 仕様の模型（numpy だけ。Vivado もライセンスも要らない）。成否は「結果: 全部通過」の行で読む
 model:
@@ -240,6 +240,26 @@ sim-pfb:
 	  $(VVP) -n $(PFB_DIR)/tb +K=$$k +GAP=$$g +IN=$(PFB_DIR)/x.hex +OUT=$(PFB_DIR)/y_k$${k}_g$${g}.txt +NSAMP=16384 | grep '^pfb:' ; \
 	done; done
 	SIM_PFB_POSCTL=$(SIM_PFB_POSCTL) $(PYTHON) sim/check_pfb.py check $(PFB_DIR) $(PFB_KS) | tee $(PFB_DIR)/check.log
+
+# pfb_core を 4 窓で（proj015 手順 3）。窓ごとに別の k・別の始まり、窓 3 は途中で打ち直す。変種: 途切れ なし / あり、
+# ビートの番号 8 bit（4096 ビートで 16 回巻き戻る）。成否は $(PFBM_DIR)/check.log の「結果」。
+# SIM_PFBM_POSCTL=1: 陽性対照（(−j)^(k·m') の偶奇を窓の始まりで揃えない）→ どこかの区切りが NG
+SIM_PFBM_POSCTL ?= 0
+PFBM_DIR := build-sim-pfbm$(if $(filter 1,$(SIM_PFBM_POSCTL)),-posctl)
+PFBM_VARS ?= g0:32 g1:32 g1:8
+sim-pfbm:
+	mkdir -p $(PFBM_DIR); rm -f $(PFBM_DIR)/check.log
+	$(PYTHON) sim/check_pfbm.py gen $(PFBM_DIR)
+	for v in $(PFBM_VARS); do g=$${v%%:*}; q=$${v#*:}; g=$${g#g}; mkdir -p $(PFBM_DIR)/$$v; \
+	  $(IVERILOG) -g2005 -Isrc -DPFB_QW=$$q $(if $(filter 1,$(SIM_PFBM_POSCTL)),-DPFBM_POSCTL) -o $(PFBM_DIR)/tb_$$q src/cmul.v src/dft16f.v src/pfb_core.v sim/tb_pfbm.v && \
+	  $(VVP) -n $(PFBM_DIR)/tb_$$q +GAP=$$g +IN=$(PFBM_DIR)/x.hex +DIR=$(PFBM_DIR)/$$v | grep '^pfbm:' ; \
+	  echo "== $$v" >> $(PFBM_DIR)/check.log; \
+	  SIM_PFBM_POSCTL=$(SIM_PFBM_POSCTL) $(PYTHON) sim/check_pfbm.py check $(PFBM_DIR)/$$v $$q >> $(PFBM_DIR)/check.log; \
+	done
+	@cat $(PFBM_DIR)/check.log
+	@n=$$(grep -c '結果: 全部通過' $(PFBM_DIR)/check.log); if [ $$n -eq $(words $(PFBM_VARS)) ]; then echo "結果: 全部通過（$$n 変種）" | tee -a $(PFBM_DIR)/check.log; else echo "結果: 失敗（通過 $$n / $(words $(PFBM_VARS))）" | tee -a $(PFBM_DIR)/check.log; fi
+sim-pfbm-p:
+	$(MAKE) --no-print-directory sim-pfbm SIM_PFBM_POSCTL=1 PFBM_VARS=g1:32
 
 # ddc_core の単体の sim（NCO → 半帯域 × NS）。入力は pfb_fixed の y。NS 1..8 × d 2 通り × 途切れ あり / なし
 sim-ddc:
@@ -303,7 +323,7 @@ sim-wspec-r:
 
 # sim を全部並べる（iverilog は 1 本 1 コア）。成否は各 check.log の「結果: 全部通過」で読む（make の成功を信用しない）
 sim-win-all:
-	$(MAKE) --no-print-directory -j8 sim-pfb sim-ddc sim-win sim-wspec sim-pfb-p sim-ddc-p sim-wspec-p sim-wspec-r sim-win-g sim-win-ts sim-hb2s
+	$(MAKE) --no-print-directory -j8 sim-pfb sim-ddc sim-win sim-wspec sim-pfb-p sim-ddc-p sim-wspec-p sim-wspec-r sim-win-g sim-win-ts sim-hb2s sim-pfbm sim-pfbm-p
 	@grep -H "結果" build-sim-*/check.log
 sim-pfb-p:
 	$(MAKE) --no-print-directory sim-pfb SIM_PFB_POSCTL=1
@@ -324,9 +344,18 @@ survey:
 sim-top:
 	mkdir -p build-sim-top/ns1
 	$(PYTHON) sim/check_top.py gen build-sim-top 1
-	$(IVERILOG) -g2005 -Isrc -o build-sim-top/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) src/wspec_core.v src/win_core.v sim/win_fft_model.v sim/tb_top.v
+	$(IVERILOG) -g2005 -Isrc -o build-sim-top/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) src/wspec_core.v src/tp_core.v src/win_core.v sim/win_fft_model.v sim/tb_top.v
 	$(VVP) -n build-sim-top/tb +K=5 +DPHI=3977774351 +NS=1 +NACC=2 +NDUMP=3 +SHIFT=4 +GAP=1 +NSAMP=917504 +IN=build-sim-top/x.hex +DIR=build-sim-top/ns1 | grep '^tb_top:'
 	$(PYTHON) sim/check_top.py check build-sim-top 1 2 3 4 | tee build-sim-top/check.log
+
+# win_core を 1 ADC × 4 窓（NW = 4）で AXI 越しに（proj015 手順 4）。窓ごとに別の k・d・NS・WRST の時刻、窓 1 のスナップショット（SNAP_SEL）。
+# iverilog で 1 時間級。成否は build-sim-win4/check.log の「総合: 結果」
+sim-win4:
+	mkdir -p build-sim-win4
+	$(PYTHON) sim/check_win4.py gen build-sim-win4
+	$(IVERILOG) -g2005 -Isrc -o build-sim-win4/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) src/wspec_core.v src/tp_core.v src/win_core.v sim/win_fft_model.v sim/tb_win4.v
+	$(VVP) -n build-sim-win4/tb +IN=build-sim-win4/x.hex +CFG=build-sim-win4/cfg.txt +DIR=build-sim-win4 +NSAMP=1048576 | grep '^tb_win4:'
+	$(PYTHON) sim/check_win4.py check build-sim-win4 | tee build-sim-win4/check.log
 
 # spec_core の sim と窓の sim を全部
 sim-all:
