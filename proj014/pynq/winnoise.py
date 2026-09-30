@@ -155,6 +155,16 @@ def main():
         per_ch[n] = (full_r(d), full_r(d / g[:, None]), g)
         msg = (f"N {n:6d}（τ {tau * 1e3:9.3f} ms）× M {m:3d}: 共通の揺らぎを除いて R_cm/R₀ {Rc / R0:.4f}"
                f"・除く前 R/R₀ {R / R0:.4f}（R₀ {R0:.4f}、±{err / R0:.4f}）・共通の利得の揺らぎ {g_rms * 100:.3f} %（ch {nuse}、床 {med:.0f} LSB²）")
+        # ch ごとの R の中央値（理想も同じ M の中央値で）と、揺れの大きい ch。平均が一部の ch に引っぱられているかを見る
+        rcf = per_ch[n][1]
+        simr = n * sim.var(axis=0, ddof=1) / sim.mean(axis=0) ** 2
+        med_ratio = float(np.nanmedian(rcf) / np.median(simr))
+        thr = float(np.quantile(simr, 0.999))
+        nbig = int(np.sum(rcf[~np.isnan(rcf)] > thr))
+        top = np.argsort(np.where(np.isnan(rcf), -1, rcf))[::-1][:5]
+        ifw = WN.ch_if(c, w)
+        msg += (f"・ch の中央値で {med_ratio:.4f}・理想の 99.9 % 点（{thr:.2f}）を超える ch {nbig}（理想なら {0.001 * nuse:.0f}）"
+                f"・大きい ch: " + " ".join(f"IF {ifw[i]:.2f}（ゾーン 1 {4096 - ifw[i]:.2f}）{rcf[i]:.1f}" for i in top))
         if inj:
             judge(abs(Rc / R0 - 1) <= a.tol, "W-5: " + msg + f"（許容 ±{a.tol}）")
         else:
