@@ -101,6 +101,17 @@ bit ③（4 ADC × 4 窓、256 MHz 窓で規模が決まる）。**自作部分�
 | 結線の照合 | 80 行・問題 0 | **行が増え、問題 0** | ch 1 の行に gb_bc_1 の 3 本 |
 | WNS `-2` / `-1` | +0.205 / +0.170 | **−0.03〜+0.37 / 閉じない恐れあり** | proj013 の教訓（±0.2 ns で書く）。**負なら `make worst-paths` で、proj013 の群（A〜E）か win_core の中（pfb の分岐の和・hb2・wspec）かを分ける** |
 
+### ビルドの結果（2026-09-30、Vivado サーバ）
+
+| | 予言 | 結果 | |
+|---|---|---|---|
+| WNS / WHS `-2` | −0.03〜+0.37 | **+0.065 / +0.006 ns** | 範囲の中（proj013 rev1 の +0.205 から下がった） |
+| WNS / WHS `-1` | 閉じない恐れ | **+0.086 / +0.010 ns で閉じた** | `-1` のほうが `-2` より余裕がある（配置のばらつき。proj012 でも起きた） |
+| `-1` の最悪経路（slack < 0.30 ns の上位 200 本、全部配線型、照合の問題 0 件） | proj013 の群（A〜E）か win_core か | **最悪は群 C（gb_fifo_1 の書き込みアドレス FO 887、+0.086）**。次いで spec_core_1 の lane_fft[7] の sclr（+0.103、FO 114）、群 A（ひねり係数 → DFT の DSP、+0.144） | **win_core は pfb +0.186・ddc +0.239・wspec +0.257 で、最悪ではない** |
+
+- 最悪の群 C が gb_fifo_0（proj012・013）から **gb_fifo_1（ADC_B = win_core に分けた ch）に移った**。gb_bc_1 と win_core_0 がその近くに載って配置が混んだと読む（未確認）。構造（FO 887・1 段）は proj012 と同じ
+- 資源・CDC の分類別件数・結線の照合の行はまだ読んでいない（build/vivado.log の「DSP48E2」「CDC」「結線の照合」の行）
+
 ## 手順（予定）
 
 1. **numpy の模型**: 粗い PFB（タップ数・オーバーサンプリング・平らな帯域）、半帯域の段と係数、通過帯域のリップル、両端 5 % の外への折り返しの量。窓の位置を粗い ch の境目・中央・帯域の端に振る。**模型は RTL の写しではなく仕様から書く**（後で bit 単位の照合の正にする）
@@ -282,7 +293,8 @@ bit ③（4 ADC × 4 窓、256 MHz 窓で規模が決まる）。**自作部分�
 - [x] RTL: 窓の FFT・電力・積分（wspec_core）と sim（4 層・変種 3 つ・陽性対照）
 - [x] AXI4-Lite の上位（win_core）と、AXI 越しの sim（sim-top）
 - [x] proj013 への組み込み（build.tcl・ID・window.py・Makefile）
-- [ ] **Vivado サーバ: `make sim-all` → `make` → `make timing-check` → `make worst-paths PART=xczu48dr-ffvg1517-1-e`**（予言は下の「ビルドの予言」）
+- [x] Vivado サーバ: `make` → `make timing-check` → `make worst-paths`: `-2` +0.065・`-1` +0.086 ns で閉じた。win_core は最悪経路に出ない
+- [ ] 資源・CDC・結線の照合を build/vivado.log から書き写す。`make sim-all` の結果
 - [ ] 実機: spectrometer.py の proj013 の判定の回帰（4 本）→ window.py の W-0・W-1・W-6（W = 256 と 8）
 - 設計のメモ（wspec_core で実装済み）: **FFT の前にフレームの溜め（4096 語 × 2 面）を置き、1 フレームを途切れなく流す**:
   realtime の FFT IP は入力の途切れを待たずに進む（proj011）が、窓の出力は W MSPS（W = 8 なら 32 クロックに 1 個）で必ず途切れる。
