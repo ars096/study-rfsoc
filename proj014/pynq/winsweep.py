@@ -162,7 +162,7 @@ def main():
     p.add_argument("--w3-tint", type=float, default=0.5, help="W-3 の 1 点の積分と、SG を切った基準の積分 [s]")
     p.add_argument("--w3-dbm", type=float, default=None, help="W-3 の SG のレベル [dBm]（既定 --sg-dbm）")
     p.add_argument("--w3-shift-full", type=int, default=None, help="W-3 の全帯域の SHIFT（既定 --shift-full）")
-    p.add_argument("--w3-shift", type=int, default=None, help="W-3 の窓の SHIFT（既定 --shift）。狭い窓は雑音が小さいので下げる")
+    p.add_argument("--w3-shift", type=int, default=None, help="W-3 の窓の SHIFT（既定: SG を切った床から、量子化を除いた真の雑音で床 ≧ 16 LSB² になるよう自動で選ぶ）")
     p.add_argument("--w2-n", type=int, default=37, help="W-2 の中央 90 % の点の数")
     p.add_argument("--w2-edge", type=float, default=0.005, help="W-2 の両端 5 % の刻み（W に対する比）")
     p.add_argument("--w3-m", default="1,2,3,4,8,16,32,64", help="W-3 の窓の外の離れ（W の倍数）")
@@ -255,7 +255,7 @@ def main():
     shf3 = a.w3_shift_full if a.w3_shift_full is not None else a.shift_full
     dbm3 = a.w3_dbm if a.w3_dbm is not None else a.sg_dbm
     pred = 64.0 * 4.0 ** (a.shift_full - a.shift)
-    sh3 = a.w3_shift if a.w3_shift is not None else a.shift
+    sh3 = a.w3_shift if a.w3_shift is not None else a.shift      # 自動のときは基準を測ってから決め直す
     pred3 = 64.0 * 4.0 ** (shf3 - sh3)
     quiet = lambda *x: None
 
@@ -282,11 +282,19 @@ def main():
     t0 = time.time()
     log(f"基準（SG を切る、{a.w3_tint} s）…")
     pw0, pf0, m0, _ = measure(a.w3_tint, a.shift_full)
+    nb = np.where(np.arange(NFFT_W) < NFFT_W // 2, np.arange(NFFT_W), np.arange(NFFT_W) - NFFT_W) * dw
+    if do3 and a.w3_shift is None:
+        # 床 = 真の雑音 ＋ 量子化（約 0.67 LSB²）。真の雑音は SHIFT を 1 下げると 4 倍。床 ≧ 16 を狙う（W-3 の CW は窓の外なので窓は飽和しない）
+        fl = float(np.median(pw0[np.abs(nb) <= 0.45 * w]))
+        true = max(fl - 0.67, 0.02)
+        n_dn = max(0, int(np.ceil(np.log(16.0 / true) / np.log(4.0))))
+        sh3 = max(0, a.shift - n_dn)
+        pred3 = 64.0 * 4.0 ** (shf3 - sh3)
+        log(f"  W-3 の窓の SHIFT を自動で {sh3}（SHIFT {a.shift} の床 {fl:.2f}、量子化を除いて {true:.2f} LSB²）")
     if do3 and (shf3 != a.shift_full or sh3 != a.shift):
         pw03, pf03, _, _ = measure(a.w3_tint, shf3, sh3)
     else:
         pw03, pf03 = pw0, pf0
-    nb = np.where(np.arange(NFFT_W) < NFFT_W // 2, np.arange(NFFT_W), np.arange(NFFT_W) - NFFT_W) * dw
     floor_w = float(np.median(pw0[np.abs(nb) <= 0.45 * w]))
     floor_w3 = float(np.median(pw03[np.abs(nb) <= 0.45 * w]))
     log(f"  窓の雑音の床（中央 90 % の ch の中央値）{floor_w:.1f} LSB² / フレーム（SHIFT {a.shift}）"
@@ -367,6 +375,7 @@ def main():
         if dbm3 != a.sg_dbm:
             sg.set_dbm(dbm3)
         log(f"W-3: SG {dbm3:+.1f} dBm・窓の SHIFT {sh3}・全帯域の SHIFT {shf3}・{a.w3_tint} s / 点")
+        res.update(w3_shift=sh3, w3_shift_full=shf3, w3_dbm=dbm3)
         rows = []
         for i, ((nu, al), gmod, nq) in enumerate(zip(w3, gp, nup)):
             f = c + nu
