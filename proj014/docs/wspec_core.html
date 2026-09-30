@@ -1,0 +1,780 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: BSD-3-Clause -->
+<!-- proj014 の wspec_core の振る舞いの図解。src/wspec_core.v・win_core.v・fft_cfg.tcl・build.tcl・sim/check_wspec.py・README から。RTL を変えたらここも直す。タイミングの図は RTL の式（adv・issue）どおりに回した模型から描いた -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wspec_core 図解</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* レイアウト: 1 段組の技術メモ（docs/win_chain.html と同じ色と書体）。式 → ブロック図 → 窓の位置 → タイミング → 段の表 → 原型の応答 → 約束 → 確かめ方 */
+:root {
+  --bg: #f6f7f5;
+  --panel: #ffffff;
+  --fg: #1d2421;
+  --muted: #5b6661;
+  --rule: #d5dbd7;
+  --dsp: #23795a;      /* DSP の段（ブロック図の緑） */
+  --win: #b23a2e;      /* フレーム m0・窓の流れ（赤） */
+  --axi: #2d65a8;      /* フレーム m1（青） */
+  --code-bg: #eef1ee;
+  --band: #eef2ef;
+  --pb: rgba(35, 121, 90, .10);
+  --sb: rgba(178, 58, 46, .08);
+  --warn-bg: #fbf3e4;
+  --warn-fg: #7a5410;
+  --f-body: "IBM Plex Sans JP", "Hiragino Sans", "Noto Sans CJK JP", "Yu Gothic", sans-serif;
+  --f-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151a18; --panel: #1c2320; --fg: #e3e8e5; --muted: #9aa6a0; --rule: #33403a;
+    --dsp: #5cc39a; --win: #ee7d70; --axi: #7fb0ec; --code-bg: #232c28; --band: #1f2724;
+    --pb: rgba(92, 195, 154, .12); --sb: rgba(238, 125, 112, .10); --warn-bg: #2e2716; --warn-fg: #e6c27a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151a18; --panel: #1c2320; --fg: #e3e8e5; --muted: #9aa6a0; --rule: #33403a;
+  --dsp: #5cc39a; --win: #ee7d70; --axi: #7fb0ec; --code-bg: #232c28; --band: #1f2724;
+  --pb: rgba(92, 195, 154, .12); --sb: rgba(238, 125, 112, .10); --warn-bg: #2e2716; --warn-fg: #e6c27a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 15px; line-height: 1.75; }
+.wrap { max-width: 1000px; margin: 0 auto; padding-inline: 20px; padding-block: 36px 64px; display: grid; gap: 44px; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+h1 { font-size: 30px; line-height: 1.3; margin: 0; text-wrap: balance; }
+h2 { font-size: 21px; margin: 0; text-wrap: balance; border-top: 3px solid var(--dsp); padding-top: 16px; }
+h3 { font-size: 15.5px; margin: 0; }
+p { margin: 0; max-width: 70ch; }
+.lead { color: var(--muted); max-width: 74ch; }
+code, .mono { font-family: var(--f-mono); font-size: .92em; }
+section { display: grid; gap: 16px; }
+section > * { min-width: 0; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.facts > div { background: var(--panel); padding: 12px 14px; display: grid; gap: 2px; align-content: start; }
+.facts dt { font-size: 12px; color: var(--muted); letter-spacing: .03em; }
+.facts dd { margin: 0; font-family: var(--f-mono); font-size: 14px; font-variant-numeric: tabular-nums; }
+.facts dd small { display: block; font-family: var(--f-body); font-size: 12.5px; color: var(--muted); }
+.eq { font-family: var(--f-mono); font-size: 13.5px; background: var(--code-bg); border-radius: 4px; padding: 12px 14px; overflow-x: auto; white-space: pre; line-height: 1.65; }
+.eq .c { color: var(--muted); }
+ul, ol { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+li { max-width: 70ch; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 20px; }
+.cols > * { min-width: 0; }
+.box { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; }
+.note { background: var(--warn-bg); color: var(--warn-fg); border-radius: 6px; padding: 10px 14px; font-size: 14px; max-width: 74ch; }
+figure { margin: 0; display: grid; gap: 8px; }
+figcaption { font-size: 13.5px; color: var(--muted); max-width: 80ch; }
+.fig { overflow-x: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; }
+.fig svg { display: block; width: 100%; height: auto; }
+.fig.w1 svg { min-width: 900px; }
+.fig.w2 svg { min-width: 860px; }
+.fig.w3 svg { min-width: 900px; }
+.fig.w4 svg { min-width: 700px; }
+svg text { font-family: var(--f-body); fill: var(--fg); font-size: 13px; }
+svg .t { font-weight: 700; font-size: 13.5px; }
+svg .m, svg .ax, svg .cell { font-family: var(--f-mono); fill: var(--muted); font-size: 11.5px; }
+svg .cell { fill: var(--fg); font-size: 11px; }
+svg .clk { font-family: var(--f-mono); fill: var(--dsp); font-size: 11.5px; font-weight: 500; }
+svg .bx { fill: var(--panel); stroke: var(--dsp); stroke-width: 1.6; }
+svg .ln { stroke: var(--fg); stroke-width: 1.6; fill: none; }
+svg .ah { fill: var(--fg); }
+svg .lnd { stroke: var(--muted); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+svg .ahd { fill: var(--muted); }
+svg .beat { fill: var(--band); stroke: var(--rule); stroke-width: 1; }
+svg .beatnow { fill: var(--pb); stroke: var(--dsp); stroke-width: 1.2; }
+svg .tick { stroke: var(--muted); stroke-width: 1; }
+svg .f0 { fill: var(--win); opacity: .85; }
+svg .f1 { fill: var(--axi); opacity: .85; }
+svg .t0 { fill: var(--win); font-weight: 500; }
+svg .t1 { fill: var(--axi); font-weight: 500; }
+svg .dot { fill: var(--panel); stroke: var(--fg); stroke-width: 1.8; }
+svg .br { stroke: var(--fg); stroke-width: 1.2; fill: none; }
+svg .band { fill: var(--band); }
+svg .sig { font-family: var(--f-mono); font-size: 12px; fill: var(--fg); }
+svg .wv { stroke: var(--fg); stroke-width: 1.6; fill: none; }
+svg .cin { fill: var(--pb); stroke: var(--dsp); stroke-width: 1.2; }
+svg .cq { fill: var(--panel); stroke: var(--muted); stroke-width: 1; }
+svg .cout { fill: var(--sb); stroke: var(--win); stroke-width: 1.2; }
+svg .cout1 { fill: var(--panel); stroke: var(--axi); stroke-width: 1.2; }
+svg .cneg { fill: var(--panel); stroke: var(--rule); stroke-width: 1; stroke-dasharray: 3 2; }
+svg .cx { fill: var(--rule); stroke: var(--rule); stroke-width: 1; opacity: .7; }
+svg .lat { stroke: var(--dsp); stroke-width: 1.6; }
+svg .lath { fill: var(--dsp); }
+svg .latt { font-size: 12px; fill: var(--dsp); }
+svg .grid { stroke: var(--rule); stroke-width: 1; }
+svg .pb { fill: var(--pb); }
+svg .sb { fill: var(--sb); }
+svg .mark { stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 4 4; }
+svg .curve { stroke: var(--dsp); stroke-width: 2; fill: none; stroke-linejoin: round; }
+svg .pt { fill: var(--dsp); }
+svg .lab { font-size: 12.5px; fill: var(--fg); }
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-weight: 500; color: var(--muted); font-size: 12.5px; letter-spacing: .03em; }
+td.num, th.num { text-align: right; font-family: var(--f-mono); }
+td.mono { font-family: var(--f-mono); font-size: 13px; white-space: nowrap; }
+tfoot td { font-weight: 700; border-bottom: none; }
+svg .b0 { fill: var(--pb); stroke: var(--dsp); stroke-width: 1.2; }
+svg .b1 { fill: var(--panel); stroke: var(--axi); stroke-width: 1.2; }
+svg .rdw { fill: var(--sb); stroke: var(--win); stroke-width: 1; stroke-dasharray: 3 2; }
+svg .tk { stroke: var(--rule); stroke-width: 1; }
+svg .mk { stroke: var(--win); stroke-width: 2; }
+.fig.w5 svg { min-width: 900px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">proj014 · src/wspec_core.v · rev2（ID 0x0014_0200）</div>
+  <h1>wspec_core：窓のスペクトルを積む</h1>
+  <p class="lead">ddc_core が出す z（複素 18 bit、W MSPS で途切れながら届く）を 4096 語ずつ溜め、溜まった 1 フレームを途切れなく FFT IP に流す。
+  出てきた 4096 ch を電力にして N_ACC フレーム積み、二面のメモリに交互にダンプとして残す。PS は AXI4-Lite で、閉じたほうの面を読む。</p>
+</header>
+
+<section aria-labelledby="facts">
+  <h2 id="facts">要点</h2>
+  <dl class="facts">
+    <div><dt>入力</dt><dd>z（18 bit 複素・Q4）<small>W MSPS。W &lt; 256 では毎クロックは来ない</small></dd></div>
+    <div><dt>FFT</dt><dd>複素 4096 点・順変換<small>Xilinx FFT IP。unscaled・realtime・自然順・XK_INDEX・DSP 30</small></dd></div>
+    <div><dt>電力</dt><dd>q = sat18(Y &gt;&gt;&gt; SHIFT)<small>p = q_re² + q_im²（37 bit）</small></dd></div>
+    <div><dt>積分</dt><dd>4096 ch × 64 bit × 2 面<small>N_ACC フレームで 1 ダンプ。面はダンプごとに交互</small></dd></div>
+    <div><dt>1 フレーム</dt><dd>4096 / W µs<small>256 MHz で 16 µs、8 MHz で 512 µs</small></dd></div>
+    <div><dt>メモリ</dt><dd>溜め 8・スナップショット 8 BRAM<small>積分の 2 面は合成が URAM 2 個に載せた</small></dd></div>
+  </dl>
+</section>
+
+<section aria-labelledby="eq">
+  <h2 id="eq">式</h2>
+  <p>sim/check_wspec.py の整数模型（A 層）と bit 単位で同じ。フレーム f は、rst の後の最初の z を 0 番として z の 4096f … 4096f + 4095 番目。</p>
+  <div class="eq"><span class="c">① FFT（IP、unscaled：出力は 18 + 12 + 1 = 31 bit）</span>
+  Y<sub>f</sub>[b] = Σ<sub>n=0..4095</sub> z[4096f + n] · exp(−j2πbn/4096)        b = 0..4095（自然順）
+
+<span class="c">② 電力（S1〜S4）</span>
+  q = sat18( Y &gt;&gt;&gt; SHIFT )       <span class="c">成分ごとに算術右シフト（切り捨て）して 18 bit に飽和</span>
+  p<sub>f</sub>[b] = q<sub>re</sub>² + q<sub>im</sub>²                <span class="c">37 bit</span>
+
+<span class="c">③ 積分（S5、64 bit）</span>
+  S<sub>k</sub>[b] = Σ<sub>f = F0 + kN .. F0 + kN + N − 1</sub> p<sub>f</sub>[b]     N = N_ACC、F0 = RUN の時点の fin + 2
+
+<span class="c">④ ch と周波数（並べ替えとゾーン 2 の反転は PS 側）</span>
+  ν<sub>b</sub> = b · W / 4096（b &lt; 2048）、(b − 4096) · W / 4096（b ≧ 2048）      IF = 4096 − c − ν</div>
+</section>
+
+<section aria-labelledby="bd">
+  <h2 id="bd">ブロック図</h2>
+  <figure>
+    <div class="fig w1">
+      <svg viewBox="0 0 1180 380" role="img" aria-label="wspec_core のブロック図。z を溜めに書き、出口のレジスタから FFT IP に流し、電力と積分へ。フレームの判定がタグを作り、スナップショットと積分の面を AXI で読む">
+        <defs>
+          <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+        </defs>
+        <g style="color: var(--fg)">
+        <text class="t" x="12" y="80">z</text>
+        <text class="m" x="12" y="98">z_valid</text>
+        <text class="m" x="12" y="114">W MSPS</text>
+        <line class="ln" x1="70" y1="86" x2="118" y2="86" marker-end="url(#a)"/>
+
+        <rect class="bx" x="120" y="50" width="200" height="72" rx="4"/>
+        <text class="t" x="132" y="72">溜め（fbuf）</text>
+        <text class="m" x="132" y="92">2 面 × 4096 語 × 36 bit</text>
+        <text class="m" x="132" y="110">書く wa・wb／読む ra・rbk</text>
+
+        <line class="ln" x1="320" y1="86" x2="358" y2="86" marker-end="url(#a)"/>
+
+        <rect class="bx" x="360" y="50" width="190" height="72" rx="4"/>
+        <text class="t" x="372" y="72">出口のレジスタ</text>
+        <text class="m" x="372" y="92">fd・f_v・f_last</text>
+        <text class="m" x="372" y="110">adv = !f_v || tready</text>
+
+        <line class="ln" x1="550" y1="92" x2="588" y2="92" marker-end="url(#a)"/>
+        <polyline class="lnd" points="590,62 570,62 570,40 455,40 455,48" marker-end="url(#a)" style="color: var(--muted)"/>
+        <text class="m" x="512" y="34" text-anchor="middle">tready</text>
+
+        <rect class="bx" x="590" y="50" width="220" height="72" rx="4"/>
+        <text class="t" x="602" y="72">FFT IP（win_fft）</text>
+        <text class="m" x="602" y="92">複素 4096 点・順・unscaled</text>
+        <text class="m" x="602" y="110">realtime・XK_INDEX</text>
+
+        <line class="ln" x1="810" y1="86" x2="848" y2="86" marker-end="url(#a)"/>
+        <text class="m" x="829" y="78" text-anchor="middle">31b</text>
+
+        <rect class="bx" x="850" y="50" width="150" height="72" rx="4"/>
+        <text class="t" x="862" y="72">電力</text>
+        <text class="m" x="862" y="92">S1 sat18(Y&gt;&gt;&gt;SH)</text>
+        <text class="m" x="862" y="110">S2〜S4 re² + im²</text>
+
+        <line class="ln" x1="1000" y1="86" x2="1018" y2="86" marker-end="url(#a)"/>
+
+        <rect class="bx" x="1020" y="50" width="150" height="72" rx="4"/>
+        <text class="t" x="1032" y="72">積分 × 2 面</text>
+        <text class="m" x="1032" y="92">4096 × 64 bit</text>
+        <text class="m" x="1032" y="110">S5 読んで足して書く</text>
+
+        <!-- 2 段目 -->
+        <polyline class="ln" points="96,86 96,236 118,236" marker-end="url(#a)"/>
+        <rect class="bx" x="120" y="200" width="200" height="72" rx="4"/>
+        <text class="t" x="132" y="222">スナップショット</text>
+        <text class="m" x="132" y="242">2 面 × 4096 語</text>
+        <text class="m" x="132" y="260">ダンプの最初のフレームの z</text>
+
+        <rect class="bx" x="360" y="200" width="190" height="72" rx="4"/>
+        <text class="t" x="372" y="222">FLAGS・見張り</text>
+        <text class="m" x="372" y="242">XK の飛び・ovr・TLAST</text>
+        <text class="m" x="372" y="260">halt・待たされた・STALL</text>
+
+        <line class="ln" x1="700" y1="122" x2="700" y2="198" marker-end="url(#a)"/>
+        <text class="m" x="706" y="164">XK_INDEX・tvalid</text>
+        <rect class="bx" x="590" y="200" width="220" height="72" rx="4"/>
+        <text class="t" x="602" y="222">フレームの判定</text>
+        <text class="m" x="602" y="242">ch 0 のクロックで act・first</text>
+        <text class="m" x="602" y="260">last・bank・k を決める</text>
+
+        <polyline class="ln" points="810,236 1060,236 1060,124" marker-end="url(#a)"/>
+        <text class="m" x="930" y="228" text-anchor="middle">タグ（act・first・last・bank・k）</text>
+        <text class="m" x="935" y="254" text-anchor="middle">S0〜S5 を運ぶ</text>
+
+        <!-- 3 段目: 読み出し -->
+        <polyline class="ln" points="1130,122 1130,318" marker-end="url(#a)"/>
+        <polyline class="ln" points="220,272 220,340 848,340" marker-end="url(#a)"/>
+        <rect class="bx" x="850" y="320" width="320" height="50" rx="4"/>
+        <text class="t" x="862" y="341">win_core（AXI4-Lite）</text>
+        <text class="m" x="862" y="360">0x10000 スペクトル・0x08000 スナップショット・SEQ</text>
+        <text class="m" x="534" y="332" text-anchor="middle">閉じた面（rd_bank）を 2 clk で読む</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>緑の枠が wspec_core の中。溜めから IP までは AXI4-Stream の握手（tvalid・tdata・tlast と tready）で、rev2 で守るようにした部分。
+    IP から後ろ（電力・積分）は、XK_INDEX の ch 0 のクロックでフレームの行き先を決め、そのタグを 5 段運んで積分の書き込みに使う。</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="buf">
+  <h2 id="buf">溜めを置く理由と、流れ方</h2>
+  <p>realtime の FFT IP は、1 フレームの途中で入力が途切れても待たずに進む（proj011）。窓の出力 z は W MSPS なので、W &lt; 256 では必ず途切れる。
+  そこで 4096 語を 2 面の溜めに書き、1 面溜まったら（fdone）その面を 4096 クロック続けて IP に流す。
+  次の面が溜まるには 4096 クロック以上かかる（z は 1 クロックに 1 個以下）ので、読み出しは間に合う。</p>
+  <figure>
+    <div class="fig w5">
+<svg viewBox="0 0 990 206" role="img" aria-label="z が 1 クロックに 1 個のときの溜めの書き込みと読み出し">
+<rect class="band" x="150" y="24" width="820" height="34"/>
+<text class="sig" x="140" y="45.0" text-anchor="end">書き込み 面 0</text>
+<rect class="b0" x="150.0" y="31" width="121.5" height="20" rx="2"/>
+<text class="cell" x="210.7" y="45.0" text-anchor="middle">f0</text>
+<rect class="b0" x="393.0" y="31" width="121.5" height="20" rx="2"/>
+<text class="cell" x="453.7" y="45.0" text-anchor="middle">f2</text>
+<rect class="b0" x="635.9" y="31" width="121.5" height="20" rx="2"/>
+<text class="cell" x="696.7" y="45.0" text-anchor="middle">f4</text>
+<text class="sig" x="140" y="79.0" text-anchor="end">書き込み 面 1</text>
+<rect class="b1" x="271.5" y="65" width="121.5" height="20" rx="2"/>
+<text class="cell" x="332.2" y="79.0" text-anchor="middle">f1</text>
+<rect class="b1" x="514.4" y="65" width="121.5" height="20" rx="2"/>
+<text class="cell" x="575.2" y="79.0" text-anchor="middle">f3</text>
+<rect class="band" x="150" y="92" width="820" height="34"/>
+<text class="sig" x="140" y="113.0" text-anchor="end">読み出し → IP</text>
+<rect class="b0" x="271.5" y="99" width="121.5" height="20" rx="2"/>
+<text class="cell" x="332.2" y="113.0" text-anchor="middle">f0</text>
+<rect class="b1" x="393.0" y="99" width="121.5" height="20" rx="2"/>
+<text class="cell" x="453.7" y="113.0" text-anchor="middle">f1</text>
+<rect class="b0" x="514.4" y="99" width="121.5" height="20" rx="2"/>
+<text class="cell" x="575.2" y="113.0" text-anchor="middle">f2</text>
+<rect class="b1" x="635.9" y="99" width="121.5" height="20" rx="2"/>
+<text class="cell" x="696.7" y="113.0" text-anchor="middle">f3</text>
+<rect class="b0" x="757.4" y="99" width="121.5" height="20" rx="2"/>
+<text class="cell" x="818.1" y="113.0" text-anchor="middle">f4</text>
+<text class="sig" x="140" y="147.0" text-anchor="end">IP の出力</text>
+<rect class="b0" x="314.0" y="133" width="121.5" height="20" rx="2"/>
+<text class="cell" x="374.7" y="147.0" text-anchor="middle">f0</text>
+<rect class="b1" x="435.5" y="133" width="121.5" height="20" rx="2"/>
+<text class="cell" x="496.2" y="147.0" text-anchor="middle">f1</text>
+<rect class="b0" x="557.0" y="133" width="121.5" height="20" rx="2"/>
+<text class="cell" x="617.7" y="147.0" text-anchor="middle">f2</text>
+<rect class="b1" x="678.4" y="133" width="121.5" height="20" rx="2"/>
+<text class="cell" x="739.2" y="147.0" text-anchor="middle">f3</text>
+<rect class="b0" x="799.9" y="133" width="121.5" height="20" rx="2"/>
+<text class="cell" x="860.7" y="147.0" text-anchor="middle">f4</text>
+<line class="grid" x1="150.0" x2="150.0" y1="24" y2="160"/>
+<text class="ax" x="150.0" y="176" text-anchor="middle">0</text>
+<line class="grid" x1="271.5" x2="271.5" y1="24" y2="160"/>
+<text class="ax" x="271.5" y="176" text-anchor="middle">4,096</text>
+<line class="grid" x1="393.0" x2="393.0" y1="24" y2="160"/>
+<text class="ax" x="393.0" y="176" text-anchor="middle">8,192</text>
+<line class="grid" x1="514.4" x2="514.4" y1="24" y2="160"/>
+<text class="ax" x="514.4" y="176" text-anchor="middle">12,288</text>
+<line class="grid" x1="635.9" x2="635.9" y1="24" y2="160"/>
+<text class="ax" x="635.9" y="176" text-anchor="middle">16,384</text>
+<line class="grid" x1="757.4" x2="757.4" y1="24" y2="160"/>
+<text class="ax" x="757.4" y="176" text-anchor="middle">20,480</text>
+<line class="grid" x1="878.9" x2="878.9" y1="24" y2="160"/>
+<text class="ax" x="878.9" y="176" text-anchor="middle">24,576</text>
+<text class="ax" x="560.0" y="194" text-anchor="middle">クロック（256 MHz）</text>
+</svg>
+    </div>
+    <figcaption>W = 256 MHz（z が毎クロック）。溜めるのと流すのが同じ速さで、面を入れ替えながら切れ目なく続く。</figcaption>
+  </figure>
+  <figure>
+    <div class="fig w5">
+<svg viewBox="0 0 990 206" role="img" aria-label="z が 4 クロックに 1 個のときの溜めの書き込みと読み出し">
+<rect class="band" x="150" y="24" width="820" height="34"/>
+<text class="sig" x="140" y="45.0" text-anchor="end">書き込み 面 0</text>
+<rect class="b0" x="150.0" y="31" width="238.5" height="20" rx="2"/>
+<text class="cell" x="269.3" y="45.0" text-anchor="middle">f0</text>
+<rect class="b0" x="627.1" y="31" width="238.5" height="20" rx="2"/>
+<text class="cell" x="746.4" y="45.0" text-anchor="middle">f2</text>
+<text class="sig" x="140" y="79.0" text-anchor="end">書き込み 面 1</text>
+<rect class="b1" x="388.5" y="65" width="238.5" height="20" rx="2"/>
+<text class="cell" x="507.8" y="79.0" text-anchor="middle">f1</text>
+<rect class="band" x="150" y="92" width="820" height="34"/>
+<text class="sig" x="140" y="113.0" text-anchor="end">読み出し → IP</text>
+<rect class="b0" x="388.5" y="99" width="59.6" height="20" rx="2"/>
+<text class="cell" x="418.4" y="113.0" text-anchor="middle">f0</text>
+<rect class="b1" x="627.1" y="99" width="59.6" height="20" rx="2"/>
+<text class="cell" x="656.9" y="113.0" text-anchor="middle">f1</text>
+<rect class="b0" x="865.6" y="99" width="59.6" height="20" rx="2"/>
+<text class="cell" x="895.5" y="113.0" text-anchor="middle">f2</text>
+<text class="sig" x="140" y="147.0" text-anchor="end">IP の出力</text>
+<rect class="b0" x="409.4" y="133" width="59.6" height="20" rx="2"/>
+<text class="cell" x="439.2" y="147.0" text-anchor="middle">f0</text>
+<rect class="b1" x="648.0" y="133" width="59.6" height="20" rx="2"/>
+<text class="cell" x="677.8" y="147.0" text-anchor="middle">f1</text>
+<rect class="b0" x="886.5" y="133" width="59.6" height="20" rx="2"/>
+<text class="cell" x="916.3" y="147.0" text-anchor="middle">f2</text>
+<line class="grid" x1="150.0" x2="150.0" y1="24" y2="160"/>
+<text class="ax" x="150.0" y="176" text-anchor="middle">0</text>
+<line class="grid" x1="388.5" x2="388.5" y1="24" y2="160"/>
+<text class="ax" x="388.5" y="176" text-anchor="middle">16,384</text>
+<line class="grid" x1="627.1" x2="627.1" y1="24" y2="160"/>
+<text class="ax" x="627.1" y="176" text-anchor="middle">32,768</text>
+<line class="grid" x1="865.6" x2="865.6" y1="24" y2="160"/>
+<text class="ax" x="865.6" y="176" text-anchor="middle">49,152</text>
+<text class="ax" x="560.0" y="194" text-anchor="middle">クロック（256 MHz）</text>
+</svg>
+    </div>
+    <figcaption>W = 64 MHz（z が 4 クロックに 1 個）。1 フレームを溜めるのに 16384 クロックかかり、流すのは 4096 クロックだけ。間は IP の入力が止まる。
+    この止まった後の面の頭で、IP は 1 クロックだけ tready を下げる（実機の W-8 で、W &lt; 256 のどの幅でも 1 フレームに 1 クロック）。
+    IP の出力の遅れは IP の設定で決まり、図は模式。</figcaption>
+  </figure>
+  <ul>
+    <li>読み出し中にもう 1 面溜まったら（待たされて遅れた場合）、pend で予約して、今の面を読み終えた次のクロックから読み始める</li>
+    <li>書き込みが、読み中の面の未読の番地か予約中の面に追いついたら ovr → FLAGS[1]（読み出しが間に合わなかった）</li>
+    <li>溜めは z の到着順に書くだけで、IP の都合で書き込みを止めることはない。止まるのは読み出し側だけ</li>
+  </ul>
+</section>
+
+<section aria-labelledby="hs">
+  <h2 id="hs">tready の握手（rev2）</h2>
+  <p>出口のレジスタ（fd・f_v・f_last）は、「空いている（f_v = 0）」か「IP が今の語を受けた（tready = 1）」のときだけ次の語に進む（adv）。
+  溜めの番地 ra も同じ条件（issue = rd_go &amp;&amp; adv）でしか進まない。これで IP に待たされても 1 語も落とさず、IP のフレームの枠 = 溜めのフレームの枠が保たれる。</p>
+  <figure>
+    <div class="fig w3">
+<svg viewBox="0 0 996 334" role="img" aria-label="tready が 1 クロック 0 になったとき。rev2 は出口の語を保って待ち、1 語も落とさない。rev1 は進んでしまい、語 4 を IP が受けない">
+<rect class="band" x="170" y="28" width="58" height="274"/>
+<rect class="band" x="286" y="28" width="58" height="274"/>
+<rect class="band" x="402" y="28" width="58" height="274"/>
+<rect class="band" x="518" y="28" width="58" height="274"/>
+<rect class="band" x="634" y="28" width="58" height="274"/>
+<rect class="band" x="750" y="28" width="58" height="274"/>
+<rect class="band" x="866" y="28" width="58" height="274"/>
+<text class="ax" x="199.0" y="22" text-anchor="middle">0</text>
+<text class="ax" x="315.0" y="22" text-anchor="middle">2</text>
+<text class="ax" x="431.0" y="22" text-anchor="middle">4</text>
+<text class="ax" x="547.0" y="22" text-anchor="middle">6</text>
+<text class="ax" x="663.0" y="22" text-anchor="middle">8</text>
+<text class="ax" x="779.0" y="22" text-anchor="middle">10</text>
+<text class="ax" x="895.0" y="22" text-anchor="middle">12</text>
+<text class="ax" x="160" y="22" text-anchor="end">クロック</text>
+<text class="sig" x="160" y="51.0" text-anchor="end">clk</text>
+<text class="sig" x="160" y="81.0" text-anchor="end">s_tready</text>
+<text class="sig" x="160" y="111.0" text-anchor="end">adv</text>
+<text class="sig" x="160" y="141.0" text-anchor="end">ra（次に引く番地）</text>
+<text class="sig" x="160" y="171.0" text-anchor="end">f_v</text>
+<text class="sig" x="160" y="201.0" text-anchor="end">fd（出口の語）</text>
+<text class="sig" x="160" y="231.0" text-anchor="end">IP が受けた語</text>
+<text class="sig" x="160" y="261.0" text-anchor="end">rev1: 出口の語</text>
+<text class="sig" x="160" y="291.0" text-anchor="end">rev1: IP が受けた語</text>
+<polyline class="wv" points="170,56 170,40 199.0,40 199.0,56 228,56 228,40 257.0,40 257.0,56 286,56 286,40 315.0,40 315.0,56 344,56 344,40 373.0,40 373.0,56 402,56 402,40 431.0,40 431.0,56 460,56 460,40 489.0,40 489.0,56 518,56 518,40 547.0,40 547.0,56 576,56 576,40 605.0,40 605.0,56 634,56 634,40 663.0,40 663.0,56 692,56 692,40 721.0,40 721.0,56 750,56 750,40 779.0,40 779.0,56 808,56 808,40 837.0,40 837.0,56 866,56 866,40 895.0,40 895.0,56 924,56 924,40 953.0,40 953.0,56 982,56"/>
+<polyline class="wv" points="170,70 460,70 460,86 518,86 518,70 982,70"/>
+<polyline class="wv" points="170,100 460,100 460,116 518,116 518,100 982,100"/>
+<polygon class="cq" points="173,138.0 176,129 222,129 225,138.0 222,147 176,147"/>
+<text class="cell" x="199.0" y="142.0" text-anchor="middle">0</text>
+<polygon class="cq" points="231,138.0 234,129 280,129 283,138.0 280,147 234,147"/>
+<text class="cell" x="257.0" y="142.0" text-anchor="middle">1</text>
+<polygon class="cq" points="289,138.0 292,129 338,129 341,138.0 338,147 292,147"/>
+<text class="cell" x="315.0" y="142.0" text-anchor="middle">2</text>
+<polygon class="cq" points="347,138.0 350,129 396,129 399,138.0 396,147 350,147"/>
+<text class="cell" x="373.0" y="142.0" text-anchor="middle">3</text>
+<polygon class="cq" points="405,138.0 408,129 454,129 457,138.0 454,147 408,147"/>
+<text class="cell" x="431.0" y="142.0" text-anchor="middle">4</text>
+<polygon class="cq" points="463,138.0 466,129 512,129 515,138.0 512,147 466,147"/>
+<text class="cell" x="489.0" y="142.0" text-anchor="middle">5</text>
+<polygon class="cq" points="521,138.0 524,129 570,129 573,138.0 570,147 524,147"/>
+<text class="cell" x="547.0" y="142.0" text-anchor="middle">5</text>
+<polygon class="cq" points="579,138.0 582,129 628,129 631,138.0 628,147 582,147"/>
+<text class="cell" x="605.0" y="142.0" text-anchor="middle">6</text>
+<polygon class="cq" points="637,138.0 640,129 686,129 689,138.0 686,147 640,147"/>
+<text class="cell" x="663.0" y="142.0" text-anchor="middle">7</text>
+<polygon class="cq" points="695,138.0 698,129 744,129 747,138.0 744,147 698,147"/>
+<text class="cell" x="721.0" y="142.0" text-anchor="middle">8</text>
+<polygon class="cq" points="753,138.0 756,129 802,129 805,138.0 802,147 756,147"/>
+<text class="cell" x="779.0" y="142.0" text-anchor="middle">9</text>
+<polygon class="cq" points="811,138.0 814,129 860,129 863,138.0 860,147 814,147"/>
+<text class="cell" x="837.0" y="142.0" text-anchor="middle">10</text>
+<polygon class="cq" points="869,138.0 872,129 918,129 921,138.0 918,147 872,147"/>
+<text class="cell" x="895.0" y="142.0" text-anchor="middle">11</text>
+<polygon class="cq" points="927,138.0 930,129 976,129 979,138.0 976,147 930,147"/>
+<text class="cell" x="953.0" y="142.0" text-anchor="middle">12</text>
+<polyline class="wv" points="170,176 228,176 228,160 982,160"/>
+<line class="wv" x1="170" x2="228" y1="198.0" y2="198.0"/>
+<polygon class="cin" points="231,198.0 234,189 280,189 283,198.0 280,207 234,207"/>
+<text class="cell" x="257.0" y="202.0" text-anchor="middle">0</text>
+<polygon class="cin" points="289,198.0 292,189 338,189 341,198.0 338,207 292,207"/>
+<text class="cell" x="315.0" y="202.0" text-anchor="middle">1</text>
+<polygon class="cin" points="347,198.0 350,189 396,189 399,198.0 396,207 350,207"/>
+<text class="cell" x="373.0" y="202.0" text-anchor="middle">2</text>
+<polygon class="cin" points="405,198.0 408,189 454,189 457,198.0 454,207 408,207"/>
+<text class="cell" x="431.0" y="202.0" text-anchor="middle">3</text>
+<polygon class="cin" points="463,198.0 466,189 512,189 515,198.0 512,207 466,207"/>
+<text class="cell" x="489.0" y="202.0" text-anchor="middle">4</text>
+<polygon class="cin" points="521,198.0 524,189 570,189 573,198.0 570,207 524,207"/>
+<text class="cell" x="547.0" y="202.0" text-anchor="middle">4</text>
+<polygon class="cin" points="579,198.0 582,189 628,189 631,198.0 628,207 582,207"/>
+<text class="cell" x="605.0" y="202.0" text-anchor="middle">5</text>
+<polygon class="cin" points="637,198.0 640,189 686,189 689,198.0 686,207 640,207"/>
+<text class="cell" x="663.0" y="202.0" text-anchor="middle">6</text>
+<polygon class="cin" points="695,198.0 698,189 744,189 747,198.0 744,207 698,207"/>
+<text class="cell" x="721.0" y="202.0" text-anchor="middle">7</text>
+<polygon class="cin" points="753,198.0 756,189 802,189 805,198.0 802,207 756,207"/>
+<text class="cell" x="779.0" y="202.0" text-anchor="middle">8</text>
+<polygon class="cin" points="811,198.0 814,189 860,189 863,198.0 860,207 814,207"/>
+<text class="cell" x="837.0" y="202.0" text-anchor="middle">9</text>
+<polygon class="cin" points="869,198.0 872,189 918,189 921,198.0 918,207 872,207"/>
+<text class="cell" x="895.0" y="202.0" text-anchor="middle">10</text>
+<polygon class="cin" points="927,198.0 930,189 976,189 979,198.0 976,207 930,207"/>
+<text class="cell" x="953.0" y="202.0" text-anchor="middle">11</text>
+<line class="wv" x1="170" x2="228" y1="228.0" y2="228.0"/>
+<polygon class="cout" points="231,228.0 234,219 280,219 283,228.0 280,237 234,237"/>
+<text class="cell" x="257.0" y="232.0" text-anchor="middle">0</text>
+<polygon class="cout" points="289,228.0 292,219 338,219 341,228.0 338,237 292,237"/>
+<text class="cell" x="315.0" y="232.0" text-anchor="middle">1</text>
+<polygon class="cout" points="347,228.0 350,219 396,219 399,228.0 396,237 350,237"/>
+<text class="cell" x="373.0" y="232.0" text-anchor="middle">2</text>
+<polygon class="cout" points="405,228.0 408,219 454,219 457,228.0 454,237 408,237"/>
+<text class="cell" x="431.0" y="232.0" text-anchor="middle">3</text>
+<line class="wv" x1="460" x2="518" y1="228.0" y2="228.0"/>
+<polygon class="cout" points="521,228.0 524,219 570,219 573,228.0 570,237 524,237"/>
+<text class="cell" x="547.0" y="232.0" text-anchor="middle">4</text>
+<polygon class="cout" points="579,228.0 582,219 628,219 631,228.0 628,237 582,237"/>
+<text class="cell" x="605.0" y="232.0" text-anchor="middle">5</text>
+<polygon class="cout" points="637,228.0 640,219 686,219 689,228.0 686,237 640,237"/>
+<text class="cell" x="663.0" y="232.0" text-anchor="middle">6</text>
+<polygon class="cout" points="695,228.0 698,219 744,219 747,228.0 744,237 698,237"/>
+<text class="cell" x="721.0" y="232.0" text-anchor="middle">7</text>
+<polygon class="cout" points="753,228.0 756,219 802,219 805,228.0 802,237 756,237"/>
+<text class="cell" x="779.0" y="232.0" text-anchor="middle">8</text>
+<polygon class="cout" points="811,228.0 814,219 860,219 863,228.0 860,237 814,237"/>
+<text class="cell" x="837.0" y="232.0" text-anchor="middle">9</text>
+<polygon class="cout" points="869,228.0 872,219 918,219 921,228.0 918,237 872,237"/>
+<text class="cell" x="895.0" y="232.0" text-anchor="middle">10</text>
+<polygon class="cout" points="927,228.0 930,219 976,219 979,228.0 976,237 930,237"/>
+<text class="cell" x="953.0" y="232.0" text-anchor="middle">11</text>
+<line class="wv" x1="170" x2="228" y1="258.0" y2="258.0"/>
+<polygon class="cq" points="231,258.0 234,249 280,249 283,258.0 280,267 234,267"/>
+<text class="cell" x="257.0" y="262.0" text-anchor="middle">0</text>
+<polygon class="cq" points="289,258.0 292,249 338,249 341,258.0 338,267 292,267"/>
+<text class="cell" x="315.0" y="262.0" text-anchor="middle">1</text>
+<polygon class="cq" points="347,258.0 350,249 396,249 399,258.0 396,267 350,267"/>
+<text class="cell" x="373.0" y="262.0" text-anchor="middle">2</text>
+<polygon class="cq" points="405,258.0 408,249 454,249 457,258.0 454,267 408,267"/>
+<text class="cell" x="431.0" y="262.0" text-anchor="middle">3</text>
+<polygon class="cq" points="463,258.0 466,249 512,249 515,258.0 512,267 466,267"/>
+<text class="cell" x="489.0" y="262.0" text-anchor="middle">4</text>
+<polygon class="cq" points="521,258.0 524,249 570,249 573,258.0 570,267 524,267"/>
+<text class="cell" x="547.0" y="262.0" text-anchor="middle">5</text>
+<polygon class="cq" points="579,258.0 582,249 628,249 631,258.0 628,267 582,267"/>
+<text class="cell" x="605.0" y="262.0" text-anchor="middle">6</text>
+<polygon class="cq" points="637,258.0 640,249 686,249 689,258.0 686,267 640,267"/>
+<text class="cell" x="663.0" y="262.0" text-anchor="middle">7</text>
+<polygon class="cq" points="695,258.0 698,249 744,249 747,258.0 744,267 698,267"/>
+<text class="cell" x="721.0" y="262.0" text-anchor="middle">8</text>
+<polygon class="cq" points="753,258.0 756,249 802,249 805,258.0 802,267 756,267"/>
+<text class="cell" x="779.0" y="262.0" text-anchor="middle">9</text>
+<polygon class="cq" points="811,258.0 814,249 860,249 863,258.0 860,267 814,267"/>
+<text class="cell" x="837.0" y="262.0" text-anchor="middle">10</text>
+<polygon class="cq" points="869,258.0 872,249 918,249 921,258.0 918,267 872,267"/>
+<text class="cell" x="895.0" y="262.0" text-anchor="middle">11</text>
+<polygon class="cq" points="927,258.0 930,249 976,249 979,258.0 976,267 930,267"/>
+<text class="cell" x="953.0" y="262.0" text-anchor="middle">12</text>
+<line class="wv" x1="170" x2="228" y1="288.0" y2="288.0"/>
+<polygon class="cout" points="231,288.0 234,279 280,279 283,288.0 280,297 234,297"/>
+<text class="cell" x="257.0" y="292.0" text-anchor="middle">0</text>
+<polygon class="cout" points="289,288.0 292,279 338,279 341,288.0 338,297 292,297"/>
+<text class="cell" x="315.0" y="292.0" text-anchor="middle">1</text>
+<polygon class="cout" points="347,288.0 350,279 396,279 399,288.0 396,297 350,297"/>
+<text class="cell" x="373.0" y="292.0" text-anchor="middle">2</text>
+<polygon class="cout" points="405,288.0 408,279 454,279 457,288.0 454,297 408,297"/>
+<text class="cell" x="431.0" y="292.0" text-anchor="middle">3</text>
+<polygon class="cx" points="463,288.0 466,279 512,279 515,288.0 512,297 466,297"/>
+<polygon class="cout" points="521,288.0 524,279 570,279 573,288.0 570,297 524,297"/>
+<text class="cell" x="547.0" y="292.0" text-anchor="middle">5</text>
+<polygon class="cout" points="579,288.0 582,279 628,279 631,288.0 628,297 582,297"/>
+<text class="cell" x="605.0" y="292.0" text-anchor="middle">6</text>
+<polygon class="cout" points="637,288.0 640,279 686,279 689,288.0 686,297 640,297"/>
+<text class="cell" x="663.0" y="292.0" text-anchor="middle">7</text>
+<polygon class="cout" points="695,288.0 698,279 744,279 747,288.0 744,297 698,297"/>
+<text class="cell" x="721.0" y="292.0" text-anchor="middle">8</text>
+<polygon class="cout" points="753,288.0 756,279 802,279 805,288.0 802,297 756,297"/>
+<text class="cell" x="779.0" y="292.0" text-anchor="middle">9</text>
+<polygon class="cout" points="811,288.0 814,279 860,279 863,288.0 860,297 814,297"/>
+<text class="cell" x="837.0" y="292.0" text-anchor="middle">10</text>
+<polygon class="cout" points="869,288.0 872,279 918,279 921,288.0 918,297 872,297"/>
+<text class="cell" x="895.0" y="292.0" text-anchor="middle">11</text>
+<polygon class="cout" points="927,288.0 930,279 976,279 979,288.0 976,297 930,297"/>
+<text class="cell" x="953.0" y="292.0" text-anchor="middle">12</text>
+<text class="ax" x="170" y="326">数字は溜めの番地（フレームの中の語の番号）。灰色 = IP が受けなかった語（rev1 ではそのまま失われ、IP のフレームの枠が 1 語ずれる）</text>
+</svg>
+    </div>
+    <figcaption>クロック 5 で tready が 0。rev2 は fd = 4 を保ち、クロック 6 で IP が受ける（その分、面の読み出しが 1 クロック遅れる）。
+    rev1 は tready を見ずに進んだので、語 4 を IP が受けないまま次へ行き、以後の IP のフレームが 1 語ずれた。これが rev1 の W-G の NG の正体（FLAGS[2] が立ち続けた）。</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="pw">
+  <h2 id="pw">電力と積分の段</h2>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>段</th><th>中身</th><th>語幅</th></tr></thead>
+      <tbody>
+        <tr><td>S0</td><td>IP の出力を受ける。XK_INDEX = 0 のクロック（fs）でフレームの行き先（act・first・last・bank・k）を決め、タグに載せる</td><td class="mono">Y 31 bit</td></tr>
+        <tr><td>S1</td><td>成分ごとに Y &gt;&gt;&gt; SHIFT、18 bit に飽和（飽和したら印）</td><td class="mono">q 18 bit</td></tr>
+        <tr><td>S2</td><td>二乗の入口。<strong>積分の読み出しの番地を出す</strong>（そのフレームが first でなく、行き先の面が同じとき）</td><td class="mono">18 bit</td></tr>
+        <tr><td>S3</td><td>q_re²・q_im²（積分のメモリの読み 1 段目）</td><td class="mono">36 bit</td></tr>
+        <tr><td>S4</td><td>p = q_re² + q_im²（読み 2 段目）</td><td class="mono">p 37 bit</td></tr>
+        <tr><td>S5</td><td>書き込み: first なら p、そうでなければ 読み値 + p</td><td class="mono">64 bit</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li>同じ ch は 4096 クロックおきにしか来ないので、読んで足して書く間に同じ番地の読みが追い越すことはない</li>
+    <li>64 bit の余裕: p は最大 2<sup>37</sup> 未満なので、飽和した値ばかりでも 2<sup>27</sup> フレーム積める（256 MHz で 2147 s、8 MHz で 68719 s）</li>
+    <li>first のフレームで読み値を捨てるので、面を 0 に消す手間が要らない（陽性対照 WSPEC_POSCTL は、ここで読み値に足して前のダンプを混ぜる）</li>
+  </ul>
+</section>
+
+<section aria-labelledby="dump">
+  <h2 id="dump">ダンプの割り当てと読み出し</h2>
+  <p>RUN（CTRL[0]）の時点で N_ACC・N_DUMP を取り込み、F0 = fin + 2（確実に未来のフレーム）を決める。ダンプ k はフレーム F0 + kN から N 個で、面 k mod 2 に積む。
+  最後のフレームの ch 4095 を書いたクロックで「閉じ」、SEQ が 1 増え、読み出しの面（rd_bank）と DUMP_K・N・F0・SAT がその面に切り替わる。</p>
+  <figure>
+    <div class="fig w5">
+<svg viewBox="0 0 1010 240" role="img" aria-label="N_ACC = 3 のときのダンプの割り当て。RUN のとき F0 = fin + 2、ダンプ k はフレーム F0 + 3k から 3 個、面は交互">
+<rect class="band" x="150" y="24" width="840" height="34"/>
+<text class="sig" x="140" y="45.0" text-anchor="end">フレーム（fin）</text>
+<line class="tk" x1="150.0" x2="150.0" y1="28" y2="54"/>
+<line class="tk" x1="187.8" x2="187.8" y1="28" y2="54"/>
+<line class="tk" x1="225.7" x2="225.7" y1="28" y2="54"/>
+<line class="tk" x1="263.5" x2="263.5" y1="28" y2="54"/>
+<line class="tk" x1="301.4" x2="301.4" y1="28" y2="54"/>
+<line class="tk" x1="339.2" x2="339.2" y1="28" y2="54"/>
+<line class="tk" x1="377.0" x2="377.0" y1="28" y2="54"/>
+<line class="tk" x1="414.9" x2="414.9" y1="28" y2="54"/>
+<line class="tk" x1="452.7" x2="452.7" y1="28" y2="54"/>
+<line class="tk" x1="490.5" x2="490.5" y1="28" y2="54"/>
+<line class="tk" x1="528.4" x2="528.4" y1="28" y2="54"/>
+<line class="tk" x1="566.2" x2="566.2" y1="28" y2="54"/>
+<line class="tk" x1="604.1" x2="604.1" y1="28" y2="54"/>
+<line class="tk" x1="641.9" x2="641.9" y1="28" y2="54"/>
+<line class="tk" x1="679.7" x2="679.7" y1="28" y2="54"/>
+<line class="tk" x1="717.6" x2="717.6" y1="28" y2="54"/>
+<line class="tk" x1="755.4" x2="755.4" y1="28" y2="54"/>
+<line class="tk" x1="793.2" x2="793.2" y1="28" y2="54"/>
+<line class="tk" x1="831.1" x2="831.1" y1="28" y2="54"/>
+<line class="tk" x1="868.9" x2="868.9" y1="28" y2="54"/>
+<line class="mk" x1="339.2" x2="339.2" y1="28" y2="54"/>
+<text class="cell" x="343.2" y="45.0">RUN（fin = 5 → F0 = 7）</text>
+<text class="sig" x="140" y="79.0" text-anchor="end">積分</text>
+<rect class="b0" x="414.9" y="65" width="113.5" height="20" rx="2"/>
+<text class="cell" x="471.6" y="79.0" text-anchor="middle">ダンプ 0・面 0</text>
+<rect class="b1" x="528.4" y="65" width="113.5" height="20" rx="2"/>
+<text class="cell" x="585.1" y="79.0" text-anchor="middle">ダンプ 1・面 1</text>
+<rect class="b0" x="641.9" y="65" width="113.5" height="20" rx="2"/>
+<text class="cell" x="698.6" y="79.0" text-anchor="middle">ダンプ 2・面 0</text>
+<rect class="b1" x="755.4" y="65" width="113.5" height="20" rx="2"/>
+<text class="cell" x="812.2" y="79.0" text-anchor="middle">ダンプ 3・面 1</text>
+<rect class="band" x="150" y="92" width="840" height="34"/>
+<text class="sig" x="140" y="113.0" text-anchor="end">スナップショット</text>
+<rect class="b0" x="414.9" y="99" width="37.8" height="20" rx="2"/>
+<text class="cell" x="433.8" y="113.0" text-anchor="middle">面 0</text>
+<rect class="b1" x="528.4" y="99" width="37.8" height="20" rx="2"/>
+<text class="cell" x="547.3" y="113.0" text-anchor="middle">面 1</text>
+<rect class="b0" x="641.9" y="99" width="37.8" height="20" rx="2"/>
+<text class="cell" x="660.8" y="113.0" text-anchor="middle">面 0</text>
+<rect class="b1" x="755.4" y="99" width="37.8" height="20" rx="2"/>
+<text class="cell" x="774.3" y="113.0" text-anchor="middle">面 1</text>
+<text class="sig" x="140" y="147.0" text-anchor="end">閉じる</text>
+<line class="mk" x1="537.8" x2="537.8" y1="130" y2="156"/>
+<text class="cell" x="541.8" y="147.0">SEQ 1</text>
+<line class="mk" x1="651.4" x2="651.4" y1="130" y2="156"/>
+<text class="cell" x="655.4" y="147.0">SEQ 2</text>
+<line class="mk" x1="764.9" x2="764.9" y1="130" y2="156"/>
+<text class="cell" x="768.9" y="147.0">SEQ 3</text>
+<line class="mk" x1="878.4" x2="878.4" y1="130" y2="156"/>
+<text class="cell" x="882.4" y="147.0">SEQ 4</text>
+<rect class="band" x="150" y="160" width="840" height="34"/>
+<text class="sig" x="140" y="181.0" text-anchor="end">PS の読み出し</text>
+<rect class="rdw" x="537.8" y="167" width="90.8" height="20" rx="2"/>
+<text class="cell" x="583.2" y="181.0" text-anchor="middle">ダンプ 0 を読む</text>
+<rect class="rdw" x="651.4" y="167" width="90.8" height="20" rx="2"/>
+<text class="cell" x="696.8" y="181.0" text-anchor="middle">ダンプ 1 を読む</text>
+<rect class="rdw" x="764.9" y="167" width="90.8" height="20" rx="2"/>
+<text class="cell" x="810.3" y="181.0" text-anchor="middle">ダンプ 2 を読む</text>
+<rect class="rdw" x="878.4" y="167" width="90.8" height="20" rx="2"/>
+<text class="cell" x="923.8" y="181.0" text-anchor="middle">ダンプ 3 を読む</text>
+<line class="grid" x1="150.0" x2="150.0" y1="24" y2="194"/>
+<text class="ax" x="150.0" y="210" text-anchor="middle">0</text>
+<line class="grid" x1="187.8" x2="187.8" y1="24" y2="194"/>
+<text class="ax" x="187.8" y="210" text-anchor="middle">1</text>
+<line class="grid" x1="225.7" x2="225.7" y1="24" y2="194"/>
+<text class="ax" x="225.7" y="210" text-anchor="middle">2</text>
+<line class="grid" x1="263.5" x2="263.5" y1="24" y2="194"/>
+<text class="ax" x="263.5" y="210" text-anchor="middle">3</text>
+<line class="grid" x1="301.4" x2="301.4" y1="24" y2="194"/>
+<text class="ax" x="301.4" y="210" text-anchor="middle">4</text>
+<line class="grid" x1="339.2" x2="339.2" y1="24" y2="194"/>
+<text class="ax" x="339.2" y="210" text-anchor="middle">5</text>
+<line class="grid" x1="377.0" x2="377.0" y1="24" y2="194"/>
+<text class="ax" x="377.0" y="210" text-anchor="middle">6</text>
+<line class="grid" x1="414.9" x2="414.9" y1="24" y2="194"/>
+<text class="ax" x="414.9" y="210" text-anchor="middle">7</text>
+<line class="grid" x1="452.7" x2="452.7" y1="24" y2="194"/>
+<text class="ax" x="452.7" y="210" text-anchor="middle">8</text>
+<line class="grid" x1="490.5" x2="490.5" y1="24" y2="194"/>
+<text class="ax" x="490.5" y="210" text-anchor="middle">9</text>
+<line class="grid" x1="528.4" x2="528.4" y1="24" y2="194"/>
+<text class="ax" x="528.4" y="210" text-anchor="middle">10</text>
+<line class="grid" x1="566.2" x2="566.2" y1="24" y2="194"/>
+<text class="ax" x="566.2" y="210" text-anchor="middle">11</text>
+<line class="grid" x1="604.1" x2="604.1" y1="24" y2="194"/>
+<text class="ax" x="604.1" y="210" text-anchor="middle">12</text>
+<line class="grid" x1="641.9" x2="641.9" y1="24" y2="194"/>
+<text class="ax" x="641.9" y="210" text-anchor="middle">13</text>
+<line class="grid" x1="679.7" x2="679.7" y1="24" y2="194"/>
+<text class="ax" x="679.7" y="210" text-anchor="middle">14</text>
+<line class="grid" x1="717.6" x2="717.6" y1="24" y2="194"/>
+<text class="ax" x="717.6" y="210" text-anchor="middle">15</text>
+<line class="grid" x1="755.4" x2="755.4" y1="24" y2="194"/>
+<text class="ax" x="755.4" y="210" text-anchor="middle">16</text>
+<line class="grid" x1="793.2" x2="793.2" y1="24" y2="194"/>
+<text class="ax" x="793.2" y="210" text-anchor="middle">17</text>
+<line class="grid" x1="831.1" x2="831.1" y1="24" y2="194"/>
+<text class="ax" x="831.1" y="210" text-anchor="middle">18</text>
+<line class="grid" x1="868.9" x2="868.9" y1="24" y2="194"/>
+<text class="ax" x="868.9" y="210" text-anchor="middle">19</text>
+<line class="grid" x1="906.8" x2="906.8" y1="24" y2="194"/>
+<text class="ax" x="906.8" y="210" text-anchor="middle">20</text>
+<line class="grid" x1="944.6" x2="944.6" y1="24" y2="194"/>
+<text class="ax" x="944.6" y="210" text-anchor="middle">21</text>
+<line class="grid" x1="982.4" x2="982.4" y1="24" y2="194"/>
+<text class="ax" x="982.4" y="210" text-anchor="middle">22</text>
+<text class="ax" x="570.0" y="228" text-anchor="middle">フレーム番号（溜め終えた順。IP・電力の段の遅れは除いて描いた）</text>
+</svg>
+    </div>
+    <figcaption>N_ACC = 3・RUN のとき fin = 5 の例。スナップショットは各ダンプの最初のフレームの z を、同じ面の番号で残す（snap_f0・snap_f1 にそのフレームの番号）。
+    N_ACC = 1 ならスナップショットの FFT とダンプが 1 対 1 になり、PS の --golden（W-G）がこれを numpy の FFT と比べる。</figcaption>
+  </figure>
+  <div class="cols">
+    <div class="box">
+      <h3>PS の読み方（seqlock）</h3>
+      <ul>
+        <li>SEQ と DUMP_* を読む → スペクトル 4096 × 64 bit（と要ればスナップショット）→ もう一度 SEQ</li>
+        <li>SEQ が変わっていたら読み直す（window.py の read_dump は 5 回まで）</li>
+        <li>FIN・FOUT などの 48 bit の値は、LO を読むと HI が固定される</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>読み終えるまでの期限</h3>
+      <ul>
+        <li>スペクトル: 次のダンプが閉じるまで（N フレーム）。閉じると読み出しの面が切り替わる</li>
+        <li>スナップショット: 閉じてから (N_ACC − 2) フレーム以内。2 つ先のダンプの最初のフレームが同じ面に書かれるため</li>
+        <li>N_ACC が小さいときは N_DUMP = 1 で 1 回だけ取る（--golden・W-8 の型）</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="flags">
+  <h2 id="flags">FLAGS と見張り</h2>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>bit</th><th>意味</th><th>普段</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">[0]</td><td>XK_INDEX が 1 ずつ進まなかった（IP の出力の ch が飛んだ）</td><td>0</td></tr>
+        <tr><td class="mono">[1]</td><td>溜めの読み出しが間に合わなかった（ovr）</td><td>0</td></tr>
+        <tr><td class="mono">[2]</td><td>IP の TLAST 事象（tlast_unexpected・tlast_missing）。rev1 では枠のずれで立ち続けた</td><td>0</td></tr>
+        <tr><td class="mono">[3]</td><td>IP の data_in_channel_halt（フレームの途中で入力が途切れた）</td><td>0</td></tr>
+        <tr><td class="mono">[4]</td><td>IP に待たされた（f_v = 1 で tready = 0）。データは保たれる</td><td><strong>W &lt; 256 では立つ</strong>（W-0 の判定から外す）</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li>FLAGS は粘着で、CTRL[8] で消す。win_core の FLAGS の [8]・[9] は pfb・ddc の飽和</li>
+    <li>WS_STALL（0x80）: rst 以来、待たされたクロック数。W-8 の実測で、W &lt; 256 は 1 フレームに 1 クロック（数え × フレームの長さ = WRST から読むまでの 17.9 ms）</li>
+    <li>WS_RDY0（0x84）: rst の解除から tready が最初に 1 になるまで。実測は 0 クロック（予言「4096 より大きい」は外れ）</li>
+  </ul>
+</section>
+
+<section aria-labelledby="shift">
+  <h2 id="shift">SHIFT の選び方</h2>
+  <p>FFT は unscaled なので、窓の中の雑音の電力は W に比例する（同じ入力なら狭い窓ほど 1 ch あたりが小さい）。SHIFT は、次の 2 つを両方満たすように選ぶ。</p>
+  <div class="cols">
+    <div class="box">
+      <h3>床を下げすぎない（SHIFT の上限）</h3>
+      <ul>
+        <li>&gt;&gt;&gt; は切り捨てなので、量子化の床が ≒ 0.67 LSB² 乗る</li>
+        <li>雑音の床が数 LSB² 以上ないと、弱い線・小さな折り返し・線形性が切り捨ての偏り（振幅に反比例）で歪む</li>
+        <li>実機では W-3 の床を 16 LSB² 以上にし、W-7 は 6.02 dB ごとに SHIFT を 1 下げた</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>飽和させない（SHIFT の下限）</h3>
+      <ul>
+        <li>q は 18 bit。強い線の ch が 2<sup>17</sup> を超えると飽和し、DUMP_SAT に数える</li>
+        <li>W-7（W = 256、SHIFT 15、+10 dBm）で q の余裕 33.9 dB・z の余裕 15.8 dB</li>
+        <li>今は PS がスクリプトごとに選ぶ（自動 SHIFT は持ち越し）</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="vf">
+  <h2 id="vf">確かめ方</h2>
+  <div class="cols">
+    <div class="box">
+      <h3>sim（make sim-wspec）</h3>
+      <ul>
+        <li>FFT は振る舞いのモデル（sim/win_fft_model.v）。4 層で判定: A 電力と積分が整数模型と bit 単位で一致／B FFT のモデル = numpy の FFT／C 帳簿（f0・n・SEQ・面・スナップショット）／D FLAGS と fin − fout</li>
+        <li>変種 5 つ: 途切れなし・3 クロックおき・32 クロックおき・tready が 6000 クロック遅れて 1・周期的に 40 クロック 0</li>
+        <li>陽性対照: WSPEC_POSCTL（first でも足す）で A が落ちる／WSPEC_NOREADY（rev1 の形）で待たせる変種の B が落ちる</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>実機（rev2）</h3>
+      <ul>
+        <li>W-G：ダンプ = 同じフレームのスナップショットの numpy FFT（6 通りの幅、W-8 の 150 回とも）</li>
+        <li>W-0：FLAGS（[4] を除く）0・DUMP_SAT 0</li>
+        <li>W-5：積分の揺れがラジオメータの式どおり（R / R₀ 0.99〜1.02）</li>
+        <li>W-9：窓の分光計そのもののアラン偏差が 900 s まで 2e-6 前後以下</li>
+      </ul>
+    </div>
+  </div>
+</section>
+</div>
+
+</body>
+</html>

@@ -25,7 +25,8 @@ RTL を書く段（手順 3）で `git ls-files proj013` の追跡ファイル�
 窓の 3 段（pfb_core・ddc_core・wspec_core）の振る舞いのまとめ: [docs/win_chain.html](docs/win_chain.html)（式・振る舞いの約束・WNS ごとの幅と速さ・FLAGS・語長・確かめ方）
 
 段ごとの図解: [docs/pfb_core.html](docs/pfb_core.html)（式の分け方・ブロック図・窓とフレームの位置・タイミング・原型の応答）／
-[docs/ddc_core.html](docs/ddc_core.html)（NCO・半帯域の縦続・組にまとめ直すタイミング・NS = 1〜6 の間隔・縦続の応答）
+[docs/ddc_core.html](docs/ddc_core.html)（NCO・半帯域の縦続・組にまとめ直すタイミング・NS = 1〜6 の間隔・縦続の応答）／
+[docs/wspec_core.html](docs/wspec_core.html)（溜め・FFT IP の tready の握手・電力と積分の段・ダンプの割り当てと読み出しの期限・FLAGS・SHIFT の選び方）
 
 ## 最終仕様（窓のモード。2026-09-29 に決定）
 
