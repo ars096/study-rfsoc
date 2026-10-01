@@ -213,8 +213,39 @@ DSP（bit ③ = 4 ADC × 4 窓 ＋ 全帯域 1 本 ＋ tp 4 個）:
 - **build.tcl**: 既定の part を `-1` に。`-1` で `src/ps_preset.tcl` が在れば、PS を作った直後に `ps_preset` を当てて全部読み返す（1 つでも違えば止める）。`ps_preset_derived` も読み返して違う数を出す。
   BUILD_TAG の [30] は「PS にプリセット（board_part か ps_preset.tcl）」。ps_preset.tcl が無ければ従来どおりの検証ビルド（[30] = 0、実機に使わない）
 - **Makefile**: `make` → build/（`-1`）。`-2` は `PART=xczu48dr-ffvg1517-2-e` → build-2-e/。`timing-check` は `make` と同じ（互換）
-- 手順: Vivado サーバで `make ps-preset` → `git diff proj015/src/ps_preset.tcl` を見てコミット → `make`。**未実行**（ps_preset.tcl はまだ無い）
+- 手順: Vivado サーバで `make ps-preset` → `src/ps_preset.tcl` を見てコミット → `make`。**済み**（下）
 - 確かめたいこと: `-1` ＋ ps_preset の .bit で PYNQ が PS を正しく動かす（Overlay・クロック・DDR）。`-2` の build-2-e/ の .hwh の PS の設定と比べる
+
+### `-1` ＋ PS のプリセットのビルド（2026-10-01〜02、Vivado サーバ）
+
+**PS のプリセット（`make ps-preset`、ae35bc7）**: 違う CONFIG のうち、当てる 225 個・導出される 13 個・`-1` の上限で外した 4 組 22 個
+（DDR の 2 組: DDR4-2400 は `-1` で不可、ADMA_REF・LPD_SWITCH: 533 MHz が上限 500 MHz を超える）。導出される 13 個は DDR（800 MHz・上位 2 GB が無効）と、
+外した組に引きずられた RPLL・DP・IOU_SWITCH の分周。**どれも FSBL が設定するもの**で、PYNQ が Overlay で書き換えるのは PL クロックの分周だけ
+（PL0 は IOPLL ÷ 15 = 100 MHz でプリセットどおり）。ビルドのログ: `PS PRESET : 当てた 225 個のうち違う 0 個 / 導出される 13 個のうち違う 13 個`
+
+**合成が Vivado ごと落ちる（segfault）**: 4 回のビルドで 7 個の OOC の run（win_core・gb_*・rst_dsp）。落ちる run は毎回違い、
+スタックは synth_design の後片付け（`HARTNDb::resetGlobals` → `sta::LibertyCell::~LibertyCell`）か、並列合成の task_worker。OOM・MCE の跡は無い。
+Vivado 2024.1 の不具合と読み、build.tcl で受ける（a11f6fa まで）: OOC の run を先に作って回し、**run のディレクトリの印**（`.vivado.end.rst` / `.vivado.error.rst`）で
+状態を読み、runme.log に落ちた印（`Abnormal program termination` / `segfault in`）のある run だけを最大 2 回回し直す。
+- 踏んだ穴: **Vivado の run のオブジェクトをリストから取り出すと名前の文字列になり、`get_property` が受け付けない**
+  （`Invalid option value '…_synth_1' specified for 'object'`）。run は名前で持ち、Vivado へは `[get_runs $n]` をその場で渡す。
+  `get_board_parts` の結果も close_project の後に文字にすると `null` になった（4656fa5）
+
+**タイミング（`-1`、clk_out2 = 256 MHz）**:
+
+| 版 | 実装の戦略 | WNS | WHS | 備考 |
+|---|---|---|---|---|
+| rev1 | 既定 | −0.767 | | 群 S・P・F・R |
+| rev2 | 既定 | −0.199 | 0.000 | 予言 −0.3〜+0.1。worst-paths: 200 本中 191 本が配線の型、win_core 4 個・spec_core・SmartConnect に散る |
+| rev2 | Performance_ExplorePostRoutePhysOpt | −0.041 | +0.010 | build-PEPRPO/ |
+| rev2 | Performance_NetDelay_high | −0.839 | +0.010 | build-PND/。かえって悪い |
+| **rev3** | **Performance_ExplorePostRoutePhysOpt** | **0.000** | **0.000** | 予言 −0.02〜+0.08 の下端。**閉じた（余裕は無い）**。CRITICAL WARNING なし |
+
+- rev3（e274e7e、ID 0x0015_0300 / 0x0015_A300）: rev2 の worst-paths の群のうち 3 つを RTL で区切った（値は同じ）。
+  X: 読み出しの候補を毎クロック 1 段のレジスタで受ける（応答が 1 クロック遅れる）／Y: LO の読みで HI を固定するのを ar_go の 1 クロック後に ar_addr で／
+  W: wspec で SHIFT を受け直す（max_fanout 16）
+- 資源（rev3）: DSP 3416（80.0 %）・BRAM 553（51.2 %）・URAM 32・LUT 69.0 %・FF 55.8 %。rev2 から LUT +0.7 k・FF +1.3 k
+- sim（rev3）: sim-wspec 全部通過。sim-top・sim-win4 はクラウドの作業環境が 2 回とも途中で止まり、**結果なし**（Vivado サーバで回す）
 
 ## 結果
 
@@ -269,7 +300,8 @@ DSP（bit ③ = 4 ADC × 4 窓 ＋ 全帯域 1 本 ＋ tp 4 個）:
 - [x] 手順 2: ddc_core の時分割（sim。DSP は `make ooc-ddc` で数える）
 - [x] 手順 3: pfb_core を共有部分と窓ごとの部分に分ける（sim-pfbm。proj014 の 16.8 秒の巻き戻りも直した）
 - [x] 手順 4（RTL と sim）: 1 ADC × 4 窓・ADC の total power・共有のスナップショット（sim-win4）
-- [ ] 手順 4（ビルド）: build.tcl（4 ADC × 4 窓・全帯域 1 本）を Vivado で。資源と `-1` を予言と比べる
+- [x] 手順 4（ビルド）: rev3 ＋ Performance_ExplorePostRoutePhysOpt で `-1` が WNS 0.000 ns（build-PEPRPO/）
+- [ ] rev3 の sim-top・sim-win4（Vivado サーバで）
 - [x] PS 側（書いた、実機は未）: window.py などを win_core_i の窓 w（0x20000·w）と --adc / --win に、spectrometer.py を spec_core_0 ＋ FULL_SEL に
 - [ ] 実機: 16 窓の W-0・W-G・W-1・W-6、4・2 MHz の W-2〜W-7、窓どうし・ADC 間の漏れ、読み出しの時間
 - [ ] 手順 5: ビルド → 実機
