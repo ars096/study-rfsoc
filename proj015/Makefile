@@ -12,8 +12,9 @@ VIVADO        := $(XILINX_VIVADO)/bin/vivado
 # Vivado のインストールツリーの中には置かない（VERSIONS.md 参照）。
 BOARD_REPO ?= $(HOME)/src/RFSoC4x2-BSP/board_files
 
-# part。**-1 で閉じる設計は -2 でも必ず閉じる**ので `make timing-check` で -1 でも通す。
-PART_DEFAULT := xczu48dr-ffvg1517-2-e
+# part。proj015: **既定を -1 に**（実機の .bit を -1 で配置配線する。PS には src/ps_preset.tcl を当てる。build.tcl の冒頭）。
+# -2（board_part ＋ プリセット、proj014 までの build/ の作り）は PART=xczu48dr-ffvg1517-2-e → build-2-e/
+PART_DEFAULT := xczu48dr-ffvg1517-1-e
 PART         ?= $(PART_DEFAULT)
 
 # FFT IP の変種（src/fft_cfg.tcl）。proj011 はこれを振って測る。
@@ -28,8 +29,8 @@ GB_K_DEFAULT := 2
 GB_K ?= $(GB_K_DEFAULT)
 
 # 既定以外の part・変種は別ディレクトリに出し、検証済みの成果物を上書きしない。
-#   build/            -2・res        build-perf/      -2・perf
-#   build-1-e/        -1・res        build-1-e-perf/  -1・perf
+#   build/            -1・res（proj015 から）   build-perf/      -1・perf
+#   build-2-e/        -2・res                   build-2-e-perf/  -2・perf
 ifeq ($(PART),$(PART_DEFAULT))
   OUTDIR := build
 else
@@ -81,7 +82,7 @@ SIM_DEFS  := $(if $(filter 1 2,$(SIM_START)),-DSTART_GAPS) $(if $(filter 2,$(SIM
 SIMDIR    := build-sim-s$(SIM_SHIFT)$(if $(filter-out 0,$(SIM_SKEW)),-k$(SIM_SKEW))$(if $(filter-out 0,$(SIM_START)),-g$(SIM_START))
 RTL       := src/spec_core.v src/tp_core.v src/cmul.v src/dft16.v src/tw_rom.v
 
-.PHONY: all sim sim-gb sim-tp sim-all sim-spec-all gb-cdc worst-paths survey twiddle prog id timing-check clean
+.PHONY: all sim sim-gb sim-tp sim-all sim-spec-all gb-cdc worst-paths survey twiddle prog id timing-check ps-preset clean
 
 all: $(OUTDIR)
 	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(JOBS)
@@ -122,7 +123,7 @@ gb-cdc:
 	$(VIVADO) -mode batch -nojournal -nolog -source tools/gb_cdc.tcl -tclargs $(DCP) $(dir $(DCP))gb_cdc.txt
 
 # ---- 配置配線後の dcp で setup / hold の最悪経路の中身を読む（rev3。ビルド不要、数分）----
-# DCP は gb-cdc と同じ既定（$(OUTDIR) の dcp）。`make worst-paths PART=xczu48dr-ffvg1517-1-e` で -1 の dcp。
+# DCP は gb-cdc と同じ既定（$(OUTDIR) の dcp）。proj015 から既定の build/ が -1（-2 は PART=xczu48dr-ffvg1517-2-e）。
 # 結果は dcp の run と同じ階層の $(OUTDIR)/worst_paths/。WP_N = 上位の本数、WP_THR = 束ねるしきい値（ns）
 WP_N   ?= 200
 WP_THR ?= 0.30
@@ -174,8 +175,15 @@ id:
 
 # 速度グレード -1 で通るかを確かめる。成果物は build-1-e/（FFT_OPT=perf なら build-1-e-perf/）に出るので build/ は無傷。
 # `make timing-check FFT_OPT=perf` のように変種を引き継ぐ（コマンドラインの変数は再帰 make に渡る）。
+# proj015: 既定が -1 になったので `make` と同じ（build/）。互換のために残す
 timing-check:
-	$(MAKE) PART=xczu48dr-ffvg1517-1-e
+	$(MAKE)
+
+# ボードプリセットが PS に当てる設定を src/ps_preset.tcl に書き出す（proj015。BOARD_REPO が要る。数分）。
+# 書き直したら git diff で中身を見てからコミットする
+ps-preset:
+	mkdir -p build-ps-preset
+	$(VIVADO) -mode batch -nojournal -log build-ps-preset/vivado.log -source tools/dump_ps_preset.tcl
 
 $(OUTDIR):
 	mkdir -p $(OUTDIR)

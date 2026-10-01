@@ -75,7 +75,11 @@
 # ナイキストゾーン（2）は実行時に PYNQ から設定する（pynq/spectrometer.py）。
 
 set proj         proj015
-set part_default xczu48dr-ffvg1517-2-e
+# proj015: **既定の part を -1 に**（実機の .bit を -1 で配置配線する。チップの刻印が未確認で、遅い方で閉じたものだけを載せる）。
+#   -1 のビルドは board_part を使わず、src/ps_preset.tcl（make ps-preset で書き出したボードプリセットの PS の設定）を当てる。
+#   -2（board_part の宣言値）は PART=xczu48dr-ffvg1517-2-e で build-2-e/ に（board_part ＋ プリセット。proj014 までの build/ と同じ作り）
+set part_default xczu48dr-ffvg1517-1-e
+set board_part_part xczu48dr-ffvg1517-2-e
 set part         $part_default
 set bd_name      system
 set outdir       ./build
@@ -281,8 +285,15 @@ file mkdir $outdir
 create_project $proj $projdir -part $part -force
 
 # board_part は part をボードの宣言値（-2）へ強制的に戻す（WARNING: Project 1-153）。
-# 速度グレードの検証ビルド（-1）では board_part もボードプリセットも使わない。
-set use_board [expr {$part eq $part_default}]
+# -1 では board_part を使わず、src/ps_preset.tcl の PS の設定を明示して当てる（proj015）
+set use_board [expr {$part eq $board_part_part}]
+set ps_preset_file [file normalize ./src/ps_preset.tcl]
+set use_preset_file [expr {!$use_board && [file exists $ps_preset_file]}]
+set has_preset [expr {$use_board || $use_preset_file}]
+if {$use_preset_file} {
+    source $ps_preset_file
+    puts "PS PRESET : $ps_preset_file（board part $ps_preset_board_part、当てる [expr {[llength $ps_preset] / 2}] 個・照らす [expr {[llength $ps_preset_derived] / 2}] 個）"
+}
 
 if {$use_board} {
     set bp [lindex [get_board_parts -quiet -latest_file_version *rfsoc4x2*] 0]
@@ -295,8 +306,10 @@ if {$use_board} {
     }
     puts "BOARD PART: $bp"
     set_property board_part $bp [current_project]
+} elseif {$use_preset_file} {
+    puts "NOTE: board_part は使わない（part $part のまま）。PS には src/ps_preset.tcl を当てる"
 } else {
-    puts "NOTE: 速度グレード検証ビルド。board_part とボードプリセットは使わない"
+    puts "NOTE: src/ps_preset.tcl が無い。PS にプリセットを当てない検証ビルド（実機に使わない）。make ps-preset で作る"
 }
 
 add_files -norecurse [list ./src/spec_core.v ./src/tp_core.v ./src/cmul.v ./src/dft16.v ./src/tw_rom.v ./src/gb_adc.v ./src/gb_gate.v]
@@ -479,6 +492,27 @@ set ps [create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e zynq_ultra_p
 if {$use_board} {
     apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e \
         -config {apply_board_preset "1"} $ps
+} elseif {$use_preset_file} {
+    # proj015: ボードプリセットの PS の設定を明示して当て、**読み返して照らす**（当てる設定は全部一致が必要・導出されるものは数えて出す）
+    if {[get_property VLNV $ps] ne $ps_preset_vlnv} {
+        puts "ERROR: PS の VLNV [get_property VLNV $ps] が ps_preset.tcl の $ps_preset_vlnv と違う（Vivado の版が変わった？ make ps-preset で作り直す）"
+        exit 1
+    }
+    set_property -dict $ps_preset $ps
+    set ng 0
+    foreach {k v} $ps_preset {
+        set got [get_property $k $ps]
+        if {$got ne $v} { incr ng; puts "  PS PRESET 違う: $k = $got（要求 $v）" }
+    }
+    set nd 0
+    foreach {k v} $ps_preset_derived {
+        set got ""
+        catch {set got [get_property $k $ps]}
+        if {$got ne $v} { incr nd; puts "  PS PRESET（導出）違う: $k = $got（プリセット $v）" }
+    }
+    puts [format "PS PRESET : 当てた %d 個のうち違う %d 個 / 導出される %d 個のうち違う %d 個" \
+            [expr {[llength $ps_preset] / 2}] $ng [expr {[llength $ps_preset_derived] / 2}] $nd]
+    if {$ng > 0} { puts "ERROR: PS にプリセットの設定が当たっていない"; exit 1 }
 }
 
 # 使う AXI ポートだけでなく、**使わないものも明示的に 0 にする**。
@@ -818,7 +852,7 @@ if {![string is integer -strict $grade] || $grade < 1 || $grade > 3} {
     puts "ERROR: part '$part' から速度グレードが読めない"
     exit 1
 }
-set build_tag_base [expr {($use_board << 30) | (($grade & 3) << 28) | (1 << 23)}]
+set build_tag_base [expr {($has_preset << 30) | (($grade & 3) << 28) | (1 << 23)}]   ;# [30] = PS にプリセット（board_part か ps_preset.tcl）
 if {$gb_slow ne ""} { set build_tag_base [expr {$build_tag_base | (1 << 27) | (($gb_slow & 7) << 24)}] }
 
 # gb_fifo の axis_rd_data_count の幅は版で変わりうるので、ピンの幅を読んで与える（4 個とも同じ設定なので gb_fifo_0 で読む）
@@ -842,7 +876,7 @@ foreach {k want} [list CONFIG.FFT_CFG $fft_code CONFIG.BUILD_TAG $build_tag CONF
     }
 }
 puts [format "spec_core_0（選べる全帯域）: FFT_CFG = 0x%02x / BUILD_TAG = 0x%08x（プリセット %s / 速度グレード -%s）/ GB_K_RST = %d" \
-        $fft_code $build_tag [expr {$use_board ? "あり" : "なし"}] $grade $gb_k_rst]
+        $fft_code $build_tag [expr {$has_preset ? "あり" : "なし"}] $grade $gb_k_rst]
 set spec_axi(0)  [BI spec_core_0 [list "s_axi"  "S_AXI"]  "spec_core_0 の AXI4-Lite"]
 set spec_axis(0) [BI spec_core_0 [list "s_axis" "S_AXIS"] "spec_core_0 の AXI4-Stream 入力"]
 set fsel [create_bd_cell -type module -reference axis_sel4 full_sel]
@@ -1601,10 +1635,9 @@ if {[info exists timing_failed]} {
     exit 1
 }
 
-if {!$use_board} {
+if {!$has_preset} {
     puts ""
-    puts "NOTE: これは速度グレード検証ビルド（$part）。"
-    puts "      ボードプリセットを当てていないので、このビットストリームは実機に使わない。"
-    puts "      見るのは上の TIMING の値だけ。"
+    puts "NOTE: これは PS にプリセットを当てていない検証ビルド（$part）。"
+    puts "      このビットストリームは実機に使わない。見るのは上の TIMING の値だけ。make ps-preset で src/ps_preset.tcl を作る"
 }
 

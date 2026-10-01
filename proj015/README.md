@@ -204,6 +204,18 @@ DSP（bit ③ = 4 ADC × 4 窓 ＋ 全帯域 1 本 ＋ tp 4 個）:
   印の後の最初の 1 個を除くと 3 窓とも全部一致・スナップショットも一致 → tb は z を書いてから印を書くように直した（回し直し中）
 - `make IMPL=<戦略>`（build.tcl が impl_1 の strategy を設定して読み返す。OUTDIR は build-<大文字> 例 build-PE）を足した。`-1` が rev2 でも閉じないときの次の手
 
+### 実機の .bit を `-1` でビルドする（2026-10-01、西村さんの判断: RFSoC4x2 の FPGA は `-1` と仮定して進める）
+
+- これまで実機に載せていたのは `-2`（board_part ＋ プリセット）の build/ で、`-1` は「閉じるか」の判定だけだった。**`-2` の配置配線は `-1` の遅延で閉じている保証が無い**
+  （rev1 は同じ RTL で `-2` +0.007 / `-1` −0.767 ns）。board_part を当てると part が `-2` に引き戻される（WARNING: Project 1-153）ので、`-1` のビルドに PS のプリセットが無かった
+- **`tools/dump_ps_preset.tcl`（`make ps-preset`）**: board_part の在る `-2` のプロジェクトで apply_board_preset した PS と、board_part の無い `-1` のプロジェクトで作っただけの PS の
+  CONFIG.* を比べ、違うものを `-1` の PS に当てて読み返し、一致したものを `src/ps_preset.tcl` の `ps_preset`、一致しないもの（導出される・読み出し専用）を `ps_preset_derived` に書く
+- **build.tcl**: 既定の part を `-1` に。`-1` で `src/ps_preset.tcl` が在れば、PS を作った直後に `ps_preset` を当てて全部読み返す（1 つでも違えば止める）。`ps_preset_derived` も読み返して違う数を出す。
+  BUILD_TAG の [30] は「PS にプリセット（board_part か ps_preset.tcl）」。ps_preset.tcl が無ければ従来どおりの検証ビルド（[30] = 0、実機に使わない）
+- **Makefile**: `make` → build/（`-1`）。`-2` は `PART=xczu48dr-ffvg1517-2-e` → build-2-e/。`timing-check` は `make` と同じ（互換）
+- 手順: Vivado サーバで `make ps-preset` → `git diff proj015/src/ps_preset.tcl` を見てコミット → `make`。**未実行**（ps_preset.tcl はまだ無い）
+- 確かめたいこと: `-1` ＋ ps_preset の .bit で PYNQ が PS を正しく動かす（Overlay・クロック・DDR）。`-2` の build-2-e/ の .hwh の PS の設定と比べる
+
 ## 結果
 
 ### 手順 1（2026-09-30、クラウドの作業環境: iverilog 12.0・numpy 2.4.4）
