@@ -32,9 +32,11 @@ proc ps_cfg {cell} {
 
 # ---- (1) プリセットを当てた PS ----
 create_project pre $logdir/pre -part $board_part_part -force
-set bp [lindex [get_board_parts -quiet -latest_file_version *rfsoc4x2*] 0]
+# 文字列にしておく（Vivado のオブジェクトのままだと close_project の後に "null" になる。proj015 の 3 回目で起きた）
+set bp [string trim "[lindex [get_board_parts -quiet -latest_file_version *rfsoc4x2*] 0]"]
 if {$bp eq ""} { puts "ERROR: RFSoC4x2 の board part が見つからない（BOARD_REPO を確かめる）"; exit 1 }
 set_property board_part $bp [current_project]
+puts "board part: $bp"
 create_bd_design pre
 set ps1 [create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e ps]
 apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e -config {apply_board_preset "1"} $ps1
@@ -126,6 +128,7 @@ dict for {k v} $derived { puts "  読み返しが違う: $k = [get_property $k $
 puts "当てる設定: [dict size $settable] 個 / 当てられない・導出される: [dict size $derived] 個（$logdir/ps_preset.log）"
 if {[dict size $settable] == 0} { puts "ERROR: 当てる設定が 0 個（board part のプリセットが効いていない？）"; exit 1 }
 
+if {$bp eq "" || $bp eq "null"} { puts "ERROR: board part の名前が「$bp」（書き出す前に確かめる）"; exit 1 }
 set fh [open $out_tcl w]
 puts $fh "# SPDX-License-Identifier: BSD-3-Clause"
 puts $fh "# 生成物（tools/dump_ps_preset.tcl、make ps-preset）。**手で直さない。** build.tcl が -1 のビルドで PS に当てる"
