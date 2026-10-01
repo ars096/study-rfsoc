@@ -1404,31 +1404,40 @@ foreach ip [list $xfft $wfft] {
         if {$xf ne "" && [llength [get_runs -quiet ${ip}_synth_1]] == 0} { create_ip_run $xf }
     } msg]} { puts "NOTE: $ip の OOC の run を先に作れない（impl_1 のときに作られる）: $msg" }
 }
-set ooc_runs [get_runs -quiet -filter {IS_SYNTHESIS && NAME != synth_1}]
-puts "OOC 合成   : [llength $ooc_runs] 個を先に回す"
-if {[llength $ooc_runs] == 0} { puts "ERROR: OOC の run が 0 個（create_ip_run が効いていない）"; exit 1 }
-if {1} {
-    launch_runs $ooc_runs -jobs $jobs
-    foreach r $ooc_runs { catch {wait_on_run $r} }
-    for {set try 1} {$try <= 2} {incr try} {
-        set bad [lmap r $ooc_runs { expr {[get_property PROGRESS $r] eq "100%" ? [continue] : $r} }]
-        if {[llength $bad] == 0} break
-        set redo {}
-        foreach r $bad {
-            if {[ooc_crashed $r]} { lappend redo $r } else {
-                puts "ERROR: OOC の合成 $r が失敗（Vivado が落ちた印が無い。[get_property DIRECTORY $r]/runme.log を見る）"
-                exit 1
-            }
-        }
-        puts "NOTE: OOC の合成で Vivado が落ちた run を回し直す（$try 回目）: $redo"
-        foreach r $redo { reset_run $r }
-        launch_runs $redo -jobs [expr {min($jobs, 4)}]
-        foreach r $redo { catch {wait_on_run $r} }
-    }
-    set bad [lmap r $ooc_runs { expr {[get_property PROGRESS $r] eq "100%" ? [continue] : $r} }]
-    if {[llength $bad] > 0} { puts "ERROR: 回し直しても OOC の合成が通らない: $bad"; exit 1 }
-    puts "OOC 合成   : [llength $ooc_runs] 個すべて完了"
+# **run は名前で持つ。**IP キャッシュに当たった run は launch_runs が消すので（e64fa7c で
+#   system_zynq_ultra_ps_e_0_0_synth_1 が消え、オブジェクトのままだと get_property が落ちた）、毎回名前で引き直す。
+#   消えた run はキャッシュに当たって不要になったものとして「済み」に数える
+set ooc_names [lmap r [get_runs -quiet -filter {IS_SYNTHESIS && NAME != synth_1}] {get_property NAME $r}]
+puts "OOC 合成   : [llength $ooc_names] 個を先に回す"
+if {[llength $ooc_names] == 0} { puts "ERROR: OOC の run が 0 個（create_ip_run が効いていない）"; exit 1 }
+proc ooc_state {n} {
+    set r [get_runs -quiet $n]
+    if {$r eq ""} { return gone }
+    if {[get_property PROGRESS $r] eq "100%"} { return done }
+    return bad
 }
+proc ooc_wait {names} { foreach n $names { set r [get_runs -quiet $n]; if {$r ne ""} { catch {wait_on_run $r} } } }
+proc ooc_bad {names} { lmap n $names { expr {[ooc_state $n] eq "bad" ? $n : [continue]} } }
+launch_runs [get_runs $ooc_names] -jobs $jobs
+ooc_wait $ooc_names
+for {set try 1} {$try <= 2} {incr try} {
+    set bad [ooc_bad $ooc_names]
+    if {[llength $bad] == 0} break
+    foreach n $bad {
+        if {![ooc_crashed [get_runs $n]]} {
+            puts "ERROR: OOC の合成 $n が失敗（Vivado が落ちた印が無い。[get_property DIRECTORY [get_runs $n]]/runme.log を見る）"
+            exit 1
+        }
+    }
+    puts "NOTE: OOC の合成で Vivado が落ちた run を回し直す（$try 回目）: $bad"
+    foreach n $bad { reset_run [get_runs $n] }
+    launch_runs [get_runs $bad] -jobs [expr {min($jobs, 4)}]
+    ooc_wait $bad
+}
+set bad [ooc_bad $ooc_names]
+if {[llength $bad] > 0} { puts "ERROR: 回し直しても OOC の合成が通らない: $bad"; exit 1 }
+set gone [lmap n $ooc_names { expr {[ooc_state $n] eq "gone" ? $n : [continue]} }]
+puts "OOC 合成   : [llength $ooc_names] 個すべて完了（うち IP キャッシュで消えた run [llength $gone] 個: $gone）"
 
 # ---- 合成〜実装〜ビットストリーム ----
 launch_runs impl_1 -to_step write_bitstream -jobs $jobs
