@@ -1394,8 +1394,20 @@ proc ooc_crashed {r} {
     if {[regexp -line {^ERROR:} $t]} { return 0 }
     return [regexp {Abnormal program termination|segfault in } $t]
 }
+# OOC の run は launch_runs synth_1 のときに作られる。先に回すため、ここで作っておく（f2d8de4 では作っていなかったので空のまま素通りした）
+generate_target all [get_files $bd_file]
+create_ip_run [get_files $bd_file]
+# FFT の IP（xfft・win_fft）も OOC で合成されるので、同じく先に回す
+foreach ip [list $xfft $wfft] {
+    if {[catch {
+        set xf [get_files -quiet [get_property IP_FILE $ip]]
+        if {$xf ne "" && [llength [get_runs -quiet ${ip}_synth_1]] == 0} { create_ip_run $xf }
+    } msg]} { puts "NOTE: $ip の OOC の run を先に作れない（impl_1 のときに作られる）: $msg" }
+}
 set ooc_runs [get_runs -quiet -filter {IS_SYNTHESIS && NAME != synth_1}]
-if {[llength $ooc_runs] > 0} {
+puts "OOC 合成   : [llength $ooc_runs] 個を先に回す"
+if {[llength $ooc_runs] == 0} { puts "ERROR: OOC の run が 0 個（create_ip_run が効いていない）"; exit 1 }
+if {1} {
     launch_runs $ooc_runs -jobs $jobs
     foreach r $ooc_runs { catch {wait_on_run $r} }
     for {set try 1} {$try <= 2} {incr try} {
