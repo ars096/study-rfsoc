@@ -22,7 +22,8 @@
 //     0x10000–0x17FFF  スペクトル: ch b の 64 bit が 0x10000 + 8b（下位語）/ +4（上位語）
 //   ADC の共通: 0x80000 + 下の表 A
 //
-//   0x00 ID        R   0x0015_0200（proj015 rev2: `-1` の最悪経路の 4 群に段を足した。rev1 = 0x0015_0100 は WNS 1..8・G 5・1 ADC に NW 窓）
+//   0x00 ID        R   0x0015_0300（proj015 rev3: 読み出しの応答に 1 段・LO の読みの固定を 1 クロック後に。rev2 = 0x0015_0200 は
+//                       `-1` の最悪経路の 4 群に段を足した版、rev1 = 0x0015_0100 は WNS 1..8・G 5・1 ADC に NW 窓。値はどれも同じ）
 //   0x04 PARAM     R   [7:0] log2 NFFT = 12 / [11:8] 今の WNS / [15:12] 今の G / [23:16] QW = 18 / [31:24] ZW = 18
 //   0x08 CTRL      W   [0] RUN / [1] STOP / [8] FLAGS を消す / [12] WRST（窓の設定を取り込んで最初から）（1 を書いた瞬間だけ）
 //                  R   [0] 積分中 / [1] 開始待ち / [3] z が流れ始めた / [4] WRST 中
@@ -55,7 +56,7 @@
 //   0x90 WIDX      R   この窓の番号 w
 //
 //   表 A（0x80000 + ）
-//   0x00 ID        R   0x0015_A200（ADC の共通。proj015 rev2）
+//   0x00 ID        R   0x0015_A300（ADC の共通。proj015 rev3）
 //   0x04 NW        R   窓の数
 //   0x08 SNAP_SEL  RW  [3:0] スナップショットを書く窓（既定 0）。変えたら、次のダンプからその窓のスナップショット
 //   0x0C BUILD     R   ビルドの指紋
@@ -122,8 +123,8 @@ module win_core #(
     output wire [1:0]   full_sel          // 全帯域の分光（spec_core_0）につなぐ ADC（axis_sel4 へ。0x80020。win_core_0 のものだけ使う）
 );
     localparam integer FW = 48;
-    localparam [31:0]  ID   = 32'h0015_0200;
-    localparam [31:0]  ID_A = 32'h0015_A200;
+    localparam [31:0]  ID   = 32'h0015_0300;
+    localparam [31:0]  ID_A = 32'h0015_A300;
     wire rst = ~aresetn;
     assign s_axis_tready = 1'b1;       // 上流に backpressure をかけない
 
@@ -194,6 +195,10 @@ module win_core #(
     wire [2:0] ar_sel = ar_addr[19:17];
     assign tp_rd_addr = ar_addr[15:0];
     wire       ar_go  = s_axi_arvalid && s_axi_arready;
+    // rev3: LO の読みで HI を固定するのは ar_go の 1 クロック後に、ar_addr（レジスタ）で決める。rev2 は SmartConnect の
+    //   araddr から 48 bit の固定の enable を直に作っていて、`-1` の群 Y（ファンアウト 48）だった。応答は 4 クロック以上後なので中身は同じ
+    reg        ar_go_d;
+    always @(posedge aclk) ar_go_d <= rst ? 1'b0 : ar_go;
 
     // ---- 粗い PFB（共有）----
     wire [NW-1:0]    core_rst;            // 窓ごと: rst | WRST 中
@@ -328,9 +333,9 @@ module win_core #(
             reg [FW-1:0] fin_lat, fout_lat;
             always @(posedge aclk) begin
                 if (rst) begin fin_lat <= {FW{1'b0}}; fout_lat <= {FW{1'b0}}; end
-                else if (ar_go && s_axi_araddr[19:17] == g) begin
-                    if (s_axi_araddr[16:2] == 15'h08) fin_lat  <= fin;
-                    if (s_axi_araddr[16:2] == 15'h0A) fout_lat <= fout;
+                else if (ar_go_d && ar_addr[19:17] == g) begin
+                    if (ar_addr[16:2] == 15'h08) fin_lat  <= fin;
+                    if (ar_addr[16:2] == 15'h0A) fout_lat <= fout;
                 end
             end
             reg [31:0] rr;
@@ -384,7 +389,7 @@ module win_core #(
     reg [FW-1:0] afin_lat;
     always @(posedge aclk) begin
         if (rst) afin_lat <= {FW{1'b0}};
-        else if (ar_go && s_axi_araddr[19:17] == 3'd4 && s_axi_araddr[16:2] == 15'h05) afin_lat <= a_fin;
+        else if (ar_go_d && ar_addr[19:17] == 3'd4 && ar_addr[16:2] == 15'h05) afin_lat <= a_fin;
     end
     reg [31:0] reg_a;
     always @* begin
@@ -403,8 +408,32 @@ module win_core #(
         endcase
     end
 
-    // ---- 読み出しの応答（4 クロック後）----
+    // ---- 読み出しの応答（5 クロック後）----
+    // rev3: 候補を毎クロック 1 段のレジスタで受け（ADC の共通 1 本・窓ごと 1 本）、応答ではそれを ar_sel で選ぶだけにした。
+    //   rev2 は「37 本の case → 窓の選び → 種類の選び」を応答のクロックで一度にやっていて、`-1` の群 X（snap_mem・rd_f0・tp_n・
+    //   ar_addr → s_axi_rdata）だった。候補は rev2 が応答で使ったのと同じクロック（ar_wait == 3）の値を受けるので、中身は同じ。
+    //   応答が 1 クロック遅れるだけ（AXI4-Lite の読み 1 回 ≒ 20 クロックのうちの 1）
     wire [35:0] sn_data = sn2;
+    reg  [31:0] rq_a;
+    reg  [31:0] rq_w [0:NW-1];
+    always @(posedge aclk) begin
+        rq_a <= (ar_addr[16:8] == 9'd0)      ? reg_a :
+                (ar_addr[16:8] == 9'h001)    ? tp_reg_rd :
+                (ar_addr[16:13] == 4'b0001)  ? tp_ring_rd : 32'hDEAD_BEEF;
+    end
+    generate
+        for (g = 0; g < NW; g = g + 1) begin : g_rq
+            always @(posedge aclk) begin
+                if (ar_addr[16])
+                    rq_w[g] <= ar_addr[2] ? sp_data_v[g][63:32] : sp_data_v[g][31:0];
+                else if (ar_addr[15])
+                    rq_w[g] <= (g != ss) ? 32'd0 :
+                               ar_addr[2] ? {{14{sn_data[35]}}, sn_data[35:18]} : {{14{sn_data[17]}}, sn_data[17:0]};
+                else
+                    rq_w[g] <= reg_rd_v[g];
+            end
+        end
+    endgenerate
     always @(posedge aclk) begin
         if (rst) begin
             ar_busy <= 1'b0; ar_wait <= 3'd0; s_axi_rvalid <= 1'b0; s_axi_rdata <= 32'd0;
@@ -419,22 +448,12 @@ module win_core #(
                 ax_ch   <= s_axi_araddr[14:3];      // スナップショット・スペクトルとも 8 バイト / 語
             end else if (ar_busy) begin
                 ar_wait <= ar_wait + 3'd1;
-                if (ar_wait == 3'd3) begin
+                if (ar_wait == 3'd4) begin          // rq_* は ar_wait == 3 のクロックの候補（rev2 の応答と同じ値）
                     ar_busy      <= 1'b0;
                     s_axi_rvalid <= 1'b1;
-                    if (ar_sel == 3'd4)
-                        s_axi_rdata <= (ar_addr[16:8] == 9'd0)      ? reg_a :
-                                       (ar_addr[16:8] == 9'h001)    ? tp_reg_rd :
-                                       (ar_addr[16:13] == 4'b0001)  ? tp_ring_rd : 32'hDEAD_BEEF;
-                    else if (ar_sel >= NW)
-                        s_axi_rdata <= 32'hDEAD_BEEF;
-                    else if (ar_addr[16])
-                        s_axi_rdata <= ar_addr[2] ? sp_data_v[ar_sel][63:32] : sp_data_v[ar_sel][31:0];
-                    else if (ar_addr[15])
-                        s_axi_rdata <= (ar_sel != ss) ? 32'd0 :
-                                       ar_addr[2] ? {{14{sn_data[35]}}, sn_data[35:18]} : {{14{sn_data[17]}}, sn_data[17:0]};
-                    else
-                        s_axi_rdata <= reg_rd_v[ar_sel];
+                    if (ar_sel == 3'd4)      s_axi_rdata <= rq_a;
+                    else if (ar_sel >= NW)   s_axi_rdata <= 32'hDEAD_BEEF;
+                    else                     s_axi_rdata <= rq_w[ar_sel];
                 end
             end
         end

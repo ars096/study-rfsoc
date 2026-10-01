@@ -77,7 +77,7 @@ module tb_top;
         aresetn <= 1;
         repeat (8) @(posedge clk);
         axr(17'h00000);
-        if (rv !== 32'h0015_0200) $display("tb_top: ID が違う %08x", rv);
+        if (rv !== 32'h0015_0300) $display("tb_top: ID が違う %08x", rv);
         $fwrite(fm, "id %0d\n", rv);
         // proj015: WNS の 4 bit（7・8 = 4・2 MHz）と範囲外（9・0 → 1）、PARAM の G を読み返す（入力は止めたまま）
         for (rc = 0; rc < 4; rc = rc + 1) begin

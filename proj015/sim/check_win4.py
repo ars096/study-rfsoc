@@ -85,7 +85,7 @@ def check(d):
         allok &= judge((wc & 31) == k and ((wc >> 8) & 15) == ns, f"2: 窓 {g} の WCUR {wc:#x}")
         fl = mi[f"flags{g}"]
         allok &= judge((fl & ~0x10) == 0 and mi[f"ovr{g}"] == 0, f"2: 窓 {g} の FLAGS {fl:#x}（[4] を除いて 0）・DDC_OVR {mi[f'ovr{g}']}")
-        allok &= judge(mi[f"id{g}"] == 0x0015_0200 and mi[f"widx{g}"] == g, f"2: 窓 {g} の ID {mi[f'id{g}']:#010x}・WIDX {mi[f'widx{g}']}")
+        allok &= judge(mi[f"id{g}"] == 0x0015_0300 and mi[f"widx{g}"] == g, f"2: 窓 {g} の ID {mi[f'id{g}']:#010x}・WIDX {mi[f'widx{g}']}")
     snap = np.loadtxt(os.path.join(d, "snap.txt"), dtype=np.int64, ndmin=2)
     f = mi["snap_f"]
     ref = zs[1][4096 * f:4096 * f + 4096]
@@ -93,7 +93,7 @@ def check(d):
                    f"1: 窓 1 のスナップショット（SNAP_SEL 1）= z のフレーム {f}（DUMP_F0 {mi['dump_f0']}、不一致 "
                    f"{int(np.count_nonzero(snap != ref)) if len(ref) == 4096 else '長さ違い'}）")
     allok &= judge(mi["snap_w0"] == 0 and mi["snap_w0i"] == 0, f"1: 選ばれていない窓 0 のスナップショットの範囲 = {mi['snap_w0']} / {mi['snap_w0i']}（0 のはず）")
-    allok &= judge(mi["id_a"] == 0x0015_A200 and mi["nw"] == 4 and mi["snap_sel"] == 1,
+    allok &= judge(mi["id_a"] == 0x0015_A300 and mi["nw"] == 4 and mi["snap_sel"] == 1,
                    f"2: ADC の共通 ID {mi['id_a']:#010x}・NW {mi['nw']}・SNAP_SEL {mi['snap_sel']}")
     allok &= judge(mi["bad_sel"] == 0xDEADBEEF, f"2: 無い窓（0xA0000）の読み = {mi['bad_sel']:#010x}")
     # 3. total power（ADC の共通、tp_core）: リングの個ごとに Σx²（x = 14 bit）を x14 から数えて比べる。RUN の後は F0 + 8n に揃う

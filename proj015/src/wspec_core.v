@@ -336,9 +336,13 @@ module wspec_core #(
     reg signed [QW-1:0] q_re, q_im;           // S1
     reg                 q_sat;
     reg [QW:0] sr, si;
+    // rev3: SHIFT をここで受け直す（`-1` の群 W: win_core の r_shift から 64 本へ配る配線が長かった）。SHIFT は RUN の外で
+    //   書く静的な設定なので、1 クロック遅れて効くだけで中身は同じ
+    (* max_fanout = 16 *) reg [3:0] sh_q = 4'd0;
+    always @(posedge clk) sh_q <= r_shift;
     always @(posedge clk) begin
-        sr = sat(y_re, r_shift);
-        si = sat(y_im, r_shift);
+        sr = sat(y_re, sh_q);
+        si = sat(y_im, sh_q);
         q_re <= sr[QW-1:0]; q_im <= si[QW-1:0]; q_sat <= sr[QW] | si[QW];
     end
     reg signed [QW-1:0]   a_re, a_im;         // S2
