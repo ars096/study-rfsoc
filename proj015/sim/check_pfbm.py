@@ -7,7 +7,7 @@
 窓 w の区切りごとに、始まりのビート q_s（「# S」の q_start を QW bit の巻き戻りから戻す: 「# R」の時点以降で最小の、合同な q ≧ 5）から
 m_s = 2·q_s − 10 を出し、x[8·m_s:] を model/win_fixed.py の pfb_fixed（k_w）に通したものとフレームの順に bit 単位で比べる。
   - 最後の区切り: フレームの数が模型と同じ
-  - 打ち直しで切れた区切り（「# X」）: 打ち直しの時点までのフレームの数（2·(X − q_s)）から、途中のパイプラインのぶん（≦ 18 ビート = 36 フレーム ＋ 2）だけ少なくてよい
+  - 打ち直しで切れた区切り（「# X」）: 打ち直しの時点までのフレームの数（2·(X − q_s)）から、途中のパイプラインのぶん（≦ 20 ビート = 40 フレーム ＋ 2。pfb_core の LAT）だけ少なくてよい
 判定: 全部の窓・全部の区切りで値が一致・数が合う・飽和 0。
 陽性対照（SIM_PFBM_POSCTL=1、RTL の (−j)^(k·m') の偶奇を窓の始まりで揃えない）: どこかの区切りが一致しないこと。
 """
@@ -77,8 +77,8 @@ def check(d, qw, posctl):
                 want = f"{len(yr)}"
             else:
                 full = 2 * (sg["X"] - qs)
-                ok_len = full - 2 * 18 - 2 <= len(got) <= full + 1      # w_rst を上げた時にパイプラインの中にいた ≦ 18 ビート（36 フレーム）は消える
-                want = f"{full - 38}〜{full + 1}（打ち直し {sg['X']} で切れる）"
+                ok_len = full - 2 * 20 - 2 <= len(got) <= full + 1      # w_rst を上げた時にパイプラインの中にいた ≦ 20 ビート（40 フレーム。rev2 の LAT）は消える
+                want = f"{full - 42}〜{full + 1}（打ち直し {sg['X']} で切れる）"
             st = "OK" if (neq == 0 and ok_len and not cnt) else "NG"
             print(f"  窓 {w}（k {k:2d}）区切り {i}: R {sg['R']} → q_s {qs}（m_s {ms}）、フレーム RTL {len(got)} / 期待 {want}、"
                   f"不一致 {neq}、模型の飽和 {cnt or 0} → {st}")

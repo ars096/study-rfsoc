@@ -37,7 +37,8 @@ try:
 except ImportError:                      # sg.py を置いていなければ --sg は使えない
     SGMOD = None
 
-ID_WIN = 0x0015_0100             # proj015 rev1: WNS 1..8（4・2 MHz）・NS ≧ 7 で FFT の入力の小数 G = 5
+ID_WIN = 0x0015_0200             # proj015 rev2: rev1（WNS 1..8・G 5・1 ADC × 4 窓）の `-1` の最悪経路に段を足した（値は同じ）
+ID_WIN_R1 = (0x0015_0100,)       # proj015 rev1（`-1` で閉じない。`-2` の build/ は +0.007 ns で閉じた）
 ID_WIN_OLD = (0x0014_0100,)      # proj014 rev1（FFT IP の tready を見ない版。枠がずれる）
 ID_WIN_P14 = (0x0014_0200,)      # proj014 rev2（幅は 256〜8 MHz だけ。G は 4 固定）
 BUILD_WIN = 1 << 22
@@ -46,7 +47,8 @@ WIN_STRIDE = 0x20000             # proj015: win_core の窓 w は 0x20000·w（1
 A_BASE = 0x80000                 # proj015: ADC の共通
 R_A_ID, R_A_NW, R_A_SNAP_SEL, R_A_BUILD, R_A_TP_CTRL = 0x00, 0x04, 0x08, 0x0C, 0x10
 R_A_TFIN_LO, R_A_TFIN_HI, R_A_GB_K, R_A_FULL_SEL, R_A_GB_STAT, R_A_ADC_STAT = 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28
-ID_ADC = 0x0015_A100
+ID_ADC = 0x0015_A200
+ID_ADC_R1 = 0x0015_A100
 SEL = {"adc": WIN_CH, "win": 0}  # add_sel_args / set_sel で決める（open_win・open_full が使う）
 NFFT_W = 4096
 R_ID, R_PARAM, R_CTRL, R_NACC, R_NDUMP, R_SHIFT, R_FLAGS, R_SEQ = 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C
@@ -227,7 +229,7 @@ def open_win(ol, allow_nopreset=False, allow_rev1=False):
         log(f"ERROR: ol.{name} が無い。proj015 の窓の .bit（4 ADC × 4 窓）が載っていないか"); sys.exit(1)
     wn = Win(ip.mmio, base=WIN_STRIDE * win, adc=adc, win=win)
     ia, nw = wn.ard(R_A_ID), wn.ard(R_A_NW)
-    if ia != ID_ADC or not (0 <= win < nw):
+    if ia not in (ID_ADC, ID_ADC_R1) or not (0 <= win < nw):
         log(f"ERROR: {name} の ADC の共通 ID {ia:08x}（期待 {ID_ADC:08x}）・NW {nw}（窓 {win}）"); sys.exit(1)
     ident, bt = wn.rd(R_ID), wn.rd(R_BUILD)
     log(f"{name} の窓 {win}: ID {ident:08x} / BUILD {bt:08x}（プリセット {'あり' if bt >> 30 & 1 else '**なし**'} / -{bt >> 28 & 3} / 窓 {bt >> 22 & 1} / ch {bt & 3}）/ NW {nw}")
@@ -238,6 +240,8 @@ def open_win(ol, allow_nopreset=False, allow_rev1=False):
         log(f"注意: ID {ident:08x} は rev1。--allow-rev1 で続ける（W-G・W-0 の FLAGS は NG になる。W-1・W-6 は下見。rev2 でやり直す）")
     elif ident in ID_WIN_OLD:
         log(f"ERROR: ID {ident:08x} は rev1（FFT IP の tready を見ない版。枠がずれる）。rev2（{ID_WIN:08x}）の .bit を載せる"); sys.exit(1)
+    elif ident in ID_WIN_R1:
+        log(f"注意: ID {ident:08x} は proj015 rev1（中身は rev2 と同じ。`-1` で閉じなかった版）。続ける")
     elif ident in ID_WIN_P14:
         log(f"ERROR: ID {ident:08x} は proj014 rev2（4・2 MHz が無く、PARAM に G が無い）。proj015 の .bit（{ID_WIN:08x}）を載せる"); sys.exit(1)
     elif ident != ID_WIN:

@@ -8,7 +8,7 @@
 // 対称 h[2i] = h[2(2L − 1 − i)] なので前置加算で乗算は L + 1 個 / 成分。
 // **最初の出力 q = 0 は組 n = 2L − 1 が来たとき**（x[0..N−1] が揃ったとき）。rst の後の最初の組を n = 0 とする。
 //
-// 段: 組を受ける（履歴）→ 前置加算 → 積 → 部分和（4 項ずつ）→ 和 → 丸め（>>> SH、+2^(SH−1)）・飽和 W bit。レイテンシ 5（in_v → out_v）
+// 段: 組を受ける（履歴）→ 前置加算 → 積 → 2 項ずつの和の木（ceil(log2(L + 1)) + 1 段。rev2）→ 丸め（>>> SH、+2^(SH−1)）・飽和 W bit
 // **組の間隔は自由**（in_v が来たときだけ進む）。出力の間隔は入力の組の間隔と同じ。
 //
 // 資源: 乗算 2(L + 1)（複素）を並列に持つ（1 組 / クロックまで受けられる）。
@@ -83,29 +83,36 @@ module hb2 #(
         v3 <= v2;
     end
 
-    // 和は 2 段: 4 項ずつの部分和（NG 個）→ その和。final（L + 1 = 18 項 × 43 bit）を 1 クロックで足すと 256 MHz に収まらない見込み
-    localparam integer NG = (L + 1 + 3) / 4;
-    reg signed [PW-1:0] gr [0:NG-1], gi [0:NG-1];
-    reg                 v3b;
-    reg signed [PW-1:0] ar, ai;                 // 途中（ブロッキング）
-    integer g;
+    // 和: 2 項ずつの木（1 段ごとにレジスタ）。rev2（proj015）: proj014 の「4 項ずつの部分和 → その和（5 項）」は、final（18 項 × 43 bit）で
+    // `-1` の最悪経路の群のひとつになった（DSP の出口 → 4 項の加算 / 5 項の加算、CARRY8 が 7〜9 段）。18 → 9 → 5 → 3 → 2 → 1 の 5 段。
+    // 整数の和なので値は変わらない（足す順が違うだけ）
+    localparam integer T  = L + 1;
+    function integer clog2(input integer n);
+        integer v; begin v = n - 1; clog2 = 0; while (v > 0) begin v = v >> 1; clog2 = clog2 + 1; end end
+    endfunction
+    localparam integer NLV = (T > 1) ? clog2(T) : 1;
+    function integer cnt_at(input integer lv);       // 段 lv の項の数
+        integer c, k; begin c = T; for (k = 0; k < lv; k = k + 1) c = (c + 1) / 2; cnt_at = c; end
+    endfunction
+    reg signed [PW-1:0] tr [0:(NLV+1)*T-1], ti [0:(NLV+1)*T-1];
+    reg [NLV:0]         tv;
+    integer lv, n;
     always @(posedge clk) begin
-        for (g = 0; g < NG; g = g + 1) begin
-            ar = 0; ai = 0;
-            for (i = 4 * g; i < 4 * g + 4; i = i + 1)
-                if (i <= L) begin ar = ar + mr[i]; ai = ai + mi[i]; end
-            gr[g] <= ar;  gi[g] <= ai;
-        end
-        v3b <= v3;
+        for (n = 0; n < T; n = n + 1) begin tr[n] <= mr[n]; ti[n] <= mi[n]; end
+        for (lv = 0; lv < NLV; lv = lv + 1)
+            for (n = 0; n < T; n = n + 1)
+                if (2 * n + 1 < cnt_at(lv)) begin
+                    tr[(lv+1)*T + n] <= tr[lv*T + 2*n] + tr[lv*T + 2*n + 1];
+                    ti[(lv+1)*T + n] <= ti[lv*T + 2*n] + ti[lv*T + 2*n + 1];
+                end else if (2 * n < cnt_at(lv)) begin
+                    tr[(lv+1)*T + n] <= tr[lv*T + 2*n];
+                    ti[(lv+1)*T + n] <= ti[lv*T + 2*n];
+                end
+        tv <= {tv[NLV-1:0], v3};
     end
-    reg signed [PW-1:0] sr, si;
-    reg                 v4;
-    always @(posedge clk) begin
-        ar = 0; ai = 0;
-        for (g = 0; g < NG; g = g + 1) begin ar = ar + gr[g]; ai = ai + gi[g]; end
-        sr <= ar;  si <= ai;
-        v4 <= v3b;
-    end
+    wire signed [PW-1:0] sr = tr[NLV*T];
+    wire signed [PW-1:0] si = ti[NLV*T];
+    wire                 v4 = tv[NLV];
 
     wire signed [PW-1:0] rr = (sr + (1 <<< (SH - 1))) >>> SH;
     wire signed [PW-1:0] ri = (si + (1 <<< (SH - 1))) >>> SH;

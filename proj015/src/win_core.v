@@ -22,7 +22,7 @@
 //     0x10000–0x17FFF  スペクトル: ch b の 64 bit が 0x10000 + 8b（下位語）/ +4（上位語）
 //   ADC の共通: 0x80000 + 下の表 A
 //
-//   0x00 ID        R   0x0015_0100（proj015 rev1、窓。WNS 1..8・NS ≧ 7 で FFT の入力の小数 G = 5・1 ADC に NW 窓）
+//   0x00 ID        R   0x0015_0200（proj015 rev2: `-1` の最悪経路の 4 群に段を足した。rev1 = 0x0015_0100 は WNS 1..8・G 5・1 ADC に NW 窓）
 //   0x04 PARAM     R   [7:0] log2 NFFT = 12 / [11:8] 今の WNS / [15:12] 今の G / [23:16] QW = 18 / [31:24] ZW = 18
 //   0x08 CTRL      W   [0] RUN / [1] STOP / [8] FLAGS を消す / [12] WRST（窓の設定を取り込んで最初から）（1 を書いた瞬間だけ）
 //                  R   [0] 積分中 / [1] 開始待ち / [3] z が流れ始めた / [4] WRST 中
@@ -55,7 +55,7 @@
 //   0x90 WIDX      R   この窓の番号 w
 //
 //   表 A（0x80000 + ）
-//   0x00 ID        R   0x0015_A100（ADC の共通。proj015 rev1）
+//   0x00 ID        R   0x0015_A200（ADC の共通。proj015 rev2）
 //   0x04 NW        R   窓の数
 //   0x08 SNAP_SEL  RW  [3:0] スナップショットを書く窓（既定 0）。変えたら、次のダンプからその窓のスナップショット
 //   0x0C BUILD     R   ビルドの指紋
@@ -122,8 +122,8 @@ module win_core #(
     output wire [1:0]   full_sel          // 全帯域の分光（spec_core_0）につなぐ ADC（axis_sel4 へ。0x80020。win_core_0 のものだけ使う）
 );
     localparam integer FW = 48;
-    localparam [31:0]  ID   = 32'h0015_0100;
-    localparam [31:0]  ID_A = 32'h0015_A100;
+    localparam [31:0]  ID   = 32'h0015_0200;
+    localparam [31:0]  ID_A = 32'h0015_A200;
     wire rst = ~aresetn;
     assign s_axis_tready = 1'b1;       // 上流に backpressure をかけない
 
@@ -216,8 +216,19 @@ module win_core #(
     reg  [11:0]      ax_ch;
     reg  [35:0]      sn1, sn2;
     wire [3:0]       ss = (snap_sel < NW) ? snap_sel : 4'd0;
+    // rev2: 書き込みを 2 段のレジスタで受ける（窓ごとに 1 段 → SNAP_SEL で選んで 1 段 → 記憶）。rev1 は wspec の fin == sn_next の
+    //   48 bit の比べ → 4 窓の選び → BRAM の書き込みの入口が 1 クロックで、`-1` の最悪経路だった。書き込みが 2 クロック遅れるだけで、
+    //   読むのはダンプが閉じた後（少なくとも 1 フレーム後）なので中身は同じ
+    reg  [NW-1:0]    swe1;
+    reg  [13*NW-1:0] swa1;
+    reg  [36*NW-1:0] swd1;
+    reg              swe2;
+    reg  [12:0]      swa2;
+    reg  [35:0]      swd2;
     always @(posedge aclk) begin
-        if (sn_wen_v[ss]) snap_mem[sn_waddr_v[13*ss +: 13]] <= sn_wdata_v[36*ss +: 36];
+        swe1 <= sn_wen_v;  swa1 <= sn_waddr_v;  swd1 <= sn_wdata_v;
+        swe2 <= swe1[ss];  swa2 <= swa1[13*ss +: 13];  swd2 <= swd1[36*ss +: 36];
+        if (swe2) snap_mem[swa2] <= swd2;
         sn1 <= snap_mem[{ax_bank, ax_ch}];
         sn2 <= sn1;
     end

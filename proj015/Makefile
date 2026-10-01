@@ -52,12 +52,19 @@ ifneq ($(GB_SLOW),)
   OUTDIR := $(OUTDIR)-slow$(GB_SLOW)
 endif
 
+# proj015 rev2: 実装の戦略（impl_1 の strategy）。空なら Vivado の既定。例: make IMPL=Performance_Explore → build-pe/ など
+# **`-1` が閉じないときの次の手**。戦略を変えても RTL は同じなので ID は変わらない（BUILD_TAG も同じ）。PS は build/ の .bit を使う
+IMPL ?=
+ifneq ($(IMPL),)
+  OUTDIR := $(OUTDIR)-$(shell echo $(IMPL) | tr -cd 'A-Z')
+endif
+
 # 同時に走らせる run の数（launch_runs -jobs）。効くのは IP の OOC 合成だけ。
 # proj010 から lane_fft（FFT IP）の OOC 合成が 1 本増えている（proj011 も同じ）。ビルドサーバの nproc = 32 に合わせてある。
 # コア数やメモリの少ない機械では `make JOBS=8` に下げること。
 JOBS ?= 30
 
-export BOARD_REPO PART OUTDIR FFT_OPT GB_K GB_SLOW GB_SLOW_SITE
+export BOARD_REPO PART OUTDIR FFT_OPT GB_K GB_SLOW GB_SLOW_SITE IMPL
 
 # ---- シミュレーション（Vivado もライセンスも要らない。RTL を触ったらまずこれ）----
 # FFT IP の代わりに sim/lane_fft_model.v を使う。判定は sim/check.py（bit 単位・numpy・帳簿の 3 層）。

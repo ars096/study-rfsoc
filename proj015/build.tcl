@@ -1334,6 +1334,20 @@ if {$gb_slow ne ""} {
     puts "NOTE: 遅いビットの検証ビルド（bit $gb_slow → $gb_slow_site）。**本番には使わない**"
 }
 
+# ---- proj015 rev2: 実装の戦略（環境変数 IMPL。Makefile の IMPL）。**読み返して確かめる** ----
+if {[info exists ::env(IMPL)] && $::env(IMPL) ne ""} {
+    set impl_req $::env(IMPL)
+    if {[catch {set_property strategy $impl_req [get_runs impl_1]} msg]} {
+        puts "ERROR: impl_1 の strategy を $impl_req にできない: $msg"
+        exit 1
+    }
+    set impl_got [get_property strategy [get_runs impl_1]]
+    puts "IMPL       : impl_1 の strategy = $impl_got（要求 $impl_req）"
+    if {$impl_got ne $impl_req} { puts "ERROR: impl_1 の strategy が要求と違う"; exit 1 }
+} else {
+    puts "IMPL       : impl_1 の strategy = [get_property strategy [get_runs impl_1]]（既定）"
+}
+
 # ---- 合成〜実装〜ビットストリーム ----
 launch_runs impl_1 -to_step write_bitstream -jobs $jobs
 wait_on_run impl_1

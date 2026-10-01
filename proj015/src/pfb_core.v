@@ -26,7 +26,7 @@
 // s_tvalid が落ちたビートは窓を進めない（入力のサンプル列だけで決まる。途切れても値は変わらない）。
 // k は RUN の間は変えない（静的）。変えたら w_rst を打ち直す。
 //
-// レイテンシ（valid なビート → y_valid）: LAT = 18 クロック（下の段の数え）。
+// レイテンシ（valid なビート → y_valid）: LAT = 20 クロック（下の段の数え）。rev2: 窓ごとの ch の選択の後と、B の後にレジスタを 1 段ずつ（+2）
 // DSP の見当: 分岐の和 2 × 96 = 192、dft16f 2 × 32 = 64（ここまで共有）、実数化の cmul 2 × 4 = 8 × NW
 
 `timescale 1ns / 1ps
@@ -58,23 +58,27 @@ module pfb_core #(
     localparam integer NS   = 16 * NB;     // 112
     localparam integer PW   = 14 + 18 + 2; // 分岐の和の幅（3 項）
     localparam integer ZW   = 26;
-    localparam integer LAT  = 18;
+    localparam integer LAT  = 20;
 
     // ---- 窓（7 ビート）。s_tvalid のビートだけ進める ----
     reg  [255:0] hist [0:NB-2];            // hist[0] が 1 つ前のビート
     reg  [QW-1:0] q_cnt;                   // 巻き戻ってよい（q_start の報告だけに使う）
     reg  [2:0]    g_cnt;                   // 5 で止まる（窓の 7 ビートが埋まったか）
+    reg  [2:0]    g6;                      // rev2: 6 で止まる（f = 0 の分岐の和が古いビートを使わなくなったか。飽和の数えの門）
     integer i;
     always @(posedge clk) begin
         if (rst) begin
-            for (i = 0; i < NB - 1; i = i + 1) hist[i] <= 256'd0;
+            // rev2: hist はリセットしない（rst_dsp のファンアウト 105 の `-1` の最悪経路のひとつ）。q ≧ 5 の前のフレームは ok = 0 で出し、
+            // 飽和の数えも g_cnt = 5 まで止めるので、残っている古いビートは値に効かない（m1' = 0 のフレームはビート 0..5 だけを使う）
             q_cnt <= {QW{1'b0}};
             g_cnt <= 3'd0;
+            g6    <= 3'd0;
         end else if (s_tvalid) begin
             hist[0] <= s_tdata;
             for (i = 1; i < NB - 1; i = i + 1) hist[i] <= hist[i-1];
             q_cnt <= q_cnt + 1'b1;
             if (g_cnt != 3'd5) g_cnt <= g_cnt + 3'd1;
+            if (g6 != 3'd6) g6 <= g6 + 3'd1;
         end
     end
 
@@ -177,9 +181,9 @@ module pfb_core #(
     endgenerate
 
     // ---- タグ（valid と窓ごとの印）を X の段まで運ぶ ----
-    // 段の数え: xw 1 → M 1 → S1 1 → S2 1 → R 1 → dft16f 6 → A/B 1 → cmul 4 → X 1 = 17、回し 1 = 18
+    // 段の数え: xw 1 → M 1 → S1 1 → S2 1 → R 1 → dft16f 6 → 選択 1 → A/B 1 → B の遅れ 1 → cmul 4 → X 1 = 19、回し 1 = 20（rev2）
     // 印は xw と同じ段（tg_*）から X の段まで TL − 1 段。**w_rst[w] の間は、運んでいる途中の窓 w の印も消す**（短い w_rst でも古いフレームが出ない）
-    localparam integer TL = 16;
+    localparam integer TL = 18;
     reg          tv  [0:TL-1];
     reg [NW-1:0] to0 [0:TL-1], to1 [0:TL-1], td [0:TL-1];
     always @(posedge clk) begin
@@ -217,7 +221,11 @@ module pfb_core #(
     wire tv_par = tq_p[TL][0] ^ 1'b1;            // (q − 5) mod 2
 `endif
     assign y_valid = ov;
-    wire sat_u_any = |sat_u;
+    // rev2: 飽和の数えの門。xw の段で「valid なビートで q ≧ 6」を立て、R の段（4 クロック後）まで運ぶ。
+    //   hist をリセットしないので、窓が埋まる前（古いビートを含む）と valid でないクロックの分岐の和の飽和は数えない
+    reg [4:0] sgate;
+    always @(posedge clk) sgate <= {sgate[3:0], s_tvalid && !rst && (g6 == 3'd6)};
+    wire sat_u_any = (|sat_u) && sgate[4];
 
     genvar g;
     generate
@@ -226,28 +234,35 @@ module pfb_core #(
             wire [4:0] kk = k[5*g +: 5];
             wire [3:0] k1 = kk[3:0];                       // k mod 16
             wire [3:0] k2 = 4'd0 - kk[3:0];                // (16 − k) mod 16
-            wire signed [17:0] w_re = POST_WR[kk*18 +: 18];
-            wire signed [17:0] w_im = POST_WI[kk*18 +: 18];
+            // rev2: 係数の選択（k は静的）をレジスタで受けてから cmul の DSP の入口へ（proj013 の群 A の型を作らない）
+            reg  signed [17:0] w_re, w_im;
+            always @(posedge clk) begin w_re <= POST_WR[kk*18 +: 18]; w_im <= POST_WI[kk*18 +: 18]; end
             wire signed [ZW+1:0] yr_v [0:1], yi_v [0:1];   // X（28 bit）。**YW で宣言すると切り詰められて巻き戻る**（proj014 の初版の誤り）
             for (f = 0; f < 2; f = f + 1) begin : g_p
-                wire signed [ZW-1:0] z1r = zr_v[f][k1*ZW +: ZW], z1i = zi_v[f][k1*ZW +: ZW];
-                wire signed [ZW-1:0] z2r = zr_v[f][k2*ZW +: ZW], z2i = zi_v[f][k2*ZW +: ZW];
+                // rev2: 16:1 の選択をレジスタで受ける（proj015 rev1 の `-1` の最悪経路: dft16f の出口 → 選択 → A の加算を 1 クロック、
+                //       出口のファンアウトは 4 窓 × 2）
+                reg  signed [ZW-1:0] z1r, z1i, z2r, z2i;
                 reg  signed [ZW:0]   ar, ai, br, bi;      // 27 bit
-                reg  signed [ZW:0]   ard [0:3], aid [0:3];
+                reg  signed [ZW:0]   brd, bid;            // rev2: B を 1 段遅らせて cmul へ（ファブリックの加算 → DSP の入口を作らない）
+                reg  signed [ZW:0]   ard [0:4], aid [0:4];
                 wire signed [ZW:0]   cr, ci;
                 reg  signed [ZW+1:0] xr, xi;
                 always @(posedge clk) begin
+                    z1r <= zr_v[f][k1*ZW +: ZW];  z1i <= zi_v[f][k1*ZW +: ZW];
+                    z2r <= zr_v[f][k2*ZW +: ZW];  z2i <= zi_v[f][k2*ZW +: ZW];
                     ar <= z1r + z2r;   ai <= z1i - z2i;           // Z[k] + conj(Z[16−k])
                     br <= z1r - z2r;   bi <= z1i + z2i;           // Z[k] − conj(Z[16−k])
+                    brd <= br;  bid <= bi;
                     ard[0] <= ar;  aid[0] <= ai;
                     ard[1] <= ard[0];  aid[1] <= aid[0];
                     ard[2] <= ard[1];  aid[2] <= aid[1];
                     ard[3] <= ard[2];  aid[3] <= aid[2];
-                    xr <= ard[3] + cr;
-                    xi <= -(aid[3] + ci);                          // 共役
+                    ard[4] <= ard[3];  aid[4] <= aid[3];
+                    xr <= ard[4] + cr;
+                    xi <= -(aid[4] + ci);                          // 共役
                 end
                 cmul #(.AW(ZW + 1), .OW(ZW + 1)) u_post (
-                    .clk(clk), .a_re(br), .a_im(bi), .w_re(w_re), .w_im(w_im), .y_re(cr), .y_im(ci));
+                    .clk(clk), .a_re(brd), .a_im(bid), .w_re(w_re), .w_im(w_im), .y_re(cr), .y_im(ci));
                 assign yr_v[f] = xr;
                 assign yi_v[f] = xi;
             end

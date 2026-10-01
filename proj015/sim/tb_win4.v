@@ -61,17 +61,26 @@ module tb_win4;
         end
     end
 
-    // ---- z を窓ごとに ----
+    // ---- z を窓ごとに。**窓の WRST（w_rst が立った）ごとに「# W」の行を書く**（リセットの後は既定の設定で回っているので、
+    //      照合は最後の「# W」の後だけ）----
     integer fz0, fz1, fz2, fz3;
+    reg [3:0] wr_prev = 4'b1111;
     always @(posedge clk) begin
         if (dut.g_w[0].zv) $fwrite(fz0, "%0d %0d\n", dut.g_w[0].zr, dut.g_w[0].zi);
         if (dut.g_w[1].zv) $fwrite(fz1, "%0d %0d\n", dut.g_w[1].zr, dut.g_w[1].zi);
         if (dut.g_w[2].zv) $fwrite(fz2, "%0d %0d\n", dut.g_w[2].zr, dut.g_w[2].zi);
         if (dut.g_w[3].zv) $fwrite(fz3, "%0d %0d\n", dut.g_w[3].zr, dut.g_w[3].zi);
+        // 「# W」は z の後に書く: w_rst が立ったクロックに出ている z は、その前のクロックに（リセットの前の設定で）作られたもの
+        // （rev2 で 1 個だけ「# W」の後に紛れ、窓 0・1・2 が模型より 1 個多かった）
+        if (dut.g_w[0].w_rst && !wr_prev[0]) $fwrite(fz0, "# W\n");
+        if (dut.g_w[1].w_rst && !wr_prev[1]) $fwrite(fz1, "# W\n");
+        if (dut.g_w[2].w_rst && !wr_prev[2]) $fwrite(fz2, "# W\n");
+        if (dut.g_w[3].w_rst && !wr_prev[3]) $fwrite(fz3, "# W\n");
+        wr_prev <= {dut.g_w[3].w_rst, dut.g_w[2].w_rst, dut.g_w[1].w_rst, dut.g_w[0].w_rst};
     end
 
     reg [8*256-1:0] fin_s, dir, cfg_s;
-    integer fm, fs, fc, ft, r, g, i;
+    integer fm, fs, fc, ft, r, g, i, tpn;
     reg [31:0] lo, hi, f0w;
     integer ck [0:NW-1], cn [0:NW-1], cb [0:NW-1];
     reg [31:0] cd [0:NW-1];
@@ -145,11 +154,11 @@ module tb_win4;
             axr(20'h20000 * g + 20'h00088); $fwrite(fm, "ovr%0d %0d\n", g, rv);
         end
         axr(20'hA0000); $fwrite(fm, "bad_sel %0d\n", rv);                           // 窓 5 は無い → DEAD_BEEF
-        axr(20'h80108); $fwrite(fm, "tp_wp %0d\n", rv);
+        axr(20'h80108); $fwrite(fm, "tp_wp %0d\n", rv); tpn = (rv > 512) ? 512 : rv;
         axr(20'h80104); $fwrite(fm, "tp_neff %0d\n", rv);
         axr(20'h80014); $fwrite(fm, "tfin %0d\n", rv);
         ft = $fopen({dir, "/tp.txt"}, "w");
-        for (i = 0; i < 512; i = i + 1) begin
+        for (i = 0; i < tpn; i = i + 1) begin          // 書かれた個だけ（書いていない番地は sim で x）
             axr(20'h82000 + 16 * i);     lo = rv;
             axr(20'h82000 + 16 * i + 4); hi = rv;
             axr(20'h82000 + 16 * i + 8); f0w = rv;
