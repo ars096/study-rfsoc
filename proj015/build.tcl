@@ -1404,19 +1404,19 @@ foreach ip [list $xfft $wfft] {
         if {$xf ne "" && [llength [get_runs -quiet ${ip}_synth_1]] == 0} { create_ip_run $xf }
     } msg]} { puts "NOTE: $ip の OOC の run を先に作れない（impl_1 のときに作られる）: $msg" }
 }
-# **run は名前で持つ。**IP キャッシュに当たった run は launch_runs が消すので（e64fa7c で
-#   system_zynq_ultra_ps_e_0_0_synth_1 が消え、オブジェクトのままだと get_property が落ちた）、毎回名前で引き直す。
-#   消えた run はキャッシュに当たって不要になったものとして「済み」に数える
+# **run は名前で持つ。**消えた run（IP キャッシュなど）は「済み」に数えて名前を出す（impl_1 が要れば作り直す）
 set ooc_names [lmap r [get_runs -quiet -filter {IS_SYNTHESIS && NAME != synth_1}] {get_property NAME $r}]
 puts "OOC 合成   : [llength $ooc_names] 個を先に回す"
 if {[llength $ooc_names] == 0} { puts "ERROR: OOC の run が 0 個（create_ip_run が効いていない）"; exit 1 }
+# **run のオブジェクトを変数に入れない。**e64fa7c では、get_runs で得たオブジェクトを launch_runs・wait_on_run の
+#   後に get_property に渡すと「Invalid option value 'system_zynq_ultra_ps_e_0_0_synth_1' specified for 'object'」
+#   で止まった（名前の文字列として渡ったことになる）。使うたびに get_runs で引き、その場で渡す
 proc ooc_state {n} {
-    set r [get_runs -quiet $n]
-    if {$r eq ""} { return gone }
-    if {[get_property PROGRESS $r] eq "100%"} { return done }
+    if {[llength [get_runs -quiet $n]] == 0} { return gone }
+    if {[get_property PROGRESS [get_runs $n]] eq "100%"} { return done }
     return bad
 }
-proc ooc_wait {names} { foreach n $names { set r [get_runs -quiet $n]; if {$r ne ""} { catch {wait_on_run $r} } } }
+proc ooc_wait {names} { foreach n $names { if {[llength [get_runs -quiet $n]]} { catch {wait_on_run [get_runs $n]} } } }
 proc ooc_bad {names} { lmap n $names { expr {[ooc_state $n] eq "bad" ? $n : [continue]} } }
 launch_runs [get_runs $ooc_names] -jobs $jobs
 ooc_wait $ooc_names
@@ -1437,7 +1437,7 @@ for {set try 1} {$try <= 2} {incr try} {
 set bad [ooc_bad $ooc_names]
 if {[llength $bad] > 0} { puts "ERROR: 回し直しても OOC の合成が通らない: $bad"; exit 1 }
 set gone [lmap n $ooc_names { expr {[ooc_state $n] eq "gone" ? $n : [continue]} }]
-puts "OOC 合成   : [llength $ooc_names] 個すべて完了（うち IP キャッシュで消えた run [llength $gone] 個: $gone）"
+puts "OOC 合成   : [llength $ooc_names] 個すべて完了（うち消えた run [llength $gone] 個: $gone）"
 
 # ---- 合成〜実装〜ビットストリーム ----
 launch_runs impl_1 -to_step write_bitstream -jobs $jobs
