@@ -58,17 +58,62 @@ dict for {k v} $cfg1 {
 }
 puts "違う CONFIG: [dict size $diff] 個（全 [dict size $cfg1] 個のうち）"
 
-# ---- (2) にまとめて当てて読み返す（build.tcl と同じ: set_property -dict を 1 回）----
+# ---- -1 の PS では当てられない組を外す ----
+# 2 回目（2026-10-01）: まとめて当てても、**-1 の PS の上限を超える設定**で検証に落ちた
+#   DDR: CL 16・CWL 12 が「動作周波数 799.992 MHz の速度ビン 2400」で不可（-1 では DDR の周波数の上限が下がる）
+#   LPD_SWITCH・ADMA_REF: 533.333 MHz が上限 500 MHz を超える
+# プリセットは -2 の上限で作られている。外す単位は「組」（CONFIG.PSU__<ブロック>__<項目> の 3 つ目の __ まで。DDRC は 1 組）。
+# 落ちたら組を 1 つずつ外していき、通った後で、外した組を 1 つずつ戻して通るものは戻す（外すのは最小限に）。
+# 失敗した set_property は Vivado が元に戻す（"Restoring to previous valid configuration"）ので、試すたびに状態は汚れない
+proc grp_of {k} {
+    set parts [split [string map {__ \x01} $k] \x01]
+    if {[string match "CONFIG.PSU__DDRC*" $k]} { return "CONFIG.PSU__DDRC" }
+    return [join [lrange $parts 0 2] __]
+}
+proc try_apply {cell d} { return [expr {![catch {set_property -dict $d $cell}]}] }
+proc subset {diff groups} {
+    set out [dict create]
+    dict for {k v} $diff { if {[lsearch -exact $groups [grp_of $k]] >= 0} { dict set out $k $v } }
+    return $out
+}
+set all_groups [lsort -unique [lmap k [dict keys $diff] {grp_of $k}]]
+puts "組: [llength $all_groups] 個"
+set keep $all_groups
+set excluded {}
+if {![try_apply $ps2 $diff]} {
+    # 外す候補の順: DDR → 周波数（FREQMHZ を含む組）→ そのほか
+    set order {}
+    foreach g $all_groups { if {[string match *DDR* $g]} { lappend order $g } }
+    foreach g $all_groups { if {[lsearch -exact $order $g] < 0 && [llength [lsearch -all -glob [dict keys [subset $diff [list $g]]] *FREQMHZ*]]} { lappend order $g } }
+    foreach g $all_groups { if {[lsearch -exact $order $g] < 0} { lappend order $g } }
+    set ok 0
+    foreach g $order {
+        set keep [lsearch -all -inline -not -exact $keep $g]
+        lappend excluded $g
+        if {[try_apply $ps2 [subset $diff $keep]]} { set ok 1; break }
+    }
+    if {!$ok} { puts "ERROR: どの組を外しても検証に通らない"; exit 1 }
+    # 戻せる組は戻す（後ろから）
+    foreach g [lreverse $excluded] {
+        set trial [concat $keep [list $g]]
+        if {[try_apply $ps2 [subset $diff $trial]]} {
+            set keep $trial
+            set excluded [lsearch -all -inline -not -exact $excluded $g]
+        }
+    }
+    # 最後に keep をもう一度当てた状態にする（戻す試しで状態が変わっているので）
+    if {![try_apply $ps2 [subset $diff $keep]]} { puts "ERROR: 最後の当て直しで落ちた"; exit 1 }
+}
+set excl_d [dict create]
+dict for {k v} $diff { if {[lsearch -exact $excluded [grp_of $k]] >= 0} { dict set excl_d $k $v } }
+puts "外した組: [llength $excluded] 個（[dict size $excl_d] 設定）: $excluded"
+set diff_applied [subset $diff $keep]
+
 set settable [dict create]
 set derived  [dict create]
 set fh_log [open $logdir/ps_preset.log w]
-if {[catch {set_property -dict $diff $ps2} msg]} {
-    puts "ERROR: まとめて当てると検証に落ちる: $msg"
-    puts $fh_log "まとめて当てて落ちた: $msg"
-    close $fh_log
-    exit 1
-}
-dict for {k v} $diff {
+dict for {k v} $excl_d { puts $fh_log "外した（-1 で当てられない組）: $k = $v（-1 の既定 [get_property $k $ps2]）" }
+dict for {k v} $diff_applied {
     set got [get_property $k $ps2]
     if {$got eq $v} { dict set settable $k $v } else {
         dict set derived $k $v
@@ -85,7 +130,7 @@ set fh [open $out_tcl w]
 puts $fh "# SPDX-License-Identifier: BSD-3-Clause"
 puts $fh "# 生成物（tools/dump_ps_preset.tcl、make ps-preset）。**手で直さない。** build.tcl が -1 のビルドで PS に当てる"
 puts $fh "# board part: $bp / PS: $vlnv / Vivado [version -short]"
-puts $fh "# 当てる設定 [dict size $settable] 個（ps_preset）、読み返しだけ照らす [dict size $derived] 個（ps_preset_derived）"
+puts $fh "# 当てる設定 [dict size $settable] 個（ps_preset）、読み返しだけ照らす [dict size $derived] 個（ps_preset_derived）、外した [dict size $excl_d] 個（ps_preset_excluded: $excluded）"
 puts $fh "set ps_preset_board_part {$bp}"
 puts $fh "set ps_preset_vlnv {$vlnv}"
 puts $fh "set ps_preset \[list \\"
@@ -93,6 +138,10 @@ foreach k [lsort [dict keys $settable]] { puts $fh "    $k {[dict get $settable 
 puts $fh "\]"
 puts $fh "set ps_preset_derived \[list \\"
 foreach k [lsort [dict keys $derived]] { puts $fh "    $k {[dict get $derived $k]} \\" }
+puts $fh "\]"
+puts $fh "# -1 の PS の上限を超えるなどで当てなかった組（プリセットの値。build.tcl は数を出すだけ）"
+puts $fh "set ps_preset_excluded \[list \\"
+foreach k [lsort [dict keys $excl_d]] { puts $fh "    $k {[dict get $excl_d $k]} \\" }
 puts $fh "\]"
 close $fh
 puts "=== wrote $out_tcl ==="

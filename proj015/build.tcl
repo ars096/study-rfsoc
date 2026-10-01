@@ -292,7 +292,8 @@ set use_preset_file [expr {!$use_board && [file exists $ps_preset_file]}]
 set has_preset [expr {$use_board || $use_preset_file}]
 if {$use_preset_file} {
     source $ps_preset_file
-    puts "PS PRESET : $ps_preset_file（board part $ps_preset_board_part、当てる [expr {[llength $ps_preset] / 2}] 個・照らす [expr {[llength $ps_preset_derived] / 2}] 個）"
+    if {![info exists ps_preset_excluded]} { set ps_preset_excluded {} }
+    puts "PS PRESET : $ps_preset_file（board part $ps_preset_board_part、当てる [expr {[llength $ps_preset] / 2}] 個・照らす [expr {[llength $ps_preset_derived] / 2}] 個・-1 で当てない [expr {[llength $ps_preset_excluded] / 2}] 個）"
 }
 
 if {$use_board} {
