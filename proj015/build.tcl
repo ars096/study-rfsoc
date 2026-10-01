@@ -1386,7 +1386,7 @@ if {[info exists ::env(IMPL)] && $::env(IMPL) ne ""} {
 # ---- proj015: OOC の合成を先に回し、Vivado 自体が落ちた run だけを回し直す ----
 # 2026-10-01: 同じ RTL の run が、合成を終えた後に segfault で落ちた（Abnormal program termination (11)）。
 #   1 回目は win_core_1、2 回目は gb_fifo_2・rst_dsp_0 と、落ちる run は毎回違う（-jobs 30 で並べたとき）。
-#   RTL の誤り（ERROR の在る run）は回し直さずに止める。回し直すのは「落ちた印が在り、ERROR が無い」run だけ
+#   回し直すのは「落ちた印（Abnormal program termination / segfault）が在る」run だけ。印の無い失敗は回し直さずに止める
 # **run のオブジェクトを Tcl の変数・リスト・proc の引数に通さない。**
 #   e64fa7c・5381546 とも、get_runs が返した OOC の run を lmap / foreach で取り出して get_property に渡すと
 #   「Invalid option value 'system_zynq_ultra_ps_e_0_0_synth_1' specified for 'object'」で止まった
@@ -1404,7 +1404,9 @@ proc ooc_crashed {n} {
     set log [file join [ooc_dir $n] runme.log]
     if {![file exists $log]} { return 0 }
     set fh [open $log r]; set t [read $fh]; close $fh
-    if {[regexp -line {^ERROR:} $t]} { return 0 }
+    # 落ちた印があれば、ERROR の行があっても落ちたと数える（2026-10-01: 並列合成の task_worker が先に落ち、
+    #   親が「Synth 8-787 cannot access rtd files in ./.Xil/...」の ERROR を出してから落ちた）。
+    #   本当の RTL の誤りなら回し直しても同じ ERROR で失敗し、2 回で止まる
     return [regexp {Abnormal program termination|segfault in } $t]
 }
 proc ooc_bad {names} { lmap n $names { expr {[ooc_state $n] eq "bad" ? $n : [continue]} } }
