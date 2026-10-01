@@ -1383,6 +1383,41 @@ if {[info exists ::env(IMPL)] && $::env(IMPL) ne ""} {
     puts "IMPL       : impl_1 の strategy = [get_property strategy [get_runs impl_1]]（既定）"
 }
 
+# ---- proj015: OOC の合成を先に回し、Vivado 自体が落ちた run だけを回し直す ----
+# 2026-10-01: 同じ RTL の run が、合成を終えた後に segfault で落ちた（Abnormal program termination (11)）。
+#   1 回目は win_core_1、2 回目は gb_fifo_2・rst_dsp_0 と、落ちる run は毎回違う（-jobs 30 で並べたとき）。
+#   RTL の誤り（ERROR の在る run）は回し直さずに止める。回し直すのは「落ちた印が在り、ERROR が無い」run だけ
+proc ooc_crashed {r} {
+    set log [file join [get_property DIRECTORY $r] runme.log]
+    if {![file exists $log]} { return 0 }
+    set fh [open $log r]; set t [read $fh]; close $fh
+    if {[regexp -line {^ERROR:} $t]} { return 0 }
+    return [regexp {Abnormal program termination|segfault in } $t]
+}
+set ooc_runs [get_runs -quiet -filter {IS_SYNTHESIS && NAME != synth_1}]
+if {[llength $ooc_runs] > 0} {
+    launch_runs $ooc_runs -jobs $jobs
+    foreach r $ooc_runs { catch {wait_on_run $r} }
+    for {set try 1} {$try <= 2} {incr try} {
+        set bad [lmap r $ooc_runs { expr {[get_property PROGRESS $r] eq "100%" ? [continue] : $r} }]
+        if {[llength $bad] == 0} break
+        set redo {}
+        foreach r $bad {
+            if {[ooc_crashed $r]} { lappend redo $r } else {
+                puts "ERROR: OOC の合成 $r が失敗（Vivado が落ちた印が無い。[get_property DIRECTORY $r]/runme.log を見る）"
+                exit 1
+            }
+        }
+        puts "NOTE: OOC の合成で Vivado が落ちた run を回し直す（$try 回目）: $redo"
+        foreach r $redo { reset_run $r }
+        launch_runs $redo -jobs [expr {min($jobs, 4)}]
+        foreach r $redo { catch {wait_on_run $r} }
+    }
+    set bad [lmap r $ooc_runs { expr {[get_property PROGRESS $r] eq "100%" ? [continue] : $r} }]
+    if {[llength $bad] > 0} { puts "ERROR: 回し直しても OOC の合成が通らない: $bad"; exit 1 }
+    puts "OOC 合成   : [llength $ooc_runs] 個すべて完了"
+}
+
 # ---- 合成〜実装〜ビットストリーム ----
 launch_runs impl_1 -to_step write_bitstream -jobs $jobs
 wait_on_run impl_1
