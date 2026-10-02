@@ -232,60 +232,104 @@ def t1(tc, tb, wins, full, wm, ns_list, seconds, tint, out=None):
 
 
 # ---------------------------------------------------------------- T-2
-def t2(tc, tb, wins, full, wm):
-    """閉ループ: 1PPS を ADC_A にも分けて入れ、PPS の縁が TP（2 µs の区切り）・窓 0（NS 1、z = 1 ビート）に出る位置を予言と比べる。
-    予言は較正なし（pps_det = adc_to_core = 0）。出た差が「PPS の縁 → スタンプ」と「ADC → コアの入口」の和（窓では ＋ D(1)）"""
-    log("T-2: 閉ループ（1PPS を ADC_A にも入れておくこと）")
+def _wait_T(tc, t_target, timeout=5.0):
+    t_end = time.time() + timeout
+    while tc.t() < t_target:
+        if time.time() > t_end:
+            raise TimebaseError(f"T が {t_target} に届かない（今 {tc.t()}）")
+        time.sleep(0.0005)
+
+
+def _stamp_of(tc, path, edge_pred):
+    """予言した縁 edge_pred の実際のスタンプ（予言 ± 16 ビートの内でなければ例外）"""
+    p = tc.pps(path)
+    if abs(p["stamp"] - edge_pred) > 16:
+        raise TimebaseError(f"PPS のスタンプ {p['stamp']} が予言 {edge_pred} と合わない（{p['stamp'] - edge_pred:+d}）")
+    return p["stamp"]
+
+
+def t2(tc, tb, wins, full, wm, path="trig", n_trial=5, if_c=2200.0, out=None):
+    """閉ループ: 1PPS を ADC_A にも分けて入れ、PPS の縁が窓 0（NS 1、z = 1 ビート）・TP（50 µs の区切り）に出る位置をスタンプと比べる。
+
+    **縁が見えていることを先に確かめる**（|z| の山 / 中央値 ≧ 10。見えなければ位置を判定しない。argmax は雑音でも何かを返す）。
+    縁の z は PFB・DDC の群遅延のぶん遅れて山になる（D(1) = 57.6 ビート、重心）。窓の IF は低いほど縁のエネルギーが大きい（既定 2200 MHz）。
+    出す量: 山の位置の T − D(1) − スタンプ ＝（ADC → コアの入口）−（PPS の縁 → スタンプ）＋（2 本のケーブルの長さの差）"""
+    from timebase import WIN_DELAY_BEATS
+    log(f"T-2: 閉ループ（1PPS を ADC_A にも入れておくこと）。窓 0 は NS 1・IF {if_c} MHz、{n_trial} 回")
+    c = wins[0]
+    setup_windows([c], [1], if_c, 0)
+    wm.write(W.A_BASE + W.R_A_SNAP_SEL, 0)
+    c.wr(W.R_NACC, 1); c.wr(W.R_NDUMP, 1); c.wr(W.R_SHIFT, 7)
+    wn = W.Win(c.m, base=c.base)
+    d1 = WIN_DELAY_BEATS[1]
+    offs, snaps = [], []
+    for k in range(n_trial):
+        p = tb.check()
+        edge = p["stamp"] + 2 * BEATS_PER_SEC
+        # RUN から最初のダンプの頭までは 1〜2 フレーム（4096〜8192 ビート）。縁の 6000 ビート前に RUN → 縁はダンプの頭のフレームの中
+        c.wr(W.R_CTRL, W.CTRL_CLR | CTRL_ARM)
+        arm_tc(tc, wins, full, wm, edge - 6000)
+        seq0 = c.rd(W.R_SEQ)
+        _wait_T(tc, edge + BEATS_PER_SEC // 10)
+        if c.rd(W.R_SEQ) == seq0:
+            log(f"  NG 試行 {k}: 窓 0 のダンプが閉じない"); return False
+        st = _stamp_of(tc, path, edge)
+        m = c.meta()
+        z = wn.block(W.SNAP_BASE, 2 * 4096).view(np.int32)
+        z = z[0::2] + 1j * z[1::2]
+        a = np.abs(z)
+        med = float(np.median(a)) or 1.0
+        j_pk = int(np.argmax(a))
+        snr = float(a[j_pk]) / med
+        lead = st - m["t"]
+        snaps.append(dict(z=z, dump_t=m["t"], stamp=st))
+        if snr < 10:
+            log(f"  試行 {k}: **縁が見えない**（山 / 中央値 = {snr:.1f} < 10）。位置は判定しない（DUMP_T は縁の {lead} ビート前）")
+            continue
+        off = m["t"] + j_pk - d1 - st
+        offs.append(off)
+        log(f"  試行 {k}: DUMP_T は縁の {lead} ビート前 / |z| の山 j = {j_pk}（山 / 中央値 {snr:.0f}）"
+            f" → 山の T − D(1) − スタンプ = {off:+.1f} ビート（{off * 3.90625:+.0f} ns）")
+        if not (0 < lead < 4096):
+            log("    注意: 縁がダンプの頭のフレームの外")
+    ok = True
+    if len(offs) >= 2:
+        o_ = np.array(offs)
+        log(f"  窓 0: {len(o_)} 回 / 平均 {o_.mean():+.1f} ・ 標準偏差 {o_.std():.1f} ・ 最小 {o_.min():+.1f} ・ 最大 {o_.max():+.1f} ビート"
+            f"（平均 {o_.mean() * 3.90625:+.0f} ns）。**揃っていれば本物、散っていれば雑音**")
+    else:
+        log("  窓 0: 縁が見えた試行が 2 回に満たない。レベル・IF・分配を見直す"); ok = False
+    # (b) TP: TP_N = 25（1 区切り = 25 ADC フレーム = 50 µs）。縁の 5 ms 前から。縁の 2 ms 後に、最新の 128 個（6.4 ms）を読む
+    wm.write(W.A_BASE + RA_TP_N, 25)
     p = tb.check()
-    edge = p["stamp"] + 2 * BEATS_PER_SEC                      # 2 秒後の PPS
-    # (a) TP: TP_N = 1（1 区切り = 1 ADC フレーム = 512 ビート = 2 µs）、リングの 512 個 ≒ 1.02 ms の真ん中に縁が来るように
-    wm.write(W.A_BASE + RA_TP_N, 1)
-    sa_tp = edge - 256 * 512
+    edge = p["stamp"] + 2 * BEATS_PER_SEC
     wm.write(W.A_BASE + RA_TP_CTRL, TP_ARM)
-    arm_tc(tc, wins, full, wm, sa_tp)
-    time.sleep(2.5)
+    arm_tc(tc, wins, full, wm, edge - 100 * 25 * 512)
+    _wait_T(tc, edge + 2 * BEATS_PER_SEC // 1000)
     wp = int(wm.read(W.A_BASE + RA_TP_WP))
-    ring = np.array([[int(wm.read(W.A_BASE + RA_RING + 16 * (i % 512) + 4 * j)) for j in range(4)] for i in range(wp - 512, wp)],
+    ring = np.array([[int(wm.read(W.A_BASE + RA_RING + 16 * (i % 512) + 4 * j)) for j in range(4)] for i in range(wp - 128, wp)],
                     dtype=np.int64)
-    if int(wm.read(W.A_BASE + RA_TP_WP)) - wp > 400:
-        log("  注意: リングを読む間に 400 個以上進んだ（区切り 2 µs）。古い側が上書きされているかもしれない")
-    s = ring[:, 0] | (ring[:, 1] << 32)
-    f = ring[:, 2]
-    i_pk = int(np.argmax(np.diff(s)) + 1)
+    wp2 = int(wm.read(W.A_BASE + RA_TP_WP))
+    st = _stamp_of(tc, path, edge)
     wm.write(W.A_BASE + RA_TP_CTRL, TP_ANCH)
     time.sleep(0.01)
     af = int(wm.read(W.A_BASE + RA_ANCH_F)); at = int(wm.read(W.A_BASE + RA_ANCH_T)) | (int(wm.read(W.A_BASE + RA_ANCH_T + 4)) << 32)
+    pw = (ring[:, 0] | (ring[:, 1] << 32)) / np.maximum(ring[:, 3] & 0xFFFFFF, 1)
+    f = ring[:, 2]
+    med = float(np.median(pw)) or 1.0
+    i_pk = int(np.argmax(pw))
     d_f = ((int(f[i_pk]) - (af & 0xFFFFFFFF) + 2**31) % 2**32) - 2**31     # リングの語 2 はフレーム番号の下位 32 bit
-    t_reg = at + d_f * 512                       # ADC のフレームは途切れなく 512 ビート（GAP_CNT が 0 のとき）
-    log(f"  TP: 和が跳ねた区切り = フレーム {int(f[i_pk])}（コアの入口の T {t_reg}）/ PPS のスタンプ {edge}"
-        f" → 差 {t_reg - edge:+d} ビート（{beats_to_ns(t_reg - edge):+d} ns、区切り 2 µs の分解能）")
+    t_reg = at + d_f * 512
+    log(f"  TP: 読む間に {wp2 - wp} 個進んだ（512 個の輪）/ 1 フレームあたりの和が最大の区切り: 山 / 中央値 {pw[i_pk] / med:.2f}・"
+        f"区切りの頭の T − スタンプ = {t_reg - st:+d} ビート（{beats_to_ns(t_reg - st) / 1000:+.1f} µs。区切り 50 µs）")
+    if pw[i_pk] / med < 1.05:
+        log("  TP: 縁が見えない（和の山が中央値の 1.05 倍未満）")
     wm.write(W.A_BASE + RA_TP_N, 500)
-    # (b) 窓 0（NS 1）: N_ACC 1・N_DUMP 1 のダンプ 0 の頭のフレーム（16 µs）に縁が入るように。スナップショット = そのフレームの z
-    c = wins[0]
-    setup_windows([c], [1], 3000.0, 0)
-    wm.write(W.A_BASE + W.R_A_SNAP_SEL, 0)
-    c.wr(W.R_NACC, 1); c.wr(W.R_NDUMP, 1); c.wr(W.R_SHIFT, 7)
-    p = tb.check()
-    edge = p["stamp"] + 2 * BEATS_PER_SEC
-    # RUN から最初のダンプの頭までは 1〜2 フレーム（4096〜8192 ビート）。縁の 6000 ビート前に RUN
-    c.wr(W.R_CTRL, W.CTRL_CLR | CTRL_ARM)
-    arm_tc(tc, wins, full, wm, edge - 6000)
-    seq0 = c.rd(W.R_SEQ)
-    time.sleep(2.5)
-    if c.rd(W.R_SEQ) == seq0:
-        log("  NG 窓 0: ダンプが閉じない"); return False
-    m = c.meta()
-    wn = W.Win(c.m, base=c.base)
-    z = wn.block(W.SNAP_BASE, 2 * 4096).view(np.int32)
-    z = z[0::2] + 1j * z[1::2]
-    a = np.abs(z)
-    j = int(np.argmax(np.abs(np.diff(a))))
-    log(f"  窓 0: DUMP_T {m['t']}（縁 − {edge - m['t']} ビート）/ z の振幅が跳ねた位置 j = {j}"
-        f" → 縁がコアに入った T {m['t'] + j} / スタンプとの差 {m['t'] + j - edge:+d} ビート"
-        f"（{beats_to_ns(m['t'] + j - edge):+d} ns。D(1) を含む）")
-    if not (0 < edge - m["t"] < 4096):
-        log("  注意: 縁がダンプの頭のフレームの外（START の見積もりを直す）")
-    return True
+    if out:
+        np.savez(out + ".t2.npz", z=np.array([s_["z"] for s_ in snaps]), dump_t=np.array([s_["dump_t"] for s_ in snaps]),
+                 stamp=np.array([s_["stamp"] for s_ in snaps]), tp=ring, tp_anchor=np.array([af, at]), d1=d1, if_c=if_c)
+        log(f"  記録: {out}.t2.npz")
+    return ok
 
 
 # ---------------------------------------------------------------- T-3
@@ -373,6 +417,8 @@ def main():
     p.add_argument("--seconds", type=float, default=120.0)
     p.add_argument("--tint", type=float, default=0.1)
     p.add_argument("--out", default=None)
+    p.add_argument("--t2-n", type=int, default=5, help="T-2 の試行の回数")
+    p.add_argument("--t2-if", type=float, default=2200.0, help="T-2 の窓 0 の IF の中心 [MHz]（低いほど縁が強い）")
     for t in ("t0", "t1", "t2", "t3", "t4"):
         p.add_argument(f"--{t}", action="store_true")
     a = p.parse_args()
@@ -410,7 +456,7 @@ def main():
     if a.t1:
         ok &= t1(tc, tb, wins, full, wm, ns_list, a.seconds, a.tint, a.out)
     if a.t2:
-        ok &= t2(tc, tb, wins, full, wm)
+        ok &= t2(tc, tb, wins, full, wm, path=a.path, n_trial=a.t2_n, if_c=a.t2_if, out=a.out)
     if a.t3:
         ok &= t3(tc, tb, wins, full, wm, a.seconds, a.tint)
     if a.t4:
