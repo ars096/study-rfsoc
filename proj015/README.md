@@ -5,6 +5,14 @@
 実機で 16 窓の W-0・W-G・W-1・W-1b・W-6、4・2 MHz の W-1・W-2・W-3・W-5・W-6、窓どうしの独立（W-10）・16 窓の読み出し（W-11）が通過。
 持ち越し: ADC 間の漏れ（配線を変えて）・4・2 MHz の W-7
 
+## ブロックデザイン
+
+![ブロックデザイン](docs/block_design.svg)
+
+（`docs/block_design.svg` は `docs/block_design.py` で描いた。4 ADC とも RFDC → ギアボックス → gb_bc_i で分け、M00 を win_core_i（窓 4 つ・粗い PFB は共有・
+total power・スナップショット）、M01 を full_sel に入れる。full_sel が win_core_0 の FULL_SEL で 1 本を選んで spec_core_0 へ。smc_ctrl の M01〜M04 が win_core_0〜3、
+M05 が spec_core_0。build.tcl の配線を変えたらこちらも直す）
+
 ## 目的
 
 **bit ③（狭帯域の窓）を最終の形にする。**
