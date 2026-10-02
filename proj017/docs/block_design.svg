@@ -1,0 +1,296 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1820 1010" width="1820" height="1010"
+     font-family="'Hiragino Sans','Noto Sans CJK JP','Yu Gothic',sans-serif">
+  <!-- SPDX-License-Identifier: BSD-3-Clause -->
+  <!-- proj016 のブロックデザイン（build.tcl が組む配線）。docs/block_design.py で描いた。build.tcl を変えたらここも直す -->
+  <defs>
+    <marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fb5"/></marker>
+    <marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d9822b"/></marker>
+    <marker id="aG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2e8b57"/></marker>
+    <marker id="aK" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
+    <marker id="aP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a4fb0"/></marker>
+    <marker id="aR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/></marker>
+    <marker id="aT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0f7c8c"/></marker>
+    <style>
+      .blk  { fill:#f8f8f8; stroke:#333; stroke-width:1.5; }
+      .sub  { fill:#ffffff; stroke:#2e8b57; stroke-width:1.2; }
+      .win  { fill:#fdf1f0; stroke:#c0392b; stroke-width:2.2; }
+      .wsub { fill:#ffffff; stroke:#c0392b; stroke-width:1.2; }
+      .tim  { fill:#eef8f9; stroke:#0f7c8c; stroke-width:2.2; }
+      .tsub { fill:#ffffff; stroke:#0f7c8c; stroke-width:1.2; }
+      .ext  { fill:#eeeeee; stroke:#777; stroke-width:1.2; stroke-dasharray:4 3; }
+      .note { fill:#fbf7ec; stroke:#b39a5a; stroke-width:1.2; }
+      .t    { font-size:14px; font-weight:bold; fill:#111; }
+      .tm   { font-size:12.5px; font-weight:bold; fill:#111; }
+      .s    { font-size:11.5px; fill:#333; }
+      .xs   { font-size:10.5px; fill:#555; }
+      .xt   { font-size:10.5px; fill:#0b5d69; }
+      .wB   { stroke:#2f6fb5; stroke-width:2.0; fill:none; marker-end:url(#aB); }
+      .wO   { stroke:#d9822b; stroke-width:2.6; fill:none; marker-end:url(#aO); }
+      .wG   { stroke:#2e8b57; stroke-width:2.6; fill:none; marker-end:url(#aG); }
+      .wR   { stroke:#c0392b; stroke-width:2.6; fill:none; marker-end:url(#aR); }
+      .wK   { stroke:#555; stroke-width:1.6; fill:none; marker-end:url(#aK); }
+      .wP   { stroke:#8a4fb0; stroke-width:1.1; fill:none; stroke-dasharray:4 3; marker-end:url(#aP); }
+      .wT   { stroke:#0f7c8c; stroke-width:2.4; fill:none; marker-end:url(#aT); }
+      .lb   { font-size:11px; fill:#333; }
+      .lbB  { font-size:11px; fill:#2f6fb5; }
+      .lbO  { font-size:11px; fill:#b8661a; }
+      .lbG  { font-size:11px; fill:#236b43; }
+      .lbR  { font-size:11px; fill:#a93226; }
+      .lbP  { font-size:10.5px; fill:#6d3a8e; }
+      .lbT  { font-size:11px; fill:#0b5d69; }
+    </style>
+  </defs>
+  <rect x="0" y="0" width="1820" height="1010" fill="#ffffff"/>
+<text x="20" y="28" class="s" style="font-size:17px;font-weight:bold;fill:#111">proj016 ブロックデザイン（build.tcl の配線、ID 0x0016_0100）: ADC_A 1 本 × 窓 4 ＋ total power ＋ 全帯域 1 本 ＋ 時刻（time_core・1PPS）</text>
+<text x="20" y="48" class="s">proj015 の分光の中身は同じ（pfb・ddc・FFT は同一のファイル）。足したのは time_core_0 と、窓・全帯域ごとの dstamp（ダンプの開始のビートと健全性）・adc_ev（振り切れ・途切れ）・予約の受け口（ARM）。新しいものは青緑</text>
+<rect class="blk" x="40" y="70" width="250" height="125" style="stroke:#2f6fb5"/>
+<text x="52" y="92" class="t">zynq_ultra_ps_e_0</text>
+<text x="52" y="110" class="s">PS（PYNQ / Linux）・-1 ＋ ps_preset.tcl</text>
+<text x="52" y="128" class="xs">timetest.py・timebase.py（時刻）</text>
+<text x="52" y="143" class="xs">window.py（win_core_0）・spectrometer.py</text>
+<text x="282" y="165" class="xs" text-anchor="end">M_AXI_HPM0_FPD ▶</text>
+<text x="282" y="185" class="xs" text-anchor="end">pl_clk0 100 MHz / pl_resetn0 ▶</text>
+<rect class="blk" x="420" y="70" width="240" height="125" style="stroke:#2f6fb5"/>
+<text x="432" y="92" class="t">smc_ctrl</text>
+<text x="432" y="110" class="s">SmartConnect（NUM_MI 4）</text>
+<text x="432" y="127" class="xs">NUM_CLKS 2</text>
+<text x="432" y="142" class="xs">aclk = pl_clk0 / aclk1 = 256 MHz</text>
+<text x="432" y="157" class="xs">乗り換えを内部に持つ</text>
+<text x="436" y="186" class="xs">◀ S00</text>
+<text x="654" y="104" class="xs" text-anchor="end">M00 ▶</text>
+<text x="654" y="119" class="xs" text-anchor="end">M01 ▶</text>
+<text x="654" y="134" class="xs" text-anchor="end">M02 ▶</text>
+<text x="654" y="149" class="xs" text-anchor="end">M03 ▶</text>
+<path class="wB" d="M290,161 L418,161"/>
+<text x="302" y="155" class="lbB">AXI（制御）</text>
+<rect class="tim" x="1010" y="66" width="710" height="160"/>
+<text x="1022" y="86" class="tm">time_core_0（新）　DSP ドメイン 256 MHz・BUILD_TAG [20]・ID 0x0016_7101</text>
+<text x="1038" y="220" class="xs">▲ s_axi（M03）</text>
+<rect class="tsub" x="1020" y="96" width="160" height="112"/>
+<text x="1028" y="112" class="tm">T（64 bit）</text>
+<text x="1028" y="128" class="xt">1 ビート = 3.906 ns</text>
+<text x="1028" y="143" class="xt">1 s = 256,000,000</text>
+<text x="1028" y="158" class="xt">aresetn でだけ 0 に</text>
+<text x="1028" y="173" class="xt">t_out = T ＋ 1 を出す</text>
+<text x="1028" y="188" class="xt">（コアで 1 段 → T）</text>
+<rect class="tsub" x="1190" y="96" width="175" height="112"/>
+<text x="1198" y="112" class="tm">PPS（TRIG・COMP）</text>
+<text x="1198" y="128" class="xt">同期器 3 段（1 で始める）</text>
+<text x="1198" y="143" class="xt">スタンプ・間隔・数</text>
+<text x="1198" y="158" class="xt">グリッチ（&lt; 0.5 s）</text>
+<text x="1198" y="173" class="xt">欠落（1.5 s）</text>
+<text x="1198" y="188" class="xt">BAD（|間隔 − 1 s| &gt; TOL）</text>
+<rect class="tsub" x="1375" y="96" width="165" height="112"/>
+<text x="1383" y="112" class="tm">予約発火</text>
+<text x="1383" y="128" class="xt">START_AT（64 bit）</text>
+<text x="1383" y="143" class="xt">rem を下へ数える</text>
+<text x="1383" y="158" class="xt">遅すぎ &lt; 16・遠すぎ ≧ 2^40</text>
+<text x="1383" y="173" class="xt">go_loc は T = START_AT</text>
+<text x="1383" y="188" class="xt">FIRED = START_AT</text>
+<rect class="tsub" x="1550" y="96" width="160" height="112"/>
+<text x="1558" y="112" class="tm">原点</text>
+<text x="1558" y="128" class="xt">ANCHORED（PS が 1 に）</text>
+<text x="1558" y="143" class="xt">リセットで 0</text>
+<text x="1558" y="158" class="xt">EPOCH: ctrl_aclk 側で</text>
+<text x="1558" y="173" class="xt">aresetn の解除を数え</text>
+<text x="1558" y="188" class="xt">gray で渡す（CDC-6）</text>
+<rect class="ext" x="760" y="84" width="200" height="40"/>
+<text x="770" y="100" class="s">pps_trig（AH13）</text>
+<text x="770" y="116" class="xs">IRIG_TRIG_OUT・シュミット</text>
+<rect class="ext" x="760" y="134" width="200" height="40"/>
+<text x="770" y="150" class="s">pps_comp（AJ13）</text>
+<text x="770" y="166" class="xs">IRIG_COMP_OUT・オープンドレイン</text>
+<path class="wK" d="M960,104 L1008,104"/>
+<path class="wK" d="M960,154 L1008,154"/>
+<rect class="ext" x="760" y="184" width="200" height="34"/>
+<text x="770" y="205" class="xs">PPS Clk（SMA）← 45m の 1PPS</text>
+<path class="wK" d="M860,184 L860,176"/>
+<rect class="blk" x="200" y="270" width="170" height="170"/>
+<text x="212" y="292" class="t">rfdc</text>
+<text x="212" y="310" class="s">RF Data Converter</text>
+<text x="212" y="362" class="xs">fs 4096 MSPS・ゾーン 2</text>
+<text x="212" y="377" class="xs">Real・Data_Width 12</text>
+<text x="212" y="395" class="tm">Tile 226 だけ</text>
+<text x="212" y="412" class="xs">（Tile 224 は無効）</text>
+<path class="wB" d="M660,100 L690,100 L690,250 L285,250 L285,268"/>
+<text x="300" y="245" class="lbB">M00 → rfdc/s_axi（pl_clk0）</text>
+<rect class="ext" x="20" y="316" width="150" height="44"/>
+<text x="30" y="334" class="s">ADC_A（SMA）</text>
+<text x="30" y="351" class="xs">IF 2048〜4096 MHz</text>
+<path class="wK" d="M170,338 L198,338"/>
+<text x="364" y="332" class="xs" text-anchor="end">m22_axis ▶</text>
+<text x="364" y="348" class="xs" text-anchor="end">slice 2</text>
+<text x="396" y="294" class="tm">ch 0 = ADC_A：Tile 226 / slice 2</text>
+<text x="640" y="294" class="xs">語幅: 192 bit・341 MHz → 768 bit → 256 bit・256 MHz（tready = 1）</text>
+<path class="wO" d="M370,338 L394,338"/>
+<rect class="blk" x="396" y="310" width="98" height="56" style="stroke:#d9822b"/>
+<text x="404" y="328" class="tm">gb_adc_0</text>
+<text x="404" y="343" class="xs">出口の見張り</text>
+<text x="404" y="357" class="xs">書き込み側の再起動</text>
+<path class="wO" d="M494,338 L504,338"/>
+<rect class="blk" x="506" y="310" width="98" height="56" style="stroke:#d9822b"/>
+<text x="514" y="328" class="tm">gb_up_0</text>
+<text x="514" y="343" class="xs">幅の変換</text>
+<text x="514" y="357" class="xs">12 → 48 smp（×4）</text>
+<path class="wO" d="M604,338 L614,338"/>
+<rect class="blk" x="616" y="310" width="108" height="56" style="stroke:#333"/>
+<line x1="616" y1="310" x2="616" y2="366" stroke="#d9822b" stroke-width="5"/>
+<line x1="724" y1="310" x2="724" y2="366" stroke="#2e8b57" stroke-width="5"/>
+<text x="624" y="328" class="tm">gb_fifo_0</text>
+<text x="624" y="343" class="xs">非同期 FIFO</text>
+<text x="624" y="357" class="xs">768 bit × 32</text>
+<path class="wG" d="M724,338 L734,338"/>
+<rect class="blk" x="736" y="310" width="98" height="56" style="stroke:#2e8b57"/>
+<text x="744" y="328" class="tm">gb_gate_0</text>
+<text x="744" y="343" class="xs">しきい値 K</text>
+<text x="744" y="357" class="xs">見張り（既定 K = 2）</text>
+<path class="wG" d="M834,338 L844,338"/>
+<rect class="blk" x="846" y="310" width="98" height="56" style="stroke:#2e8b57"/>
+<text x="854" y="328" class="tm">gb_dn_0</text>
+<text x="854" y="343" class="xs">幅の変換</text>
+<text x="854" y="357" class="xs">48 → 16 smp（÷3）</text>
+<path class="wG" d="M944,338 L954,338"/>
+<rect class="blk" x="956" y="310" width="106" height="56" style="stroke:#c0392b;stroke-width:1.8"/>
+<text x="964" y="328" class="tm">gb_bc_0</text>
+<text x="964" y="343" class="xs">axis_broadcaster</text>
+<text x="964" y="357" class="xs">M00 窓・M01 全帯域</text>
+<path class="wR" d="M1062,338 L1108,338"/>
+<path class="wP" d="M1110,380 L444,380 L444,368"/>
+<path class="wP" d="M784,380 L784,368"/>
+<path class="wP" d="M894,380 L894,368"/>
+<text x="452" y="393" class="lbP">gb_hold・gb_adj／gb_k・gb_dn_rstn ← win_core_0 ／ gb_stat・adc_stat → win_core_0 と full_sel</text>
+<rect class="win" x="1110" y="282" width="610" height="300"/>
+<text x="1120" y="299" class="tm">win_core_0（ADC_A）　NW 4・ID 0x0016_0100・DSP 728</text>
+<text x="1714" y="299" class="xs" text-anchor="end">s_axi ◀ M01</text>
+<rect class="wsub" x="1120" y="310" width="128" height="170"/>
+<text x="1126" y="325" class="tm">pfb_core（共有）</text>
+<text x="1126" y="341" class="xs">粗い PFB・M 32</text>
+<text x="1126" y="355" class="xs">128 MHz 間隔・4 倍</text>
+<text x="1126" y="369" class="xs">96 タップ・実 DFT</text>
+<text x="1126" y="383" class="xs">窓ごとに ch k を</text>
+<text x="1126" y="397" class="xs">選んで 4 本へ・288</text>
+<text x="1126" y="411" class="xs">（proj015 と同一）</text>
+<path class="wR" d="M1112,338 L1118,338"/>
+<rect class="wsub" x="1260" y="310" width="290" height="38"/>
+<text x="1266" y="322" class="xs">窓 0: ddc → wspec（4096 点 FFT・電力・積分）</text>
+<rect class="tsub" x="1266" y="327" width="278" height="17"/>
+<text x="1270" y="339" class="xt">dstamp（DUMP_T・DUMP_H）・ARM・CFG_ID</text>
+<path class="wR" d="M1248,395 L1254,395 L1254,329 L1258,329"/>
+<rect class="wsub" x="1260" y="354" width="290" height="38"/>
+<text x="1266" y="366" class="xs">窓 1: ddc → wspec（4096 点 FFT・電力・積分）</text>
+<rect class="tsub" x="1266" y="371" width="278" height="17"/>
+<text x="1270" y="383" class="xt">dstamp（DUMP_T・DUMP_H）・ARM・CFG_ID</text>
+<path class="wR" d="M1248,395 L1254,395 L1254,373 L1258,373"/>
+<rect class="wsub" x="1260" y="398" width="290" height="38"/>
+<text x="1266" y="410" class="xs">窓 2: ddc → wspec（4096 点 FFT・電力・積分）</text>
+<rect class="tsub" x="1266" y="415" width="278" height="17"/>
+<text x="1270" y="427" class="xt">dstamp（DUMP_T・DUMP_H）・ARM・CFG_ID</text>
+<path class="wR" d="M1248,395 L1254,395 L1254,417 L1258,417"/>
+<rect class="wsub" x="1260" y="442" width="290" height="38"/>
+<text x="1266" y="454" class="xs">窓 3: ddc → wspec（4096 点 FFT・電力・積分）</text>
+<rect class="tsub" x="1266" y="459" width="278" height="17"/>
+<text x="1270" y="471" class="xt">dstamp（DUMP_T・DUMP_H）・ARM・CFG_ID</text>
+<path class="wR" d="M1248,395 L1254,395 L1254,461 L1258,461"/>
+<rect class="sub" x="1560" y="310" width="150" height="44"/>
+<text x="1566" y="325" class="xs">tp_core（total power）</text>
+<text x="1566" y="339" class="xs">Σx²・1 ms・リング・TP_ARM</text>
+<rect class="wsub" x="1560" y="360" width="150" height="32"/>
+<text x="1566" y="373" class="xs">スナップショット 1 つ</text>
+<text x="1566" y="386" class="xs">SNAP_SEL の窓が書く</text>
+<rect class="tsub" x="1560" y="398" width="150" height="46"/>
+<text x="1566" y="411" class="xt">adc_ev: 振り切れ・途切れ</text>
+<text x="1566" y="424" class="xt">TANCH:（ADC のフレーム, T）</text>
+<text x="1566" y="437" class="xt">OVR_CNT・GAP_CNT</text>
+<text x="1560" y="460" class="xs">窓 w: 0x20000·w</text>
+<text x="1560" y="474" class="xs">共通: 0x80000〜</text>
+<text x="1120" y="496" class="xs">SHIFT・CFG_ID は RUN の時点で取り込む（RUN の間の書き込みは次の RUN から）</text>
+<text x="1120" y="510" class="xs">ARM_RUN ＋ ARM_WRST が同じ発火なら、RUN は WRST が明けた後</text>
+<text x="1120" y="526" class="xt">DUMP_H: [0] PPS 来ていない [1] 間隔 [2] グリッチ [3] 原点なし [4] 振り切れ</text>
+<text x="1120" y="540" class="xt">　　　　[5] 途切れ [6] CFG 不一致 [14][15] 帳簿</text>
+<text x="1120" y="556" class="xt">窓の遅れ D(NS)（ADC → z）: 0.23 µs（256 MHz）〜 10.9 µs（2 MHz）＝ WIN_DELAY_BEATS</text>
+<text x="1120" y="570" class="xt">DUMP_T(k) − DUMP_T(0) = k·N·4096·2^(NS−1)（sim の NS 1 でずれ 0）</text>
+<path class="wT" d="M1400,226 L1400,280"/>
+<text x="1408" y="244" class="lbT">t_out（64）・go_out・ev_out（4）→ 各コアで 1 段（t_loc = T）</text>
+<path class="wG" d="M1062,352 L1076,352 L1076,620"/>
+<rect class="blk" x="1046" y="622" width="150" height="90" style="stroke:#2e8b57;stroke-width:1.8"/>
+<text x="1054" y="640" class="tm">full_sel</text>
+<text x="1054" y="656" class="xs">axis_sel4（s0 だけ）</text>
+<text x="1054" y="671" class="xs">sel ← win_core_0</text>
+<text x="1054" y="686" class="xs">sel のファンアウト 303</text>
+<text x="1054" y="701" class="xs">（最悪経路の群。次で外す）</text>
+<path class="wG" d="M1196,667 L1234,667"/>
+<rect class="blk" x="1236" y="622" width="484" height="160" style="stroke:#2e8b57;stroke-width:2.2"/>
+<text x="1248" y="642" class="t">spec_core_0（全帯域 1 本）　DSP 504</text>
+<text x="1712" y="642" class="xs" text-anchor="end">ID 0x0016_01CC・s_axi ◀ M02</text>
+<text x="1248" y="660" class="xs">8192 点 FFT（lane_fft × 16）→ 電力 → 積分：4096 ch × 0.5 MHz</text>
+<rect class="sub" x="1246" y="670" width="180" height="40"/>
+<text x="1254" y="686" class="tm">tp_core（u_tp）</text>
+<text x="1254" y="702" class="xs">Σx²・1 ms</text>
+<rect class="tsub" x="1436" y="670" width="274" height="40"/>
+<text x="1444" y="686" class="xt">dstamp・adc_ev・ARM_RUN・CFG_ID（新）</text>
+<text x="1444" y="702" class="xt">DUMP_T の間隔 = k·N·512 ちょうど</text>
+<text x="1248" y="730" class="xs">SHIFT・CFG_ID は RUN で取り込む。gb_* の出口は未接続（ギアボックスは win_core_0 が握る）</text>
+<path class="wB" d="M660,119 L700,119 L700,258 L1742,258 L1742,294 L1722,294"/>
+<path class="wB" d="M660,134 L710,134 L710,266 L1754,266 L1754,772 L1722,772"/>
+<path class="wB" d="M660,149 L720,149 L720,236 L1030,236 L1030,228"/>
+<text x="728" y="231" class="lbB">M03 → time_core_0（4 KiB）</text>
+<text x="760" y="252" class="lbB">M01 → win_core_0（1 MiB）・M02 → spec_core_0（64 KiB）</text>
+<path class="wT" d="M1720,206 L1772,206 L1772,752 L1722,752"/>
+<text x="1712" y="748" class="xt" text-anchor="end">t_in・go_in・tev_in ◀</text>
+<path class="wK" d="M285,440 L285,815"/>
+<text x="292" y="464" class="lb">clk_adc2 256 MHz（fs/16）</text>
+<rect class="blk" x="200" y="817" width="230" height="120"/>
+<text x="212" y="839" class="t">clk_wiz_adc（MMCM）</text>
+<text x="212" y="857" class="xs">入力 256 MHz（clk_adc2）</text>
+<text x="212" y="877" class="lbO">clk_out1 341.333 MHz → ADC ドメイン</text>
+<text x="212" y="894" class="lbG">clk_out2 256.000 MHz → DSP ドメイン</text>
+<text x="212" y="912" class="xt">time_core の T はこのクロックを数える</text>
+<text x="212" y="927" class="xt">（10 MHz に乗っていれば 1 s = 256e6）</text>
+<rect class="blk" x="450" y="817" width="170" height="56" style="stroke:#2f6fb5"/>
+<text x="460" y="839" class="t">rst_ctrl</text>
+<text x="460" y="859" class="xs">smc・rfdc・time_core の ctrl</text>
+<rect class="blk" x="630" y="817" width="170" height="56" style="stroke:#d9822b"/>
+<text x="640" y="839" class="t">rst_adc</text>
+<text x="640" y="859" class="xs">1 タイルなので切り出さない</text>
+<rect class="blk" x="810" y="817" width="300" height="56" style="stroke:#2e8b57"/>
+<text x="820" y="839" class="t">rst_dsp</text>
+<text x="820" y="859" class="xs">win_core_0・spec_core_0・time_core_0 ほか</text>
+<text x="450" y="895" class="xs">3 つとも ext_reset_in = pl_resetn0。ADC・DSP 側は MMCM の locked まで保持。</text>
+<text x="450" y="911" class="xt">MMCM のロックが外れると rst_dsp → T が 0 に戻り ANCHORED = 0（ダンプの [3]）。EPOCH は rst_ctrl 側で数える。</text>
+<text x="450" y="927" class="xt">time_core の ctrl_aclk = pl_clk0（エポックを数える側）。それ以外の時刻はすべて DSP ドメイン。</text>
+<rect class="ext" x="20" y="817" width="150" height="44"/>
+<text x="30" y="835" class="s">LMX2594</text>
+<text x="30" y="852" class="xs">491.52 MHz</text>
+<rect class="ext" x="20" y="873" width="150" height="44"/>
+<text x="30" y="891" class="s">SYSREF（LMK04828）</text>
+<text x="30" y="908" class="xs">→ sysref_in</text>
+<rect class="ext" x="20" y="929" width="150" height="44"/>
+<text x="30" y="947" class="s">10 MHz（CLKin0）</text>
+<text x="30" y="964" class="xs">メーザー由来（--clkin 0）</text>
+<path class="wK" d="M170,839 L184,839 L184,400 L198,400"/>
+<path class="wK" d="M170,895 L192,895 L192,416 L198,416"/>
+<rect class="note" x="1130" y="817" width="590" height="156"/>
+<text x="1142" y="837" class="tm">資源とタイミング（build/・-1 ＋ PS のプリセット・既定の戦略）</text>
+<text x="1142" y="857" class="xs">DSP 1232（28.8 %）= win_core_0 728 ＋ spec_core_0 504</text>
+<text x="1142" y="872" class="xs">　wspec 1 個 32（予言 30。+2 の場所は未確認）</text>
+<text x="1142" y="887" class="xs">BRAM 199 タイル（18.4 %）・URAM 8・LUT 26.5 %・FF 22.7 %</text>
+<text x="1142" y="905" class="xs">WNS +0.006 ns / WHS +0.010 ns。最悪経路は pfb（proj015 から）と</text>
+<text x="1142" y="920" class="xs">　full_sel のファンアウト。時刻の論理は上位 200 本に出ない</text>
+<text x="1142" y="938" class="xs">CDC-6: ADC_STAT（既存）と EPOCH の gray（新）の 2 件</text>
+<text x="1142" y="953" class="xs">実機: T-0〜T-4 通過（30 分でずれ 0・M = 121.2 ns・健全性の陽性対照）</text>
+<text x="20" y="992" class="tm">凡例</text>
+<path class="wB" d="M70,988 L110,988"/>
+<text x="118" y="992" class="lbB">PS 側（pl_clk0）・AXI</text>
+<path class="wO" d="M315,988 L355,988"/>
+<text x="363" y="992" class="lbO">ADC ドメイン 341 MHz</text>
+<path class="wG" d="M560,988 L600,988"/>
+<text x="608" y="992" class="lbG">DSP ドメイン 256 MHz</text>
+<path class="wR" d="M805,988 L845,988"/>
+<text x="853" y="992" class="lbR">窓の流れ</text>
+<path class="wT" d="M1050,988 L1090,988"/>
+<text x="1098" y="992" class="lbT">時刻（新・DSP ドメイン）</text>
+<path class="wP" d="M1295,988 L1335,988"/>
+<text x="1343" y="992" class="lbP">見張り・再起動</text>
+<path class="wK" d="M1540,988 L1580,988"/>
+<text x="1588" y="992" class="lb">アナログ・クロック・PPS</text>
+</svg>
