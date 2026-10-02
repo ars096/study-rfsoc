@@ -140,7 +140,7 @@ sim-win-all のうち pfb・ddc・win・hb2s・pfbm は回し直していない�
 | BRAM / URAM | 199 タイル（18.4 %）/ 8 | |
 | LUT / FF | 26.5 % / 22.7 % | |
 | run の CRITICAL WARNING | なし | |
-| report_cdc | CDC-3 Info 52 / CDC-6 Warning 2 / CDC-15 Warning 833 | CDC-6（多 bit・ASYNC_REG）は time_core の EPOCH の gray（予言どおりの新顔）。2 件の中身は cdc.rpt で確かめる |
+| report_cdc | CDC-3 Info 52 / CDC-6 Warning 2 / CDC-15 Warning 833 | CDC-6 の 2 件は (1) `gb_adc_0/gaps_reg[15:0]` → `gb_gate_0/adc_s1_reg`（proj012 から居る ADC_STAT の数え。PS が 2 回読んで一致を確かめる約束）と (2) `time_core_0/epoch_g_reg[31:0]` → `eg1_reg`（clk_pl_0 → DSP、新顔。gray で 1 bit ずつしか動かない）。**どちらも意図したもので、他に新しい乗り換えは無い** |
 | PPS のピン・結線の照合 | 通過（落ちれば exit 1 で止まる） | |
 
 最悪経路（`make worst-paths`、slack < 0.3 ns の setup 120 本）:
@@ -160,7 +160,7 @@ hold は 200 本とも +0.010〜0.015 で FFT IP の中が主（Vivado の hold 
 - [x] Vivado サーバでビルド → `-1` で WNS +0.006 ns（T-5 は通過。ただし余裕はほぼ 0）
 - [x] `make worst-paths` → 時刻の論理は出ない。pfb（proj015 から）と full_sel のファンアウト 303
 - [ ] 次に作り直すとき: ADC 1 本なら full_sel を置かず gb_bc_0 → spec_core_0 を直につなぐ（30 本の群が消える）
-- [ ] cdc.rpt の CDC-6 の 2 件が EPOCH の gray だけか
+- [x] cdc.rpt の CDC-6 の 2 件 → ADC_STAT（既存）と EPOCH の gray（新顔）。意図どおり
 - [ ] 実機の T-0〜T-4
 - [ ] T-2 の結果で `timebase.CAL` の pps_det_ns・adc_to_core_ns を埋める
 - [ ] 窓の構成の proj（4 ADC に戻す）で「4 ADC が同じビートで開始」を合否に入れる
