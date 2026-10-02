@@ -131,9 +131,23 @@ sim-win-all のうち pfb・ddc・win・hb2s・pfbm は回し直していない�
 - time_core の同期器をリセットで 0 にしていると、**リセットの解除の瞬間に PPS が H なら偽の縁**になり、最初の間隔が短く出て BAD が立った（tb の PPS の位相で見つけた）。同期器を 1 で始めるように直した
 - 発火の残りの初期値を最初は diff − 2 にしていて 1 クロック遅れた（diff は 1 クロック前の T に対する値）。diff − 3 に直し、陽性対照（diff − 4）が落ちることを確かめた
 
+### ビルド（2026-10-02、Vivado 2024.1、`-1`、実装の戦略は既定、`make`）
+
+| | proj016 | 予言・比べ |
+|---|---|---|
+| WNS / WHS | **+0.006 / +0.010 ns**（閉じた。最悪 5 本とも clk_out2 → clk_out2 = DSP ドメインの中） | proj015 rev3 は 4 ADC で 0.000（戦略 PEPRPO）。資源が 1/3 なのに余裕は戻っていない → 最悪経路の群を `make worst-paths` で見る |
+| DSP | 1232（28.8 %） | spec_core_0 504（予言 504）・win_core_0 728（予言 720）。**wspec 1 個 32（予言 30）**: 窓ごとに +2、時刻の足しもので DSP に乗ったものがある（dstamp か RUN の取り込み。未確認） |
+| BRAM / URAM | 199 タイル（18.4 %）/ 8 | |
+| LUT / FF | 26.5 % / 22.7 % | |
+| run の CRITICAL WARNING | なし | |
+| report_cdc | CDC-3 Info 52 / CDC-6 Warning 2 / CDC-15 Warning 833 | CDC-6（多 bit・ASYNC_REG）は time_core の EPOCH の gray（予言どおりの新顔）。2 件の中身は cdc.rpt で確かめる |
+| PPS のピン・結線の照合 | 通過（落ちれば exit 1 で止まる） | |
+
 ## 結論・次にやること
 
-- [ ] Vivado サーバでビルド（`make ps-preset` は proj015 の `src/ps_preset.tcl` をそのまま複製してある）。`-1` で閉じるか（T-5）。資源は proj015 の 1/4 程度の見込みで、余裕は戻るはず
+- [x] Vivado サーバでビルド → `-1` で WNS +0.006 ns（T-5 は通過。ただし余裕はほぼ 0）
+- [ ] `make worst-paths` で最悪経路の群を見る（新しく足した時刻の論理か、proj015 から居る群か）
+- [ ] cdc.rpt の CDC-6 の 2 件が EPOCH の gray だけか
 - [ ] 実機の T-0〜T-4
 - [ ] T-2 の結果で `timebase.CAL` の pps_det_ns・adc_to_core_ns を埋める
 - [ ] 窓の構成の proj（4 ADC に戻す）で「4 ADC が同じビートで開始」を合否に入れる
