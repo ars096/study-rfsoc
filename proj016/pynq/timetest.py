@@ -15,6 +15,7 @@
             [6] 窓の WRST と RUN の CFG_ID が違う / [14] 帳簿が上書きされた / [15] 帳簿が閉じていない
 """
 import argparse
+import os
 import sys
 import time
 
@@ -376,6 +377,12 @@ def main():
         p.add_argument(f"--{t}", action="store_true")
     a = p.parse_args()
     ns_list = [int(x) for x in a.ns.split(",")]
+    if a.out:
+        # **測る前に書けることを確かめる**（2026-10-02、30 分の T-1 の最後に runs/ が無くて記録を失った）
+        d = os.path.dirname(a.out) or "."
+        os.makedirs(d, exist_ok=True)
+        if not os.access(d, os.W_OK):
+            log(f"ERROR: {d} に書けない"); sys.exit(1)
 
     from pynq import Overlay
     import xrfdc                                   # Overlay() より前に import する（VERSIONS.md）
