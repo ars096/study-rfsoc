@@ -247,6 +247,12 @@ Vivado 2024.1 の不具合と読み、build.tcl で受ける（a11f6fa まで）
 - 資源（rev3）: DSP 3416（80.0 %）・BRAM 553（51.2 %）・URAM 32・LUT 69.0 %・FF 55.8 %。rev2 から LUT +0.7 k・FF +1.3 k
 - sim（rev3）: sim-wspec（クラウド）・sim-top・sim-win4（Vivado サーバ、2026-10-02）とも「結果: 全部通過」。sim-win4 は rev3 の ID（0x0015_0300・0x0015_A300）の読み返しを含む
 
+### 実機（rev3、build-PEPRPO/、2026-10-02）
+
+- **PS のクロック**（Overlay の後）: `Clocks.fclk0_mhz` = 99.999（PL0_REF_CTRL = IOPLL ÷ 15 ÷ 1、IOPLL の FBDIV 90 = 1500 MHz、.hwh の ACT_FREQMHZ 99.999985）。
+  `cpu_mhz` = 1199.988（FSBL の設定。Overlay で変わらない。1200 MHz は `-1` の APU の上限でもある）。.hwh の DDR は 400 MHz（`-1` で外した組の印。実際の DDR は FSBL）
+- **W-0**（`window.py --probe`、16 窓）: 16 窓とも `RESULT OK`・NG 0。ID 0x0015_0300、BUILD 0x50c0000{0..3}（プリセット あり・`-1`・窓・ch = ADC の番号）
+
 ## 結果
 
 ### 手順 1（2026-09-30、クラウドの作業環境: iverilog 12.0・numpy 2.4.4）
