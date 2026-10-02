@@ -1,0 +1,341 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: BSD-3-Clause -->
+<!-- proj015 の窓の 3 段（pfb_core・ddc_core・wspec_core）と win_core_i の共通の振る舞いのまとめ。RTL の冒頭の注記と README から要約。RTL を変えたらここも直す -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>proj015 窓の 3 段</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* レイアウト: 1 段組の技術メモ。信号の流れの帯を先頭に置き、段ごとに「何をするか → 式 → 振る舞いの約束 → 数字」の順で並べる */
+:root {
+  --bg: #f6f7f5;
+  --panel: #ffffff;
+  --fg: #1d2421;
+  --muted: #5b6661;
+  --rule: #d5dbd7;
+  --dsp: #23795a;      /* DSP ドメイン（ブロック図の緑） */
+  --win: #b23a2e;      /* 窓の流れ（ブロック図の赤） */
+  --axi: #2d65a8;      /* AXI */
+  --code-bg: #eef1ee;
+  --warn-bg: #fbf3e4;
+  --warn-fg: #7a5410;
+  --f-body: "IBM Plex Sans JP", "Hiragino Sans", "Noto Sans CJK JP", "Yu Gothic", sans-serif;
+  --f-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151a18; --panel: #1c2320; --fg: #e3e8e5; --muted: #9aa6a0; --rule: #33403a;
+    --dsp: #5cc39a; --win: #ee7d70; --axi: #7fb0ec; --code-bg: #232c28; --warn-bg: #2e2716; --warn-fg: #e6c27a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151a18; --panel: #1c2320; --fg: #e3e8e5; --muted: #9aa6a0; --rule: #33403a;
+  --dsp: #5cc39a; --win: #ee7d70; --axi: #7fb0ec; --code-bg: #232c28; --warn-bg: #2e2716; --warn-fg: #e6c27a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--f-body); font-size: 15px; line-height: 1.75; }
+.wrap { max-width: 980px; margin: 0 auto; padding-inline: 20px; padding-block: 36px 64px; display: grid; gap: 40px; }
+header { display: grid; gap: 8px; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+h1 { font-size: 30px; line-height: 1.3; margin: 0; text-wrap: balance; }
+h2 { font-size: 22px; margin: 0; text-wrap: balance; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+h2 code { font-size: 20px; }
+h3 { font-size: 15.5px; margin: 0; }
+p { margin: 0; max-width: 68ch; }
+.lead { color: var(--muted); max-width: 72ch; }
+code, .mono { font-family: var(--f-mono); font-size: .92em; }
+section { display: grid; gap: 16px; }
+.stage { border-top: 3px solid var(--dsp); padding-top: 18px; }
+.stage.win { border-top-color: var(--win); }
+.tag { font-family: var(--f-mono); font-size: 12px; font-weight: 500; color: var(--muted); }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+.cols > * { min-width: 0; }
+.box { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 14px 16px; display: grid; gap: 8px; min-width: 0; align-content: start; }
+ul, ol { margin: 0; padding-left: 1.3em; display: grid; gap: 4px; align-content: start; }
+li { max-width: 68ch; }
+.eq { font-family: var(--f-mono); font-size: 13.5px; background: var(--code-bg); border-radius: 4px; padding: 10px 12px; overflow-x: auto; white-space: pre; line-height: 1.6; }
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-weight: 500; color: var(--muted); font-size: 12.5px; letter-spacing: .03em; }
+td.num, th.num { text-align: right; font-family: var(--f-mono); }
+.note { background: var(--warn-bg); color: var(--warn-fg); border-radius: 6px; padding: 10px 14px; font-size: 14px; }
+.flow { overflow-x: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 12px; }
+.flow svg { display: block; min-width: 860px; width: 100%; height: auto; }
+.flow text { font-family: var(--f-body); fill: var(--fg); }
+.flow .m { font-family: var(--f-mono); fill: var(--muted); font-size: 11.5px; }
+.flow .b { fill: var(--panel); stroke: var(--dsp); stroke-width: 1.6; }
+.flow .bw { fill: var(--panel); stroke: var(--win); stroke-width: 1.6; }
+.flow .ln { stroke: var(--win); stroke-width: 2.2; fill: none; }
+.flow .lg { stroke: var(--dsp); stroke-width: 2.2; fill: none; }
+.flow .ah { fill: var(--win); }
+.flow .ahg { fill: var(--dsp); }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; font-size: 14px; }
+dt { font-family: var(--f-mono); color: var(--muted); }
+dd { margin: 0; min-width: 0; }
+footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--rule); padding-top: 16px; }
+@media (max-width: 520px) { h1 { font-size: 24px; } dl { grid-template-columns: 1fr; } dt { margin-top: 6px; } }
+</style>
+<style>body{margin:0}</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">RFSoC4x2 分光計 · proj015 rev3 · win_core_i（4 ADC × 4 窓）の中身</div>
+  <h1>窓の 3 段: pfb_core → ddc_core → wspec_core</h1>
+  <p class="lead">ADC ごとの 4096 MSPS の実数列から、幅 W（256〜2 MHz の 8 通り）の窓を 4 つ切り出し、それぞれ 4096 ch の電力スペクトルにする。粗い PFB は ADC ごとに 1 つを 4 窓で共有し、NCO・半帯域・FFT・積分は窓ごと。win_core_i（i = ADC_A..D）が 4 つあり、16 窓が同時に動く。3 段とも DSP ドメイン 256 MHz で動き、固定小数点の模型（<code>model/win_fixed.py</code>）と bit 単位で一致することを sim で確かめてある。</p>
+</header>
+
+<section aria-label="信号の流れ">
+  <div class="flow">
+    <svg viewBox="0 0 940 150" role="img" aria-label="x から pfb_core、ddc_core、wspec_core を経てスペクトルになる流れ">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker>
+        <marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahg" d="M0,0 L10,5 L0,10 z"/></marker>
+      </defs>
+      <text x="10" y="58" font-size="13" font-weight="700">x</text>
+      <text x="10" y="76" class="m">実数 14 bit</text>
+      <text x="10" y="92" class="m">4096 MSPS</text>
+      <text x="10" y="108" class="m">16 smp / clk</text>
+      <path class="lg" d="M92,70 L142,70" marker-end="url(#ag)"/>
+      <rect class="bw" x="146" y="30" width="190" height="80" rx="5"/>
+      <text x="158" y="54" font-size="14" font-weight="700">pfb_core</text>
+      <text x="158" y="74" class="m">粗い ch k_w を窓ごとに</text>
+      <text x="158" y="90" class="m">128 MHz 間隔・÷8・共有</text>
+      <path class="ln" d="M336,70 L386,70" marker-end="url(#ar)"/>
+      <text x="340" y="56" class="m">y 複素 24</text>
+      <text x="340" y="96" class="m">512 MSPS</text>
+      <rect class="bw" x="390" y="30" width="190" height="80" rx="5"/>
+      <text x="402" y="54" font-size="14" font-weight="700">ddc_core</text>
+      <text x="402" y="74" class="m">NCO で中心へ</text>
+      <text x="402" y="90" class="m">半帯域 ÷2 × WNS（≦ 8）</text>
+      <path class="ln" d="M580,70 L630,70" marker-end="url(#ar)"/>
+      <text x="584" y="56" class="m">z 複素 18</text>
+      <text x="584" y="96" class="m">W MSPS</text>
+      <rect class="bw" x="634" y="30" width="190" height="80" rx="5"/>
+      <text x="646" y="54" font-size="14" font-weight="700">wspec_core</text>
+      <text x="646" y="74" class="m">溜め → FFT 4096</text>
+      <text x="646" y="90" class="m">電力 → 積分</text>
+      <path class="ln" d="M824,70 L864,70" marker-end="url(#ar)"/>
+      <text x="870" y="58" font-size="13" font-weight="700">AXI</text>
+      <text x="870" y="76" class="m">4096 ch</text>
+      <text x="870" y="92" class="m">× 64 bit</text>
+      <text x="146" y="134" class="m">DSP 288（共有）· 20 clk</text>
+      <text x="390" y="134" class="m">DSP 72 / 窓（light を時分割）</text>
+      <text x="634" y="134" class="m">DSP 32 / 窓 · URAM 2 / 窓</text>
+    </svg>
+  </div>
+</section>
+
+<section aria-labelledby="freq">
+  <h2 id="freq">窓の置き方（PS が決める 3 つの値）</h2>
+  <p>ゾーン 2 なので、IF と ADC の見かけの周波数 f は <code>f = 4096 − IF</code>（MHz）。窓の中心 c（f の側）を粗い ch と端数に分ける。</p>
+  <div class="eq">WK    = round(c / 128)                 粗い ch（0..16）。pfb_core の k
+d     = c − 128·WK                     端数（|d| ≦ 64 MHz）
+WDPHI = round(d / 512 · 2^32) mod 2^32 NCO の 1 サンプルの位相の増分（512 MSPS で）
+WNS   = 1..8                           半帯域の段数 → W = 512 / 2^WNS MHz（7・8 = 4・2 MHz は proj015）</div>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>例</th><th>IF の中心</th><th class="num">c</th><th class="num">WK</th><th class="num">d</th><th>WDPHI</th><th class="num">WNS</th><th class="num">W</th></tr></thead>
+    <tbody><tr><td>実機の試験（256 MHz）</td><td class="mono">3000 MHz</td><td class="num">1096</td><td class="num">9</td><td class="num">−56</td><td class="mono">0xE4000000</td><td class="num">1</td><td class="num">256 MHz</td></tr>
+    <tr><td>実機の試験（2 MHz）</td><td class="mono">3010 MHz</td><td class="num">1086</td><td class="num">8</td><td class="num">+62</td><td class="mono">0x1F000000</td><td class="num">8</td><td class="num">2 MHz</td></tr></tbody>
+  </table>
+  </div>
+  <p>3 つとも窓ごとのレジスタ（窓 w は 0x20000·w から）に書き、<code>CTRL[12] = WRST</code> で取り込んで、その窓の 3 段だけを最初からやり直す（フレーム番号・積分も 0 から。ほかの窓は止まらない）。観測中は変えない前提。PS の既定は中心を ch の格子に丸め、k·fs/8 の線（IF 2560・3072・3584 MHz）が窓の中央 90 % に入ると警告する。</p>
+</section>
+
+<section class="stage win" aria-labelledby="pfb">
+  <h2 id="pfb"><code>pfb_core</code><span class="tag">粗い PFB・4 窓で共有</span></h2>
+  <p>4096 MSPS の実数列を 32 本の多相フィルタバンクに通し、窓 w ごとに ch k_w（中心 f = 128k_w MHz）の 1 本を 512 MSPS の複素数列 y として出す。分岐の和と 16 点 DFT は ADC ごとに 1 つ（共有）、ch の選択・実数化・(−j)<sup>km</sup>・丸めは窓ごと。ch 間隔 128 MHz に対して出力が 512 MSPS なので 4 倍オーバーサンプリングになり、±64 MHz の端数 d と窓の幅の半分を足しても ch の通過域に収まる。</p>
+  <div class="eq">y_k[m] = Σ_n h[n] · x[p − n] · exp(−j2πk(p − n)/32)      p = 8m + 95、N = 96 タップ</div>
+  <div class="cols">
+    <div class="box">
+      <h3>段の中身</h3>
+      <ol>
+        <li>分岐の和: <code>u_r[m] = Σ_t h[r+32t]·x[p−r−32t]</code>（r = 0..31、t = 0..2）→ Q10 に丸め・22 bit で飽和</li>
+        <li>32 点の実 DFT の 1 ch: 偶奇を複素に詰めて 16 点 DFT（<code>dft16f</code>）→ 実数化の後処理（−j·W32<sup>k</sup>）</li>
+        <li>(−j)<sup>k·m</sup> を掛ける（位相の m で変わる部分。定数の位相は電力に効かないので落とす）</li>
+        <li>Q8 に丸め・24 bit で飽和 → y</li>
+      </ol>
+    </div>
+    <div class="box">
+      <h3>振る舞いの約束</h3>
+      <ul>
+        <li>1 ビート（16 サンプル）で 2 フレーム出す（ホップ 8 サンプル）。窓は直近 7 ビート = 112 サンプル</li>
+        <li>tvalid が落ちたビートでは窓を進めない。途切れても値は入力の列だけで決まる</li>
+        <li><strong>窓ごとの始まり</strong>: 窓 w は w_rst を下ろした後の最初の valid なビート q_s（q ≧ 5）から数え、m′ = m − m_s（m_s = 2q_s − 10）≧ 0 のフレームだけ <code>y_ok = 1</code>。窓 w の出力は模型に x[8·m_s:] を与えたものと bit 単位で同じ。q_s は WSTART（0x8C）に出る</li>
+        <li>ok と m′ の偶奇は飽和する数えで作る（proj014 は 32 bit の q との比べで、16.8 秒ごとの巻き戻りで 6 ビート ok が落ちていた。proj015 で直した）</li>
+        <li>k は動作中に変えない（変えたらその窓だけ WRST）</li>
+        <li>DSP: 分岐の和 192 ＋ dft16f 64（共有）＋ 実数化 8 × 4 窓 = 288。分岐の和は対称の相手が別の分岐にあるので前置加算が使えない</li>
+        <li>rev2: 16:1 の ch の選択の後と B の後にレジスタ（遅延 18 → 20 クロック、値は同じ）</li>
+      </ul>
+    </div>
+  </div>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>フィルタ</th><th class="num">タップ</th><th class="num">通過</th><th class="num">阻止</th><th>設計</th></tr></thead>
+    <tbody><tr><td>PFB の原型</td><td class="num">96</td><td class="num">±179.2 MHz</td><td class="num">332.8 MHz〜</td><td>等リプル（minimax）・係数 18 bit・60 dB</td></tr></tbody>
+  </table>
+  </div>
+  <p class="lead">通過 179.2 = |d|max 64 + 0.45 × 256。阻止 332.8 = 512 − 179.2（÷8 で折り返って通過域に重なる帯）。</p>
+</section>
+
+<section class="stage win" aria-labelledby="ddc">
+  <h2 id="ddc"><code>ddc_core</code><span class="tag">NCO と半帯域の縦続</span></h2>
+  <p>y に NCO を掛けて窓の中心を 0 Hz に寄せ、半帯域フィルタで 2 分の 1 ずつ落として幅 W の複素数列 z にする。段数 WNS で 8 通りの幅を 1 本の bit で切り替える。</p>
+  <div class="eq">v[m] = round( y[m] · (cos φ − j sin φ) / 2^17 )
+φ    = 2π(a + 1/2) / 2^14,   a = (m·WDPHI mod 2^32) の上位 14 bit
+z    = sat18( round( v / 2^(8 − G) ) )                G = 4（WNS ≦ 6・Q4）/ 5（WNS 7・8・Q5）</div>
+  <div class="cols">
+    <div class="box">
+      <h3>NCO</h3>
+      <ul>
+        <li>位相の累算 32 bit。1/4 波の表 4096 語 × 18 bit（振幅 2<sup>17</sup> − 1）を 2 口 ROM × 2 で引く</li>
+        <li>番地に半 LSB のずらし（a + ½）を入れて、表の端の重複と偏りを消す</li>
+        <li>m = 0 は pfb_core の最初の ok なフレームで、そこで位相 0</li>
+        <li>pfb の出力の並び（y0 = 奇 m、y1 = 偶 m）を組（偶, 奇）に詰め直して 2 サンプル / 組で進む</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>半帯域（hb2・hb2s）</h3>
+      <ul>
+        <li>0 でない係数は偶数番目と中心だけ。対称なので前置加算で乗算は L + 1 個 / 成分</li>
+        <li>組の間隔は自由（入力が来たときだけ進む）。遅延 5 クロック</li>
+        <li>軽い段（15 タップ）を WNS − 1 段（最大 7 段）→ 最後に鋭い段（67 タップ）を 1 段。係数は proj014 と同じ（4・2 MHz も段を足すだけ）</li>
+        <li><strong>時分割（hb2s）</strong>: 軽い段の j 段目（j ≧ 2）には組が 2<sup>j−1</sup> クロックに 1 回以下しか来ないので、乗算を C = min(2<sup>j−1</sup>, L + 1) クロック使い回す（値は hb2 と bit 単位で同じ）。前提が破れたら DDC_OVR（0x88）を数える。DSP は窓 1 つ 114 → 72（NCO 8・light 1 段目 10・2 段目 6・3 段目 4・4〜7 段目 2 ずつ・final 36）</li>
+        <li>rev2: hb2 の和を 2 項ずつの木にした（1 段ごとにレジスタ。値は同じ）</li>
+        <li>各段 Q8 で丸め・24 bit で飽和。飽和は数えて DDC_SAT に出す</li>
+      </ul>
+    </div>
+  </div>
+  <div class="tbl">
+  <table>
+    <thead><tr><th class="num">WNS</th><th class="num">幅 W</th><th class="num">z の速さ</th><th>段の並び</th><th class="num">1 フレーム（4096 点）</th><th class="num">ch 幅</th></tr></thead>
+    <tbody>
+      <tr><td class="num">1</td><td class="num">256 MHz</td><td class="num">1 / clk</td><td>最後の段だけ</td><td class="num">16 µs</td><td class="num">62.5 kHz</td></tr>
+      <tr><td class="num">2</td><td class="num">128 MHz</td><td class="num">1 / 2 clk</td><td>軽 × 1 → 最後</td><td class="num">32 µs</td><td class="num">31.25 kHz</td></tr>
+      <tr><td class="num">3</td><td class="num">64 MHz</td><td class="num">1 / 4 clk</td><td>軽 × 2 → 最後</td><td class="num">64 µs</td><td class="num">15.6 kHz</td></tr>
+      <tr><td class="num">4</td><td class="num">32 MHz</td><td class="num">1 / 8 clk</td><td>軽 × 3 → 最後</td><td class="num">128 µs</td><td class="num">7.81 kHz</td></tr>
+      <tr><td class="num">5</td><td class="num">16 MHz</td><td class="num">1 / 16 clk</td><td>軽 × 4 → 最後</td><td class="num">256 µs</td><td class="num">3.91 kHz</td></tr>
+      <tr><td class="num">6</td><td class="num">8 MHz</td><td class="num">1 / 32 clk</td><td>軽 × 5 → 最後</td><td class="num">512 µs</td><td class="num">1.95 kHz</td></tr>
+      <tr><td class="num">7</td><td class="num">4 MHz</td><td class="num">1 / 64 clk</td><td>軽 × 6 → 最後（G = 5）</td><td class="num">1.024 ms</td><td class="num">977 Hz</td></tr>
+      <tr><td class="num">8</td><td class="num">2 MHz</td><td class="num">1 / 128 clk</td><td>軽 × 7 → 最後（G = 5）</td><td class="num">2.048 ms</td><td class="num">488 Hz</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="lead">使えるのは各窓の中央 90 %（|ν| ≦ 0.45W）。両端 5 % は最後の段の遷移帯。最後の段は通過 0.45W・阻止 0.55W、軽い段は後ろに最後の段がある前提で緩い。WNS 7・8 で G を 5 にするのは、窓が狭いと z が小さくなり、G = 4 では量子化の誤差（N1）が 1e-3 を超えるため。その分、窓 / 全帯域の電力の比は 4 倍になる（実機の W-6 で 4.001・4.002）。</p>
+</section>
+
+<section class="stage win" aria-labelledby="ws">
+  <h2 id="ws"><code>wspec_core</code><span class="tag">溜め・FFT・電力・積分</span></h2>
+  <p>z を 4096 語ずつ溜めて、溜まった面を途切れなく FFT IP に流し、電力を 64 bit で積む。realtime の FFT IP は入力の途切れを待たないので、W MSPS で必ず途切れる z を直接はつなげない。溜めがそのための緩衝になる。</p>
+  <div class="eq">Y = FFT4096(z)                 順変換・unscaled（31 bit）・自然順
+q = sat18( Y >>> SHIFT )
+p = q_re² + q_im²              37 bit
+S = Σ p   （N_ACC フレーム）   64 bit・二面</div>
+  <div class="cols">
+    <div class="box">
+      <h3>溜めと FFT への流し込み</h3>
+      <ul>
+        <li>2 面 × 4096 語。書きながら、溜まった面を 4096 クロックで読み出す</li>
+        <li>出口のレジスタは「空いている か IP が受けた」ときだけ進む（AXI の握手、proj014 rev2 から）。待たされても 1 語も落とさず、IP の枠 = 溜めの枠が保たれる</li>
+        <li>読み出しが遅れたら次の面は予約して遅れて始める。書き込みが未読の番地に追いついたときだけ FLAGS[1]</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>積分と読み出し</h3>
+      <ul>
+        <li>RUN の時点で F0 = fin + 2（確実に未来）。ダンプ k はフレーム F0 + k·N … + N − 1</li>
+        <li>ダンプが閉じるたびに SEQ が 1 増え、読み出しの面が切り替わる（PS は SEQ → 中身 → SEQ で読む）</li>
+        <li>ダンプ k の最初のフレームの z を 4096 語スナップショットに残す（ADC で 1 つを共有し、SNAP_SEL の窓だけが書く）。N_ACC = 1 なら FFT(スナップショット) とダンプが 1 対 1（<code>--golden</code>、SHIFT 7 で比べる）</li>
+        <li>既定 N_ACC = 6250（W = 256 MHz で 100 ms）。rev3: SHIFT を窓の中で受け直す（値は同じ・1 クロック遅れて効く）</li>
+      </ul>
+    </div>
+  </div>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>FLAGS</th><th>意味（粘着・CTRL[8] で消す）</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">[0]</td><td>FFT の出力の XK_INDEX が 1 ずつ進まなかった</td></tr>
+      <tr><td class="mono">[1]</td><td>溜めの読み出しが間に合わなかった（未読の番地を書いた）</td></tr>
+      <tr><td class="mono">[2]</td><td>IP の TLAST 事象（IP の枠と溜めの枠が合っていない）</td></tr>
+      <tr><td class="mono">[3]</td><td>IP の data_in_channel_halt（フレームの途中で入力が途切れた）</td></tr>
+      <tr><td class="mono">[4]</td><td>IP に待たされた（tready = 0）。rev2 ではデータを保って待つだけ</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <dl>
+    <dt>0x80 WS_STALL</dt><dd>WRST 以来、IP に待たされたクロック数</dd>
+    <dt>0x84 WS_RDY0</dt><dd>WRST の解除から IP の tready が最初に 1 になるまでのクロック数</dd>
+    <dt>ch b ↔ ν</dt><dd><code>ν = b·W/4096</code>（b ≧ 2048 は b − 4096）。<code>IF = 4096 − c − ν</code>。並べ替えとゾーン 2 の反転は PS 側</dd>
+  </dl>
+  <div class="note">proj014 rev1 は tready を見ずに流していた。WRST 直後に IP が受けなかった語のぶん枠がずれたまま回り、実機で FLAGS 0x14 → 0x4 と W-G の NG になった。proj014 rev2 で直し、proj015 も同じ作り。狭い窓では IP が 1 フレームに 1 クロック待たせる（FLAGS[4]、判定の外）。</div>
+</section>
+
+<section aria-labelledby="core">
+  <h2 id="core"><code>win_core_i</code> の共通<span class="tag">ADC ごとに 1 つ</span></h2>
+  <p>4 窓のほか、ADC ごとに 1 つずつ持つもの。AXI4-Lite は 1 MiB（20 bit 番地）で、窓 w は 0x20000·w、共通は 0x80000 から。</p>
+  <div class="cols">
+    <div class="box">
+      <h3>ADC の共通</h3>
+      <ul>
+        <li><strong>total power</strong>（tp_core）: Σx²・1 ms・リング 512 個（0x82000〜）。4 ADC すべてで測る（DSP 24）</li>
+        <li><strong>ギアボックスの制御</strong>: gb_hold・gb_adj・gb_k（GB_K）・gb_dn_rstn を ch ごとに握る。見張りは GB_STAT・ADC_STAT</li>
+        <li><strong>FULL_SEL</strong>: win_core_0 のものだけが効き、全帯域の spec_core_0 につなぐ ADC を選ぶ（W-6・W-1b の基準）</li>
+        <li>SNAP_SEL・ID（0x0015_A300）・NW = 4</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>読み出し</h3>
+      <ul>
+        <li>応答は ar を受けてから 5 クロック後（rev3: 候補を 1 段のレジスタで受けてから選ぶ。値は同じ）</li>
+        <li>LO を読むと HI を固定（FIN・FOUT・TFIN）。rev3 は固定を ar の 1 クロック後に</li>
+        <li>実機: 1 ダンプ（4096 ch × 64 bit）の読み出し 2.14 ms、16 窓で 34.2 ms / 100 ms（W-11）</li>
+        <li>窓ごとに 0x88 DDC_OVR・0x8C WSTART・0x90 WIDX（proj015）</li>
+      </ul>
+    </div>
+  </div>
+  <p class="lead">資源（rev3、win_core 1 つ）: DSP 728 = pfb 288 ＋ (ddc 72 ＋ ws 32) × 4 ＋ tp 24。4 つで 2912、spec_core_0 504 と合わせて 3416（80 %）。<code>-1</code> で WNS 0.000 ns。</p>
+</section>
+
+<section aria-labelledby="fx">
+  <h2 id="fx">語長のまとめ</h2>
+  <div class="tbl">
+  <table>
+    <thead><tr><th>信号</th><th>場所</th><th class="num">語長</th><th>小数部</th><th>丸め・飽和</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">x</td><td>入力（ADC >>> 2）</td><td class="num">14</td><td>整数</td><td>—</td></tr>
+      <tr><td class="mono">u</td><td>PFB の分岐の和</td><td class="num">22</td><td>Q10</td><td>floor(x + ½)・飽和</td></tr>
+      <tr><td class="mono">y</td><td>PFB の出力</td><td class="num">24（複素）</td><td>Q8</td><td>同上</td></tr>
+      <tr><td class="mono">v</td><td>NCO と半帯域</td><td class="num">24（複素）</td><td>Q8</td><td>同上</td></tr>
+      <tr><td class="mono">z</td><td>FFT の入力</td><td class="num">18（複素）</td><td>Q4（WNS 7・8 は Q5）</td><td>同上</td></tr>
+      <tr><td class="mono">Y</td><td>FFT の出力</td><td class="num">31（複素）</td><td>—</td><td>unscaled</td></tr>
+      <tr><td class="mono">q, p</td><td>電力</td><td class="num">18 / 37</td><td>—</td><td>SHIFT の後で飽和・数える</td></tr>
+      <tr><td class="mono">S</td><td>積分</td><td class="num">64</td><td>—</td><td>—</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="lead">係数はすべて 18 bit。フィルタの要求は阻止 60 dB・通過の平坦さ 0.1 dB p-p（XFFTS の ch の特性に倣った値）。</p>
+</section>
+
+<section aria-labelledby="ver">
+  <h2 id="ver">確かめ方</h2>
+  <ul>
+    <li><code>make sim-pfb</code>・<code>sim-pfbm</code>（4 窓・打ち直し・巻き戻り）・<code>sim-ddc</code>・<code>sim-hb2s</code>・<code>sim-win</code>（WNS 1..8）: 各段を固定小数点の模型と bit 単位で照合（陽性対照 sim-pfbm-p・sim-win-g・sim-win-ts つき）</li>
+    <li><code>make sim-wspec</code>: 4 層（積分・FFT のモデル・帳簿・FLAGS）。tready を下げる変種 2 つと、rev1 の作りで落ちることを見る陽性対照 <code>sim-wspec-r</code></li>
+    <li><code>make sim-win4</code>: 1 ADC × 4 窓を AXI 越しに（窓ごとの設定・WRST・total power・共有のスナップショット）</li>
+    <li><code>make sim-top</code>: x から AXI で読んだダンプまで端から端まで（30 分級）</li>
+    <li>実機: <code>window.py</code> の W-0（FLAGS・飽和）・W-G（ダンプ = スナップショットの FFT）・W-1（CW の ch）・W-6（全帯域との電力の比）、<code>winsweep.py</code>・<code>winnoise.py</code> の W-2・W-3・W-5、<code>win16.py</code> の W-10（窓どうしの独立）・W-11（16 窓の読み出し）</li>
+  </ul>
+</section>
+
+<footer>proj015 rev3（ID 0x0015_0300）の RTL の冒頭の注記と README から要約。数字は src/win_coef.vh（make coef の生成物）と rev3 のビルド・実機の結果による。</footer>
+</div>
+</body>
+</html>
