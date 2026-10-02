@@ -114,6 +114,12 @@ def plan_w2(c, w, n_mid, edge_step, f_grid):
         else:
             f = c + round(nu / dw) * dw
         nu2 = f - c
+        # proj015 実機（2026-10-02、2 MHz・IF 2050）: 全帯域の ch のちょうど境目（端数 0.5）に置いた 4 点だけが模型から +0.52〜−0.69 dB 外れた
+        #   （2 回とも同じ点・同じ大きさ）。境目では全帯域の山が sinc²(0.5) = −3.9 dB に落ち、fs/2 の近くでは実数の入力の像（2·(fs/2) − f、
+        #   数 ch 先）の漏れが同じ ch に重なって、基準の補正 1/sinc² が狂う。窓の側の誤りではない。**端数 |df| > 0.4 の点は置かない**
+        dfr = f / DF_FULL - round(f / DF_FULL)
+        if abs(dfr) > 0.4:
+            continue
         # 全帯域の DC と fs/2 の近く（1 MHz = 2 ch）は基準にならない（実数の FFT の端の ch、±f の像が同じ ch に重なる）ので置かない
         if abs(nu2) < 0.5 * w - 1e-9 and 2 * DF_FULL <= f <= FS / 2 - 2 * DF_FULL:
             out.add(round(nu2 / dw))
