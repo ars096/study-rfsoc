@@ -1,7 +1,9 @@
 # proj015 — 狭帯域の窓に 4・2 MHz を足し（8 通りの幅）、4 ADC × 4 窓に広げる
 
 日付: 2026-09-30
-状態: **進行中**（rev1: `-2` +0.007 ns・`-1` −0.767 ns。`-1` の最悪経路の 4 群（スナップショットの書き込み・pfb の ch の選択・final の和・hist のリセット）に段を足した **rev2 は sim の回帰が全部通過**。次は rev2 のビルド）
+状態: **完了**（rev3 = ID 0x0015_0300、2026-10-02）。`-1` ＋ PS のプリセットで WNS 0.000 ns（Performance_ExplorePostRoutePhysOpt）。
+実機で 16 窓の W-0・W-G・W-1・W-1b・W-6、4・2 MHz の W-1・W-2・W-3・W-5・W-6、窓どうしの独立（W-10）・16 窓の読み出し（W-11）が通過。
+持ち越し: ADC 間の漏れ（配線を変えて）・4・2 MHz の W-7
 
 ## 目的
 
@@ -331,28 +333,62 @@ Vivado 2024.1 の不具合と読み、build.tcl で受ける（a11f6fa まで）
 
 ## 結論・次にやること
 
-- [x] 手順 1: 4・2 MHz（模型・固定小数点・sim。ビルドは手順 2 と合わせて）
-- [x] 手順 2: ddc_core の時分割（sim。DSP は `make ooc-ddc` で数える）
-- [x] 手順 3: pfb_core を共有部分と窓ごとの部分に分ける（sim-pfbm。proj014 の 16.8 秒の巻き戻りも直した）
-- [x] 手順 4（RTL と sim）: 1 ADC × 4 窓・ADC の total power・共有のスナップショット（sim-win4）
-- [x] 手順 4（ビルド）: rev3 ＋ Performance_ExplorePostRoutePhysOpt で `-1` が WNS 0.000 ns（build-PEPRPO/）
-- [x] rev3 の sim-top・sim-win4（全部通過）
-- [x] PS 側（書いた、実機は未）: window.py などを win_core_i の窓 w（0x20000·w）と --adc / --win に、spectrometer.py を spec_core_0 ＋ FULL_SEL に
-- [x] 実機: 16 窓の W-0・W-G・W-1・W-6、4・2 MHz の W-1・W-2・W-3・W-5・W-6、窓どうしの独立（W-10）、読み出しの時間（W-11）
-- [ ] 実機: ADC 間の漏れ（配線を変えて）、4・2 MHz の W-7（線形性）
-- [ ] 手順 5: ビルド → 実機
-- **proj016 以降の候補**（2026-09-30、西村さん）:
-  - **窓を減らして分光点数を増やす**（例: 8 MHz × 16384 点 × 窓 1 つ / ADC）。1 ADC のメモリは「窓の数 × 点数」でほぼ決まる（16384 点で窓 1 つあたり BRAM ≒ 128・URAM 8 の見当）。FFT IP の 8192 / 16384 点は先に `make survey` で数える
-  - **最小積分時間を 0.1 秒より短くする**（場合によっては分光点数を減らす）。読み出し（今は AXI4-Lite で 16 窓 ≒ 34 ms / 100 ms）が先に律速になる → DMA
+**結論**
+
+- **bit ③（狭帯域の窓）は最終の形になった**: 8 通りの幅（256〜2 MHz、4096 点）× 4 ADC × 4 窓 ＋ 4 ADC の total power ＋ 全帯域 1 本（4 ADC から選ぶ）が、
+  `-1` の FPGA で 1 つの .bit に入って動く。資源は DSP 3416（80.0 %）・BRAM 553（51.2 %）・URAM 32（40 %）・LUT 69.0 %・FF 55.8 %（予言 ≒ 3260 ± 10 % に対して +5 %）
+- **4・2 MHz は係数を変えずに light を 2 段足すだけで足りた**: 実機の W-2 は模型と 0.015 dB 以内、W-3・W-5 も通過。FFT の入力の小数を NS ≧ 7 で G = 5 にした分は、
+  W-6 の比 4.001・4.002（予言 4）としてそのまま見えた。2 MHz（ch 488 Hz）でも、メーザー基準で CW は予言の ch に乗る
+- **ddc の時分割で DSP は窓 1 つ 114 → 72**。これが無ければ 16 窓は入らなかった（見当 ≒ 95 %）
+- **`-1` で閉じるまでに 3 段階**: rev1 −0.767 → rev2（4 群に段）−0.199 → 実装の戦略 −0.041 → rev3（読み出し・SHIFT の 3 群に段）＋ 戦略で 0.000 ns。
+  rev2 以降の違反は配線が主で広く散っていた（DSP 80 %）。**余裕は 0 なので、次に何かを足すなら先に余裕を作る**（窓を減らす・読み出しを DMA に）
+- **`-1` のビルドに PS のプリセットを明示して当てる方式**（`make ps-preset` → `src/ps_preset.tcl`）は実機で問題なし: PL0 = 100 MHz、DDR・APU は FSBL のまま
+- **16 窓の読み出しは 0.1 s の積分で 34.2 ms**（見積もりどおり）。積分を短くするなら AXI4-Lite が先に律速になる
+
+**判定の道具で直したこと**（実機の NG が道具の側だったもの）
+
+- `window.py --golden`: SHIFT 4 では FFT IP の中の丸めが許容を超える → 既定を 7 に
+- `winsweep.py`: 全帯域の ch の境目（端数 0.5）に置いた CW は、fs/2 の近くで像の漏れが基準を狂わせる → 端数 |df| > 0.4 の点を置かない
+- `win16.py` を新しく（W-10 窓どうしの独立・W-11 読み出しの時間）
+
+**ビルドの環境で踏んだこと**
+
+- Vivado 2024.1 の合成が、終わった後の後片付けで segfault する（毎回違う run、-jobs 30 で 1〜3 個）→ build.tcl で落ちた印のある OOC の run だけを回し直す（JOBS=8 で使った）
+- Vivado の run のオブジェクトは、リストから取り出すと名前の文字列になり get_property が受け付けない → 名前で持ち、その場で `[get_runs $n]`、状態は印のファイルで読む
+
+**持ち越し**
+
+- [ ] ADC 間の漏れ（今は SG を 4 ADC に分けて入れているので測れない。1 本だけに入れる配線で、win16.py の型で）
+- [ ] 4・2 MHz の W-7（線形性、`winlin.py`）
+- [ ] 窓 1 の IF 2990.5 MHz（CW − 20 MHz）に −74 dB の線（ADC 0・3）。要求の内。SG を替えるか切り分けたいときに
+- [ ] Makefile の既定の実装の戦略は Vivado の既定のまま（実機の .bit は `IMPL=Performance_ExplorePostRoutePhysOpt` の build-PEPRPO/）
+- proj014 からの持ち越し（DC 側の広い窓の W-5・インターリーブの線 f − fs/4・PS の自動 SHIFT）は変わらず
+
+**proj016 以降の候補**（2026-09-30、西村さん）
+
+- **窓を減らして分光点数を増やす**（例: 8 MHz × 16384 点 × 窓 1 つ / ADC）。1 ADC のメモリは「窓の数 × 点数」でほぼ決まる（16384 点で窓 1 つあたり BRAM ≒ 128・URAM 8 の見当）。
+  FFT IP の 8192 / 16384 点は先に `make survey` で数える。窓を減らすと DSP と配線に余裕が戻る（今の `-1` の余裕は 0）
+- **最小積分時間を 0.1 秒より短くする**（場合によっては分光点数を減らす）。16 窓の読み出しが 34.2 ms なので、AXI4-Lite のままなら 16 窓で ≒ 40 ms が下限 → DMA
 
 ## 再現手順
 
 ```bash
 make model          # 仕様の模型（numpy だけ）
 make fixed          # 固定小数点の模型
-make sim-all        # sim を全部と陽性対照。各ログの「結果: 全部通過」で読む
-make                # 合成〜ビットストリーム（Vivado サーバ）
-make timing-check   # `-1` でも閉じるか
+make sim-all        # sim を全部と陽性対照。各ログの「結果: 全部通過」で読む（sim-win4 は make sim-win4）
+make ps-preset      # -1 の PS に当てるプリセット（src/ps_preset.tcl。Vivado の版を変えたら作り直す）
+make IMPL=Performance_ExplorePostRoutePhysOpt JOBS=8   # 実機の .bit（build-PEPRPO/、`-1`、WNS 0.000 ns）
+make worst-paths IMPL=Performance_ExplorePostRoutePhysOpt   # `-1` の最悪経路の群（その build-*/ の routed.dcp）
+```
+
+実機（PYNQ、root。ボードと SG は同じ 10 MHz に、SG の宛先は環境変数 RFSOC_SG）:
+
+```bash
+python3 window.py --probe --adc A --win W                                     # W-0
+python3 window.py --golden --adc A --win W                                    # W-G（SHIFT 7）
+python3 window.py --if 3000 --w 256 --tone 3010.5 --w6 --clkin 0 --ref 10 --sg-dbm -20 --shift 11 --shift-full 8 --adc A --win W   # W-1・W-1b・W-6
+sh winwidths.sh narrow                                                         # 4・2 MHz の W-2・W-3・W-5
+python3 win16.py --clkin 0 --ref 10 --out runs/win16                           # W-10・W-11
 ```
 
 環境は [`../VERSIONS.md`](../VERSIONS.md)、詰まったときは
