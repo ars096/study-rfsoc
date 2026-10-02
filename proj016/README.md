@@ -3,6 +3,12 @@
 日付: 2026-10-02
 状態: **進行中**（RTL・sim まで完了。ビルド・実機は未実施）
 
+## ブロックデザイン
+
+![ブロックデザイン](docs/block_design.svg)
+
+（`docs/block_design.py` で描いた。build.tcl の配線を変えたらこちらも直す）
+
 ## 目的
 
 **45m に載せたときに科学観測品質を出すための「細かな機能」を、分光の中身を変えずに足す。**
@@ -106,7 +112,6 @@ sim が通った後に、別の目（サブエージェント）で RTL と buil
 - `timebase.py`（新）: `TimeCore`（レジスタ）と `Timebase`（錨・UTC の整数 ns・答えられないときは例外）。proj008 の型
 - `timetest.py`（新）: 実機の T-0〜T-4
 - `spectrometer.py`・`window.py`: ID・BITFILE（proj016.bit）・CHANS を ADC_A の 1 本に・窓の既定の ADC を 0 に。**4 ADC を前提にした道具（`win16.py` など）は proj016 では動かない**
-- `docs/block_design.svg` は proj015 のまま（time_core が描かれていない）
 
 ## 結果
 
