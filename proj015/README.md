@@ -245,7 +245,7 @@ Vivado 2024.1 の不具合と読み、build.tcl で受ける（a11f6fa まで）
   X: 読み出しの候補を毎クロック 1 段のレジスタで受ける（応答が 1 クロック遅れる）／Y: LO の読みで HI を固定するのを ar_go の 1 クロック後に ar_addr で／
   W: wspec で SHIFT を受け直す（max_fanout 16）
 - 資源（rev3）: DSP 3416（80.0 %）・BRAM 553（51.2 %）・URAM 32・LUT 69.0 %・FF 55.8 %。rev2 から LUT +0.7 k・FF +1.3 k
-- sim（rev3）: sim-wspec 全部通過。sim-top・sim-win4 はクラウドの作業環境が 2 回とも途中で止まり、**結果なし**（Vivado サーバで回す）
+- sim（rev3）: sim-wspec（クラウド）・sim-top・sim-win4（Vivado サーバ、2026-10-02）とも「結果: 全部通過」。sim-win4 は rev3 の ID（0x0015_0300・0x0015_A300）の読み返しを含む
 
 ## 結果
 
@@ -301,7 +301,7 @@ Vivado 2024.1 の不具合と読み、build.tcl で受ける（a11f6fa まで）
 - [x] 手順 3: pfb_core を共有部分と窓ごとの部分に分ける（sim-pfbm。proj014 の 16.8 秒の巻き戻りも直した）
 - [x] 手順 4（RTL と sim）: 1 ADC × 4 窓・ADC の total power・共有のスナップショット（sim-win4）
 - [x] 手順 4（ビルド）: rev3 ＋ Performance_ExplorePostRoutePhysOpt で `-1` が WNS 0.000 ns（build-PEPRPO/）
-- [ ] rev3 の sim-top・sim-win4（Vivado サーバで）
+- [x] rev3 の sim-top・sim-win4（全部通過）
 - [x] PS 側（書いた、実機は未）: window.py などを win_core_i の窓 w（0x20000·w）と --adc / --win に、spectrometer.py を spec_core_0 ＋ FULL_SEL に
 - [ ] 実機: 16 窓の W-0・W-G・W-1・W-6、4・2 MHz の W-2〜W-7、窓どうし・ADC 間の漏れ、読み出しの時間
 - [ ] 手順 5: ビルド → 実機
