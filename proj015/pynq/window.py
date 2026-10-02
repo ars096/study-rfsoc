@@ -7,7 +7,7 @@
       判定 W-0: ID・BUILD（窓のコア・ch 1）・WRST の後の WCUR・z が流れる・FLAGS 0・飽和 0
   sudo python3 window.py --if 3000 --w 64 --tone 3010.5
       判定 W-1: CW（IF 3010.5 MHz）が予言の ch に出るか。ch の格子の上に置けば 0.00 ch でずれる
-  sudo python3 window.py --if 3000 --w 256 --golden
+  sudo python3 window.py --if 3000 --w 256 --golden          （SHIFT は既定で 7。4 だと FFT IP の中の丸めで許容をわずかに超える）
       判定 W-G: N_ACC = 1 のダンプを、同じフレームのスナップショット（FFT の入力 z）を numpy で FFT した電力と ch ごとに比べる。
       **FFT IP がフレームの枠どおりに変換しているか**の直接の証拠（proj010 の --golden の型）。FLAGS[2]（IP の TLAST 事象）が立つときの切り分けに
   sudo python3 window.py --if 3000 --w 256 --tone 3010.5 --w6
@@ -269,7 +269,7 @@ def main():
     p.add_argument("--if", dest="if_c", type=float, default=3000.0, help="窓の IF の中心 [MHz]")
     p.add_argument("--w", type=float, default=256.0, help="窓の幅 [MHz]")
     p.add_argument("--no-grid", action="store_true", help="中心を ch の格子に丸めない")
-    p.add_argument("--shift", type=int, default=4)
+    p.add_argument("--shift", type=int, default=None, help="窓の SHIFT（既定 4。--golden だけのときは 7: proj014 で W-G を通した条件）")
     p.add_argument("--tint", type=float, default=0.1, help="1 ダンプの積分時間 [s]")
     p.add_argument("--ndump", type=int, default=3)
     p.add_argument("--probe", action="store_true", help="判定 W-0")
@@ -286,6 +286,10 @@ def main():
     p.add_argument("--out", default=None, help="ダンプを PREFIX.win.npz に")
     add_sel_args(p)
     args = p.parse_args()
+    # proj015 実機（2026-10-02）: --golden を SHIFT 4 で測ると、16 窓とも 4096 ch のうち 18 ch ほどが許容（2.0 + 1e-4·最大）を
+    #   わずかに超えた（最悪 差 2.8 / 振幅 156）。比べる値が 8 倍に拡大され、FFT IP の中の丸めが見えるため。SHIFT 7 では 20 回とも超えた ch 0
+    if args.shift is None:
+        args.shift = 7 if (args.golden and args.tone is None and not args.w6) else 4
     set_sel(args)
 
     c, k, dphi, ns, if_c = window_params(args.if_c, args.w, grid=not args.no_grid)

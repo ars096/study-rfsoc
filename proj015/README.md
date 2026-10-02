@@ -252,6 +252,11 @@ Vivado 2024.1 の不具合と読み、build.tcl で受ける（a11f6fa まで）
 - **PS のクロック**（Overlay の後）: `Clocks.fclk0_mhz` = 99.999（PL0_REF_CTRL = IOPLL ÷ 15 ÷ 1、IOPLL の FBDIV 90 = 1500 MHz、.hwh の ACT_FREQMHZ 99.999985）。
   `cpu_mhz` = 1199.988（FSBL の設定。Overlay で変わらない。1200 MHz は `-1` の APU の上限でもある）。.hwh の DDR は 400 MHz（`-1` で外した組の印。実際の DDR は FSBL）
 - **W-0**（`window.py --probe`、16 窓）: 16 窓とも `RESULT OK`・NG 0。ID 0x0015_0300、BUILD 0x50c0000{0..3}（プリセット あり・`-1`・窓・ch = ADC の番号）
+- **W-G**（`--golden`、雑音）: 1 回目は SHIFT 4（`--shift` を付けず既定）で **16 窓 ＋ 8・4・2 MHz とも NG 1**（4096 ch のうち 18 ch ほどが許容を超えた。
+  最悪 ch 365: 差 2.8 / 振幅 156。スナップショットのフレーム = ダンプの f0 は一致）。枠のずれなら proj014 の 2 回目のようにほぼ全 ch が大きく外れるはずなので、
+  **判定の条件の違い**と読んだ: proj014 は `--shift 7` で通していた。SHIFT が 3 小さいと比べる値が 8 倍に拡大され、FFT IP の中の丸め（numpy の倍精度に無い）が許容を超える
+- 予言（測る前）: `--shift 7` で 20 回とも超えた ch 0・最悪の差 ≦ 1.5。**結果: 一致**。16 窓 × 256 MHz・ADC_B の窓 0〜3 × 8・4・2・4 MHz の 20 回とも `RESULT OK`・
+  超えた ch 0・最悪の差 1.3〜1.4（振幅 3〜62）。→ window.py の `--golden` の既定の SHIFT を 7 にした（`--shift` で上書きできる）
 
 ## 結果
 
