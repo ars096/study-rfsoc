@@ -993,9 +993,17 @@ proc mk_slice {name width bit} {
     return [list [norm_pin_s $pi] [norm_pin_s $po]]
 }
 proc norm_pin_s {p} { return [string trimleft $p /] }
+# proj016: タイルが 1 個なら切り出さない（xlslice の DIN_WIDTH は 2 以上しか受けない: IP_Flow 19-3458。2026-10-02 に踏んだ）。
+#   peripheral_aresetn は 1 bit で、フロップは 1 個 → 1 タイル。rev2 の CDC-11（1 個のフロップ → 2 タイル）の形は起きない
 set k 0
 foreach t $adc_tiles {
-    lassign [mk_slice rst_adc_t$t $n_tiles $k] rst_in($t) rst_out($t)
+    if {$n_tiles == 1} {
+        set rst_in($t)  ""
+        set rst_out($t) rst_adc/peripheral_aresetn
+        puts "RST SLICE  : タイル 1 個なので切り出さない（rst_adc/peripheral_aresetn を直に配る）"
+    } else {
+        lassign [mk_slice rst_adc_t$t $n_tiles $k] rst_in($t) rst_out($t)
+    }
     incr k
 }
 
@@ -1051,7 +1059,7 @@ foreach r {rst_ctrl rst_adc rst_dsp} { nc $ps_rstn $r/ext_reset_in }
 foreach p [list smc_ctrl/aresetn rfdc/s_axi_aresetn] { nc rst_ctrl/peripheral_aresetn $p }
 # rev2: タイルごとのビット（上の rst_adc_t*）。ch i の gb_adc_i は ch i のタイルのビット
 foreach t $adc_tiles {
-    nc rst_adc/peripheral_aresetn $rst_in($t)
+    if {$rst_in($t) ne ""} { nc rst_adc/peripheral_aresetn $rst_in($t) }
     nc $rst_out($t) rfdc/m${t}_axis_aresetn
 }
 for {set i 0} {$i < $nch} {incr i} {
@@ -1239,9 +1247,16 @@ foreach t $adc_tiles {
         lappend nc_log [format "tile %d %-3s rfdc/m%d_axis_aresetn と rfdc/m%d_axis_aresetn が別のネット" $t $tag $t $u]
         if {$tag eq "NG"} { lappend nc_log "        タイル $t と $u のリセットが同じネット（rev1 の CDC-11 の形）"; incr nc_ng }
     }
-    if {[lsearch -exact $peers rst_adc/peripheral_aresetn] >= 0} {
+    set direct [expr {[lsearch -exact $peers rst_adc/peripheral_aresetn] >= 0}]
+    if {$n_tiles > 1 && $direct} {
         lappend nc_log "tile $t NG  rfdc/m${t}_axis_aresetn が rst_adc/peripheral_aresetn に直に繋がっている（切り出しを通っていない）"
         incr nc_ng
+    } elseif {$n_tiles == 1 && !$direct} {
+        # proj016: 1 タイルなら直に繋がっているべき（在るべき側の照合）
+        lappend nc_log "tile $t NG  rfdc/m${t}_axis_aresetn が rst_adc/peripheral_aresetn に繋がっていない（1 タイルは直に配る）"
+        incr nc_ng
+    } else {
+        lappend nc_log [format "tile %d OK  rfdc/m%d_axis_aresetn の源（%s）" $t $t [expr {$direct ? "rst_adc に直" : "切り出し"}]]
     }
 }
 # 陽性対照: (a) 在るべき相手を他の ch にする（(1) が落ちるべき）/ (b) 正しいネットを他の ch の番号で照らす（(2) が落ちるべき）
