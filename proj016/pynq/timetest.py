@@ -313,12 +313,21 @@ def t2(tc, tb, wins, full, wm, path="trig", n_trial=5, if_c=2200.0, out=None):
     wn = W.Win(c.m, base=c.base)
     d1 = WIN_DELAY_BEATS[1]
     offs, snaps = [], []
+    # 窓のフレーム（4096 ビート）も 1 s = 62,500 フレームちょうどで位相は PPS に対して動かない → (a) と同じく位相を 1 回測って狙う
+    #   （2026-10-02 の 3 回目: 縁の 6000 ビート前に RUN、では頭のフレームが縁の 1443 ビート後に来た。RUN から頭までは 1〜2 フレームで揺れる）
+    seq0 = c.rd(W.R_SEQ)
+    c.wr(W.R_CTRL, W.CTRL_CLR | W.CTRL_RUN)
+    t_e = time.time() + 1.0
+    while c.rd(W.R_SEQ) == seq0 and time.time() < t_e:
+        time.sleep(0.001)
+    phw = c.meta()["t"] % 4096
     for k in range(n_trial):
         p = tb.check()
         edge = p["stamp"] + 2 * BEATS_PER_SEC
-        # RUN から最初のダンプの頭までは 1〜2 フレーム（4096〜8192 ビート）。縁の 6000 ビート前に RUN → 縁はダンプの頭のフレームの中
+        te = edge + 31 + int(round(d1))                  # 縁が z に出る見当 = スタンプ ＋ M ＋ D(1)
+        S0 = te - ((te - phw) % 4096)
         c.wr(W.R_CTRL, W.CTRL_CLR | CTRL_ARM)
-        arm_tc(tc, wins, full, wm, edge - 6000)
+        arm_tc(tc, wins, full, wm, S0 - 6145)            # RUN（START_AT + 1）は S0 − 6144 = 1.5 フレーム前 → F0 の頭が S0
         seq0 = c.rd(W.R_SEQ)
         _wait_T(tc, edge + BEATS_PER_SEC // 10)
         if c.rd(W.R_SEQ) == seq0:

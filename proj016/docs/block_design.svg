@@ -277,7 +277,7 @@
 <text x="1142" y="905" class="xs">WNS +0.006 ns / WHS +0.010 ns。最悪経路は pfb（proj015 から）と</text>
 <text x="1142" y="920" class="xs">　full_sel のファンアウト。時刻の論理は上位 200 本に出ない</text>
 <text x="1142" y="938" class="xs">CDC-6: ADC_STAT（既存）と EPOCH の gray（新）の 2 件</text>
-<text x="1142" y="953" class="xs">実機: T-0 通過（間隔 256,000,000 ちょうど）・T-1 通過（30 分でずれ 0・健全性なし）</text>
+<text x="1142" y="953" class="xs">実機: T-0・T-1（30 分でずれ 0）・T-2（M = 121.2 ns、σ 0.2 ns）通過</text>
 <text x="20" y="992" class="tm">凡例</text>
 <path class="wB" d="M70,988 L110,988"/>
 <text x="118" y="992" class="lbB">PS 側（pl_clk0）・AXI</text>

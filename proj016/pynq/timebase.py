@@ -36,9 +36,14 @@ NS_NUM, NS_DEN = 125, 32          # 1 ビート = 125/32 ns（厳密）
 #   pps_det_ns   : PPS の縁 → スタンプ（同期器 3 段 ＋ 入力の遅れ）。proj007 の COMP − TRIG = 58.6 ns（RC）は系統の差
 #   adc_to_core_ns: ADC のサンプル → ギアボックスの出口（コアの入口）。proj007/008 の L_adc − D_pps = 213 ns は fs が違うので使えない
 #   **どちらも T-2（1PPS を ADC にも入れる閉ループ）で測るまで未較正。** 上限の見当（bound_ns）だけ持つ
+#   **T-2（閉ループ）で測れるのは差 M = adc_to_core − pps_det（＋ 2 本のケーブルの差）の 1 つだけ**なので、M を adc_to_core_ns に入れ、
+#   pps_det_ns = 0 とする（式の上では引く量は M で同じ）。
 CAL = {
-    0x0016_7101: dict(pps_det_ns=None, adc_to_core_ns=None, bound_ns=2000,
-                      source="未較正（proj016 T-2 で測る）。上限の見当: 同期器 3 ビート ＋ RFDC・ギアボックス ≦ 数百 ns"),
+    0x0016_7101: dict(pps_det_ns=0.0, adc_to_core_ns=121.2, bound_ns=50,
+                      source="proj016 T-2（2026-10-02）: 全帯域の生サンプルで 1PPS の縁がコアに入った T − スタンプ = +31.04 ビート"
+                             "（+121.2 ns、5 回で σ 0.2 ns、TRIG 系統）。1 エポック（Overlay 1 回）だけ。"
+                             "上限 50 ns の内訳の見当: エポックごとのギアボックスの整数ビート（proj007 では Overlay ごとに数ビート動いた。未測）"
+                             "＋ T-2 の配線の PPS と ADC のケーブルの長さの差（未測）"),
 }
 # 窓の PFB・DDC の遅れ（win_core の入口のビート → そのインパルスの |z|² の重心が wspec に入るまで、ビート）。NS → 値。
 #   make sim-wdelay（2026-10-02、iverilog・k = 5・Δφ = 0）。線形位相なので重心 = 群遅延 ＋ 経路の遅れ。**RTL を変えたら出し直す**
