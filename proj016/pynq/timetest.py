@@ -255,7 +255,57 @@ def t2(tc, tb, wins, full, wm, path="trig", n_trial=5, if_c=2200.0, out=None):
     縁の z は PFB・DDC の群遅延のぶん遅れて山になる（D(1) = 57.6 ビート、重心）。窓の IF は低いほど縁のエネルギーが大きい（既定 2200 MHz）。
     出す量: 山の位置の T − D(1) − スタンプ ＝（ADC → コアの入口）−（PPS の縁 → スタンプ）＋（2 本のケーブルの長さの差）"""
     from timebase import WIN_DELAY_BEATS
-    log(f"T-2: 閉ループ（1PPS を ADC_A にも入れておくこと）。窓 0 は NS 1・IF {if_c} MHz、{n_trial} 回")
+    log(f"T-2: 閉ループ（1PPS を ADC_A にも入れておくこと）。{n_trial} 回ずつ: (a) 全帯域の生サンプル (b) 窓 0（NS 1・IF {if_c} MHz）(c) TP")
+    # (a) 全帯域（spec_core_0）のスナップショット = 1 フレーム 8192 サンプル（512 ビート = 2 µs）の**生の ADC 値**。フィルタを通らないので
+    #     縁のサンプルがそのまま読める（proj008 の閉ループの型）。フレームは 512 ビートで 1 s = 500,000 フレームちょうどなので、
+    #     フレームの位相（DUMP_T mod 512）は PPS に対して動かない → 1 回測って、縁（の見当）を含むフレームを狙う
+    sp = S.Spec(full.m, idx=0, label="ADC_A")
+    full.wr(W.R_NACC, 1); full.wr(W.R_NDUMP, 1); full.wr(W.R_SHIFT, 7)
+    seq0 = full.rd(W.R_SEQ)
+    full.wr(W.R_CTRL, W.CTRL_CLR | W.CTRL_RUN)
+    t_e = time.time() + 1.0
+    while full.rd(W.R_SEQ) == seq0 and time.time() < t_e:
+        time.sleep(0.001)
+    phi = full.meta()["t"] % 512
+    L0 = 55                                  # 縁 → コアの入口の見当（ビート）。外れていても縁はフレームの中に入る（± 100 ビートまで）
+    offs_f, raws = [], []
+    for k in range(n_trial):
+        p = tb.check()
+        edge = p["stamp"] + 2 * BEATS_PER_SEC
+        te = edge + L0
+        S0 = te - ((te - phi) % 512)         # 縁（の見当）を含むフレームの頭。フレーム内の位置は位相で決まり、選べない
+        full.wr(W.R_CTRL, W.CTRL_CLR | CTRL_ARM)
+        seq0 = full.rd(W.R_SEQ)
+        arm_tc(tc, wins, full, wm, S0 - 769)  # RUN（START_AT + 1）は S0 − 768 = 1.5 フレーム前 → F0 = fin + 2 の頭が S0
+        _wait_T(tc, edge + BEATS_PER_SEC // 10)
+        if full.rd(W.R_SEQ) == seq0:
+            log(f"  NG (a) 試行 {k}: 全帯域のダンプが閉じない"); return False
+        st = _stamp_of(tc, path, edge)
+        m, _, snap = sp.read_dump(with_snap=True)
+        x = (snap.astype(np.int64) >> 2).astype(float)
+        x -= np.median(x[:1024])
+        sig = 1.4826 * float(np.median(np.abs(x[:1024]))) or 1.0
+        snr = float(np.max(np.abs(x))) / sig
+        dt = full.rd64(RS_DUMP_T)
+        raws.append(dict(x=snap, dump_t=dt, stamp=st))
+        if dt != S0:
+            log(f"    注意: DUMP_T {dt} が狙った S0 {S0} と違う（{dt - S0:+d}）")
+        if not (32 <= (edge + L0 - S0) < 480):
+            log(f"    注意: 縁の見当がフレームの端（{edge + L0 - S0} ビート目）。L0 が外れていると縁がフレームの外に出る")
+        if snr < 20:
+            log(f"  (a) 試行 {k}: **縁が見えない**（最大 / σ = {snr:.1f} < 20）")
+            continue
+        i_e = int(np.argmax(np.abs(x) > 0.5 * np.max(np.abs(x))))     # 最大の半分を初めて越えたサンプル
+        off = (dt + i_e / 16.0) - st
+        offs_f.append(off)
+        log(f"  (a) 試行 {k}: 縁のサンプル {i_e}（ビート {i_e / 16:.2f}、最大 / σ {snr:.0f}）→ 縁がコアに入った T − スタンプ = {off:+.2f} ビート"
+            f"（{off * 3.90625:+.1f} ns）")
+    if len(offs_f) >= 2:
+        o_ = np.array(offs_f)
+        log(f"  (a) 全帯域: {len(o_)} 回 / 平均 {o_.mean():+.2f}・標準偏差 {o_.std():.2f}・最小 {o_.min():+.2f}・最大 {o_.max():+.2f} ビート"
+            f"（平均 {o_.mean() * 3.90625:+.1f} ns・σ {o_.std() * 3.90625:.1f} ns）")
+    else:
+        log("  (a) 全帯域: 縁が見えた試行が 2 回に満たない")
     c = wins[0]
     setup_windows([c], [1], if_c, 0)
     wm.write(W.A_BASE + W.R_A_SNAP_SEL, 0)
@@ -292,13 +342,13 @@ def t2(tc, tb, wins, full, wm, path="trig", n_trial=5, if_c=2200.0, out=None):
             f" → 山の T − D(1) − スタンプ = {off:+.1f} ビート（{off * 3.90625:+.0f} ns）")
         if not (0 < lead < 4096):
             log("    注意: 縁がダンプの頭のフレームの外")
-    ok = True
+    ok = len(offs_f) >= 2
     if len(offs) >= 2:
         o_ = np.array(offs)
         log(f"  窓 0: {len(o_)} 回 / 平均 {o_.mean():+.1f} ・ 標準偏差 {o_.std():.1f} ・ 最小 {o_.min():+.1f} ・ 最大 {o_.max():+.1f} ビート"
             f"（平均 {o_.mean() * 3.90625:+.0f} ns）。**揃っていれば本物、散っていれば雑音**")
     else:
-        log("  窓 0: 縁が見えた試行が 2 回に満たない。レベル・IF・分配を見直す"); ok = False
+        log("  窓 0: 縁が見えた試行が 2 回に満たない（判定は (a) で行う。窓は参考）")
     # (b) TP: TP_N = 25（1 区切り = 25 ADC フレーム = 50 µs）。縁の 5 ms 前から。縁の 2 ms 後に、最新の 128 個（6.4 ms）を読む
     wm.write(W.A_BASE + RA_TP_N, 25)
     p = tb.check()
@@ -324,9 +374,14 @@ def t2(tc, tb, wins, full, wm, path="trig", n_trial=5, if_c=2200.0, out=None):
         f"区切りの頭の T − スタンプ = {t_reg - st:+d} ビート（{beats_to_ns(t_reg - st) / 1000:+.1f} µs。区切り 50 µs）")
     if pw[i_pk] / med < 1.05:
         log("  TP: 縁が見えない（和の山が中央値の 1.05 倍未満）")
+    for i in range(max(0, i_pk - 4), min(len(pw), i_pk + 4)):
+        d_i = ((int(f[i]) - (af & 0xFFFFFFFF) + 2**31) % 2**32) - 2**31
+        log(f"    区切りの頭の T − スタンプ {at + d_i * 512 - st:+8d} ビート（{beats_to_ns(at + d_i * 512 - st) / 1000:+7.1f} µs）: 和 / 中央値 {pw[i] / med:8.2f}")
     wm.write(W.A_BASE + RA_TP_N, 500)
     if out:
-        np.savez(out + ".t2.npz", z=np.array([s_["z"] for s_ in snaps]), dump_t=np.array([s_["dump_t"] for s_ in snaps]),
+        np.savez(out + ".t2.npz", raw=np.array([r_["x"] for r_ in raws]), raw_dump_t=np.array([r_["dump_t"] for r_ in raws]),
+                 raw_stamp=np.array([r_["stamp"] for r_ in raws]),
+                 z=np.array([s_["z"] for s_ in snaps]), dump_t=np.array([s_["dump_t"] for s_ in snaps]),
                  stamp=np.array([s_["stamp"] for s_ in snaps]), tp=ring, tp_anchor=np.array([af, at]), d1=d1, if_c=if_c)
         log(f"  記録: {out}.t2.npz")
     return ok
