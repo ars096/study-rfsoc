@@ -155,13 +155,22 @@ sim-win-all のうち pfb・ddc・win・hb2s・pfbm は回し直していない�
 hold は 200 本とも +0.010〜0.015 で FFT IP の中が主（Vivado の hold の詰めの値。問題にしない）。
 余裕が戻らなかったのは、時刻の論理ではなく、proj015 から居る pfb の配線と、ADC 1 本にしたのに残した full_sel のファンアウト。
 
+### 実機（2026-10-02、PYNQ、`--clkin 0 --ref 10`、45m の 1PPS を PPS Clk に）
+
+| 判定 | 結果 |
+|---|---|
+| T-0（120 s） | **通過**。TRIG: 120 個とも間隔 = 256,000,000 ちょうど（最小 +0・最大 +0 ビート、120 秒で +0.0000 ppb）。COMP: 平均 +0.000・最小 −1・最大 +1 ビート（同期器の量子化。COMP はオープンドレインの RC で縁がなまる＝proj007 の COMP − TRIG 58.6 ns と同じ素性。許容 ±1 の内）。GLITCH 0 / BAD 0 / MISS 0 / EPOCH 1 → 1 |
+
+**錨・健全性の既定の系統は TRIG のまま**（縁が鋭く、120 秒で揺れ 0）。
+
 ## 結論・次にやること
 
 - [x] Vivado サーバでビルド → `-1` で WNS +0.006 ns（T-5 は通過。ただし余裕はほぼ 0）
 - [x] `make worst-paths` → 時刻の論理は出ない。pfb（proj015 から）と full_sel のファンアウト 303
 - [ ] 次に作り直すとき: ADC 1 本なら full_sel を置かず gb_bc_0 → spec_core_0 を直につなぐ（30 本の群が消える）
 - [x] cdc.rpt の CDC-6 の 2 件 → ADC_STAT（既存）と EPOCH の gray（新顔）。意図どおり
-- [ ] 実機の T-0〜T-4
+- [x] 実機の T-0（通過）
+- [ ] 実機の T-1〜T-4
 - [ ] T-2 の結果で `timebase.CAL` の pps_det_ns・adc_to_core_ns を埋める
 - [ ] 窓の構成の proj（4 ADC に戻す）で「4 ADC が同じビートで開始」を合否に入れる
 
