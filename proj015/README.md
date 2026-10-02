@@ -13,6 +13,8 @@
 total power・スナップショット）、M01 を full_sel に入れる。full_sel が win_core_0 の FULL_SEL で 1 本を選んで spec_core_0 へ。smc_ctrl の M01〜M04 が win_core_0〜3、
 M05 が spec_core_0。build.tcl の配線を変えたらこちらも直す）
 
+窓の 3 段（pfb_core・ddc_core・wspec_core）と win_core_i の共通の振る舞いのまとめ: [docs/win_chain.html](docs/win_chain.html)（式・約束・WNS ごとの幅と速さ・時分割・G・番地・語長・確かめ方）
+
 ## 目的
 
 **bit ③（狭帯域の窓）を最終の形にする。**
