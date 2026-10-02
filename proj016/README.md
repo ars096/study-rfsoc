@@ -143,10 +143,23 @@ sim-win-all のうち pfb・ddc・win・hb2s・pfbm は回し直していない�
 | report_cdc | CDC-3 Info 52 / CDC-6 Warning 2 / CDC-15 Warning 833 | CDC-6（多 bit・ASYNC_REG）は time_core の EPOCH の gray（予言どおりの新顔）。2 件の中身は cdc.rpt で確かめる |
 | PPS のピン・結線の照合 | 通過（落ちれば exit 1 で止まる） | |
 
+最悪経路（`make worst-paths`、slack < 0.3 ns の setup 120 本）:
+
+| 群 | 本数 | 最悪 | 型 | 読み |
+|---|---|---|---|---|
+| win_core_0/u_pfb の中（`g_f[0].g_r[18].u_reg` → dft16f のひねり係数の cmul の DSP の A/B） | 80 | +0.006 | 配線 77 %・段 5・**skew −0.331 ns** | proj015 から居る群（pfb_core は proj015 と同一のファイル）。DSP の列までの配線とクロックの skew。配置で動く |
+| full_sel（axis_sel4）の選択 `sr[1]` → 256 bit の出口 | 30 | +0.008 | 配線 94 %・段 1・**ファンアウト 303** | ADC 1 本では選ぶ相手がいないのに 4:1 の選択器が残っていて、その選択の bit が 256 bit に配られている |
+| win_core → wspec | 10 | +0.190 | | |
+
+**今回足した時刻の論理（time_core・dstamp・t_loc の配り）は setup の上位 200 本に出ていない**（hold の 1 本 t_loc → ts だけ、+0.010 で他と同じ）。
+hold は 200 本とも +0.010〜0.015 で FFT IP の中が主（Vivado の hold の詰めの値。問題にしない）。
+余裕が戻らなかったのは、時刻の論理ではなく、proj015 から居る pfb の配線と、ADC 1 本にしたのに残した full_sel のファンアウト。
+
 ## 結論・次にやること
 
 - [x] Vivado サーバでビルド → `-1` で WNS +0.006 ns（T-5 は通過。ただし余裕はほぼ 0）
-- [ ] `make worst-paths` で最悪経路の群を見る（新しく足した時刻の論理か、proj015 から居る群か）
+- [x] `make worst-paths` → 時刻の論理は出ない。pfb（proj015 から）と full_sel のファンアウト 303
+- [ ] 次に作り直すとき: ADC 1 本なら full_sel を置かず gb_bc_0 → spec_core_0 を直につなぐ（30 本の群が消える）
 - [ ] cdc.rpt の CDC-6 の 2 件が EPOCH の gray だけか
 - [ ] 実機の T-0〜T-4
 - [ ] T-2 の結果で `timebase.CAL` の pps_det_ns・adc_to_core_ns を埋める
