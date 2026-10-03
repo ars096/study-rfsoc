@@ -13,8 +13,10 @@ TP の区切りは 512 フレーム = 1.024 ms（= G / 2）で、ADC のフレ�
 F-4 の約束:
   - 窓 4 × NW を格子の START_AT で一斉に WRST（WSTART が ADC の中で全窓同じ）、窓と TP 4 本を次の格子の START_AT で同時に始める
     （RUN_T = TP_RUN_T = START_AT + 1）
-  - **8 窓の DUMP_T(k) − D(NS) が全ダンプで一致（±16 ビート）**（D は timebase.WIN_DELAY_BEATS、sim の値）
-  - TP の区切りの頭 − 窓の区切り（DUMP_T − D）が mod 262,144 ビートで一定（ADC ごと。値を出す）
+  - **8 窓の DUMP_T(k) − D(NS) − X(NS) が全ダンプで一致（±2 ビート）**（D・X は timebase の WIN_DELAY_BEATS・WIN_BOUNDARY_BEATS、
+    sim-wdelay の値。X(NS) は幅の違う窓に残る一定の差: 窓のフレーム 0 = 最初の z が群遅延ぶん遅れて出るため。2026-10-03 に受け入れた）
+  - TP の区切りの頭 − 窓の区切り（DUMP_T − D）が窓ごとに一定（符号つき、±131,072 に折り返す。値を出す）
+  - `--recheck PREFIX.f4.npz` で記録から区切りの判定だけを回し直せる
   - 陽性対照 --offgrid B: 揃えた後に ADC_A の窓 0 だけを格子 ＋ B ビートで WRST し直す → その窓だけ一致しないはず
   - 窓は SEQ が 1 ずつ・DUMP_K が 1 ずつ進み、DUMP_T(k) − DUMP_T(0) = k·N·L（z の出方の揺れに ±16 ビートを許す。T-1 と同じ。
     proj016 の実機の 30 分は 0）、健全性なし、FLAGS は [4]（FFT IP に待たされた。rev2 から正常）以外 0
@@ -35,7 +37,7 @@ import numpy as np
 import spectrometer as S
 import timetest as T
 import window as W
-from timebase import BEATS_PER_SEC, WIN_DELAY_BEATS, Timebase, TimebaseError, beats_to_ns
+from timebase import BEATS_PER_SEC, WIN_BOUNDARY_BEATS, WIN_DELAY_BEATS, Timebase, TimebaseError, beats_to_ns
 
 log = S.log
 TPF_RUN, TPF_OVR = 2, 16
@@ -127,6 +129,77 @@ def read_win(c, tries=5):
             spec = w[0::2].astype(np.uint64) | (w[1::2].astype(np.uint64) << np.uint64(32))
             return m, spec
     raise RuntimeError(f"{c.name}: 読む間に毎回ダンプが閉じた（読み出しが積分に間に合わない）")
+
+
+# ---------------------------------------------------------------- 窓の区切りの一致
+def align_report(wmeta, ks_, ts_, tpi, offgrid=0, lim=2):
+    """8 窓の区切りの実効の時刻（DUMP_T − D(NS)）を同じ k どうしで比べる。**幅の違う窓には NS ごとの一定の差 X(NS) が残る**
+    （窓のフレーム 0 は WSTART の後の最初の z で、最初の z は群遅延ぶん遅れて出る。timebase.WIN_BOUNDARY_BEATS、sim-wdelay の値。
+    2026-10-03 の F-4 で sim と 1 ビート以内で一致し、受け入れると決めた）。判定は DUMP_T − D(NS) − X(NS) が 8 窓で ±lim ビートの内。
+    wmeta = [(名前, adc, ns)]、ks_・ts_ = 窓ごとの DUMP_K・DUMP_T、tpi = [(ラベル, TP の最初の区切りのフレーム番号, ANCH_F, ANCH_T)]。戻り値: NG の数"""
+    bad = 0
+    nw_all = len(wmeta)
+    vk = []
+    for (name, adc, ns), k, t in zip(wmeta, ks_, ts_):
+        vk.append(dict(zip(k.tolist(), (t - int(round(WIN_DELAY_BEATS[ns]))).tolist())))
+    ks = sorted(set.intersection(*[set(d.keys()) for d in vk]))
+    if not ks:
+        log("  NG: 全窓に共通のダンプの番号が無い")
+        return 1
+    mat = np.array([[vk[j][k_] for k_ in ks] for j in range(nw_all)], np.int64)
+    xs = np.array([WIN_BOUNDARY_BEATS[ns] for (_, _, ns) in wmeta])
+    raw = mat - np.median(mat, axis=0)
+    adj = mat - np.round(xs - xs.min()).astype(np.int64)[:, None]
+    dv = adj - np.median(adj, axis=0)
+    log(f"  窓の区切りの実効の時刻（DUMP_T − D(NS)、{len(ks)} 回の共通の k）。中央値からのずれ（生）/ NS ごとの差 X(NS) − X(1) を引いた残り:")
+    for j, (name, adc, ns) in enumerate(wmeta):
+        log(f"    {name}（NS {ns}）: 生 {int(raw[j].min()):+d}〜{int(raw[j].max()):+d} / X − X(1) = {xs[j] - xs.min():+.1f} / "
+            f"残り {int(dv[j].min()):+d}〜{int(dv[j].max()):+d}")
+    bad_w = [wmeta[j][0] for j in range(nw_all) if np.abs(dv[j]).max() > lim]
+    if bad_w:
+        log(f"  {'NOTE（陽性対照どおり）' if offgrid else 'NG'}: 区切りが揃っていない窓 {bad_w}（許容 ±{lim}）")
+        if not offgrid:
+            bad += 1
+    elif offgrid:
+        log("  NG: 陽性対照なのに全窓が揃った（揃いの見張りが効いていない）"); bad += 1
+    else:
+        log(f"  OK: 8 窓の区切りは X(NS) を除いて ±{lim} ビートの内で揃っている")
+    # TP の区切り（ADC ごと）と窓の区切り（その ADC の窓ごと）のずれ。窓ごと・符号つき（±TP_BEATS/2 に折り返す）で一定か
+    for i, (lbl, f0first, af, at) in enumerate(tpi):
+        if f0first is None:
+            continue
+        t_tp0 = at + (f0first - af) * 512
+        for j, (name, adc, ns) in enumerate(wmeta):
+            if adc != i:
+                continue
+            d = ((mat[j] - t_tp0 + TP_BEATS // 2) % TP_BEATS) - TP_BEATS // 2
+            okj = int(d.max() - d.min()) <= 2
+            log(f"  TP {lbl} と {name}（NS {ns}）: 窓の区切り − TP の区切り = {int(d.min()):+d}〜{int(d.max()):+d} ビート"
+                f"（{beats_to_ns(int(np.median(d))) / 1000:+.2f} µs）{'OK（一定）' if okj else 'NG（一定でない）'}")
+            if not offgrid and not okj:
+                bad += 1
+    return bad
+
+
+def recheck(path):
+    """F-4 の記録（PREFIX.f4.npz）から、窓の区切りの一致と TP とのずれを回し直す（ハードは要らない）"""
+    z = np.load(path)
+    names = [str(x) for x in z["names"]]
+    wmeta, ks_, ts_ = [], [], []
+    for j, name in enumerate(names):
+        adc, widx, ns, nacc, L = [int(x) for x in z[f"w{j}_meta"]]
+        wmeta.append((name, adc, ns)); ks_.append(z[f"w{j}_k"]); ts_.append(z[f"w{j}_t"])
+    tpi = []
+    i = 0
+    while f"tp{i}_f0" in z:
+        f0 = z[f"tp{i}_f0"]
+        af, at = [int(x) for x in z[f"tp{i}_anch"]]
+        tpi.append((S.CHANS[i][0], int(f0[0]) if len(f0) else None, af, at))
+        i += 1
+    log(f"F-4 の記録 {path} を回し直す: 窓 {len(names)}・TP {len(tpi)}")
+    bad = align_report(wmeta, ks_, ts_, tpi)
+    log(f"F-4（区切りの一致・TP とのずれ）: {'通過' if bad == 0 else f'失敗（{bad} 件）'}")
+    return bad == 0
 
 
 # ---------------------------------------------------------------- F-4
@@ -238,42 +311,14 @@ def f4(tc, tb, wins, full, wms, ndumps, tint, shift, keep, out=None, offgrid=0, 
             f"錨の組の始め → 終わり {af1 - af} フレームで T のずれ {a_dev:+d}・GAP_CNT {gap0[i]} → {gap1[i]} "
             f"{'OK' if ok and ok_a else 'NG'}")
         bad += not (ok and ok_a)
-    # 8 窓の区切りの一致（同じ k どうし）と、TP の区切りとのずれ
-    vk = {}
-    for j, (c, n) in enumerate(zip(wins, nacc)):
-        r = rec[c.name]
-        k = np.array(r["k"], np.int64)
-        v = np.array(r["t"], np.int64) - int(round(WIN_DELAY_BEATS[c.ns]))
-        vk[j] = dict(zip(k.tolist(), v.tolist()))
-    ks = sorted(set.intersection(*[set(d.keys()) for d in vk.values()]))
-    if ks:
-        mat = np.array([[vk[j][k_] for k_ in ks] for j in range(nw_all)], np.int64)
-        ref = np.median(mat, axis=0)
-        dv = mat - ref
-        lim = 16
-        log(f"  窓の区切りの一致（DUMP_T − D(NS)、{len(ks)} 回の共通の k）: 窓ごとの中央値からのずれ " +
-            " / ".join(f"{c.name} {int(dv[j].min()):+d}〜{int(dv[j].max()):+d}" for j, c in enumerate(wins)) + f"（許容 ±{lim}）")
-        bad_w = [wins[j].name for j in range(nw_all) if np.abs(dv[j]).max() > lim]
-        if bad_w:
-            log(f"  {'NOTE（陽性対照どおり）' if offgrid else 'NG'}: 区切りが揃っていない窓 {bad_w}")
-            if not offgrid:
-                bad += 1
-        elif offgrid:
-            log("  NG: 陽性対照なのに全窓が揃った（揃いの見張りが効いていない）"); bad += 1
-        # TP の区切り（ADC ごと）と窓の区切り（その ADC の窓）のずれ（mod TP_BEATS）
-        for i, (rd, (af, at)) in enumerate(zip(rds, anch)):
-            f0 = rd.arrays()[0]
-            if not len(f0):
-                continue
-            t_tp0 = at + (int(f0[0]) - af) * 512
-            offs = [int((v - t_tp0) % TP_BEATS) for j in range(nw_all) if wins[j].adc == i for v in mat[j]]
-            offs = np.array(offs)
-            log(f"  TP {S.CHANS[i][0]}: 窓の区切り − TP の区切り（mod {TP_BEATS}）= {offs.min()}〜{offs.max()} ビート"
-                f"（{beats_to_ns(int(np.median(offs))) / 1000:.2f} µs）{'OK' if offs.max() - offs.min() <= 2 * lim else 'NG（一定でない）'}")
-            if not offgrid and offs.max() - offs.min() > 2 * lim:
-                bad += 1
-    else:
-        log("  NG: 全窓に共通のダンプの番号が無い"); bad += 1
+    # 8 窓の区切りの一致（同じ k どうし）と、TP の区切りとのずれ（align_report。--recheck で記録から回し直せる）
+    tpi = []
+    for i, (rd, (af, at)) in enumerate(zip(rds, anch)):
+        f0 = rd.arrays()[0]
+        tpi.append((S.CHANS[i][0], int(f0[0]) if len(f0) else None, af, at))
+    bad += align_report([(c.name, c.adc, c.ns) for c in wins],
+                        [np.array(rec[c.name]["k"], np.int64) for c in wins],
+                        [np.array(rec[c.name]["t"], np.int64) for c in wins], tpi, offgrid)
     if len(t_first) == len(rds):
         tf = np.array(t_first)
         log("  TP の最初の区切りの頭の T − START_AT: " + " / ".join(f"{S.CHANS[i][0]} {t_ - sa:+d}" for i, t_ in enumerate(tf))
@@ -343,7 +388,10 @@ def main():
     p.add_argument("--out", default=None)
     p.add_argument("--f4", action="store_true")
     p.add_argument("--f5", action="store_true")
+    p.add_argument("--recheck", default=None, help="F-4 の記録 PREFIX.f4.npz から区切りの一致と TP とのずれだけを回し直す（ボードの PL は使わない）")
     a = p.parse_args()
+    if a.recheck:
+        sys.exit(0 if recheck(a.recheck) else 1)
     ns_list = [int(x) for x in a.ns.split(",")]
     if a.out:
         d = os.path.dirname(a.out) or "."

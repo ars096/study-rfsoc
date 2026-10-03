@@ -433,7 +433,7 @@ sim-t4adc-p:
 sim-wdelay:
 	mkdir -p build-sim-wdelay
 	$(IVERILOG) -g2005 -Isrc -o build-sim-wdelay/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) sim/tb_wdelay.v
-	for n in 1 2 3 4 5 6 7 8; do $(VVP) -n build-sim-wdelay/tb +NS=$$n +LEN=$$(( n < 4 ? 8000 : 1000 << (n - 2) )) | grep '^wdelay:'; done | tee build-sim-wdelay/delay.log
+	for n in 1 2 3 4 5 6 7 8; do $(VVP) -n build-sim-wdelay/tb +NS=$$n +LEN=$$(( n < 4 ? 8000 : 1000 << (n - 2) )) | grep -E '^(wdelay|wfirst):'; done | tee build-sim-wdelay/delay.log
 sim-t-all:
 	$(MAKE) --no-print-directory -j4 sim-time sim-time-p sim-wstamp sim-wstamp-p sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p
 	@grep -H "結果" build-sim-time/check.log build-sim-time/check1.log build-sim-wstamp/check.log build-sim-wstamp-posctl/check.log \

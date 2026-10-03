@@ -14,6 +14,9 @@
 //   2. **RUN_F0·L が 6 窓で同じ**（同じ格子の点）
 //   3. ダンプ k（N_ACC = M なので N·L = G）の DUMP_T − D(NS) − S0 = (g0 + k)·G が 6 窓で一致（k = 0, 1）。DUMP_K = k
 // 陽性対照（-DWSPEC_NOGRID: 格子に寄せない = 従来の F0 = fin + 2）→ 2・3 が落ちるはず（make sim-wgrid-p）
+// **限界（2026-10-03 の F-4 で分かった）**: この試験台は「最初の z は WSTART ＋ D(NS) に入る」と仮定して z を流している。実際の pfb・ddc では
+//   最初の z は WSTART ＋ F(NS)（≒ 2D − 段の遅れ）に来るので、窓の区切りの実効の時刻には X(NS) = F − D の差が残る（timebase.WIN_BOUNDARY_BEATS）。
+//   ここで確かめているのは wspec_core の F0 の格子の式だけ
 `timescale 1ns / 1ps
 module tb_wgrid;
     localparam integer GL2 = 17;
