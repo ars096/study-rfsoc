@@ -417,6 +417,12 @@ def main():
                                            "同じ ADC のクロックで測るので基準のずれは打ち消す。窓の周波数軸そのものの確かめ）")
             ratio = p[b_meas] / pf[kf]
             pred = pred_ratio(ns, args.shift_full, args.shift)
+            # proj017（2026-10-05）: 窓の山の ch が 18 bit で飽和していると、re・im が別々に切られ、電力の目減りが CW の位相で
+            #   0〜−3 dB 以上ばらつく（実機の W-6 で −0.8〜−3.0 dB と散った）。飽和したダンプでは W-6 を判定しない
+            nsat = int(m["sat"])
+            if nsat:
+                judge(False, f"W-6: 窓のダンプに飽和 {nsat} 個（山の ch が 18 bit で切られている見当）。比べられない → --shift を上げるか SG を下げる"
+                             f"（今の SHIFT {args.shift}。1 上げるごとに電力 1/4）")
             db_raw = 10 * np.log10(ratio / pred)
             db = 10 * np.log10(ratio / pred * gf / gw)
             judge(abs(db) < 0.1, f"W-6: 窓 / 全帯域（ch {kf}）の電力の比 {ratio:.4g}、予言 {pred:.4g} → そのまま {db_raw:+.3f} dB /"

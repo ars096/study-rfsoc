@@ -41,8 +41,12 @@ NS_NUM, NS_DEN = 125, 32          # 1 ビート = 125/32 ns（厳密）
 CAL = {
     # proj017: adc_to_core_ns は ADC ごと（chans の添字 0..3 = ADC_A..D）。F-2 で 4 本とも測るまで None（未較正）。
     #   proj016 の ADC_A の 121.2 ns は別の Overlay・別の配置なので持ち込まない
-    0x0017_7101: dict(pps_det_ns=0.0, adc_to_core_ns={0: None, 1: None, 2: None, 3: None}, bound_ns=50,
-                      source="proj017: 未較正（F-2 で ADC ごとに測る）"),
+    0x0017_7101: dict(pps_det_ns=0.0, adc_to_core_ns={0: 126.8, 1: 126.4, 2: 122.4, 3: 123.3}, bound_ns=50,
+                      source="proj017 F-2（2026-10-05）: 全帯域の生サンプルで 1PPS の縁がコアに入った T − スタンプ（TRIG 系統）を 4 ADC 同時に、"
+                             "ADC に入れるケーブルを A↔C・B↔D に入れ替えて 2 回（Overlay も 2 回）。値は 2 回の平均"
+                             "（A 32.62・32.29 / B 32.55・32.15 / C 31.27・31.39 / D 31.40・31.74 ビート）。"
+                             "タイル 226（A・B）が 224（C・D）より A−C 1.13・B−D 0.78 ビート（4.4・3.0 ns）遅い（ケーブルと Overlay の差が消える組み合わせ）。"
+                             "上限 50 ns は proj016 と同じ見当（45m の配線のケーブルの差は未測）"),
     0x0016_7101: dict(pps_det_ns=0.0, adc_to_core_ns=121.2, bound_ns=50,
                       source="proj016 T-2（2026-10-02）: 全帯域の生サンプルで 1PPS の縁がコアに入った T − スタンプ = +31.04 ビート"
                              "（+121.2 ns、5 回で σ 0.2 ns、TRIG 系統）。1 エポック（Overlay 1 回）だけ。"
