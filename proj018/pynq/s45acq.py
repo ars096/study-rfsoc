@@ -783,6 +783,8 @@ class Acq:
 
 
 def main(conn, ring, opts):
+    import signal
+    signal.signal(signal.SIGINT, signal.SIG_IGN)   # 端末の Ctrl-C は親だけが受け、親が quit で止める（README）
     try:
         Acq(conn, ring, opts).run()
     except BaseException:

@@ -25,6 +25,7 @@ import os
 import re
 import signal
 import socket
+import sys
 import threading
 import time
 
@@ -366,14 +367,36 @@ class Server:
                 time.sleep(0.5)
             log("取得のプロセスが止まった")
         except KeyboardInterrupt:
-            log("止める（Ctrl-C）")
+            log("止める（Ctrl-C / TERM）。もう一度 Ctrl-C ですぐ抜ける")
+            signal.signal(signal.SIGINT, lambda *_: os._exit(1))
+        self._shutdown()
+
+    def _shutdown(self):
+        """取得に quit を頼み（RUN なら STOP してから抜ける）、来なければ terminate → kill。最後に共有メモリを片付ける。
+        取得のプロセスは SIGINT を無視している（端末の Ctrl-C は親と子の両方に届く。子が先に落ちると親の片付けが止まった。2026-10-05 実機）"""
+        if self.plock.acquire(timeout=3.0):         # 制御の口の命令が取得の応答を待っている途中なら、少し待つ
             try:
-                self.acq_cmd(dict(op="quit"), timeout=10)
-            except Exception:
+                self.pipe.send(dict(op="quit"))
+                if self.pipe.poll(10.0):
+                    self.pipe.recv()
+            except (OSError, EOFError):
                 pass
-        self.stop_ev.set()
+            finally:
+                self.plock.release()
         self.acq.join(5)
-        self.ring.close()
+        if self.acq.is_alive():
+            log("取得のプロセスが quit で抜けない → terminate")
+            self.acq.terminate(); self.acq.join(3)
+        if self.acq.is_alive():
+            self.acq.kill(); self.acq.join(2)
+        self.stop_ev.set()
+        try:
+            with self.dlock:
+                self.inflight.clear()
+            self.ring.close()
+        except BufferError:
+            log("共有メモリの片付け: 送信の途中の参照が残っていた（OS が片付ける）")
+        log("止めた")
 
 
 def _iso(ns):
@@ -418,6 +441,8 @@ def main():
         log(f"注意: 陽性対照の変種で動いている（corrupt {a.posctl_corrupt}・gap {a.posctl_gap}・fake_stall {a.fake_stall}）")
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))   # TERM でも Ctrl-C と同じに片付ける
     Server(a).run()
+    sys.stdout.flush()
+    os._exit(0)                                   # 受け・送りのスレッド（daemon）や multiprocessing の後始末を待たない
 
 
 if __name__ == "__main__":
