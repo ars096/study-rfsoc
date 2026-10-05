@@ -12,10 +12,13 @@ PL なしの試験（test_fake.sh）は運び（CRC・番号・ACK）だけを�
                        UTC がボードの時計と 1 秒以内（ボードの時計は錨の秒の元なので、桁の誤りを見るだけ）
 
     from s45client import S45
+    from sg import SG                          # SG（E8257D）を LAN の SCPI で。宛先はリポジトリに書かない（引数か環境変数 RFSOC_SG）
     import s45fcheck as F
     s = S45("<board>")
-    r1 = F.c1(s, f_sg=3000.5, adc="A")       # SG 3000.5 MHz を ADC_A に
-    r2 = F.c1(s, f_sg=3001.5, adc="A", ref=r1)  # SG を +1 MHz 動かしてから。r1 との差が +1 MHz
+    g = SG("<SG の IP>"); g.set_dbm(-20); g.set_output(True)
+    r1 = F.c1(s, f_sg=3000.5, adc="A", sg=g)   # sg を渡すと、SG を f_sg に合わせて読み返してから測る
+    r2 = F.c1(s, f_sg=3001.5, adc="A", ref=r1, sg=g)  # +1 MHz。r1 との差が +1 MHz
+    （sg を渡さなければ SG には触らない。そのときは SG を手で f_sg に合わせておく）
     F.c2(s); F.c3(s, f_sg=3000.5, adc="A"); F.c4(s, f_sg=3000.5, adc="A"); F.c5(s)
 
 判定の約束（README の規約）: argmax は必ず何かを返すので、**山 / 中央値 ≧ 30 dB を先に確かめてから**位置を読む。
@@ -57,6 +60,21 @@ def _peak(d, key):
     return float(fi), float(y[i]), float(snr), float(df)
 
 
+def _sg_to(sg, f_sg):
+    """SG を f_sg [MHz] に合わせて読み返す（sg = sg.SG）。sg が無ければ、SG は手で合わせてある前提（触らない）と出す"""
+    if sg is None:
+        print(f"  （SG には触らない。SG が {f_sg} MHz・出力 ON になっていること）")
+        return None
+    sg.set_freq_mhz(f_sg)
+    st = sg.state()
+    print(f"  SG: {st['freq_hz'] / 1e6:.6f} MHz・{st['dbm']:+.2f} dBm・出力 {'ON' if st['on'] else 'OFF'}・基準 {st['ref']}"
+          + (f"・警告 {st['warnings']}" if st["warnings"] else ""))
+    if not st["on"]:
+        print("  注意: SG の出力が OFF（g.set_output(True)）")
+    time.sleep(0.2)
+    return st
+
+
 def _set_adc_windows(s, adc, if0, if1, bw0=256, bw1=8, shift=9):
     a = adc.upper()
     s.set(**{f"{a}0_if": if0, f"{a}0_bw": bw0, f"{a}0_shift": shift, f"{a}1_if": if1, f"{a}1_bw": bw1, f"{a}1_shift": shift})
@@ -74,11 +92,12 @@ def _health(d, keys):
 
 
 # ---------------------------------------------------------------- C-1
-def c1(s, f_sg, adc="A", ref=None, n=10, off0=37.3, off1=1.1):
+def c1(s, f_sg, adc="A", ref=None, n=10, off0=37.3, off1=1.1, sg=None):
     """SG の CW（f_sg MHz）を ADC adc に入れて呼ぶ。窓 0 = 256 MHz（中心 f_sg + off0）・窓 1 = 8 MHz（中心 f_sg + off1）に置き、
     山の IF が f_sg に一致すること。ref = 前の c1 の戻り値（SG を動かした後）なら、山の動きが SG の動きと同じ向き・同じ量"""
     a = adc.upper()
     print(f"C-1 周波数軸: SG {f_sg} MHz → ADC_{a}。窓 {a}0 = 256 MHz（中心 {f_sg + off0}）・{a}1 = 8 MHz（中心 {f_sg + off1}）")
+    _sg_to(sg, f_sg)
     _set_adc_windows(s, a, f_sg + off0, f_sg + off1)
     d = s.acquire(n)
     out = dict(f_sg=f_sg, peaks={}, snr={})
@@ -152,10 +171,11 @@ def c2(s, n=5):
 
 
 # ---------------------------------------------------------------- C-3
-def c3(s, f_sg, adc="A", n=10, leak_max_db=10.0):
+def c3(s, f_sg, adc="A", n=10, leak_max_db=10.0, sg=None):
     """SG の CW を ADC adc の 1 本だけに入れて呼ぶ。8 窓とも f_sg を含む位置に置き、山がその ADC の窓にだけ出る"""
     a = adc.upper()
     print(f"C-3 ADC と窓の対応: SG {f_sg} MHz を ADC_{a} だけに。8 窓とも f_sg を含む位置に")
+    _sg_to(sg, f_sg)
     kw = {}
     for k in KEYS:
         kw.update({f"{k}_if": f_sg + (37.3 if k.endswith("0") else 1.1), f"{k}_bw": 256 if k.endswith("0") else 8, f"{k}_shift": 9})
@@ -173,10 +193,11 @@ def c3(s, f_sg, adc="A", n=10, leak_max_db=10.0):
 
 
 # ---------------------------------------------------------------- C-4
-def c4(s, f_sg, adc="A", s1=9, s2=11, n=25, tol_db=0.1):
+def c4(s, f_sg, adc="A", s1=9, s2=11, n=25, tol_db=0.1, sg=None):
     """同じ CW を SHIFT s1 と s2 で取り、山の電力の比が 4^(s2 − s1)。山の ch は前後 1 ch まで足して（ch の間の CW でも比は同じ）"""
     a = adc.upper()
     print(f"C-4 SHIFT: SG {f_sg} MHz → ADC_{a}、SHIFT {s1} と {s2}。予言: 比 {4 ** (s2 - s1)}（{10 * np.log10(4.0 ** (s2 - s1)):.2f} dB）")
+    _sg_to(sg, f_sg)
     _set_adc_windows(s, a, f_sg + 37.3, f_sg + 1.1, shift=s1)
     res = {}
     ok = True
