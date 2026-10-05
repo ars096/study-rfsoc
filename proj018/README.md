@@ -1,0 +1,153 @@
+# proj018 — SAM45-Fine のデータ取得サーバー（PS 側。制御 PC の命令で取得し、ダウンロード PC へ送る）
+
+日付: 2026-10-05
+状態: **進行中**（コードと PL なしの試験まで。実機の P-1〜P-5 はこれから）
+
+## 目的
+
+**proj017 の bit（SAM45-Fine、ID 0x0017_0100）を、制御 PC から命令で動かし、データをダウンロード PC へ送るサーバーを PS に置く。**
+RTL・bit は変えない（proj017 rev1 をそのまま載せる。起動時に ID を照合する）。
+
+- ソケットのサーバー。**制御 PC**（命令・状態）と**ダウンロード PC**（データの受け取り）の 2 つの口
+- 制御 PC の命令で: 設定・取得の開始と停止・ダウンロード PC への送信の開始と停止・状態の取得
+- 取得したデータは PS に一定量溜め、送れない間に溢れたら捨てて**捨てたことを記録する**
+- 送る中身は **生の積分値**（64 bit、PL から読んだ値そのまま）。絶対強度への換算（`fmt=abs`）は [proj019](../proj019/) で足す
+- 40.96 ms × 8 窓 ＋ TP 4 本を**読み落としなく**、ダウンロード PC へ送りながら 1 時間
+
+まず SAM45-Fine 専用にする（9 本で共通の枠にするのは、2 本目の bit のとき）。
+
+## 着手の前に決めたこと（2026-10-05、確認済み）
+
+| | 決定 | 読み |
+|---|---|---|
+| 制御の形式 | **行単位のテキスト**（ASCII、LF 区切り。1 命令に 1 行の応答） | telnet / nc で人が試せる。検証が簡単 |
+| 送る中身 | **生（64 bit の積分値）と絶対強度（換算済み）を命令で選ぶ**。proj018 は生だけ、abs は proj019 | 生は検証の正、絶対強度は受け側が楽。**proj を分けた**（2026-10-05）: サーバーの正しさ（ソフト）と単位の正しさ（測定の主張）は別の問いで、生だけなら「送った値 = PL から読んだ値」を bit 単位で照合できる |
+| 送れないとき | **PS に一定量溜め、溢れたら捨てて記録** | 捨てた範囲は記録の番号の欠けと EVENT で分かる |
+| 共通化 | **まず SAM45-Fine 専用** | 一番早く動く |
+| 言語 | **Python**。取得の側と通信の側の境目は言語に依らない形（共有メモリのバイトの環・固定の頭）にして、取得の環だけを C に替えられるようにする。**C に移す基準: P-1 の 1 時間で取得の 1 周の最大が 38 ms を越えたら** | PL の起動（Overlay・xrfdc・クロック）・timebase・proj017 の読み出しは実機で通った Python。重いのは AXI4-Lite のバスの往復で言語ではない。送る量は 6.4 MB/s で小さい。proj017 の最大 35.6 ms は GC（30 分伸ばし続けたリスト）と OS のスケジューリングを疑い、Python のまま対策する（下） |
+| SHIFT | **既定 9（6 幅とも共通）**。窓ごとに命令で変えられる | 入力 −10 dBm（−15.9 dBFS）・R +5 dB・最強の線 ch の雑音 +10 dB で、6 幅とも飽和まで ≧ 25 dB・σ_q = 4 の床まで ≧ 23 dB（2026-10-05 の見積もり、`model/win_fixed.py` で E\|Y\|² = 256·W·σ_x² を確認） |
+
+## 設計（実装した形）
+
+### 構成
+
+| | 取得のプロセス（`s45acq.py`、子） | 通信のプロセス（`specd.py`、親） |
+|---|---|---|
+| 持つもの | PL（Overlay・RFDC・time_core・8 窓・TP 4 本）、timebase | 制御の口・データの口・送信。**PYNQ を import しない** |
+| 回すもの | proj017 F-4 の読み出しの環（SEQ を見て閉じたダンプを seqlock で読む・TP のリングを TP_WP まで）→ 記録にして溜まりへ | 命令の解釈 → 取得へパイプで渡す / 溜まりから送る |
+| 遅れの対策 | **記録を Python のリストに溜めない**（数は整数だけ、1 周の時間は固定の度数分布）、`gc.freeze()` の後 `gc.disable()`、CPU 3 に固定（`--cpu`）、可能なら SCHED_FIFO 10（`--rt`） | |
+
+- 間は **共有メモリのバイトの環**（`s45ring.py`、既定 256 MiB ≒ 38 秒）と命令のパイプ（辞書）。fork は PYNQ を読む前
+- `--fake`: PL の代わりに同じ間隔・同じ形の記録を作る裏（`FakeBackend`）。通信・溜まり・照合を PL なしで試す
+
+### 制御の口（既定 51000、同時に 1 接続。2 つ目は `ERR BUSY`）
+
+1 行の命令に 1 行の応答 `OK key=value ...` / `ERR <符号> <説明>`（符号: STATE・ARG・TIME・CMD・FAIL・ACQ・BUSY）。
+
+| 命令 | 状態 | 中身 |
+|---|---|---|
+| `ID` | いつでも | サーバーの版・窓 / ADC の共通 / time_core の ID・ADC 4・窓 2・記録の版 |
+| `STATUS` | いつでも | state（IDLE / ARMED / RUN / ERROR）・time_ok・start_at・dumps（8 窓の最小）・miss（PL で読み落としたダンプ）・kgap・tp（ADC ごとの区切りの数）・tp_lost・tp_bad・tp_ovr・health（DUMP_H の OR）・flags・sat・loop_max_ms・loop_p99_ms・seq・drop・buf_used_mb / buf_cap_mb・data_client・send・sent・acked・inflight・skip |
+| `GET` | いつでも | tint・cfg・窓ごとの if / ns / bw / shift |
+| `SET key=val ...` | IDLE / ERROR | `tint=0.04096`（2.048 ms の倍数）・`cfg=0x...`（CFG_ID）・`A0.if=3000`・`A0.ns=1` か `A0.bw=256`・`A0.shift=9`・`all.shift=9`（窓は A〜D × 0・1）。全部を確かめてから一度に入れる |
+| `ANCHOR` | IDLE / ERROR | 錨を打ち直す（PPS を直した後など） |
+| `START [at=<UTC>] [n=<ダンプ数>] [force=1]` | IDLE / ERROR | 窓を格子の点で一斉に WRST → 格子の点（at= 以降の最初、無ければ今 ＋ 0.5 秒以降）で窓 8・TP 4 本を同時に開始。`OK start_at=<ビート> utc=...`。at= は ISO 8601（時間帯つき）か unix 秒。n = 0 は STOP まで。時刻を答えられないときは force=1 が要る（記録に印） |
+| `STOP` | ARMED / RUN | 止める（溜まった分は残る） |
+| `SEND ON [from=oldest\|now]` / `SEND OFF` | いつでも | データの口へ送る。from=now は溜まりを捨ててから（SKIP の EVENT） |
+| `CLEAR` | いつでも | 溜まりを捨てる（SKIP の EVENT） |
+| `BYE` / `HELP` | いつでも | |
+
+制御 PC が切れても取得は止めない。既定の窓: 各 ADC の窓 0 = 256 MHz・窓 1 = 8 MHz、IF 3000 MHz、SHIFT 9、40.96 ms。
+
+### データの口（既定 51001、同時に 1 接続）
+
+記録の形は `s45proto.py` の冒頭が正。共通の頭（24 バイト: 印・版・種類・長さ・**中身の CRC-32**・**通し番号 seq**）＋ 中身。
+
+- **SPEC**（ダンプ 1 個 × 窓 1 つ、32,848 バイト）: ADC・窓・NS・SHIFT（RUN_SHIFT）・G・CFG_ID・DUMP_K・N_ACC・DUMP_SAT・FLAGS・
+  健全性（DUMP_H ＋ サーバーの印 [16] 時刻なし・[17] force）・DUMP_T・最初のサンプルの UTC（ns）・IF の中心、4096 ch の uint64（**IF の昇順**）
+- **TP**（ADC ごと、40 区切り = 40.96 ms をまとめて）: 区切りごとに 頭のビート・UTC・Σx²・フレーム数・FLAGS
+- **EVENT**（JSON）: START（設定の全部・ID）・STOP（数・TP の錨の組の照合）・DROP / SKIP（捨てた seq の範囲）・ERROR・WARN
+- **CRC は取得の側が PL から読んだ値で計算する**。溜まり・ソケットを通った後に受け側で照合 → 「送った値 = PL から読んだ値」（P-1b）
+- **受け側は ACK を返す**（<Q の 8 バイト = 受け取って書き終えた最後の seq、0.2 秒おき）。サーバーは ACK のあった記録だけを溜まりから消し、
+  切れたら ACK の無い記録を次の接続で送り直す（受け側は seq で重複を除く）。**ACK を返さない受け側では溜まりが溢れて DROP になる**
+- 送る量: 8 窓 × 32.8 KB / 40.96 ms ＋ TP ≒ **6.5 MB/s**（52 Mbit/s）
+
+### 溜まりが溢れたとき
+
+- 新しい記録を捨てる（溜まっている側は連続のまま）。**一度溢れたら空きが 1/4 に戻るまで捨て続け**、再開の直前に DROP（範囲・数）を置く
+- EVENT（小さい・START / STOP を落としたくない）は空きがあれば割り込む
+- seq の欠けは、すべて DROP / SKIP の範囲で説明できる（`specrecv.py` の「説明のない欠け」= 0 が合格）
+
+## 予言と判定
+
+| | 何を | 予言・合否 |
+|---|---|---|
+| P-1 | 読み出しの余裕（実機） | 送信 ON・ダウンロード PC で全部受けながら 1 時間: 8 窓・TP 4 本の読み落とし 0（STATUS の miss・tp_lost）、説明のない欠け 0、取得の 1 周の最大 < 38 ms（越えたら取得の環を C に）。**予言: 最大は proj017 の 35.6 ms より下がる**（リストを伸ばさない・GC 停止・CPU 固定） |
+| P-1b | 送った値の正しさ | 受けた記録の CRC（取得の側で PL の値から計算）の不一致 0。陽性対照 `--posctl-corrupt N`（CRC の後に 1 bit 反転）で seq/N 個 |
+| P-4 | 溢れたときの記録 | 送らずに溜まりの長さ以上待つ → 欠け = DROP の範囲 = サーバーの drop、説明のない欠け 0、再開後は続きから |
+| P-5 | 切断 | 制御・受け側を RUN 中に切って繋ぎ直す: 取得は続き、2 回に分けた受けを続けると欠け 0（ACK の無い記録は送り直される） |
+| 陽性対照 | 見張りが立つこと | `--posctl-gap N`（黙って捨てる）→ 説明のない欠け seq/N 個・照合は失敗。`--fake-stall N`（読み出しを 50 ms 止める）→ miss と DUMP_K の飛び |
+
+## やったこと
+
+- `pynq/` は proj017 の追跡ファイルを複製（`git ls-files proj017/pynq`）し、新しく 6 本:
+  `s45proto.py`（記録の形）・`s45ring.py`（溜まり）・`s45acq.py`（取得）・`specd.py`（サーバー）・`specctl.py`（制御 PC の道具）・
+  `specrecv.py`（ダウンロード PC の道具: 受けて書く・照合・ACK）、試験 `test_fake.sh`
+- 溜まりの単体の試験: 乱数の長さ（8 B〜32 KB）・書く / 送る / ACK / 切断（送り直し）を 3 万回ずつ、種 5 つ → 置けた記録が欠けも重複もなく順に出る
+
+## 結果（PL なし、`test_fake.sh`、2026-10-05）
+
+| 試験 | 結果 |
+|---|---|
+| basic（100 ダンプ × 8 窓） | **通過**: SPEC 800・CRC 不一致 0・説明のない欠け 0・DUMP_K / DUMP_T / TP の連続。1 回だけ、8 窓とも 1 ダンプ読み落とした（試験の機械の Linux で取得のプロセスが 41 ms 以上止まった。RT・CPU 固定なしで回している。**miss と DUMP_K の飛びがその通り立った**）。続く 3 回は 0 |
+| corrupt（陽性対照） | **通過**: CRC 不一致 23（期待 23） |
+| gap（陽性対照） | **通過**: 説明のない欠け 23（期待 23）、照合は失敗 |
+| drop（P-4、溜まり 4 MiB で 5 秒送らない） | **通過**: 欠け 1149〜1305 = DROP の範囲 = サーバーの drop、説明のない欠け 0 |
+| skip（from=now） | **通過**: SKIP 1 つ、説明のない欠け 0 |
+| reconnect（P-5） | **通過**（ACK を入れた後）: 2 回に分けた受けを続けて欠け 0 |
+| stall（陽性対照） | **通過**: miss 40・DUMP_K の飛び 40 |
+
+### 道具・設計が間違えたこと
+
+- **最初の版は「sendall が返ったら溜まりから消す」で、受け側を切ると送りかけの記録が黙って消えた**（reconnect で説明のない欠け 3）。
+  sendall は OS の送信の溜まり（4 MiB）に入れただけで、相手が受けた保証ではない。→ 受け側の ACK まで溜まりに残し、切れたら送り直す形に
+- 溢れたときの最初の版は、空きの縁で「1 個捨てる・DROP を置く・次を捨てる」を繰り返し、DROP の EVENT の seq が捨てた記録より先に振られて
+  番号が戻った（seq_back 2・説明のない欠け 4）→ 番号を振る前に DROP を置く・空きが 1/4 に戻るまで捨て続ける
+- 試験の台本: 裏で走らせたサーバーは非対話の bash では SIGINT を無視する → `kill -TERM` と SIGTERM の受けを足した。
+  受け側は記録が来ないと時間で止まらなかった → 記録の頭の手前で select で待つ
+
+### 実機の経路（HwBackend）の読み合わせ（2026-10-05）
+
+実機の裏は PL が無いと回せないので、proj017 の `fine.f4`・`timetest`・`TpReader` と突き合わせて読んだ（模擬の MMIO で 1 周も通した）。
+レジスタ・属性・引数の順・seqlock・スペクトルの番地と語の順・TP の 64 bit の復元・IF の順は一致。直したもの:
+
+- ARMED の間の発火の処理（begin: RUN_SHIFT の照合・TANCH）で例外が出ると、取得のプロセスごと黙って落ちた → ERROR の EVENT を出して止める
+- ARMED のまま STOP してもコアの予約が残り、後で発火して IDLE のまま走る（timetest.disarm_all の注意どおり）→ コアの DISARM と time_core の取り消し
+- IDLE の間は時刻の照合が回らないので、PPS が落ちていても START で初めて例外になり、force=1 が効かなかった → START で照合し、落ちていれば force の判断へ
+- UTC の ns を切り捨てていた（timebase は最近接）→ 同じ丸めに（−1 ns のずれ）
+- TP の手元の箱が溢れたときに黙って捨てていた → tp_lost に数える
+- START の知らない引数を黙って無視していた → ERR ARG
+
+## 結論・次にやること
+
+- [ ] **実機**: proj017.bit で起動 → `test_fake.sh` と同じ流れ（basic・drop・reconnect）を実機で → **P-1: 1 時間**（ダウンロード PC で受けて書く）
+- [ ] P-1 の 1 周の最大で、C に移すかを決める（基準 38 ms）
+- [ ] ダウンロード PC の受け側を本番用に（ファイルの区切り・名前、受けながらの表示）。今の `specrecv.py` は照合の道具
+- [ ] proj019（絶対強度 `fmt=abs`）
+
+## 再現手順
+
+```bash
+# PL なし（どこの Linux でも。numpy だけ）
+cd proj018/pynq && bash test_fake.sh all          # 「test_fake: 全部通過」
+
+# 実機（ボード。proj017 の build/proj017.bit・.hwh と pynq/*.py を ~/proj018/ に）
+sudo -E $(which python3) specd.py --clkin 0 --ref 10
+# 制御 PC
+python3 specctl.py --host <board> STATUS "SET A0.bw=256 A1.bw=8 all.shift=9" "START n=0" "SEND ON"
+# ダウンロード PC
+python3 specrecv.py --host <board> --out run1.s45 --seconds 3600 --json run1.json
+python3 specctl.py --host <board> STOP STATUS
+```
+
+環境は [`../VERSIONS.md`](../VERSIONS.md)。bit は [proj017](../proj017/)（RTL は変えていない）。
