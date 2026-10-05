@@ -12,7 +12,7 @@
 
 制御の口（既定 51000、同時に 1 接続）: 1 行の命令に 1 行の応答 `OK key=value ...` / `ERR <符号> <説明>`
   ID | STATUS | GET | SET key=val ... | ANCHOR | START [at=<UTC>] [n=<ダンプ数>] [force=1] | STOP |
-  SEND ON [from=oldest|now] | SEND OFF | CLEAR | BYE | HELP
+  SEND ON [from=oldest|now] | SEND OFF | CLEAR | BYE | HELP | SHUTDOWN confirm=1（サーバーを止める）
 データの口（既定 51001、同時に 1 接続）: s45proto の記録を続けて送る。SEND ON の間だけ。
   **受け側は ACK（<Q の 8 バイト、受け取って書き終えた最後の seq）を返す**（0.2 秒おき程度）。ACK のあった記録だけを溜まりから消し、
   切れたら ACK の無い記録を次の接続で送り直す（受け側は seq で重複を除く）。ACK を返さない受け側では溜まりが溢れ、DROP になる
@@ -33,7 +33,8 @@ import s45proto as P
 import s45ring as R
 
 HELP = ("ID | STATUS | GET | SET key=val ...（tint cfg A0.if A0.ns A0.bw A0.shift all.shift …） | ANCHOR | "
-        "START [at=<UTC ISO8601 か unix 秒>] [n=<ダンプ数>] [force=1] | STOP | SEND ON [from=oldest|now] | SEND OFF | CLEAR | BYE")
+        "START [at=<UTC ISO8601 か unix 秒>] [n=<ダンプ数>] [force=1] | STOP | SEND ON [from=oldest|now] | SEND OFF | CLEAR | BYE | "
+        "SHUTDOWN confirm=1")
 
 
 def log(*a):
@@ -104,6 +105,7 @@ class Server:
         self.t_up = time.time()
         self.stop_ev = threading.Event()
         self._pending_ev = None
+        self.quit_ev = threading.Event()        # 制御の口の SHUTDOWN
         self.inflight = collections.deque()     # 送ったが ACK の無い記録 (seq, 溜まりの終わりの位置)
         self.acked = 0
 
@@ -205,6 +207,11 @@ class Server:
             return f"OK skipped={n}"
         if cmd in ("BYE", "QUIT"):
             return "OK bye"
+        if cmd == "SHUTDOWN":
+            if kv.get("confirm") != "1":
+                return "ERR ARG サーバーを止めるときは SHUTDOWN confirm=1（RUN なら STOP してから止める）"
+            self.quit_ev.set()
+            return "OK shutdown"
         return f"ERR CMD 知らない命令 {cmd}（HELP）"
 
     def _skip_all(self, why):
@@ -363,9 +370,12 @@ class Server:
         threading.Thread(target=self.serve_data, daemon=True).start()
         threading.Thread(target=self.sender, daemon=True).start()
         try:
-            while self.acq.is_alive():
+            while self.acq.is_alive() and not self.quit_ev.is_set():
                 time.sleep(0.5)
-            log("取得のプロセスが止まった")
+            if self.quit_ev.is_set():
+                log("止める（制御の口の SHUTDOWN）")
+            else:
+                log("取得のプロセスが止まった")
         except KeyboardInterrupt:
             log("止める（Ctrl-C / TERM）。もう一度 Ctrl-C ですぐ抜ける")
             signal.signal(signal.SIGINT, lambda *_: os._exit(1))
@@ -439,7 +449,13 @@ def main():
         a.cpu = os.cpu_count() - 1
     if a.posctl_corrupt or a.posctl_gap or a.fake_stall:
         log(f"注意: 陽性対照の変種で動いている（corrupt {a.posctl_corrupt}・gap {a.posctl_gap}・fake_stall {a.fake_stall}）")
-    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))   # TERM でも Ctrl-C と同じに片付ける
+    def _on_sig(signum, _frm):
+        log(f"信号 {signal.Signals(signum).name} を受けた")
+        raise KeyboardInterrupt
+    # SIGINT も明示して受ける（起動のされ方で SIGINT が無視の状態で引き継がれていると、Python は Ctrl-C を受けない）。TERM も同じに片付ける
+    signal.signal(signal.SIGINT, _on_sig)
+    signal.signal(signal.SIGTERM, _on_sig)
+    log(f"specd の PID {os.getpid()}（止める: Ctrl-C・kill {os.getpid()}・制御の口の SHUTDOWN confirm=1）")
     Server(a).run()
     sys.stdout.flush()
     os._exit(0)                                   # 受け・送りのスレッド（daemon）や multiprocessing の後始末を待たない
