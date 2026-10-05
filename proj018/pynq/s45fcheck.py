@@ -80,13 +80,21 @@ def _set_adc_windows(s, adc, if0, if1, bw0=256, bw1=8, shift=9):
     s.set(**{f"{a}0_if": if0, f"{a}0_bw": bw0, f"{a}0_shift": shift, f"{a}1_if": if1, f"{a}1_bw": bw1, f"{a}1_shift": shift})
 
 
+H_TIME = (1 << 0) | (1 << 3) | (1 << 16) | (1 << 17)   # PPS 来ていない・原点なし・サーバーの時刻なし・force（時刻の印。中身の判定には効かない）
+
+
 def _health(d, keys):
+    """健全性・飽和を見る。時刻の印（1PPS なしで取った場合）は注意だけ出して NG にしない（C-5 が時刻を見る）"""
     ok = True
+    told = False
     for k in keys:
         m = d.meta(k)
         h = int(np.bitwise_or.reduce(m["health"])) if len(m) else 0
         sat = int(m["sat"].sum()) if len(m) else 0
-        if h or sat:
+        if h & H_TIME and not told:
+            print(f"  注意: 時刻なしで取った記録（健全性 {h & H_TIME:#x}）。中身の判定には効かない。C-5（時刻）は 1PPS を入れて")
+            told = True
+        if (h & ~H_TIME) or sat:
             ok = _say(False, f"{k}: 健全性 {h:#x}・飽和 {sat}") and ok
     return ok
 

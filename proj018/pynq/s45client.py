@@ -183,9 +183,12 @@ class S45:
             time.sleep(poll)
         raise TimeoutError("IDLE にならない")
 
-    def acquire(self, n, clear=True, timeout=None, settle=1.0, **setkw):
+    def acquire(self, n, clear=True, timeout=None, settle=1.0, force=None, **setkw):
         """n ダンプを取って手元の写し（Data）を返す: [SET] → SEND ON → START n → 8 窓とも n 個届くまで待つ。
-        clear=True なら、始める前にサーバーの溜まりと手元を空にする（前の残りを混ぜない）"""
+        clear=True なら、始める前にサーバーの溜まりと手元を空にする（前の残りを混ぜない）。
+        force: None（既定）= 時刻を答えられない（1PPS が無い・錨が無い）ときは**警告を出して時刻なしで取る**
+        （サーバーの START force=1。記録の utc_ns は 0、健全性に [16] 時刻なし・[17] force と PL の [0] PPS 来ていない など）。
+        True = 初めから force、False = 時刻が無ければ止める（サーバーの既定と同じ）"""
         st = self.status()
         if st["state"] in ("ARMED", "RUN"):
             raise RuntimeError(f"サーバーが {st['state']}（先に stop()）")
@@ -195,7 +198,18 @@ class S45:
             self.clear()
             self.clear_local()
         self.send(True)
-        r = self.start(n=n)
+        if force is None and not st.get("time_ok"):
+            why = str(st.get("time_err") or "1PPS が来ていない・錨が無い").replace("_", " ")   # STATUS は空白を _ にして送る
+            _warn(f"時刻を答えられない（{why}）。時刻なしで取る"
+                  "（utc_ns = 0、健全性に印。スペクトルと DUMP_T・TP の区切りは普通に出る）")
+            force = True
+        try:
+            r = self.start(n=n, force=bool(force))
+        except RuntimeError as e:
+            if force is not None or "TIME" not in str(e) and "時刻" not in str(e):
+                raise
+            _warn(f"START が時刻で断られた（{e}）。時刻なしで取り直す")   # STATUS の後に PPS が落ちた場合
+            r = self.start(n=n, force=True)
         tint = float(self.get()["tint"])
         t_e = time.time() + (timeout or (n * tint + 10.0))
         while time.time() < t_e:
@@ -328,6 +342,10 @@ class S45:
         with self._lock:
             n = {k: len(v) for k, v in self._w.items()}
         return f"S45({self.host}, 手元 {sum(n.values())} ダンプ、受けの誤り {self._err or 'なし'})"
+
+
+def _warn(msg):
+    print(f"警告: {msg}", flush=True)       # Jupyter で毎回出す（warnings.warn は同じ場所から 1 回しか出ない）
 
 
 def _read_exact(s, buf):

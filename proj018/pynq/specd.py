@@ -440,6 +440,7 @@ def main():
     p.add_argument("--loop-sleep", type=float, default=0.003, help="読み出しの 1 周の後に寝る秒数（proj017 F-4 と同じ 3 ms）")
     p.add_argument("--boot-timeout", type=float, default=120.0)
     p.add_argument("--fake", action="store_true", help="PL を使わない（偽の記録。通信の試験）")
+    p.add_argument("--fake-notime", action="store_true", help="偽物で 1PPS が無い（時刻を答えられない）状態を作る")
     p.add_argument("--fake-stall", type=int, default=0, help="偽物の陽性対照: 窓 A0 の k がこの倍数のとき読み出しを 50 ms 止める")
     p.add_argument("--posctl-corrupt", type=int, default=0, help="陽性対照: seq がこの倍数の記録の中身を CRC の後に 1 bit 反転")
     p.add_argument("--posctl-gap", type=int, default=0, help="陽性対照: seq がこの倍数の記録を黙って捨てる（DROP を出さない）")

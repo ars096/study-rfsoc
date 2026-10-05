@@ -376,6 +376,9 @@ class FakeBackend:
         tb = types.SimpleNamespace(cal=dict(pps_det_ns=0, adc_to_core_ns=0), check=lambda: None,
                                    _anchor=dict(utc_sec=int(self.t0), stamp=-int(round((self.t0 - int(self.t0)) * BEATS_PER_SEC))))
         self.clock = Clock(tb, {})
+        if self.o.fake_notime:                       # 1PPS が無い（錨が打てない）実機の振る舞いを真似る
+            self.clock = Clock(None, {})
+            self.clock.err = "偽物: 1PPS なし（--fake-notime）"
 
     def anchor(self):
         return True, None
@@ -387,6 +390,8 @@ class FakeBackend:
         return -(-int(beat) // G_BEATS) * G_BEATS
 
     def start(self, st, at_beat, force):
+        if not self.clock.ok and not force:
+            raise RuntimeError("時刻を答えられない（錨が無い・PPS が来ていない）。ANCHOR か force=1")
         self.cfgs = [dict(if_mhz=ws["if_mhz"], ns=ws["ns"], shift=ws["shift"], nacc=nacc_of(st["tint"], ws["ns"]), g=g_of(ws["ns"]))
                      for ws in st["wins"]]
         self.cfg = st["cfg"]
