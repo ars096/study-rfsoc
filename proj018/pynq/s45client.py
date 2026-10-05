@@ -107,6 +107,17 @@ class S45:
         self._th = threading.Thread(target=self._recv_loop, daemon=True, name="s45recv")
         self._th.start()
         self.send_from = send_from
+        # 繋いだ直後に確かめる: 制御の口が ERR BUSY でないこと・データの口が BUSY で切られていないこと
+        try:
+            self.id()
+        except Exception as e:
+            self.close()
+            raise RuntimeError(f"制御の口に繋げない（他の specctl・S45 が繋いだままでは？）: {e}") from None
+        time.sleep(0.3)
+        if self._err:
+            msg = self._err
+            self.close()
+            raise RuntimeError(f"データの口に繋げない: {msg}")
 
     # ---------------------------------------------------------------- 制御
     def cmd(self, line):
@@ -288,9 +299,11 @@ class S45:
                         self.events.append(d)
                         if d.get("ev") == "START":
                             run = d["start_at"]
-        except Exception as e:          # 切断など
+        except Exception as e:          # 切断など。サーバーが理由を EVENT で言っていれば添える
             if not self._stop.is_set():
-                self._err = f"{type(e).__name__}: {e}"
+                last = self.events[-1] if self.events else None
+                why = f"（サーバー: {last.get('ev')} {last.get('msg', '')}）" if last and last.get("ev") in ("BUSY", "ERROR") else ""
+                self._err = f"{type(e).__name__}: {e}{why}"
 
     def close(self):
         self._stop.set()
