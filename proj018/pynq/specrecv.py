@@ -25,10 +25,12 @@ import numpy as np
 import s45proto as P
 
 TP_BEATS = 512 * 512
+FLAGS_MASK = 0x7EF                # 窓の FLAGS の [4]（FFT IP に待たされた）は正常なので数えない（サーバーの STATUS と同じ）
 
 
 class Check:
-    def __init__(self):
+    def __init__(self, verbose=True):
+        self.verbose = verbose
         self.n = {t: 0 for t in P.T_NAMES}
         self.bytes = 0
         self.crc_bad = 0
@@ -75,7 +77,7 @@ class Check:
                 elif d["dump_t"] - t0 != d["nacc"] * L:
                     self.tdev += 1
             self.k[key] = (d["k"], d["dump_t"], self.epoch)
-            self.h_or |= d["health"]; self.sat += d["sat"]; self.flags_or |= d["flags"]
+            self.h_or |= d["health"]; self.sat += d["sat"]; self.flags_or |= d["flags"] & FLAGS_MASK
         elif rtype == P.T_TP:
             e = d["e"]
             if len(e):
@@ -91,7 +93,8 @@ class Check:
                 self.declared.append((d["from"], d["to"]))
             if ev == "START":
                 self.k.clear(); self.tp_t.clear()
-            print(f"  EVENT seq {seq}: {json.dumps(d, ensure_ascii=False)[:300]}", flush=True)
+            if self.verbose:
+                print(f"  EVENT seq {seq}: {json.dumps(d, ensure_ascii=False)[:300]}", flush=True)
 
     def unexplained(self):
         n = 0

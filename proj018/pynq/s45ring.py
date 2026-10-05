@@ -24,7 +24,8 @@ class Ring:
         cap = cap_bytes & ~7
         self.cap = cap
         self.shm = shared_memory.SharedMemory(create=True, size=CTL + cap)
-        self.ctl = np.ndarray(2, np.uint64, self.shm.buf[:16])
+        self._ctl_mv = self.shm.buf[:16]
+        self.ctl = np.ndarray(2, np.uint64, self._ctl_mv)
         self.ctl[:] = 0
         self.buf = self.shm.buf[CTL:CTL + cap]
         self.lock = lock or mp.Lock()
@@ -32,6 +33,7 @@ class Ring:
 
     def close(self):
         self.ctl = None
+        self._ctl_mv.release()
         self.buf.release()
         self.shm.close()
         try:

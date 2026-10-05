@@ -78,6 +78,21 @@ RTL・bit は変えない（proj017 rev1 をそのまま載せる。起動時に
 - EVENT（小さい・START / STOP を落としたくない）は空きがあれば割り込む
 - seq の欠けは、すべて DROP / SKIP の範囲で説明できる（`specrecv.py` の「説明のない欠け」= 0 が合格）
 
+### 試験用: Jupyter から（`s45client.py`）
+
+制御とデータの受けを 1 つの物で行う（裏のスレッドで受けて ACK を返し、窓ごとに直近 500 ダンプ・ADC ごとに直近 20 万区切りの TP を手元に持つ）。
+
+```python
+from s45client import S45
+s = S45("<board>")                       # 制御・データの両方の口に繋ぐ（制御の口を持つので、開いている間 specctl は ERR BUSY）
+s.set(A0_bw=256, A1_bw=8, all_shift=9)   # "A0.bw" は A0_bw と書ける
+d = s.acquire(25)                        # SEND ON → START n=25 → 8 窓とも届くまで待つ。前の残りは捨ててから
+d.spec("A0"), d.freq("A0"), d.meta("A0"), d.tp("A"), d.events
+s.plot(["A0", "A1"]); s.check(); s.close()
+```
+
+ボードの上の Jupyter で使うと、受けの処理がボードの CPU を使う。P-1（読み出しの余裕）の試験では使わない。
+
 ## 予言と判定
 
 | | 何を | 予言・合否 |

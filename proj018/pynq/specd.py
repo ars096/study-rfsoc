@@ -81,11 +81,16 @@ class Server:
         import s45acq
         self.acq = ctx.Process(target=s45acq.main, args=(child, self.ring, a), daemon=True, name="s45acq")
         self.acq.start()
-        if not self.pipe.poll(a.boot_timeout):
-            raise SystemExit("取得のプロセスが起動の結果を返さない")
-        r = self.pipe.recv()
-        if not r.get("ok"):
-            raise SystemExit(r.get("msg"))
+        try:
+            if not self.pipe.poll(a.boot_timeout):
+                raise SystemExit("取得のプロセスが起動の結果を返さない")
+            r = self.pipe.recv()
+            if not r.get("ok"):
+                raise SystemExit(r.get("msg"))
+        except BaseException:
+            self.acq.join(5)
+            self.ring.close()                      # 起動に失敗しても共有メモリを残さない
+            raise
         self.ids = r
         self.plock = threading.Lock()
         self.send_on = False
@@ -392,7 +397,7 @@ def main():
     p.add_argument("--data-port", type=int, default=51001)
     p.add_argument("--buf-mb", type=int, default=256, help="溜まりの大きさ [MiB]（256 で ≒ 38 秒ぶん）")
     p.add_argument("--send-timeout", type=float, default=10.0, help="データの口の送信がこの秒数進まなければ切る")
-    p.add_argument("--bitfile", default="proj017.bit")
+    p.add_argument("--bitfile", default="proj017.bit", help="proj017 の .bit（同じ名前の .hwh が同じ場所に要る）")
     p.add_argument("--clkin", default="stock", choices=("stock", "0", "1", "2"))
     p.add_argument("--ref", type=float, default=10.0)
     p.add_argument("--settle", type=float, default=5.0)
