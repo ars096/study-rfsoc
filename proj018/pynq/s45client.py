@@ -12,6 +12,7 @@
     d.tp("A")                               # ADC_A の TP（t_beat・utc_ns・sum・nfr・flags の構造化配列）
     s.plot("A0")                            # 平均のスペクトル（dB）。s.plot(["A0", "A1"], db=False)
     s.check()                               # 受けた記録の照合（CRC・番号の欠け・DUMP_K・DUMP_T・TP の連続）
+    s.live()                                # スペアナのように 8 窓を描き続ける（Jupyter の ■ で止める。取得は続く → s.stop()）
     s.close()
 
 - 受けた記録は窓ごとに直近 keep 個（既定 500 ダンプ ≒ 20 秒、8 窓で ≒ 130 MB）、TP は ADC ごとに直近 keep_tp 区切りを手元に持つ。
@@ -247,6 +248,96 @@ class S45:
         """受けた記録の照合（specrecv と同じ）。unexplained・crc_bad・kgap・tdev・tp_gap が 0 なら良い"""
         with self._lock:
             return self.chk.summary()
+
+    def latest(self, key, n=1):
+        """窓 key の直近 n ダンプの平均（1 フレームあたり）と、その IF・最後のメタ。重い写し（data()）を作らない。無ければ None"""
+        with self._lock:
+            recs = list(self._w[key])[-n:]
+        if not recs:
+            return None
+        d = recs[-1][0]
+        y = np.mean([x for _, x in recs], axis=0) / d["nacc"]
+        w = 512.0 / (1 << d["ns"])
+        b = P.IF_ORDER
+        f = d["if_mhz"] - np.where(b < P.NCH // 2, b, b - P.NCH) * (w / P.NCH)
+        return f, y, d, len(recs)
+
+    def live(self, keys=None, avg=5, interval=0.3, duration=None, db=True, ylim=None, hold=False, cols=2, height=2.2):
+        """スペアナのように表示し続ける（Jupyter）。止めるのは Jupyter の ■（カーネルの割り込み）か duration [s]。
+        取得は止めずに続ける（START n=0、すでに RUN ならそのまま）。止めた後に取得も止めたければ s.stop()。
+          keys: 窓の並び（既定 8 窓、ADC ごとに 1 行・窓 0・窓 1 の 2 列）
+          avg: 何ダンプの平均を描くか（40.96 ms × avg）、hold=True で最大値を残す、ylim=(下, 上) [dB] で縦軸を固定
+        1 回の描画はボードの上で数百 ms（8 窓 × 4096 点）。取得は CPU 3・SCHED_FIFO なので、描画が取得を落とさない見込み"""
+        import matplotlib.pyplot as plt
+        from IPython.display import display
+        keys = keys or KEYS
+        st = self.status()
+        if st["state"] not in ("RUN", "ARMED"):
+            self.clear(); self.clear_local()
+            self.send(True)
+            if not st.get("time_ok"):
+                _warn("時刻を答えられない（1PPS が無い）。時刻なしで取る")
+            self.start(n=0, force=not st.get("time_ok"))
+        else:
+            self.send(True)
+        rows = -(-len(keys) // cols)
+        fig, axs = plt.subplots(rows, cols, figsize=(5.2 * cols, height * rows), squeeze=False)
+        axs = axs.ravel()
+        for ax in axs[len(keys):]:
+            ax.axis("off")
+        lines, holds, maxs = {}, {}, {}
+        title = fig.suptitle("")
+        handle = display(fig, display_id=True)
+        plt.close(fig)                                   # inline の自動表示を止める（handle.update で描き直す）
+        t0 = time.time()
+        n = 0
+        try:
+            while duration is None or time.time() - t0 < duration:
+                tl = time.time()
+                last_k = None
+                for ax, k in zip(axs, keys):
+                    r = self.latest(k, avg)
+                    if r is None:
+                        continue
+                    f, y, d, m = r
+                    yy = 10 * np.log10(np.maximum(y, 1e-30)) if db else y
+                    if k not in lines:
+                        lines[k], = ax.plot(f, yy, lw=0.6)
+                        if hold:
+                            holds[k], = ax.plot(f, yy, lw=0.5, alpha=0.5)
+                        ax.set_xlim(f[0], f[-1])
+                        ax.grid(alpha=0.3)
+                        ax.tick_params(labelsize=7)
+                    else:
+                        lines[k].set_data(f, yy)
+                        if (f[0], f[-1]) != tuple(ax.get_xlim()):
+                            ax.set_xlim(f[0], f[-1])
+                    if hold:
+                        maxs[k] = yy if k not in maxs or len(maxs[k]) != len(yy) else np.maximum(maxs[k], yy)
+                        holds[k].set_data(f, maxs[k])
+                    if ylim is not None:
+                        ax.set_ylim(*ylim)
+                    else:
+                        lo, hi = np.percentile(yy, 1), yy.max()
+                        pad = 0.05 * (hi - lo + 1e-9)
+                        ax.set_ylim(lo - pad, hi + pad)
+                    flag = " health %#x" % d["health"] if d["health"] & 0xFFFF else ""
+                    flag += " SAT %d" % d["sat"] if d["sat"] else ""
+                    ax.set_title(f"{k}  {512 >> d['ns']} MHz @ {d['if_mhz']:.3f}  S{d['shift']}  k {d['k']}{flag}", fontsize=8,
+                                 color="red" if flag else "black")
+                    last_k = d["k"]
+                title.set_text(f"mean of {avg} dumps ({avg * 40.96:.0f} ms){' [dB]' if db else ''}  —  frame {n}, k {last_k}  "
+                               f"(stop: Jupyter interrupt)")
+                fig.tight_layout(rect=(0, 0, 1, 0.97))
+                handle.update(fig)
+                n += 1
+                if self._err:
+                    raise RuntimeError(f"受けのスレッドが止まった: {self._err}")
+                time.sleep(max(0.0, interval - (time.time() - tl)))
+        except KeyboardInterrupt:
+            pass
+        print(f"表示を止めた（{n} 枚、{time.time() - t0:.1f} s）。取得は続いている: 止めるなら s.stop()")
+        return fig
 
     def plot(self, keys="A0", db=True, avg=True, ax=None):
         import matplotlib.pyplot as plt

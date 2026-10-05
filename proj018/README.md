@@ -96,6 +96,8 @@ s.set(A0_bw=256, A1_bw=8, all_shift=9)   # "A0.bw" は A0_bw と書ける
 d = s.acquire(25)                        # SEND ON → START n=25 → 8 窓とも届くまで待つ。前の残りは捨ててから
 d.spec("A0"), d.freq("A0"), d.meta("A0"), d.tp("A"), d.events
 s.plot(["A0", "A1"]); s.check(); s.close()
+s.live()                                 # スペアナのように 8 窓を描き続ける（avg=5 ダンプの平均、hold=True で最大値、ylim=(下, 上)）
+s.stop()                                 # live は Jupyter の ■ で止まるが、取得は続いているので
 ```
 
 ボードの上の Jupyter で使うと、受けの処理がボードの CPU を使う。P-1（読み出しの余裕）の試験では使わない。
