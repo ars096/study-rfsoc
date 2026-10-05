@@ -171,10 +171,22 @@ def c2(s, n=5):
 
 
 # ---------------------------------------------------------------- C-3
-def c3(s, f_sg, adc="A", n=10, leak_max_db=10.0, sg=None):
-    """SG の CW を ADC adc の 1 本だけに入れて呼ぶ。8 窓とも f_sg を含む位置に置き、山がその ADC の窓にだけ出る"""
+def _at(d, key, f0):
+    """窓 key の f0 の前後 1 ch（3 ch）の電力の和と、その窓の中央値（1 フレームあたり）"""
+    y = _mean_per_frame(d, key)
+    f = d.freq(key)
+    i = int(np.argmin(np.abs(f - f0)))
+    return float(y[max(0, i - 1):i + 2].sum()), float(np.median(y)), y, f
+
+
+def c3(s, f_sg, adc="A", n=10, leak_max_db=-60.0, sg=None):
+    """SG の CW を ADC adc の 1 本だけに入れて呼ぶ（ほかの 3 本は何も繋がないか 50 Ω）。8 窓とも f_sg を含む位置に置き、
+    **f_sg の ch での**漏れ（入れていない ADC の窓 / 入れた ADC の同じ幅の窓）が ≦ leak_max_db（proj015 W-10 と同じ −60 dB）。
+    判定は 8 MHz の窓（ch あたりの雑音が 256 MHz より 15 dB 低く、−60 dB まで見える）。256 MHz の窓は参考。
+    窓全体の一番強い山は別の線（k·fs/8 = 3072 MHz など）のことがあるので、位置と強さを参考に出すだけ。
+    8 窓のデータが bit 単位で同じでないこと（読み出しの取り違え）も確かめる"""
     a = adc.upper()
-    print(f"C-3 ADC と窓の対応: SG {f_sg} MHz を ADC_{a} だけに。8 窓とも f_sg を含む位置に")
+    print(f"C-3 ADC と窓の対応: SG {f_sg} MHz を ADC_{a} だけに。8 窓とも f_sg を含む位置に（窓 0 = 256 MHz・窓 1 = 8 MHz）")
     _sg_to(sg, f_sg)
     kw = {}
     for k in KEYS:
@@ -182,12 +194,37 @@ def c3(s, f_sg, adc="A", n=10, leak_max_db=10.0, sg=None):
     s.set(**kw)
     d = s.acquire(n)
     ok = True
+    for w in "01":
+        raws = {k: d.spec(k, raw=True) for k in KEYS if k.endswith(w)}
+        same = [(x, y) for i, x in enumerate(raws) for y in list(raws)[i + 1:] if np.array_equal(raws[x], raws[y])]
+        ok = _say(not same, f"窓 {w} の 4 ADC のデータが互いに違う（同じ組: {same or 'なし'}）") and ok
+    ref = {w: _at(d, a + w, f_sg)[0] for w in "01"}
     for k in KEYS:
-        _, _, snr, _ = _peak(d, k)
+        w = k[1]
+        p, med, y, f = _at(d, k, f_sg)
+        snr = 10 * np.log10(p / (3 * med))
+        imax = int(np.argmax(y))
+        top = f"一番強い山 {f[imax]:.3f} MHz（{10 * np.log10(y[imax] / med):.1f} dB / 中央値）"
         if k[0] == a:
-            ok = _say(snr >= PEAK_MIN_DB, f"{k}: 山 / 中央値 {snr:.1f} dB（入れた ADC。≧ {PEAK_MIN_DB}）") and ok
+            ok = _say(snr >= PEAK_MIN_DB, f"{k}: f_sg の ch {snr:.1f} dB / 中央値（入れた ADC。≧ {PEAK_MIN_DB}）・{top}") and ok
+            continue
+        leak = 10 * np.log10(p / ref[w])
+        lim = 10 * np.log10(3 * med / ref[w])               # 雑音だけのときの値（検出限界）
+        seen = snr >= 10.0
+        judge = w == "1"
+        if seen:
+            good = leak <= leak_max_db
+            msg = f"漏れ {leak:.1f} dB（f_sg の ch に見えている。≦ {leak_max_db}）"
         else:
-            ok = _say(snr <= leak_max_db, f"{k}: 山 / 中央値 {snr:.1f} dB（入れていない ADC。≦ {leak_max_db}、雑音の山だけのはず）") and ok
+            good = True
+            msg = f"f_sg の ch に何も見えない（{snr:+.1f} dB / 雑音）→ 漏れ ≦ 検出限界 {lim:.1f} dB"
+            if judge and lim > leak_max_db:
+                good = False                                 # 見えないが、要求の深さまで見えていない（入れた CW が弱い・n が少ない）
+                msg += f"（要求 {leak_max_db} dB まで見えていないので判定できない。SG を上げるか n を増やす）"
+        if judge:
+            ok = _say(good, f"{k}: {msg}・{top}") and ok
+        else:
+            print(f"  参考 {k}: {msg}・{top}（256 MHz の窓は雑音の床が高く、判定は 8 MHz の窓で）")
     print(f"C-3: {'通過' if ok else '失敗'}")
     return ok
 
