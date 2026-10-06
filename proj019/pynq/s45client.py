@@ -83,6 +83,23 @@ class Data:
         nu = np.where(b < P.NCH // 2, b, b - P.NCH) * (w / P.NCH)
         return d["if_mhz"] - nu
 
+    def cal(self):
+        """直近の START の EVENT に載っていた TP の較正（s45cal の形）。無ければ None"""
+        for e in reversed(self.events):
+            if e.get("ev") == "START":
+                return e.get("tp_cal")
+        return None
+
+    def tp_dbm(self, adc):
+        """ADC の TP を dBm（ADC の入口）で。係数は START の EVENT の tp_cal（無ければ NaN）。生の値は tp()"""
+        import s45cal
+        a = "ABCD"[_adc_index(adc)]
+        return s45cal.dbm(s45cal.sigma2(self.tp(adc)), self.cal(), a)
+
+    def tp_dbfs(self, adc):
+        import s45cal
+        return s45cal.dbfs(s45cal.sigma2(self.tp(adc)))
+
     def tp(self, adc):
         """ADC の TP（区切りごと: t_beat・utc_ns・sum・nfr・flags）。1 サンプルあたりの電力は sum / (nfr·8192)（14 bit の x の二乗 = σ_x²、LSB²）"""
         parts = self._t.get(_adc_index(adc), [])
@@ -136,6 +153,10 @@ class S45:
 
     def id(self):
         return self._kv("ID")
+
+    def cal(self):
+        """サーバーの TP の較正（GET CAL）"""
+        return self._kv("GET CAL")
 
     def status(self):
         return self._kv("STATUS")

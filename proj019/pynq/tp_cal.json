@@ -1,0 +1,52 @@
+{
+ "version": 1,
+ "bit_id_win": "00170100",
+ "unit": "dBm at ADC input (SMA)",
+ "adc": {
+  "A": {
+   "k_db": -69.357,
+   "provisional": true,
+   "valid_dbfs": [
+    -47.0,
+    -7.0
+   ],
+   "date": "2026-10-06",
+   "source": "lin4.lin.jsonl: 0 dBFS = +5.9 dBm（3 GHz の正弦波、proj010）の見積もり",
+   "lin_dbfs_minus_pm_db": 4.67
+  },
+  "B": {
+   "k_db": -69.357,
+   "provisional": true,
+   "valid_dbfs": [
+    -47.0,
+    -7.0
+   ],
+   "date": "2026-10-06",
+   "source": "lin4.lin.jsonl: 0 dBFS = +5.9 dBm（3 GHz の正弦波、proj010）の見積もり",
+   "lin_dbfs_minus_pm_db": 4.842
+  },
+  "C": {
+   "k_db": -69.357,
+   "provisional": true,
+   "valid_dbfs": [
+    -47.0,
+    -7.0
+   ],
+   "date": "2026-10-06",
+   "source": "lin4.lin.jsonl: 0 dBFS = +5.9 dBm（3 GHz の正弦波、proj010）の見積もり",
+   "lin_dbfs_minus_pm_db": 4.845
+  },
+  "D": {
+   "k_db": -69.357,
+   "provisional": true,
+   "valid_dbfs": [
+    -47.0,
+    -7.0
+   ],
+   "date": "2026-10-06",
+   "source": "lin4.lin.jsonl: 0 dBFS = +5.9 dBm（3 GHz の正弦波、proj010）の見積もり",
+   "lin_dbfs_minus_pm_db": 4.876
+  }
+ },
+ "note": "暫定（2026-10-06）: lin4（PM の前に 20 dB、8 窓で全帯域）。K は 0 dBFS = +5.9 dBm（3 GHz の正弦波、proj010）からの見積もりで全 ADC 同じ。PM を ADC の口で測って adc_port_cal で置き換える"
+}

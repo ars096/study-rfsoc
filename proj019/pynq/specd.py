@@ -32,7 +32,7 @@ import time
 import s45proto as P
 import s45ring as R
 
-HELP = ("ID | STATUS | GET | SET key=val ...（tint cfg A0.if A0.ns A0.bw A0.shift all.shift …） | ANCHOR | "
+HELP = ("ID | STATUS | GET | GET CAL | SET key=val ...（tint cfg A0.if A0.ns A0.bw A0.shift all.shift …） | ANCHOR | "
         "START [at=<UTC ISO8601 か unix 秒>] [n=<ダンプ数>] [force=1] | STOP | SEND ON [from=oldest|now] | SEND OFF | CLEAR | BYE | "
         "SHUTDOWN confirm=1")
 
@@ -139,7 +139,7 @@ class Server:
         if cmd == "STATUS":
             r = self.acq_cmd(dict(op="status"))
             def f(r):
-                d = {k: r[k] for k in ("state", "time_ok", "start_at", "dumps", "miss", "kgap", "tp", "tp_lost", "tp_bad", "tp_ovr",
+                d = {k: r[k] for k in ("state", "time_ok", "start_at", "dumps", "miss", "kgap", "tp", "tp_lost", "tp_bad", "tp_ovr", "tp_dbfs", "tp_dbm",
                                        "sat", "loop_max_ms", "loop_p99_ms", "seq", "drop", "forced")}
                 d["health"] = f"{r['health']:#06x}"
                 d["flags"] = f"{r['flags']:#05x}"
@@ -157,6 +157,17 @@ class Server:
                     d["err"] = r["err"]
                 if r.get("time_err"):
                     d["time_err"] = r["time_err"]
+                return kv_line(d)
+            return self._rep(r, f)
+        if cmd == "GET" and args and args[0].upper() == "CAL":
+            r = self.acq_cmd(dict(op="cal"))
+            def f(r):
+                c = r.get("cal")
+                if not c:
+                    return kv_line(dict(cal="none", msg=r.get("msg")))
+                d = dict(file=c.get("file"), bit=c.get("bit_id_win"), unit=c.get("unit"))
+                for a, v in sorted(c["adc"].items()):
+                    d[f"{a}.k"] = round(v["k_db"], 3); d[f"{a}.prov"] = bool(v.get("provisional")); d[f"{a}.date"] = v.get("date")
                 return kv_line(d)
             return self._rep(r, f)
         if cmd == "GET":
@@ -443,6 +454,7 @@ def main():
     p.add_argument("--loop-sleep", type=float, default=0.003, help="読み出しの 1 周の後に寝る秒数（proj017 F-4 と同じ 3 ms）")
     p.add_argument("--boot-timeout", type=float, default=120.0)
     p.add_argument("--fake", action="store_true", help="PL を使わない（偽の記録。通信の試験）")
+    p.add_argument("--tp-cal", default="tp_cal.json", help="TP の dBm の較正ファイル（無ければ使わない。s45cal.py）")
     p.add_argument("--fake-notime", action="store_true", help="偽物で 1PPS が無い（時刻を答えられない）状態を作る")
     p.add_argument("--fake-stall", type=int, default=0, help="偽物の陽性対照: 窓 A0 の k がこの倍数のとき読み出しを 50 ms 止める")
     p.add_argument("--posctl-corrupt", type=int, default=0, help="陽性対照: seq がこの倍数の記録の中身を CRC の後に 1 bit 反転")
@@ -460,6 +472,17 @@ def main():
     signal.signal(signal.SIGINT, _on_sig)
     signal.signal(signal.SIGTERM, _on_sig)
     log(f"specd の PID {os.getpid()}（止める: Ctrl-C・kill {os.getpid()}・制御の口の SHUTDOWN confirm=1）")
+    cal_path, a.tp_cal = a.tp_cal, None
+    if cal_path and os.path.exists(cal_path):
+        import s45cal
+        try:
+            a.tp_cal = s45cal.load(cal_path)
+            log(f"TP の較正ファイル: {a.tp_cal['_file']}（bit の ID は取得の起動の後に照らす）")
+        except (ValueError, OSError) as e:
+            log(f"TP の較正ファイルを読めない（使わない）: {e}")
+            a.tp_cal = None
+    else:
+        log(f"TP の較正ファイル {cal_path} が無い（STATUS の tp_dbm は出さない）")
     Server(a).run()
     sys.stdout.flush()
     os._exit(0)                                   # 受け・送りのスレッド（daemon）や multiprocessing の後始末を待たない

@@ -17,6 +17,7 @@ import traceback
 
 import numpy as np
 
+import s45cal
 import s45proto as P
 
 BEATS_PER_SEC = 256_000_000
@@ -469,6 +470,9 @@ class Acq:
         self.forced = False
         self.posctl = dict(corrupt=opts.posctl_corrupt, gap=opts.posctl_gap)
         self.hist = np.zeros(1001, np.int64)      # 1 周の時間（0.1 ms 刻み、100 ms で頭打ち）
+        self.cal = getattr(opts, "tp_cal", None)    # TP の dBm の較正（s45cal、specd が起動時に読む）。bit の ID は open の後で照らす
+        self.cal_msg = "較正ファイルが無い" if self.cal is None else "未確認"
+        self.tp_last = [None] * 4                  # ADC ごとの直近の TP（σ_x²、最後に書き出した記録の平均）
         self._reset_counters()
 
     def log(self, *a):
@@ -540,6 +544,8 @@ class Acq:
                 return dict(ok=True, ids=self.be.ids, version=VERSION, adcs=4, nw=NW, fake=bool(self.o.fake))
             if op == "get":
                 return dict(ok=True, settings=self.st)
+            if op == "cal":
+                return dict(ok=True, cal=self._cal_pub(), msg=self.cal_msg)
             if op == "set":
                 if self.state not in (self.IDLE, self.ERROR):
                     return dict(ok=False, code="STATE", msg=f"{self.state} の間は SET できない（STOP の後に）")
@@ -634,7 +640,7 @@ class Acq:
         self.ndump_target = int(cmd.get("n") or 0)
         utc = self.be.clock.utc_ns(sa)
         self.event(dict(ev="START", start_at=sa, utc_ns=utc, n=self.ndump_target, forced=self.forced, version=VERSION,
-                        ids=self.be.ids, tint=self.st["tint"], cfg=self.st["cfg"],
+                        ids=self.be.ids, tint=self.st["tint"], cfg=self.st["cfg"], tp_cal=self._cal_pub(),
                         wins=[dict(key=win_key(j), adc=j // NW, win=j % NW, **cf) for j, cf in enumerate(self.be.cfgs)]))
         self.log(f"START: START_AT {sa}（格子 {sa // G_BEATS}·G、UTC {utc / 1e9:.6f}）n = {self.ndump_target}")
         return dict(ok=True, start_at=sa, utc_ns=utc)
@@ -668,9 +674,18 @@ class Acq:
                     tp=[t.total for t in tps], tp_lost=sum(t.lost + t.overflow for t in tps), tp_bad=sum(t.bad_seq + t.bad_flag + t.bad_nfr for t in tps),
                     tp_ovr=sum(t.n_ovr for t in tps), health=self.h_or, flags=self.fl_or, sat=self.sat,
                     loop_max_ms=round(self.loop_max * 1e3, 2), loop_p99_ms=p99, loops=self.n_loop,
-                    seq=self.seq, drop=self.drop["n"], ring_used=w - r, ring_cap=self.ring.cap, err=self.err, forced=self.forced)
+                    seq=self.seq, drop=self.drop["n"], ring_used=w - r, ring_cap=self.ring.cap, err=self.err, forced=self.forced,
+                    tp_dbfs=[None if v is None else round(float(s45cal.dbfs(v)), 2) for v in self.tp_last],
+                    tp_dbm=[None if v is None or self.cal is None else round(float(s45cal.dbm(v, self.cal, "ABCD"[i])), 2)
+                            for i, v in enumerate(self.tp_last)])
 
     # ---- 読み出しの 1 周
+    def _cal_pub(self):
+        """START の EVENT・GET CAL に出す較正（使えないときは None）"""
+        if self.cal is None:
+            return None
+        return {k: v for k, v in self.cal.items() if not k.startswith("_")} | {"file": self.cal.get("_file")}
+
     def _spec_record(self, j, m, spec):
         cf = self.be.cfgs[j]
         h = int(m["h"]) | (0 if self.be.clock.ok else P.H_NOTIME) | (P.H_FORCED if self.forced else 0)
@@ -687,6 +702,7 @@ class Acq:
         if n == 0 or (n < TP_FLUSH and not final):
             return
         e = t.buf[:n].copy()
+        self.tp_last[i] = float(np.mean(e["sum"].astype(np.float64) / (e["nfr"].astype(np.float64) * 8192.0)))
         e["t_beat"] = self.be.tp_time(i, e["t_beat"].astype(np.int64))      # フレームの番号 → ビート
         if self.be.clock.ok:
             e["utc_ns"] = self.be.clock.utc_ns_arr(e["t_beat"], i)
@@ -733,6 +749,14 @@ class Acq:
         except BaseException as e:
             self.conn.send(dict(ok=False, msg=f"起動できない: {type(e).__name__}: {e}"))
             raise
+        if self.cal is not None:
+            ok, self.cal_msg = s45cal.check(self.cal, self.be.ids)
+            if not ok:
+                self.log(f"TP の較正を使わない: {self.cal_msg}（{self.cal.get('_file')}）")
+                self.cal = None
+            else:
+                self.log(f"TP の較正: {self.cal.get('_file')}（" + "・".join(
+                    f"{a} K {c['k_db']:+.2f}{' 暫定' if c.get('provisional') else ''}" for a, c in sorted(self.cal["adc"].items())) + "）")
         gc.collect(); gc.freeze(); gc.disable()
         self.conn.send(dict(ok=True, ids=self.be.ids, version=VERSION))
         self.log(f"準備完了（{'偽物' if self.o.fake else '実機'}、ID {self.be.ids}）")

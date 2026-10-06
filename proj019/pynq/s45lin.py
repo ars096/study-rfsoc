@@ -319,6 +319,66 @@ def _l2b(path, res, on, off, snr_hi):
               f"ずれ 最大 {np.abs(rr).max():.4f} dB（{ok.sum()} 点）")
 
 
+def make_cal(path, out="tp_cal.json", fs_dbm=5.9, note=""):
+    """リニアリティの記録から、暫定の tp_cal.json を作る（ADC の入口の dBm、全 ADC で同じ K）。
+    K = fs_dbm − 10·log10(8192²/2): 0 dBFS（14 bit の満杯の正弦波）= fs_dbm [dBm]（3 GHz、proj010 の実測 +5.9）を使う見積もり。
+    PM を ADC の口に付け替えて adc_port_cal() で測ったら、その ADC を置き換える（provisional false）"""
+    import s45cal
+    head, _ = load(path)
+    res = analyze(path, plot=False)
+    k = fs_dbm - s45cal.DBFS0
+    adc = {}
+    for a in ADCS:
+        r = res.get(f"TP {a}", {})
+        c = r.get("dbfs_minus_pm_db")
+        adc[a] = dict(k_db=round(k, 3), provisional=True, valid_dbfs=[-47.0, -7.0], date=time.strftime("%Y-%m-%d"),
+                      source=f"{os.path.basename(path)}: 0 dBFS = {fs_dbm:+.1f} dBm（3 GHz の正弦波、proj010）の見積もり",
+                      lin_dbfs_minus_pm_db=None if c is None else round(c, 3))
+    cal = dict(version=1, bit_id_win=str(head.get("server", {}).get("win_id", "")).zfill(8), unit="dBm at ADC input (SMA)",
+               adc=adc, note=note or f"暫定: {os.path.basename(path)} から。PM を ADC の口で測って置き換える")
+    if os.path.exists(out):
+        raise SystemExit(f"{out} がもうある（上書きしない。消すか別の名前に）")
+    json.dump(cal, open(out, "w"), ensure_ascii=False, indent=1)
+    print(f"{out} を書いた: K = {k:+.3f} dB（全 ADC、暫定）。ボードの specd の起動の場所に置いて specd を起動し直す")
+    return cal
+
+
+def adc_port_cal(s, pm, adc, cal_path="tp_cal.json", n=50, pad_db=0.0):
+    """ADC 1 本の K を PM で直に決める（対話）。ノイズの入力を一定にしたまま:
+      1) 監視: PM を分配器 A の口（今の場所）に → PM と、その ADC の TP を同時に読む
+      2) PM を外して、その ADC につながるケーブルの先に付ける（ADC は外れる）→ PM を読む
+      3) PM を分配器 A の口に戻し、ケーブルを ADC に戻す → PM と TP をもう一度（入力の揺らぎの確かめ）
+    K = P(ADC の口) − 10·log10(σ_x²)。σ_x² は 1) と 3) の平均、P(ADC の口) は 1)・3) の監視の変化で補う。pad_db: 2) で PM の前に入れた減衰
+    （PM の較正係数の周波数は PowerMeter(freq_mhz) のまま）"""
+    import s45cal
+    a = adc.upper()
+
+    def tp_now():
+        d = s.acquire(n)
+        return float(np.mean(s45cal.sigma2(d.tp(a))))
+    input(f"1) PM を分配器 A の口（いつもの場所）に。ADC_{a} はケーブルにつないだまま。Enter: ")
+    m1 = pm.read(); s1 = tp_now()
+    input(f"2) PM を外し、ADC_{a} につながるケーブルの先（ADC を外して）に PM をつなぐ{'（PM の前に ' + str(pad_db) + ' dB）' if pad_db else ''}。Enter: ")
+    p_port = pm.read() + pad_db
+    input(f"3) ケーブルを ADC_{a} に戻し、PM を分配器 A の口に戻す。Enter: ")
+    m3 = pm.read(); s3 = tp_now()
+    drift = m3 - m1
+    s2_ = (s1 + s3) / 2
+    k = p_port - 10 * np.log10(s2_)
+    print(f"ADC_{a}: 口の電力 {p_port:+.3f} dBm・σ_x² {s2_:.4g}（{float(s45cal.dbfs(s2_)):+.2f} dBFS）→ K = {k:+.3f} dB。"
+          f"監視の変化 {drift:+.3f} dB・TP の変化 {10 * np.log10(s3 / s1):+.3f} dB（0.02 dB を越えたら測り直す）")
+    if os.path.exists(cal_path):
+        cal = json.load(open(cal_path))
+        old = cal["adc"].get(a, {}).get("k_db")
+        cal["adc"][a] = dict(k_db=round(float(k), 3), provisional=False, valid_dbfs=cal["adc"].get(a, {}).get("valid_dbfs", [-47.0, -7.0]),
+                             date=time.strftime("%Y-%m-%d"), source=f"adc_port_cal: PM を ADC の口で（{p_port:+.2f} dBm、監視の変化 {drift:+.3f} dB）",
+                             previous_k_db=old)
+        os.replace(cal_path, cal_path + ".bak")
+        json.dump(cal, open(cal_path, "w"), ensure_ascii=False, indent=1)
+        print(f"{cal_path} の ADC_{a} を置き換えた（前の K {old}、前のファイルは {cal_path}.bak）。specd を起動し直すと効く")
+    return float(k)
+
+
 def _plot(png, pm, att, res, names, pm_min):
     import matplotlib
     matplotlib.use(matplotlib.get_backend())
