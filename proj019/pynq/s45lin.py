@@ -66,19 +66,31 @@ def _tp_abs(d, adc):
     return v, int(np.sum((e["flags"] & 16) != 0))
 
 
-def measure(s, pm, att, steps=None, n=25, settle=1.0, out="lin", note=""):
-    """段ごとに: アッテネータ → settle 秒 → パワーメーター → 分光計 n ダンプ → パワーメーター。1 段ごとに out.lin.jsonl に 1 行足す"""
-    steps = steps or default_steps()
+def measure(s, pm, att, steps=None, n=25, settle=1.0, out="lin", note="", resume=False):
+    """段ごとに: アッテネータ → settle 秒 → パワーメーター → 分光計 n ダンプ → パワーメーター。1 段ごとに out.lin.jsonl に 1 行足す。
+    resume=True: 途中で止まった記録の続きから（頭の段の並びを使い、済んだ段は飛ばす）"""
     path = out + ".lin.jsonl"
+    done = 0
     if os.path.exists(path):
-        raise SystemExit(f"{path} がもうある（別の --out に）")
-    g = s.get()
-    head = dict(kind="head", t=time.time(), settings=g, server=s.id(), pm=getattr(pm, "idn", None), att=getattr(att, "idn", None),
-                pm_freq_mhz=getattr(pm, "freq_mhz", None), pm_avg=getattr(pm, "avg", None), n=n, settle=settle, note=note, steps=steps)
-    with open(path, "w") as f:
-        f.write(json.dumps(head, ensure_ascii=False) + "\n")
+        if not resume:
+            raise SystemExit(f"{path} がもうある（別の out に。途中で止まった続きなら resume=True）")
+        head, rows = load(path)
+        steps = head["steps"]
+        done = len(rows)
+        print(f"続きから: {path} の {done} 段は済み（残り {len(steps) - done} 段）。設定は前と同じか確かめる")
+        if s.get() != head["settings"]:
+            raise SystemExit("サーバーの設定（GET）が前と違う。同じ設定に戻すか、別の out で取り直す")
+    else:
+        steps = steps or default_steps()
+        g = s.get()
+        head = dict(kind="head", t=time.time(), settings=g, server=s.id(), pm=getattr(pm, "idn", None), att=getattr(att, "idn", None),
+                    pm_freq_mhz=getattr(pm, "freq_mhz", None), pm_avg=getattr(pm, "avg", None), n=n, settle=settle, note=note, steps=steps)
+        with open(path, "w") as f:
+            f.write(json.dumps(head, ensure_ascii=False) + "\n")
     print(f"リニアリティ: {len(steps)} 段 × {n} ダンプ → {path}")
     for i, a in enumerate(steps):
+        if i < done:
+            continue
         ag = att.set(a)
         time.sleep(settle)
         p1 = pm.read()

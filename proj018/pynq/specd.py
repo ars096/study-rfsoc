@@ -108,6 +108,7 @@ class Server:
         self.quit_ev = threading.Event()        # 制御の口の SHUTDOWN
         self.inflight = collections.deque()     # 送ったが ACK の無い記録 (seq, 溜まりの終わりの位置)
         self.acked = 0
+        self.last_drop = None                    # 最後にデータの口を切った時刻・相手・理由
 
     # ---- 取得への命令
     def acq_cmd(self, d, timeout=30.0):
@@ -151,6 +152,7 @@ class Server:
                 d["inflight"] = len(self.inflight)
                 d["sent_mb"] = round(self.sent_bytes / 2**20, 1)
                 d["skip"] = self.skip
+                d["data_drop"] = self.last_drop or "-"
                 if r.get("err"):
                     d["err"] = r["err"]
                 if r.get("time_err"):
@@ -329,6 +331,7 @@ class Server:
         with self.dlock:
             if self.dsock is s:
                 log(f"データ: 切断 {self.dpeer}（{why}）。ACK の無い記録 {len(self.inflight)} 個は次の接続で送り直す")
+                self.last_drop = f"{time.strftime('%H:%M:%S')} {self.dpeer} {why}"   # STATUS の data_drop（受け側が理由を知るため）
                 self.dsock, self.dpeer = None, None
                 self.inflight.clear()
                 self.ring.rewind()

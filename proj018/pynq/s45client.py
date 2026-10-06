@@ -103,10 +103,8 @@ class S45:
         self._out = open(out, "ab") if out else None
         self._stop = threading.Event()
         self._err = None
-        self.ds = socket.create_connection((host, data_port), timeout=timeout)
-        self.ds.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 << 20)
-        self._th = threading.Thread(target=self._recv_loop, daemon=True, name="s45recv")
-        self._th.start()
+        self._data_addr, self._timeout = (host, data_port), timeout
+        self._connect_data()
         self.send_from = send_from
         # 繋いだ直後に確かめる: 制御の口が ERR BUSY でないこと・データの口が BUSY で切られていないこと
         try:
@@ -190,6 +188,7 @@ class S45:
         force: None（既定）= 時刻を答えられない（1PPS が無い・錨が無い）ときは**警告を出して時刻なしで取る**
         （サーバーの START force=1。記録の utc_ns は 0、健全性に [16] 時刻なし・[17] force と PL の [0] PPS 来ていない など）。
         True = 初めから force、False = 時刻が無ければ止める（サーバーの既定と同じ）"""
+        self.ensure_data()
         st = self.status()
         if st["state"] in ("ARMED", "RUN"):
             raise RuntimeError(f"サーバーが {st['state']}（先に stop()）")
@@ -271,6 +270,7 @@ class S45:
         import matplotlib.pyplot as plt
         from IPython.display import display
         keys = keys or KEYS
+        self.ensure_data()
         st = self.status()
         if st["state"] not in ("RUN", "ARMED"):
             self.clear(); self.clear_local()
@@ -360,8 +360,35 @@ class S45:
         return ax
 
     # ---------------------------------------------------------------- 受けのスレッド
-    def _recv_loop(self):
-        s = self.ds
+    def _connect_data(self):
+        self.ds = socket.create_connection(self._data_addr, timeout=self._timeout)
+        self.ds.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 << 20)
+        self._err = None
+        self._th = threading.Thread(target=self._recv_loop, args=(self.ds,), daemon=True, name="s45recv")
+        self._th.start()
+
+    def ensure_data(self):
+        """データの口が切れていたら（受けのスレッドが止まっていたら）、理由を出して繋ぎ直す。acquire・live が始めに呼ぶ。
+        ACK の無い記録はサーバーが送り直し、seq で重複を除くので、繋ぎ直しで記録は欠けない（溢れていれば DROP で言われる）"""
+        if self._th.is_alive() and not self._err:
+            return False
+        why = self._err or "受けのスレッドが止まっていた"
+        try:
+            srv = str(self.status().get("data_drop", "-")).replace("_", " ")
+        except Exception:
+            srv = "?"
+        _warn(f"データの口が切れていた（{why}。サーバーの記録: {srv}）。繋ぎ直す")
+        try:
+            self.ds.close()
+        except OSError:
+            pass
+        self._connect_data()
+        time.sleep(0.3)
+        if self._err:
+            raise RuntimeError(f"データの口に繋ぎ直せない: {self._err}")
+        return True
+
+    def _recv_loop(self, s):
         hb = bytearray(P.HDR.size)
         run = None
         t_ack = time.time()
@@ -445,7 +472,7 @@ def _read_exact(s, buf):
     while got < len(buf):
         k = s.recv_into(mv[got:])
         if k == 0:
-            raise ConnectionError("サーバーが切った")
+            raise ConnectionError("データの口が切れた（サーバーか、こちらの側で閉じた）")
         got += k
 
 
