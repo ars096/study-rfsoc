@@ -343,40 +343,55 @@ def make_cal(path, out="tp_cal.json", fs_dbm=5.9, note=""):
     return cal
 
 
-def adc_port_cal(s, pm, adc, cal_path="tp_cal.json", n=50, pad_db=0.0):
-    """ADC 1 本の K を PM で直に決める（対話）。ノイズの入力を一定にしたまま:
-      1) 監視: PM を分配器 A の口（今の場所）に → PM と、その ADC の TP を同時に読む
+def adc_port_cal(s, pm, adc, cal_path="tp_cal.json", n=50, pad_db=0.0, repeat=1):
+    """ADC 1 本の K を PM で直に決める（対話）。ノイズの入力を一定にしたまま、repeat 回くり返して平均する:
+      1) PM を分配器 A の口（いつもの場所）に → PM と、**4 ADC の TP** を同時に読む
       2) PM を外して、その ADC につながるケーブルの先に付ける（ADC は外れる）→ PM を読む
-      3) PM を分配器 A の口に戻し、ケーブルを ADC に戻す → PM と TP をもう一度（入力の揺らぎの確かめ）
-    K = P(ADC の口) − 10·log10(σ_x²)。σ_x² は 1) と 3) の平均、P(ADC の口) は 1)・3) の監視の変化で補う。pad_db: 2) で PM の前に入れた減衰
-    （PM の較正係数の周波数は PowerMeter(freq_mhz) のまま）"""
+      3) PM を分配器 A の口に戻し、ケーブルを ADC に戻す → PM と 4 ADC の TP をもう一度
+    K = P(ADC の口) − 10·log10(σ_x²(2) の時刻の見積もり)。
+    **入力の揺らぎは、触っていない 3 本の ADC の TP の変化で見る**（PM の監視の値は、PM を付け替えるので口のつなぎ直しの揺らぎも入る。
+    2026-10-06 の 1 回目: ADC_B で監視 +0.001 dB なのに TP −0.30 dB、ADC_D で監視 −0.21 dB）。
+    その ADC の TP の変化 − 他の 3 本の変化 = ADC の口のつなぎ直しの揺らぎ（SMA の再現性）。K の不確かさはその半分と見る。
+    pad_db: 2) で PM の前に入れた減衰"""
     import s45cal
     a = adc.upper()
+    others = [x for x in ADCS if x != a]
 
-    def tp_now():
+    def tp_all():
         d = s.acquire(n)
-        return float(np.mean(s45cal.sigma2(d.tp(a))))
-    input(f"1) PM を分配器 A の口（いつもの場所）に。ADC_{a} はケーブルにつないだまま。Enter: ")
-    m1 = pm.read(); s1 = tp_now()
-    input(f"2) PM を外し、ADC_{a} につながるケーブルの先（ADC を外して）に PM をつなぐ{'（PM の前に ' + str(pad_db) + ' dB）' if pad_db else ''}。Enter: ")
-    p_port = pm.read() + pad_db
-    input(f"3) ケーブルを ADC_{a} に戻し、PM を分配器 A の口に戻す。Enter: ")
-    m3 = pm.read(); s3 = tp_now()
-    drift = m3 - m1
-    s2_ = (s1 + s3) / 2
-    k = p_port - 10 * np.log10(s2_)
-    print(f"ADC_{a}: 口の電力 {p_port:+.3f} dBm・σ_x² {s2_:.4g}（{float(s45cal.dbfs(s2_)):+.2f} dBFS）→ K = {k:+.3f} dB。"
-          f"監視の変化 {drift:+.3f} dB・TP の変化 {10 * np.log10(s3 / s1):+.3f} dB（0.02 dB を越えたら測り直す）")
+        return {x: float(np.mean(s45cal.sigma2(d.tp(x)))) for x in ADCS}
+    ks, uncs = [], []
+    for rep_ in range(repeat):
+        tag = f"（{rep_ + 1}/{repeat}）" if repeat > 1 else ""
+        input(f"1){tag} PM を分配器 A の口（いつもの場所）に。ADC_{a} はケーブルにつないだまま。Enter: ")
+        m1 = pm.read(); t1 = tp_all()
+        input(f"2){tag} PM を外し、ADC_{a} につながるケーブルの先（ADC を外して）に PM をつなぐ"
+              f"{'（PM の前に ' + str(pad_db) + ' dB）' if pad_db else ''}。Enter: ")
+        p_port = pm.read() + pad_db
+        input(f"3){tag} ケーブルを ADC_{a} に戻し、PM を分配器 A の口に戻す。Enter: ")
+        m3 = pm.read(); t3 = tp_all()
+        d_in = float(np.median([10 * np.log10(t3[x] / t1[x]) for x in others]))      # 入力の揺らぎ（他の 3 本）
+        d_own = 10 * np.log10(t3[a] / t1[a])
+        recon = d_own - d_in                                                          # 口のつなぎ直し
+        s2_mid = np.sqrt(t1[a] * t3[a])                                              # 2) の時刻（真ん中）の見積もり
+        k = p_port - 10 * np.log10(s2_mid)
+        unc = abs(recon) / 2 + abs(d_in) / 2
+        ks.append(k); uncs.append(unc)
+        print(f"ADC_{a}{tag}: 口の電力 {p_port:+.3f} dBm・σ_x² {s2_mid:.4g}（{float(s45cal.dbfs(s2_mid)):+.2f} dBFS）→ K = {k:+.3f} dB。"
+              f"入力の揺らぎ（他の 3 本の TP）{d_in:+.3f} dB・ADC_{a} の口のつなぎ直し {recon:+.3f} dB・PM の監視 {m3 - m1:+.3f} dB → 不確かさ ±{unc:.3f} dB")
+    k = float(np.mean(ks)); unc = float(np.sqrt(np.mean(np.square(uncs))) / np.sqrt(len(ks)))
+    if repeat > 1:
+        print(f"ADC_{a}: K = {k:+.3f} dB（{repeat} 回の平均、ばらつき {np.std(ks):.3f} dB）・不確かさ ±{unc:.3f} dB")
     if os.path.exists(cal_path):
         cal = json.load(open(cal_path))
         old = cal["adc"].get(a, {}).get("k_db")
-        cal["adc"][a] = dict(k_db=round(float(k), 3), provisional=False, valid_dbfs=cal["adc"].get(a, {}).get("valid_dbfs", [-47.0, -7.0]),
-                             date=time.strftime("%Y-%m-%d"), source=f"adc_port_cal: PM を ADC の口で（{p_port:+.2f} dBm、監視の変化 {drift:+.3f} dB）",
-                             previous_k_db=old)
+        cal["adc"][a] = dict(k_db=round(k, 3), k_unc_db=round(unc, 3), provisional=False,
+                             valid_dbfs=cal["adc"].get(a, {}).get("valid_dbfs", [-47.0, -7.0]), date=time.strftime("%Y-%m-%d"),
+                             source=f"adc_port_cal: PM を ADC の口で、{repeat} 回（K {', '.join('%+.3f' % x for x in ks)}）", previous_k_db=old)
         os.replace(cal_path, cal_path + ".bak")
         json.dump(cal, open(cal_path, "w"), ensure_ascii=False, indent=1)
         print(f"{cal_path} の ADC_{a} を置き換えた（前の K {old}、前のファイルは {cal_path}.bak）。specd を起動し直すと効く")
-    return float(k)
+    return k
 
 
 def _plot(png, pm, att, res, names, pm_min):
