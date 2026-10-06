@@ -19,7 +19,7 @@
     python3 s45lin.py --analyze lin1.lin.jsonl
 
 量（どれも ADC 14 bit の LSB² = proj019 の単位）:
-  TP: Σx² / (フレーム数 · 8192) / 16 = 入力の分散 σ_x²（全帯域）
+  TP: Σx² / (フレーム数 · 8192) = 入力の分散 σ_x²（全帯域。tp_core は 14 bit の x = ADC の 16 bit >>> 2 の二乗を足す）
   窓: 中央 90 % の ch の abs の和 = その帯域が σ_x² に寄与する量。abs = (Σp/N_ACC − 2/3)·4^SHIFT·4^(4−G)/2³¹
 判定（README の予言）:
   L-1 TP・窓とも、雑音の床を引いた値がパワーメーターに比例（残差 ±0.05 dB、パワーメーターの読める範囲・飽和なし）
@@ -39,9 +39,11 @@ ADCS = "ABCD"
 
 
 def default_steps(lo=0, hi=60, step=2, off=100.0):
+    """床 → hi から lo へ → 床 → lo から hi へ（**同じ設定を往復で 2 回**）→ 床。
+    同じ設定の 2 回の差 = 時間の揺らぎ、2 回に共通の残差 = 設定ごとの（アッテネータの段の・周波数特性の）ずれ、と分けられる
+    （初版は往きが偶数・帰りが奇数で、この 2 つを分けられなかった。2026-10-06 実機）"""
     down = list(range(hi, lo - 1, -step))
-    up = list(range(lo + step // 2, hi, step)) if step > 1 else []
-    return [off] + [float(x) for x in down] + [off] + [float(x) for x in up] + [off]
+    return [off] + [float(x) for x in down] + [off] + [float(x) for x in reversed(down)] + [off]
 
 
 def _abs_band(d, key, frac=0.9):
@@ -62,7 +64,7 @@ def _tp_abs(d, adc):
     e = d.tp(adc)
     if not len(e):
         return None, 0
-    v = e["sum"].astype(np.float64) / (e["nfr"].astype(np.float64) * 8192.0) / 16.0
+    v = e["sum"].astype(np.float64) / (e["nfr"].astype(np.float64) * 8192.0)      # tp_core は 14 bit の x の二乗（/16 は誤り。2026-10-06 実機）
     return v, int(np.sum((e["flags"] & 16) != 0))
 
 
@@ -183,6 +185,24 @@ def analyze(path, pm_min=-45.0, snr_min=10.0, off_db=100.0, plot=True, tol_lin=0
               f"{res[nm]['rms_pm'] or float('nan'):10.4f} / {res[nm]['max_pm'] or float('nan'):8.4f} dB | "
               f"{res[nm]['rms_att'] or float('nan'):8.4f} / {res[nm]['max_att'] or float('nan'):7.4f} dB | {ok_pt.sum():2d} | "
               f"{'OK' if good else 'NG'}（±{tol_lin} dB）")
+    # 同じ設定を 2 回測った段があれば、残差を「時間の揺らぎ」（2 回の差）と「設定ごと」（2 回の平均）に分ける
+    uniq, cnt = np.unique(att, return_counts=True)
+    rep_ = uniq[cnt >= 2]
+    if len(rep_) >= 3:
+        print(f"同じ設定を 2 回以上測った段 {len(rep_)} 個: 残差（PM 基準）の 2 回の差の rms = 時間の揺らぎ・平均の rms = 設定ごとのずれ")
+        for nm in names:
+            if nm not in res:
+                continue
+            r = np.array(res[nm]["r_pm"])
+            dif, avg = [], []
+            for a_ in rep_:
+                ii = np.flatnonzero(att == a_)
+                v = r[ii]
+                if np.all(np.isfinite(v)) and pm[ii].min() >= pm_min:
+                    dif.append(v[-1] - v[0]); avg.append(v.mean())
+            if dif:
+                res[nm]["rep_diff_rms"] = float(np.sqrt(np.mean(np.square(dif)))); res[nm]["rep_avg_rms"] = float(np.sqrt(np.mean(np.square(avg))))
+                print(f"  {nm:>6}: 2 回の差 rms {res[nm]['rep_diff_rms']:.4f} dB・2 回の平均 rms {res[nm]['rep_avg_rms']:.4f} dB（{len(dif)} 段）")
     # L-2 窓 / TP
     print(f"L-2 窓 / TP（同じ ADC）の一定さ（パワーメーターを使わない。床を引いた値どうし、点は TP・窓とも床の {snr_min} 倍以上）:")
     for k in KEYS:

@@ -84,7 +84,7 @@ class Data:
         return d["if_mhz"] - nu
 
     def tp(self, adc):
-        """ADC の TP（区切りごと: t_beat・utc_ns・sum・nfr・flags）。1 サンプルあたりの電力は sum / (nfr·8192)（16 bit の生値の二乗）"""
+        """ADC の TP（区切りごと: t_beat・utc_ns・sum・nfr・flags）。1 サンプルあたりの電力は sum / (nfr·8192)（14 bit の x の二乗 = σ_x²、LSB²）"""
         parts = self._t.get(_adc_index(adc), [])
         return np.concatenate(parts) if parts else np.zeros(0, P.TP_E)
 

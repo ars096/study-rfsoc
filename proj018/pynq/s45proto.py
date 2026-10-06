@@ -25,7 +25,7 @@ SPEC の中身  <BBBBBBHIIIIIIqqd ＋ 4096 × uint64
 TP の中身  <BBHI ＋ n × <qqQII
   adc rsv rsv2 n | 区切りごと: t_beat utc_ns sum nfr flags
   t_beat 区切りの最初のフレームの頭のビート（ANCH_T + (f − ANCH_F)·512）、utc_ns その UTC（0 = 答えられない）、
-  sum Σx²（16 bit の生値）、nfr フレーム数（512）、flags tp_core の FLAGS（[4] 振り切れ）| サーバーの印（[16] 時刻を答えられない）
+  sum Σx²（14 bit の x = ADC の 16 bit >>> 2 の二乗。レーン FFT と同じ値）、nfr フレーム数（512）、flags tp_core の FLAGS（[4] 振り切れ）| サーバーの印（[16] 時刻を答えられない）
 
 EVENT の中身  UTF-8 の JSON（後ろは空白で 8 の倍数に詰める）。{"ev": "START" | "STOP" | "DROP" | "SKIP" | "ERROR" | ...}
   DROP / SKIP は {"ev": ..., "from": 最初の seq, "to": 最後の seq, "n": 数}（両端を含む）
