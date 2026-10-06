@@ -38,12 +38,21 @@ KEYS = [f"{a}{w}" for a in "ABCD" for w in "01"]
 ADCS = "ABCD"
 
 
-def default_steps(lo=0, hi=60, step=2, off=100.0):
+def default_steps(lo=0, hi=60, step=2, off=100.0, every=8):
     """床 → hi から lo へ → 床 → lo から hi へ（**同じ設定を往復で 2 回**）→ 床。
     同じ設定の 2 回の差 = 時間の揺らぎ、2 回に共通の残差 = 設定ごとの（アッテネータの段の・周波数特性の）ずれ、と分けられる
-    （初版は往きが偶数・帰りが奇数で、この 2 つを分けられなかった。2026-10-06 実機）"""
-    down = list(range(hi, lo - 1, -step))
-    return [off] + [float(x) for x in down] + [off] + [float(x) for x in reversed(down)] + [off]
+    （初版は往きが偶数・帰りが奇数で、この 2 つを分けられなかった。2026-10-06 実機）
+    床は every 段ごとにも測る（床が時間で数 % 動き、低い所の残差を決めていた。lin3 で TP_C の床が 1 往復で +6.8 %）"""
+    down = [float(x) for x in range(hi, lo - 1, -step)]
+    seq = down + list(reversed(down))
+    out = [off]
+    for i, a in enumerate(seq):
+        out.append(a)
+        if (i + 1) % every == 0:
+            out.append(off)
+    if out[-1] != off:
+        out.append(off)
+    return out
 
 
 def _abs_band(d, key, frac=0.9):
@@ -58,6 +67,14 @@ def _abs_band(d, key, frac=0.9):
     n = v.shape[1]
     a = int(round(n * (1 - frac) / 2))
     return v[:, a:n - a].sum(axis=1)
+
+
+def _abs_spec(d, key):
+    """窓 key の ch ごとの abs の、取ったダンプの平均（LSB²、IF の昇順）"""
+    m = d.meta(key)
+    raw = d.spec(key)
+    sc = 4.0 ** float(m["shift"][-1]) * 4.0 ** (4 - float(m["g"][-1])) / 2.0 ** 31
+    return ((raw / m["nacc"][:, None].astype(np.float64) - 2.0 / 3.0) * sc).mean(axis=0)
 
 
 def _tp_abs(d, adc):
@@ -86,10 +103,16 @@ def measure(s, pm, att, steps=None, n=25, settle=1.0, out="lin", note="", resume
         steps = steps or default_steps()
         g = s.get()
         head = dict(kind="head", t=time.time(), settings=g, server=s.id(), pm=getattr(pm, "idn", None), att=getattr(att, "idn", None),
-                    pm_freq_mhz=getattr(pm, "freq_mhz", None), pm_avg=getattr(pm, "avg", None), n=n, settle=settle, note=note, steps=steps)
+                    pm_freq_mhz=getattr(pm, "freq_mhz", None), pm_avg=getattr(pm, "avg", None), n=n, settle=settle, note=note, steps=steps,
+                    tp_unit="x14")
         with open(path, "w") as f:
             f.write(json.dumps(head, ensure_ascii=False) + "\n")
-    print(f"リニアリティ: {len(steps)} 段 × {n} ダンプ → {path}")
+    print(f"リニアリティ: {len(steps)} 段 × {n} ダンプ → {path}（ch ごとの平均のスペクトルは {out}.spec.npz）")
+    spec_path = out + ".spec.npz"
+    spec = {}
+    if done and os.path.exists(spec_path):
+        z = np.load(spec_path)
+        spec = {k: list(z[k]) for k in z.files}
     for i, a in enumerate(steps):
         if i < done:
             continue
@@ -103,6 +126,9 @@ def measure(s, pm, att, steps=None, n=25, settle=1.0, out="lin", note="", resume
             b = _abs_band(d, k)
             if b is None:
                 continue
+            sp = _abs_spec(d, k)
+            spec.setdefault(k, []).append(sp)
+            spec.setdefault(k + "_if", []).append(d.freq(k))
             m = d.meta(k)
             row["win"][k] = dict(mean=float(b.mean()), rstd=float(b.std() / abs(b.mean())) if b.mean() else None, n=len(b),
                                  sat=int(m["sat"].sum()), health=int(np.bitwise_or.reduce(m["health"])),
@@ -114,6 +140,7 @@ def measure(s, pm, att, steps=None, n=25, settle=1.0, out="lin", note="", resume
             row["tp"][a_] = dict(mean=float(v.mean()), rstd=float(v.std() / v.mean()), n=len(v), ovr=novr)
         with open(path, "a") as f:
             f.write(json.dumps(row) + "\n")
+        np.savez(spec_path, **{k: np.array(v) for k, v in spec.items()})          # 段ごとに上書き（止まっても残る）
         tpa = row["tp"].get("A", {}).get("mean")
         print(f"  {i + 1:3d}/{len(steps)}  ATT {a:6.1f} dB  PM {p1:+8.3f} / {p2:+8.3f} dBm  "
               f"TP_A {10 * np.log10(tpa / (8192 ** 2 / 2)) if tpa else float('nan'):+7.2f} dBFS  "
@@ -135,12 +162,21 @@ def load(path):
     return head, rows
 
 
-def analyze(path, pm_min=-45.0, snr_min=10.0, off_db=100.0, plot=True, tol_lin=0.05, tol_ratio=0.02):
+def analyze(path, pm_min=-45.0, snr_min=100.0, off_db=100.0, plot=True, tol_lin=0.05, tol_ratio=0.02, pm_skip=(-13.0, -7.0), snr_hi=100.0):
+    """pm_skip: パワーメーターの値でこの範囲は L-1 の当てはめ・判定から外す（E9300A の 2 つの経路の切り替え −10 dBm 前後で
+    ±0.1 dB の段差。lin3 で全部の量に同じ形で出た）。snr_hi: L-2 は床の snr_hi 倍以上の点だけ（床の時間の揺らぎを避ける）。
+    床は時刻で内挿する（床の段が 2 つ以上あれば）"""
     head, rows = load(path)
     on = [r for r in rows if r["att"] < off_db - 1e-6]
     off = [r for r in rows if r["att"] >= off_db - 1e-6]
     if not off:
         raise SystemExit("雑音の床（ATT ≧ off_db の段）が無い")
+    if head.get("tp_unit") != "x14":
+        print("注意: この記録の TP は誤った単位（/16）で書かれている（tp_unit が無い）。16 倍して読む")
+        for r in rows:
+            for v in r["tp"].values():
+                v["mean"] *= 16.0
+    t_on = np.array([r["t"] for r in on]); t_off = np.array([r["t"] for r in off])
     pm = np.array([(r["pm1"] + r["pm2"]) / 2 for r in on])
     dpm = np.array([r["pm2"] - r["pm1"] for r in on])
     att = np.array([r["att"] for r in on])
@@ -166,10 +202,12 @@ def analyze(path, pm_min=-45.0, snr_min=10.0, off_db=100.0, plot=True, tol_lin=0
         y = series(on, nm)
         if np.all(np.isnan(y)):
             continue
+        fl_t = np.interp(t_on, t_off, y0) if len(off) >= 2 else np.full(len(on), np.nanmean(y0))
         fl = np.nanmean(y0)
-        yy = y - fl
+        yy = y - fl_t
         b = bad(on, nm)
-        ok_pt = (pm >= pm_min) & (yy > snr_min * abs(fl)) & ~b & np.isfinite(yy)
+        skip = (pm > pm_skip[0]) & (pm < pm_skip[1]) if pm_skip else np.zeros(len(on), bool)
+        ok_pt = (pm >= pm_min) & (yy > snr_min * abs(fl)) & ~b & np.isfinite(yy) & ~skip
         g = np.exp(np.median(np.log(yy[ok_pt] / x_pm[ok_pt]))) if ok_pt.sum() >= 3 else np.nan
         r_pm = 10 * np.log10(np.where(yy > 0, yy, np.nan) / (g * x_pm))
         ok_at = (yy > snr_min * abs(fl)) & ~b & np.isfinite(yy)
@@ -177,14 +215,16 @@ def analyze(path, pm_min=-45.0, snr_min=10.0, off_db=100.0, plot=True, tol_lin=0
         r_at = 10 * np.log10(np.where(yy > 0, yy, np.nan) / (ga * x_at))
         rp = r_pm[ok_pt]; ra = r_at[ok_at]
         good = len(rp) >= 3 and np.nanmax(np.abs(rp)) <= tol_lin
-        res[nm] = dict(floor=fl, gain_db=10 * np.log10(g) if g == g else None, rms_pm=float(np.sqrt(np.nanmean(rp ** 2))) if len(rp) else None,
+        res[nm] = dict(floor=fl, floor_drift=float(y0.max() / y0.min() - 1) if len(y0) > 1 else 0.0, gain_db=10 * np.log10(g) if g == g else None, rms_pm=float(np.sqrt(np.nanmean(rp ** 2))) if len(rp) else None,
                        max_pm=float(np.nanmax(np.abs(rp))) if len(rp) else None, rms_att=float(np.sqrt(np.nanmean(ra ** 2))) if len(ra) else None,
                        max_att=float(np.nanmax(np.abs(ra))) if len(ra) else None, n=int(ok_pt.sum()), ok=bool(good),
                        r_pm=r_pm.tolist(), r_att=r_at.tolist(), y=yy.tolist())
         print(f"{nm:>6} | {fl:11.4g} | {res[nm]['gain_db'] if res[nm]['gain_db'] is not None else float('nan'):18.3f} | "
               f"{res[nm]['rms_pm'] or float('nan'):10.4f} / {res[nm]['max_pm'] or float('nan'):8.4f} dB | "
               f"{res[nm]['rms_att'] or float('nan'):8.4f} / {res[nm]['max_att'] or float('nan'):7.4f} dB | {ok_pt.sum():2d} | "
-              f"{'OK' if good else 'NG'}（±{tol_lin} dB）")
+              f"{'OK' if good else 'NG'}（±{tol_lin} dB）・床の動き {100 * res[nm]['floor_drift']:.1f} %")
+    if pm_skip:
+        print(f"  （PM {pm_skip[0]}〜{pm_skip[1]} dBm は当てはめ・判定から外した: E9300A の経路の切り替え。ATT 基準は参考: アッテネータの段の誤差 ±0.3 dB 級が乗る）")
     # 同じ設定を 2 回測った段があれば、残差を「時間の揺らぎ」（2 回の差）と「設定ごと」（2 回の平均）に分ける
     uniq, cnt = np.unique(att, return_counts=True)
     rep_ = uniq[cnt >= 2]
@@ -204,19 +244,32 @@ def analyze(path, pm_min=-45.0, snr_min=10.0, off_db=100.0, plot=True, tol_lin=0
                 res[nm]["rep_diff_rms"] = float(np.sqrt(np.mean(np.square(dif)))); res[nm]["rep_avg_rms"] = float(np.sqrt(np.mean(np.square(avg))))
                 print(f"  {nm:>6}: 2 回の差 rms {res[nm]['rep_diff_rms']:.4f} dB・2 回の平均 rms {res[nm]['rep_avg_rms']:.4f} dB（{len(dif)} 段）")
     # L-2 窓 / TP
-    print(f"L-2 窓 / TP（同じ ADC）の一定さ（パワーメーターを使わない。床を引いた値どうし、点は TP・窓とも床の {snr_min} 倍以上）:")
+    print(f"L-2 窓 / TP（同じ ADC）の一定さ（パワーメーターを使わない。床を引いた値どうし、点は TP・窓とも床の {snr_hi:g} 倍以上）:")
     for k in KEYS:
         if k not in res or f"TP {k[0]}" not in res:
             continue
         yw = np.array(res[k]["y"]); yt = np.array(res[f"TP {k[0]}"]["y"])
-        okp = (yw > snr_min * abs(res[k]["floor"])) & (yt > snr_min * abs(res[f"TP {k[0]}"]["floor"])) & ~bad(on, k) & ~bad(on, f"TP {k[0]}")
+        okp = (yw > snr_hi * abs(res[k]["floor"])) & (yt > snr_hi * abs(res[f"TP {k[0]}"]["floor"])) & ~bad(on, k) & ~bad(on, f"TP {k[0]}")
         if okp.sum() < 3:
             continue
         r = yw[okp] / yt[okp]
         rr = 10 * np.log10(r / np.median(r))
         res[k]["ratio_median"] = float(np.median(r)); res[k]["ratio_max_db"] = float(np.abs(rr).max())
+        res[k]["_rr"] = np.where(okp, 10 * np.log10(yw / yt / np.median(r)), np.nan)
         print(f"  {k}: 窓 / TP = {np.median(r):.5f}（帯域が全帯域の電力に占める割合）・ずれ 最大 {np.abs(rr).max():.4f} dB "
               f"{'OK' if np.abs(rr).max() <= tol_ratio else 'NG'}（±{tol_ratio} dB）")
+    # L-2 のずれが 4 ADC で同じか（同じなら入力の側: 帯域の中の形がアッテネータの段で変わる。違えば ADC・窓の側）
+    for w in "01":
+        ks = [a + w for a in ADCS if a + w in res and "_rr" in res[a + w]]
+        if len(ks) >= 2:
+            M = np.array([res[k]["_rr"] for k in ks])
+            com = np.nanmean(M, axis=0)
+            dev = M - com
+            print(f"  窓 {w} の 4 ADC: L-2 のずれのうち 4 ADC に共通な分 最大 {np.nanmax(np.abs(com)):.4f} dB・ADC ごとの分 rms {np.sqrt(np.nanmean(dev ** 2)):.4f} dB"
+                  "（共通な分は入力のスペクトルの形の変化で、分光計のせいではない）")
+    for k in KEYS:
+        res.get(k, {}).pop("_rr", None)
+    _l2b(path, res, on, off, snr_hi)
     # TP と dBm の対応（パワーメーターの位置の dBm）
     print("TP と入力の対応（パワーメーターの dBm → ADC の dBFS。0 dBFS = 14 bit の満杯の正弦波の電力 8192²/2）:")
     for a in ADCS:
@@ -232,6 +285,38 @@ def analyze(path, pm_min=-45.0, snr_min=10.0, off_db=100.0, plot=True, tol_lin=0
     if plot:
         _plot(path.replace(".lin.jsonl", "") + ".lin.png", pm, att, res, names, pm_min)
     return res
+
+
+def _l2b(path, res, on, off, snr_hi):
+    """L-2b: 狭い窓（8 MHz）の帯域の電力 / 広い窓（256 MHz）の同じ IF の範囲の ch の和。同じ ADC・同じ周波数の入力を見るので、
+    入力のスペクトルの形の変化が消え、分光計の窓の経路どうしの線形だけが残る（.spec.npz があるとき）"""
+    sp = path.replace(".lin.jsonl", ".spec.npz")
+    if not os.path.exists(sp):
+        return
+    z = np.load(sp)
+    rows_all = sorted(on + off, key=lambda r: r["i"])
+    is_on = np.array([r["att"] < 99 for r in rows_all])
+    print("L-2b 狭い窓 / 広い窓の同じ IF の範囲（分光計の中だけの照合、入力の形の変化は消える）:")
+    for a in ADCS:
+        n_, w_ = a + "1", a + "0"
+        if n_ not in z.files or w_ not in z.files:
+            continue
+        Sn, Sw, fn, fw = z[n_], z[w_], z[n_ + "_if"], z[w_ + "_if"]
+        m = len(Sn)
+        lo, hi = fn[0, int(0.05 * 4096)], fn[0, int(0.95 * 4096)]
+        sel = (fw[0] >= lo) & (fw[0] <= hi)
+        pn = Sn[:, int(0.05 * 4096):int(0.95 * 4096)].sum(axis=1)
+        pw = Sw[:, sel].sum(axis=1)
+        flo_n, flo_w = pn[~is_on[:m]].mean(), pw[~is_on[:m]].mean()
+        yn, yw = pn[is_on[:m]] - flo_n, pw[is_on[:m]] - flo_w
+        ok = (yn > snr_hi * abs(flo_n)) & (yw > snr_hi * abs(flo_w))
+        if ok.sum() < 3:
+            continue
+        r = yn[ok] / yw[ok]
+        rr = 10 * np.log10(r / np.median(r))
+        res[n_]["l2b_max_db"] = float(np.abs(rr).max())
+        print(f"  {n_} / {w_} の {lo:.2f}〜{hi:.2f} MHz（広い窓の ch {sel.sum()} 個）: 比 {np.median(r):.4f}（1 なら単位が窓幅によらない）・"
+              f"ずれ 最大 {np.abs(rr).max():.4f} dB（{ok.sum()} 点）")
 
 
 def _plot(png, pm, att, res, names, pm_min):
