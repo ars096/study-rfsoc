@@ -17,17 +17,16 @@
    "remeasure": false
   },
   "B": {
-   "k_db": -69.306,
-   "k_unc_db": 0.152,
+   "k_db": -69.356,
+   "k_unc_db": 0.09,
    "provisional": false,
    "valid_dbfs": [
     -47.0,
     -7.0
    ],
    "date": "2026-10-06",
-   "source": "adc_port_cal 1 回目: 口の電力 -11.290 dBm・σ_x² 6.332e+05。PM の監視 +0.001 dB・TP -0.304 dB の変化（口のつなぎ直しを含む）",
-   "previous_k_db": -69.357,
-   "remeasure": true
+   "source": "adc_port_cal: PM を ADC の口で、2 回（K -69.424, -69.287）",
+   "previous_k_db": -69.306
   },
   "C": {
    "k_db": -69.415,
@@ -43,18 +42,17 @@
    "remeasure": false
   },
   "D": {
-   "k_db": -69.412,
-   "k_unc_db": 0.155,
+   "k_db": -69.343,
+   "k_unc_db": 0.14,
    "provisional": false,
    "valid_dbfs": [
     -47.0,
     -7.0
    ],
    "date": "2026-10-06",
-   "source": "adc_port_cal 1 回目: 口の電力 -11.274 dBm・σ_x² 6.513e+05。PM の監視 -0.209 dB・TP -0.102 dB の変化（口のつなぎ直しを含む）",
-   "previous_k_db": -69.357,
-   "remeasure": true
+   "source": "adc_port_cal: PM を ADC の口で、2 回（K -69.069, -69.616）",
+   "previous_k_db": -69.412
   }
  },
- "note": "2026-10-06: PM を ADC の口で測った K（adc_port_cal 1 回目）。4 本の平均 −69.34 dB は暫定の見積もり −69.36（0 dBFS = +5.9 dBm）と 0.02 dB で一致。B・D は口のつなぎ直しの揺らぎが大きく（remeasure）、直した adc_port_cal（他の 3 本の TP で入力の揺らぎを見る）で測り直す"
+ "note": "2026-10-06: PM を ADC の口で測った K。A・C は 1 回目、B・D は直した adc_port_cal（他の 3 本の TP で入力の揺らぎ）で 2 回ずつ。4 本の平均 −69.34 dB は暫定の見積もり −69.36（0 dBFS = +5.9 dBm）と一致。D は 2 回で 0.55 dB 離れた（ADC_D の口のつなぎの再現性が悪い。コネクタを点検）"
 }
