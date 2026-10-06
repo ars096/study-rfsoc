@@ -4,49 +4,57 @@
  "unit": "dBm at ADC input (SMA)",
  "adc": {
   "A": {
-   "k_db": -69.357,
-   "provisional": true,
+   "k_db": -69.231,
+   "k_unc_db": 0.03,
+   "provisional": false,
    "valid_dbfs": [
     -47.0,
     -7.0
    ],
    "date": "2026-10-06",
-   "source": "lin4.lin.jsonl: 0 dBFS = +5.9 dBm（3 GHz の正弦波、proj010）の見積もり",
-   "lin_dbfs_minus_pm_db": 4.67
+   "source": "adc_port_cal 1 回目: 口の電力 -11.268 dBm・σ_x² 6.255e+05。PM の監視 -0.016 dB・TP -0.045 dB の変化（口のつなぎ直しを含む）",
+   "previous_k_db": -69.357,
+   "remeasure": false
   },
   "B": {
-   "k_db": -69.357,
-   "provisional": true,
+   "k_db": -69.306,
+   "k_unc_db": 0.152,
+   "provisional": false,
    "valid_dbfs": [
     -47.0,
     -7.0
    ],
    "date": "2026-10-06",
-   "source": "lin4.lin.jsonl: 0 dBFS = +5.9 dBm（3 GHz の正弦波、proj010）の見積もり",
-   "lin_dbfs_minus_pm_db": 4.842
+   "source": "adc_port_cal 1 回目: 口の電力 -11.290 dBm・σ_x² 6.332e+05。PM の監視 +0.001 dB・TP -0.304 dB の変化（口のつなぎ直しを含む）",
+   "previous_k_db": -69.357,
+   "remeasure": true
   },
   "C": {
-   "k_db": -69.357,
-   "provisional": true,
+   "k_db": -69.415,
+   "k_unc_db": 0.043,
+   "provisional": false,
    "valid_dbfs": [
     -47.0,
     -7.0
    ],
    "date": "2026-10-06",
-   "source": "lin4.lin.jsonl: 0 dBFS = +5.9 dBm（3 GHz の正弦波、proj010）の見積もり",
-   "lin_dbfs_minus_pm_db": 4.845
+   "source": "adc_port_cal 1 回目: 口の電力 -11.306 dBm・σ_x² 6.47e+05。PM の監視 -0.061 dB・TP -0.026 dB の変化（口のつなぎ直しを含む）",
+   "previous_k_db": -69.357,
+   "remeasure": false
   },
   "D": {
-   "k_db": -69.357,
-   "provisional": true,
+   "k_db": -69.412,
+   "k_unc_db": 0.155,
+   "provisional": false,
    "valid_dbfs": [
     -47.0,
     -7.0
    ],
    "date": "2026-10-06",
-   "source": "lin4.lin.jsonl: 0 dBFS = +5.9 dBm（3 GHz の正弦波、proj010）の見積もり",
-   "lin_dbfs_minus_pm_db": 4.876
+   "source": "adc_port_cal 1 回目: 口の電力 -11.274 dBm・σ_x² 6.513e+05。PM の監視 -0.209 dB・TP -0.102 dB の変化（口のつなぎ直しを含む）",
+   "previous_k_db": -69.357,
+   "remeasure": true
   }
  },
- "note": "暫定（2026-10-06）: lin4（PM の前に 20 dB、8 窓で全帯域）。K は 0 dBFS = +5.9 dBm（3 GHz の正弦波、proj010）からの見積もりで全 ADC 同じ。PM を ADC の口で測って adc_port_cal で置き換える"
+ "note": "2026-10-06: PM を ADC の口で測った K（adc_port_cal 1 回目）。4 本の平均 −69.34 dB は暫定の見積もり −69.36（0 dBFS = +5.9 dBm）と 0.02 dB で一致。B・D は口のつなぎ直しの揺らぎが大きく（remeasure）、直した adc_port_cal（他の 3 本の TP で入力の揺らぎを見る）で測り直す"
 }
