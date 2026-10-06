@@ -41,3 +41,7 @@ __pycache__/
 
 # ---- Jupyter ----
 .ipynb_checkpoints/
+
+# ---- 測定の大きな記録（npz・s45）。jsonl などの小さいものだけ入れる ----
+*.spec.npz
+*.s45
