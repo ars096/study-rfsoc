@@ -15,7 +15,8 @@
   T-2 サイクルを重ねると rms が 1/√N で下がる（ベースラインの残りが無い）: N = 1, 2, 4, … の rms / 予言
   T-3 64 ch 束ねた Ta*（ベースライン）も予言どおり
   T-4 スプリアスの ch（SKY のスペクトルで s45spur.detect）: Ta* の平均は 0（一定の線は分子・分母の差で消える）、
-      サイクルごとの揺れは √(1 + 2r) 倍（r = 線 / その ch の雑音、SKY で測る）
+      サイクルごとの揺れは隣の ch の √(1 + 2r) 倍（r = 線 / その ch の雑音、SKY で測る）
+  T-5 ADC どうしの差 Ta*(X) − Ta*(Y): 源の揺らぎ（共通）が消え、分光計と分配の後の経路に固有のものだけが残る。予言 ≒ 1 本の σ の 1〜2 %
   入力のレベルを変えて（既定 3 段）同じことを繰り返す。r ∝ 1/P なので、スプリアスの ch の雑音の増えはレベルとともに減るはず
 
     # 配線は lin / allan と同じ。窓は先に specctl の SET で決めておく（例: spur3768 と同じ。ヘッダに GET を残す）
@@ -117,6 +118,7 @@ def analyze(path, tamb=290.0, zth=8.0, plot=True):
     res = dict(path=path, tamb=tamb, levels=head["levels"], hot_db=head["hot_db"], n=n, res={})
     print(f"Ta* のヌル試験の解析: {path}・{len(st)} 状態・T_amb {tamb:g} K・1 状態 {n} ダンプ")
     plot_rows = {}
+    keep_ta = {}
     for k in KEYS:
         if k not in z.files:
             continue
@@ -186,10 +188,13 @@ def analyze(path, tamb=290.0, zth=8.0, plot=True):
             for pk in pks:
                 r_ = float(sky[pk] / b[pk] - 1)
                 nb_ = np.r_[max(pk - 20, 0):max(pk - 3, 0), min(pk + 4, nch):min(pk + 21, nch)]
-                ref_sd = float(np.median(sd[nb_] / sig1[nb_])) if len(nb_) else float("nan")
+                # 揺れの比は K のまま隣の ch と比べる（sig1 は Tsys ∝ OFF を使うので、線の ch では (1 + r) 倍に膨らむ。
+                # それで割ると √(1+2r)/(1+r) に見える。ta1 の初版で 0.6〜0.9 倍に出た）
+                ref_sd = float(np.median(sd[nb_])) if len(nb_) else float("nan")
+                ref_sig = float(np.median(sig1[nb_])) if len(nb_) else float("nan")
                 sp.append(dict(ch=int(pk), if_mhz=float(f[pk]), r=r_, ta_mean_K=float(mean[pk]),
-                               ta_mean_z=float(mean[pk] / (sig1[pk] / math.sqrt(N))),
-                               noise_ratio=float(sd[pk] / sig1[pk] / ref_sd), noise_pred=math.sqrt(1 + 2 * max(r_, 0))))
+                               ta_mean_z=float(mean[pk] / (ref_sig * math.sqrt(1 + 2 * max(r_, 0)) / math.sqrt(N))),
+                               noise_ratio=float(sd[pk] / ref_sd), noise_pred=math.sqrt(1 + 2 * max(r_, 0))))
             sp.sort(key=lambda d: -d["r"])
             tp = [st[i]["tp"] for i in sl]
             ovr = {"R": sum(sum(t[ad]["ovr"] for ad in t) for t, i in zip(tp, sl) if st[i]["state"] == "R"),
@@ -202,6 +207,7 @@ def analyze(path, tamb=290.0, zth=8.0, plot=True):
                      tsys_K=tsys_med, cycles=N, sigma1_K=float(np.median(sig1[use])),
                      T1_mean_rms_ratio=t1, T0_cycle_sd_ratio=t0r, T2=t2, T3_bin64_ratio=t3, spurs=sp, ovr=ovr)
             res["res"][k][str(li)] = d
+            keep_ta.setdefault((k[1], li), {})[k[0]] = (ta, sig1, use, tsys_med)
             plot_rows[k][li] = dict(f=f, mean=mean, sig=sig1 / math.sqrt(N), t2=t2, sky_dbfs=d["sky_dbfs"])
             print(f"  {k} 段 {li}（SKY {d['sky_dbfs']:+.1f} dBFS・R {d['r_dbfs']:+.1f}・Y {d['y_db']:.2f} dB・Tsys {tsys_med:.0f} K・{N} サイクル）: "
                   f"1 サイクルの揺れ {t0r:.2f}・T-1 平均の rms {t1:.2f}・T-2 N={t2[-1]['N']} で {t2[-1]['ratio']:.2f}・T-3 64 ch {t3:.2f}"
@@ -209,6 +215,30 @@ def analyze(path, tamb=290.0, zth=8.0, plot=True):
             for q in sp[:4]:
                 print(f"      線 {q['if_mhz']:10.4f} MHz  r {q['r']:.3g}  Ta* の平均 {q['ta_mean_K']:+.4f} K（{q['ta_mean_z']:+.1f}σ）"
                       f"  揺れ {q['noise_ratio']:.2f} 倍（予言 √(1+2r) = {q['noise_pred']:.2f}）")
+    # T-5: ADC どうしの差。4 ADC は同じノイズソースを分けて見ているので、源の揺らぎ（ラジオメータ雑音も、源・BPF・ATT の形の揺れも）は
+    # 4 本に同じく乗る。差 Ta*(X) − Ta*(Y) にはそれが消え、**分光計と分配の後の経路（ケーブル・口・ADC）に固有のもの**だけが残る。
+    # 予言: ADC 自身の雑音（無入力で ≒ −60 dBFS）は入力より ≒ 43 dB 下なので、差の雑音は 1 本の σ の ≒ 1〜2 %
+    res["cross"] = {}
+    print("  T-5 ADC どうしの差（同じ窓・同じ段）: 平均の rms / 1 本の予言 σ/√N、64 ch 束ね、ベースラインの傾き")
+    for (w, li), byadc in sorted(keep_ta.items()):
+        ads = sorted(byadc)
+        for i1 in range(len(ads)):
+            for i2 in range(i1 + 1, len(ads)):
+                x, y = ads[i1], ads[i2]
+                tx, sx, use, tsx = byadc[x]; ty, sy, _, _ = byadc[y]
+                Nn = min(len(tx), len(ty))
+                dm = (tx[:Nn] - ty[:Nn]).mean(axis=0)
+                sg = sx / math.sqrt(Nn)
+                r_ch = float(np.sqrt(np.mean((dm[use] / sg[use]) ** 2)))
+                ui = np.flatnonzero(use); ui = ui[:len(ui) // 64 * 64].reshape(-1, 64)
+                bm = dm[ui].mean(axis=1)
+                r_b = float(np.sqrt(np.mean(bm ** 2)))
+                xs = np.linspace(-1, 1, len(bm))
+                tilt = float(np.polyfit(xs, bm, 1)[0])                    # 窓の端から端で ±tilt K
+                key = f"{x}{w}-{y}{w}"
+                res["cross"].setdefault(key, {})[str(li)] = dict(rms_ratio_ch=r_ch, rms_bin64_K=r_b, rms_bin64_rel=r_b / tsx,
+                                                                tilt_K=tilt, tilt_rel=tilt / tsx)
+                print(f"      {key} 段 {li}: ch {r_ch:.3f}・64 ch 束ね rms {r_b * 1e3:.2f} mK（Tsys の {r_b / tsx:.1e}）・傾き {tilt * 1e3:+.2f} mK")
     json.dump(res, open(out + ".ta.json", "w"), ensure_ascii=False, indent=1)
     print(f"まとめ: {out}.ta.json")
     if plot:
