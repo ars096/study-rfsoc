@@ -500,14 +500,28 @@ def lmx_patch_chdiv(regs, chdiv, ref_mhz=LMK_FREQ):
     return regs, dict(fpd_mhz=fpd, n_old=n0, chdiv_old=div0, vco_old_mhz=vco0, n=n, chdiv=chdiv, vco_mhz=vco, fout_mhz=fout)
 
 
-def rewrite_lmx(chdiv, settle=0.5, verbose=True):
-    """出荷時の LMX の設定を CHDIV だけ差し替えて書き直す。**set_ref_clks（setup_clocks）の後、Overlay() の前に呼ぶ**
+def lmx_patch_pwr(regs, pwr):
+    """OUTA_PWR（R44[13:8]）と OUTB_PWR（R45[5:0]）を pwr（0〜63、出荷時 31）に。周波数は変えない"""
+    if not 0 <= pwr <= 63:
+        raise ValueError(f"出力の強さ {pwr} は 0〜63")
+    a0 = (_lmx_get(regs, 44) >> 8) & 0x3F
+    b0 = _lmx_get(regs, 45) & 0x3F
+    regs = _lmx_set(regs, 44, (_lmx_get(regs, 44) & ~(0x3F << 8)) | (pwr << 8))
+    regs = _lmx_set(regs, 45, (_lmx_get(regs, 45) & ~0x3F) | pwr)
+    return regs, dict(outa_pwr_old=a0, outb_pwr_old=b0, outa_pwr=pwr, outb_pwr=pwr)
+
+
+def rewrite_lmx(chdiv=16, pwr=None, settle=0.5, verbose=True):
+    """出荷時の LMX の設定を CHDIV（と出力の強さ）だけ差し替えて書き直す。**set_ref_clks（setup_clocks）の後、Overlay() の前に呼ぶ**
     （タイルはビットストリームを読んだ時点で 491.52 を掴む）。最後の R0 の書き込みで VCO の較正が走る"""
     xrfclk = _import_xrfclk()
     path = find_stock_lmx_file()
     if not path:
         raise RuntimeError("LMX2594 のレジスタファイルが無い")
     regs, info = lmx_patch_chdiv(read_tics(path), chdiv)
+    if pwr is not None:
+        regs, ip = lmx_patch_pwr(regs, pwr)
+        info.update(ip)
     write_lmx, fn = _writer(xrfclk, "LMX")
     if write_lmx is None:
         raise RuntimeError("xrfclk に LMX を書く関数が無い")
@@ -516,7 +530,8 @@ def rewrite_lmx(chdiv, settle=0.5, verbose=True):
     time.sleep(settle)
     if verbose:
         log(f"LMX2594 を書き直した: CHDIV {info['chdiv_old']} → {info['chdiv']}、N {info['n_old']} → {info['n']}、"
-            f"VCO {info['vco_old_mhz']:.2f} → {info['vco_mhz']:.2f} MHz（出力 {info['fout_mhz']:.2f} MHz は同じ）")
+            f"VCO {info['vco_old_mhz']:.2f} → {info['vco_mhz']:.2f} MHz（出力 {info['fout_mhz']:.2f} MHz は同じ）"
+            + (f"、出力の強さ OUTA {info['outa_pwr_old']} → {pwr}・OUTB {info['outb_pwr_old']} → {pwr}" if pwr is not None else ""))
     return info
 
 

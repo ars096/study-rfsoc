@@ -170,9 +170,10 @@ class HwBackend:
         S.setup_clocks(self.o.clkin, self.o.ref)
         self.lmx = None
         chdiv = getattr(self.o, "lmx_chdiv", 16)
-        if chdiv != 16:                            # proj019: LMX の VCO を動かす（櫛の出どころの試験）。出力 491.52 は同じ
+        pwr = getattr(self.o, "lmx_pwr", None)
+        if chdiv != 16 or pwr is not None:         # proj019: LMX の VCO・出力の強さを動かす（櫛の出どころの試験）。出力 491.52 は同じ
             import extref
-            self.lmx = extref.rewrite_lmx(chdiv)
+            self.lmx = extref.rewrite_lmx(chdiv, pwr)
         self.ol = Overlay(self.o.bitfile)
         if not isinstance(self.ol.rfdc, xrfdc.RFdc):
             raise RuntimeError("RFDC に xrfdc のドライバが当たっていない")
@@ -188,7 +189,8 @@ class HwBackend:
         self.tb = TB.Timebase(self.tc, path=self.o.path)
         self.TpStream = make_tp_reader(S)
         self.ids = dict(win=f"{W.ID_WIN:08x}", adc=f"{W.ID_ADC:08x}", time=f"{TB.TimeCore.ID:08x}",
-                        lmx_vco=f"{self.lmx['vco_mhz']:.2f}" if self.lmx else "7864.32")
+                        lmx_vco=f"{self.lmx['vco_mhz']:.2f}" if self.lmx else "7864.32",
+                        lmx_pwr=str(self.lmx.get("outa_pwr", 31)) if self.lmx else "31")
         self.clock = Clock(None, TB.WIN_DELAY_BEATS)
         self.anchor()
 
