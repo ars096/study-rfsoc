@@ -724,7 +724,7 @@ class Acq:
             raise ValueError(f"n は 1〜{self.SNAP_MAX}")
         if not 5.0 <= every <= 10000.0:
             raise ValueError("every は 5〜10000 ms（読み出しに数 ms かかる）")
-        nacc = int(round(every * 1e-3 / 2.048e-6))         # 1 フレーム = 8192 サンプル = 512 ビート = 2.048 µs
+        nacc = int(round(every * 1e-3 / 2.0e-6))           # 1 フレーム = 8192 サンプル = 512 ビート = 2.000 µs
         self.event(dict(ev="SNAP", adc=adc, n=n, every_ms=every, nacc=nacc))
         got = self.be.snap(adc, n, nacc)
         for k, (m, x) in enumerate(got):

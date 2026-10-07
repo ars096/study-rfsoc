@@ -25,7 +25,7 @@ def check(x16, meta, every, sg=None):
     x14 = (x16 >> 2).astype(np.int16)
     out = {}
     dt = np.diff([m["dump_t"] for m in meta])
-    nacc = int(round(every * 1e-3 / 2.048e-6))
+    nacc = int(round(every * 1e-3 / 2.0e-6))            # 1 フレーム = 2.000 µs
     out["S1_dt_ok"] = bool(np.all(dt == nacc * 512)) if len(dt) else None
     out["S1_frame_ok"] = bool(np.all(np.diff([m["frame"] for m in meta]) == nacc)) if len(dt) else None
     out["S1_k_ok"] = [m["k"] for m in meta] == list(range(len(meta)))

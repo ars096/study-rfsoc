@@ -141,7 +141,7 @@ def main():
         ax = row[3]
         key = c + "_dump_t"
         if key in z.files and len(z[key]) == n:
-            t = (z[key] - z[key][0]) * 2.048e-6 / 512 * 1e3       # ビート（250 MHz = 4 ns）→ ms
+            t = (z[key] - z[key][0]) * 125 / 32 * 1e-6           # ビート（256 MHz = 3.90625 ns）→ ms
             xl = "time from first block [ms]"
         else:
             t = np.arange(n) * every

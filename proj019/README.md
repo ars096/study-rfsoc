@@ -40,12 +40,18 @@ PL は変えない。全帯域コア（spec_core_0、試験用に残してある
 スナップショットに残している（SNAP_F = DUMP_F0 で同じフレームと分かる）。これを specd から取れるようにした。
 
 - 制御の口: `SNAP adc=A|B|C|D [n=1] [every=20]` — **IDLE のときだけ**（RUN の窓・TP には触らない。specd は全帯域コアを RUN に入れていない）。
-  FULL_SEL で ADC を選んで SRST、N_ACC = every / 2.048 µs・N_DUMP = n で走らせ、ダンプごとに SNAP_F = DUMP_F0 を確かめて読む
+  FULL_SEL で ADC を選んで SRST、N_ACC = every / 2.000 µs・N_DUMP = n で走らせ、ダンプごとに SNAP_F = DUMP_F0 を確かめて読む
 - データの口: 記録の種類 **T_SNAP = 4**（`s45proto`）。頭 `<BBHIqqQII`（adc・kind・n・dump_t・utc_ns・frame・health・k）＋ int16 × 8192
   （ADC の 16 bit のまま。**14 bit の x = 値 >> 2**）。前後に EVENT `SNAP` / `SNAP_END`
 - `s45client.S45.snap(adc, n, every)` → (n, 8192) の配列（既定で 14 bit）と時刻。`specrecv` は数えるだけ（`snap=`）
 - `pynq/s45snap.py`: S-1 間隔（dump_t の差 = N_ACC × 512 ビート）・S-2 中身（下位 2 bit・振り切れ・dBFS・尖度）・S-3 SG の山・S-4 UTC の刻み
 - `pynq/s45snapplot.py <out>.snap.npz [--sg MHz] [--marks] [--zoom F0 F1]`: ADC ごとに時系列・ヒストグラム（ガウスと尖度）・スペクトル（Hann、塊の平均、dBFS/bin、横軸は入力の周波数 = 4096 − ベースバンド）・塊ごとの電力を 1 枚の図（`<out>.snap.png`）に
+- 実機の確認（2026-10-07、PWR 3）: `runs/snap_noise`（ノイズソース、16 塊）・`runs/snap_sg2`（SG 3000.25 MHz、4 塊）。4 ADC とも S-1〜S-4 通過
+  - ノイズ: −17.2 dBFS・尖度 2.47〜2.50（adcstat の 2.48 と同じ。ソースがガウスでない）・振り切れ 0。帯域は入力 2050〜3930 MHz で平ら
+  - SG: 山は 4096 − 3000.25 = 1095.75 MHz（bin の間なので 3000.0 / 3000.5 に等分）・−38.9 dBFS・尖度 1.51（正弦波で 1.5）。床 −97.5 dBFS/bin、他の線は −38 dBc 以下（DC の近く 4093〜4095 と、C の 3072 = 4096 − 2×512）
+  - 塊ごとの電力の揺れ: C は 0.002 dB、A・B・D は 0.04〜0.06 dB（4 塊だけ。B/D の揺れの保留と合わせて、塊を増やして見る）
+- 直したこと: 1 フレームを 2.048 µs として N_ACC を計算していた（正しくは 8192 / 4.096 GS/s = **2.000 µs**）。`--every 20` が実際は 19.53 ms だった。
+  S-1・S-4 は同じ式どうしで比べていたので通っていた
 - 塊は**連続ではない**（各 2 µs の塊の間が every ms）。長く連続したものが要るなら PL に URAM の取り込みを足す（proj020 以降の判断）
 - サーバーの版を proj019-0.2 に（記録の版 `VERSION` は 1 のまま。T_SNAP は SNAP 命令のときだけ出るので、古い受け側も SNAP を使わなければ動く）
 - 偽物（`--fake`）は 3000.25 MHz 相当の正弦波＋雑音を返す。test_fake.sh は全部通過
