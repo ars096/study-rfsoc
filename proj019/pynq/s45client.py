@@ -116,6 +116,7 @@ class S45:
         self._t = {i: collections.deque() for i in range(4)}
         self._tn = {i: 0 for i in range(4)}
         self.events = []
+        self._snaps = collections.deque(maxlen=4096)        # T_SNAP（ADC の生サンプル、proj019）
         self.chk = Check(verbose=False)
         self._out = open(out, "ab") if out else None
         self._stop = threading.Event()
@@ -255,6 +256,38 @@ class S45:
             t = {i: list(v) for i, v in self._t.items()}
             ev = list(self.events)
         return Data(w, t, ev)
+
+    def snap(self, adc="A", n=1, every=20.0, timeout=None, x14=True):
+        """ADC の生サンプル（全帯域コアのスナップショット 8192 個 = 2 µs）を n 個、every ms おきに取る（IDLE のときだけ）。
+        戻り値 (x, meta): x は (n, 8192) の配列（x14=True なら 14 bit の値 = 16 bit >> 2、False なら 16 bit のまま）、
+        meta は記録ごとの dict（adc・dump_t・utc_ns・frame・health・k）の並び。
+        **連続ではない**（各 2 µs の塊の間隔は every ms）。fs = 4096 MSPS・第 2 ナイキスト（入力 f は 4096 − f に見える）"""
+        self.ensure_data()
+        st = self.status()
+        if st["state"] in ("ARMED", "RUN"):
+            raise RuntimeError(f"サーバーが {st['state']}（SNAP は IDLE のときだけ。先に stop()）")
+        a = adc if isinstance(adc, str) else "ABCD"[int(adc)]
+        with self._lock:
+            self._snaps.clear()
+        self.send(True)
+        self._kv(f"SNAP adc={a} n={int(n)} every={float(every)}")
+        t_e = time.time() + (timeout or (10.0 + n * every * 1e-3 * 1.5))
+        while time.time() < t_e:
+            with self._lock:
+                got = [d for d in self._snaps if d["adc"] == "ABCD".index(a.upper())]
+            if len(got) >= n:
+                break
+            if self._err:
+                raise RuntimeError(f"受けのスレッドが止まった: {self._err}")
+            time.sleep(0.02)
+        else:
+            raise TimeoutError(f"SNAP の記録が {len(got)}/{n} 個しか届かない")
+        got = sorted(got, key=lambda d: d["k"])[:n]
+        x = np.stack([d["data"] for d in got])
+        if x14:
+            x = (x >> 2).astype(np.int16)
+        meta = [{k: v for k, v in d.items() if k != "data"} for d in got]
+        return x, meta
 
     def clear_local(self):
         with self._lock:
@@ -447,6 +480,10 @@ class S45:
                         self._tn[i] += d["n"]
                         while self._tn[i] - len(self._t[i][0]) >= self.keep_tp:
                             self._tn[i] -= len(self._t[i].popleft())
+                    elif rtype == P.T_SNAP:
+                        d = P.decode(rtype, pb)
+                        d["data"] = d["data"].copy()
+                        self._snaps.append(d)
                     elif rtype == P.T_EVENT:
                         d = P.decode(rtype, pb)
                         self.events.append(d)

@@ -86,6 +86,8 @@ class Check:
                     self.tp_gap += 1
                 self.tp_gap += int(np.sum(np.diff(t) != TP_BEATS))
                 self.tp_t[d["adc"]] = (int(t[-1]), self.epoch)
+        elif rtype == P.T_SNAP:
+            pass                                  # ADC の生サンプル（proj019）。数えるだけ
         elif rtype == P.T_EVENT:
             self.events.append(d)
             ev = d.get("ev")
@@ -105,7 +107,7 @@ class Check:
         return n
 
     def summary(self):
-        return dict(spec=self.n[P.T_SPEC], tp=self.n[P.T_TP], event=self.n[P.T_EVENT], mb=round(self.bytes / 2**20, 1),
+        return dict(spec=self.n[P.T_SPEC], tp=self.n[P.T_TP], event=self.n[P.T_EVENT], snap=self.n.get(P.T_SNAP, 0), mb=round(self.bytes / 2**20, 1),
                     crc_bad=self.crc_bad, gaps=sum(b - a + 1 for a, b in self.gaps), declared=sum(b - a + 1 for a, b in self.declared),
                     unexplained=self.unexplained(), seq_back=self.seq_back, dup=self.dup, kgap=self.kgap, tdev=self.tdev, tp_gap=self.tp_gap,
                     health=f"{self.h_or:#x}", sat=self.sat, flags=f"{self.flags_or:#x}", last_seq=self.last_seq)

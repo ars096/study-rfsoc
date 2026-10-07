@@ -30,7 +30,7 @@ ADC_NAMES = ("ADC_A", "ADC_B", "ADC_C", "ADC_D")
 NW = 2
 NS_OF_BW = {256: 1, 128: 2, 64: 3, 32: 4, 16: 5, 8: 6}
 FLAGS_OK_MASK = 0x7EF                      # 窓の FLAGS で異常に数えるもの（[4] FFT IP に待たされた は正常。fine.py と同じ）
-VERSION = "proj018-0.1"
+VERSION = "proj019-0.2"                 # proj019: SNAP（ADC の生サンプル）・LMX の出力の強さ
 
 
 def default_settings():
@@ -330,6 +330,47 @@ class HwBackend:
         af, at = self.anch[i]
         return at + (f - af) * 512
 
+    def snap(self, adc, n, nacc, timeout=5.0):
+        """全帯域コア（spec_core_0）を ADC adc につないで N_ACC = nacc・N_DUMP = n で走らせ、ダンプごとの最初のフレームの
+        生サンプル 8192 個を読む（IDLE のときだけ。窓・TP の RUN には触らない: specd は全帯域コアを RUN に入れていない）。
+        戻り値 [(meta, int16 の 8192 個)]。SNAP_F ≠ DUMP_F0（別のフレームを読んだ）・読む間に閉じたものは読み直す"""
+        S, T, W = self.S, self.T, self.W
+        full = self.full
+        T.select_full(self.wms, full, adc)
+        full.wr(S.R_NACC, nacc)
+        full.wr(S.R_NDUMP, n)
+        seq = full.rd(W.R_SEQ)
+        full.wr(S.R_CTRL, S.CTRL_CLR | S.CTRL_RUN)
+        out = []
+        t_end = time.time() + timeout + n * nacc * 2e-6
+        i0 = S.SNAP_BASE // 4
+        while len(out) < n:
+            if time.time() > t_end:
+                raise RuntimeError(f"SNAP: {len(out)}/{n} 個で時間切れ（全帯域コアのダンプが閉じない）")
+            s = full.rd(W.R_SEQ)
+            if s == seq:
+                time.sleep(0.0005)
+                continue
+            for _ in range(5):
+                m = full.meta()
+                sf = full.rd(S.R_SNAP_F_LO) | (full.rd(S.R_SNAP_F_HI) << 32)
+                w = np.array(full.m.array[i0:i0 + S.NFFT // 2], dtype=np.uint32)
+                if full.rd(W.R_SEQ) == m["seq"]:
+                    break
+            else:
+                raise RuntimeError("SNAP: 読む間に毎回ダンプが閉じた（every を長く）")
+            if ((m["seq"] - seq) & 0xFFFFFFFF) != 1:
+                raise RuntimeError(f"SNAP: ダンプを読み落とした（seq {seq} → {m['seq']}。every を長く）")
+            if sf != m["f0"]:
+                raise RuntimeError(f"SNAP: スナップショットのフレーム {sf} ≠ ダンプの最初 {m['f0']}")
+            seq = m["seq"]
+            x = np.empty(S.NFFT, np.int16)
+            x[0::2] = (w & 0xFFFF).astype(np.uint16).view(np.int16)
+            x[1::2] = (w >> 16).astype(np.uint16).view(np.int16)
+            out.append((m, x))
+        full.wr(S.R_CTRL, S.CTRL_STOP)
+        return out
+
     def disarm(self):
         T = self.T
         T.disarm_all(self.wins, self.full, self.wms)
@@ -456,6 +497,20 @@ class FakeBackend:
     def tp_time(self, i, f):
         return self.sa + 1 + f * 512
 
+    def snap(self, adc, n, nacc, timeout=5.0):
+        """偽物: 3000.25 MHz（第 2 ナイキストで 1095.75 MHz に見える）の正弦波 ＋ ガウス雑音、16 bit の上位 14 bit"""
+        rng = np.random.default_rng(adc)
+        out = []
+        t0 = self.now_beat()
+        for k in range(n):
+            t = t0 + k * nacc * 512
+            i = np.arange(P.SNAP_N) + (t * 16)
+            x = 1000 * np.sin(2 * np.pi * (1095.75 / 4096.0) * i) + 800 * rng.standard_normal(P.SNAP_N)
+            out.append((dict(seq=k + 1, k=k, n=nacc, f0=t // 512, t=t, h=0, cfg=0),
+                        (np.clip(np.round(x), -8191, 8191).astype(np.int16) * 4)))
+            time.sleep(nacc * 2e-6)
+        return out
+
     def disarm(self):
         pass
 
@@ -574,6 +629,8 @@ class Acq:
                 return dict(ok=ok, code="TIME", msg=e) if not ok else dict(ok=True)
             if op == "start":
                 return self._start(cmd)
+            if op == "snap":
+                return self._snap(cmd)
             if op == "stop":
                 if self.state not in (self.ARMED, self.RUN):
                     return dict(ok=False, code="STATE", msg=f"{self.state} なので止めるものが無い")
@@ -652,6 +709,32 @@ class Acq:
                         wins=[dict(key=win_key(j), adc=j // NW, win=j % NW, **cf) for j, cf in enumerate(self.be.cfgs)]))
         self.log(f"START: START_AT {sa}（格子 {sa // G_BEATS}·G、UTC {utc / 1e9:.6f}）n = {self.ndump_target}")
         return dict(ok=True, start_at=sa, utc_ns=utc)
+
+    SNAP_MAX = 256
+
+    def _snap(self, cmd):
+        """ADC の生サンプル（全帯域コアのスナップショット 8192 個 = 2 µs）を n 個、every_ms おきに取り、T_SNAP の記録で溜まりへ。
+        IDLE のときだけ（RUN の窓・TP には触らない）。記録の前後に EVENT（SNAP / SNAP_END）"""
+        if self.state not in (self.IDLE, self.ERROR):
+            return dict(ok=False, code="STATE", msg=f"{self.state} の間は SNAP できない（STOP の後に）")
+        adc, n, every = int(cmd["adc"]), int(cmd.get("n", 1)), float(cmd.get("every_ms", 20.0))
+        if not 0 <= adc < 4:
+            raise ValueError("adc は A〜D（0〜3）")
+        if not 1 <= n <= self.SNAP_MAX:
+            raise ValueError(f"n は 1〜{self.SNAP_MAX}")
+        if not 5.0 <= every <= 10000.0:
+            raise ValueError("every は 5〜10000 ms（読み出しに数 ms かかる）")
+        nacc = int(round(every * 1e-3 / 2.048e-6))         # 1 フレーム = 8192 サンプル = 512 ビート = 2.048 µs
+        self.event(dict(ev="SNAP", adc=adc, n=n, every_ms=every, nacc=nacc))
+        got = self.be.snap(adc, n, nacc)
+        for k, (m, x) in enumerate(got):
+            h = int(m["h"]) | (0 if self.be.clock.ok else P.H_NOTIME)
+            utc = self.be.clock.utc_ns(m["t"], None, adc)
+            hd = P.SNAP_H.pack(adc, 0, 0, len(x), int(m["t"]), int(utc), int(m["f0"]), h, k)
+            data = np.ascontiguousarray(x, "<i2")
+            self._put(P.T_SNAP, [hd, data], P.crc32(hd, data))
+        self.event(dict(ev="SNAP_END", adc=adc, n=len(got)))
+        return dict(ok=True, n=len(got), nacc=nacc, every_ms=every)
 
     def _stop(self, why):
         info = []

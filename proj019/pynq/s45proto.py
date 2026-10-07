@@ -27,6 +27,12 @@ TP の中身  <BBHI ＋ n × <qqQII
   t_beat 区切りの最初のフレームの頭のビート（ANCH_T + (f − ANCH_F)·512）、utc_ns その UTC（0 = 答えられない）、
   sum Σx²（14 bit の x = ADC の 16 bit >>> 2 の二乗。レーン FFT と同じ値）、nfr フレーム数（512）、flags tp_core の FLAGS（[4] 振り切れ）| サーバーの印（[16] 時刻を答えられない）
 
+SNAP の中身  <BBHIqqQII ＋ n × int16（proj019 追加。ADC の生サンプル、SNAP 命令で IDLE のときに取る）
+  adc kind rsv n | dump_t utc_ns | frame | health k
+  kind 0 = 全帯域コア（spec_core_0）のスナップショット: ダンプの最初のフレーム 8192 サンプル（2 µs）を ADC の 16 bit のまま
+  （**下位 2 bit は常に 0。14 bit の x = 値 >> 2**）。dump_t = そのフレームの頭のビート、utc_ns その UTC（0 = 答えられない）、
+  frame = フレームの番号（SNAP_F = DUMP_F0 を確かめたもの）、health = DUMP_H | サーバーの印、k = SNAP の中での通し番号（0, 1, …）
+
 EVENT の中身  UTF-8 の JSON（後ろは空白で 8 の倍数に詰める）。{"ev": "START" | "STOP" | "DROP" | "SKIP" | "ERROR" | ...}
   DROP / SKIP は {"ev": ..., "from": 最初の seq, "to": 最後の seq, "n": 数}（両端を含む）
 """
@@ -38,14 +44,16 @@ import numpy as np
 
 MAGIC = b"S45F"
 VERSION = 1
-T_PAD, T_SPEC, T_TP, T_EVENT = 0, 1, 2, 3
-T_NAMES = {T_PAD: "PAD", T_SPEC: "SPEC", T_TP: "TP", T_EVENT: "EVENT"}
+T_PAD, T_SPEC, T_TP, T_EVENT, T_SNAP = 0, 1, 2, 3, 4
+T_NAMES = {T_PAD: "PAD", T_SPEC: "SPEC", T_TP: "TP", T_EVENT: "EVENT", T_SNAP: "SNAP"}
 FMT_RAW = 0
 NCH = 4096
 
 HDR = struct.Struct("<4sHHIIQ")                     # 24
 SPEC_H = struct.Struct("<BBBBBBHIIIIIIqqd")          # 56
 TP_H = struct.Struct("<BBHI")                       # 8
+SNAP_H = struct.Struct("<BBHIqqQII")                 # 40
+SNAP_N = 8192
 TP_E = np.dtype([("t_beat", "<i8"), ("utc_ns", "<i8"), ("sum", "<u8"), ("nfr", "<u4"), ("flags", "<u4")])   # 32
 SPEC_PLEN = SPEC_H.size + 8 * NCH                   # 32824
 H_NOTIME, H_FORCED = 1 << 16, 1 << 17
@@ -94,6 +102,10 @@ def decode(rtype, payload):
         return dict(adc=adc, n=n, e=np.frombuffer(payload, TP_E, n, TP_H.size))
     if rtype == T_EVENT:
         return json.loads(bytes(payload).decode().rstrip())
+    if rtype == T_SNAP:
+        adc, kind, _, n, dump_t, utc_ns, frame, health, k = SNAP_H.unpack_from(payload)
+        data = np.frombuffer(payload, "<i2", n, SNAP_H.size)
+        return dict(adc=adc, kind=kind, n=n, dump_t=dump_t, utc_ns=utc_ns, frame=frame, health=health, k=k, data=data)
     raise ValueError(f"知らない記録の種類 {rtype}")
 
 

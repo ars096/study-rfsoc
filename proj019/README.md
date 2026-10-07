@@ -34,6 +34,21 @@ proj018 のサーバーに `fmt=abs`（換算済みで送る）を足し、単�
 **長時間の安定度**（アラン分散、proj018 のサーバーで記録した .s45 から）を測る。`pynq/` は proj018 の追跡ファイルを複製し、
 `instr.py`（パワーメーター N1913A ＋ E9300A・アッテネータ J7211C、LAN の SCPI）・`s45lin.py`・`s45allan.py` を足した。
 
+## 追加: ADC の生サンプルの取り出し（specd の SNAP、2026-10-07）
+
+PL は変えない。全帯域コア（spec_core_0、試験用に残してある 1 本）は、ダンプごとに**最初のフレームの生サンプル 8192 個（2 µs）**を
+スナップショットに残している（SNAP_F = DUMP_F0 で同じフレームと分かる）。これを specd から取れるようにした。
+
+- 制御の口: `SNAP adc=A|B|C|D [n=1] [every=20]` — **IDLE のときだけ**（RUN の窓・TP には触らない。specd は全帯域コアを RUN に入れていない）。
+  FULL_SEL で ADC を選んで SRST、N_ACC = every / 2.048 µs・N_DUMP = n で走らせ、ダンプごとに SNAP_F = DUMP_F0 を確かめて読む
+- データの口: 記録の種類 **T_SNAP = 4**（`s45proto`）。頭 `<BBHIqqQII`（adc・kind・n・dump_t・utc_ns・frame・health・k）＋ int16 × 8192
+  （ADC の 16 bit のまま。**14 bit の x = 値 >> 2**）。前後に EVENT `SNAP` / `SNAP_END`
+- `s45client.S45.snap(adc, n, every)` → (n, 8192) の配列（既定で 14 bit）と時刻。`specrecv` は数えるだけ（`snap=`）
+- `pynq/s45snap.py`: S-1 間隔（dump_t の差 = N_ACC × 512 ビート）・S-2 中身（下位 2 bit・振り切れ・dBFS・尖度）・S-3 SG の山・S-4 UTC の刻み
+- 塊は**連続ではない**（各 2 µs の塊の間が every ms）。長く連続したものが要るなら PL に URAM の取り込みを足す（proj020 以降の判断）
+- サーバーの版を proj019-0.2 に（記録の版 `VERSION` は 1 のまま。T_SNAP は SNAP 命令のときだけ出るので、古い受け側も SNAP を使わなければ動く）
+- 偽物（`--fake`）は 3000.25 MHz 相当の正弦波＋雑音を返す。test_fake.sh は全部通過
+
 ## 着手の前に決めたこと（2026-10-06）
 
 | | 決定 | 読み |

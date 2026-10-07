@@ -12,7 +12,8 @@
 
 制御の口（既定 51000、同時に 1 接続）: 1 行の命令に 1 行の応答 `OK key=value ...` / `ERR <符号> <説明>`
   ID | STATUS | GET | SET key=val ... | ANCHOR | START [at=<UTC>] [n=<ダンプ数>] [force=1] | STOP |
-  SEND ON [from=oldest|now] | SEND OFF | CLEAR | BYE | HELP | SHUTDOWN confirm=1（サーバーを止める）
+  SEND ON [from=oldest|now] | SEND OFF | CLEAR | BYE | HELP | SHUTDOWN confirm=1（サーバーを止める） |
+  SNAP adc=A|B|C|D [n=1] [every=20]（proj019: ADC の生サンプル 8192 個 = 2 µs を n 個、every ms おき。IDLE のときだけ。記録は T_SNAP）
 データの口（既定 51001、同時に 1 接続）: s45proto の記録を続けて送る。SEND ON の間だけ。
   **受け側は ACK（<Q の 8 バイト、受け取って書き終えた最後の seq）を返す**（0.2 秒おき程度）。ACK のあった記録だけを溜まりから消し、
   切れたら ACK の無い記録を次の接続で送り直す（受け側は seq で重複を除く）。ACK を返さない受け側では溜まりが溢れ、DROP になる
@@ -34,7 +35,7 @@ import s45ring as R
 
 HELP = ("ID | STATUS | GET | GET CAL | SET key=val ...（tint cfg A0.if A0.ns A0.bw A0.shift all.shift …） | ANCHOR | "
         "START [at=<UTC ISO8601 か unix 秒>] [n=<ダンプ数>] [force=1] | STOP | SEND ON [from=oldest|now] | SEND OFF | CLEAR | BYE | "
-        "SHUTDOWN confirm=1")
+        "SHUTDOWN confirm=1 | SNAP adc=A|B|C|D [n=1] [every=20]")
 
 
 def log(*a):
@@ -201,6 +202,18 @@ class Server:
                                                                      utc=_iso(r["utc_ns"]))))
         if cmd == "STOP":
             return self._rep(self.acq_cmd(dict(op="stop")), lambda r: "")
+        if cmd == "SNAP":
+            bad = [x for x in args if "=" not in x or x.split("=", 1)[0] not in ("adc", "n", "every")]
+            if bad or "adc" not in kv:
+                return "ERR ARG SNAP adc=A|B|C|D [n=1] [every=20]"
+            a = kv["adc"].upper()
+            adc = "ABCD".index(a) if a in ("A", "B", "C", "D") else int(a) if a.isdigit() else -1
+            try:
+                d = dict(op="snap", adc=adc, n=int(kv.get("n", 1)), every_ms=float(kv.get("every", 20)))
+            except ValueError as e:
+                return f"ERR ARG {e}"
+            tmo = 10.0 + d["n"] * d["every_ms"] * 1e-3 * 1.5
+            return self._rep(self.acq_cmd(d, timeout=tmo), lambda r: kv_line(dict(n=r["n"], nacc=r["nacc"], every_ms=r["every_ms"])))
         if cmd == "SEND":
             if not args or args[0].upper() not in ("ON", "OFF"):
                 return "ERR ARG SEND ON [from=oldest|now] / SEND OFF"
