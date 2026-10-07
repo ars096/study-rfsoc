@@ -68,18 +68,25 @@ def stat(blocks):
         acc += r; cnt += 1
     rho = acc / cnt / (acc[0] / cnt)
     sum_rho2 = float(1 + 2 * np.sum(rho[1:] ** 2))
+    # F は取得の中だけで出す（各塊を自分の取得の平均で割る）。取得ごとの電力の違い（Overlay の読み直し・較正の
+    # 動き）は別に cap_rstd として出す（入れると F が L に比例して膨らむ: 2026-10-07 の無入力の取得で見えた）
+    pw = np.array([np.mean(b * b) for b in x])
+    dc = np.array([b.mean() for b in x])
     F = {}
     for L in LS:
         m = []
-        for b in x:
+        for b, pb in zip(x, pw):
             k = len(b) // L
-            if k:
-                m.append((b[:k * L] ** 2).reshape(k, L).mean(axis=1))
+            if k >= 2:
+                mb = (b[:k * L] ** 2).reshape(k, L).mean(axis=1) / pb
+                m.append(mb - mb.mean())
         m = np.concatenate(m) if m else np.array([])
         if len(m) >= 8:
-            F[L] = dict(F=float(L * m.var(ddof=1) / p2 ** 2), nblk=int(len(m)), err=float(math.sqrt(2.0 / (len(m) - 1))))
+            dof = len(m) - len([1 for b in x if len(b) // L >= 2])
+            F[L] = dict(F=float(L * np.sum(m * m) / max(dof, 1)), nblk=int(len(m)), err=float(math.sqrt(2.0 / max(dof, 1))))
     clip = float(np.mean(np.abs(allx) >= 8191))
     return dict(n=int(len(allx)), mean=float(mu), sigma=float(math.sqrt(s2)), dbfs=float(10 * math.log10(p2) - DBFS0),
+                cap_rstd=float(pw.std() / pw.mean()) if len(pw) > 1 else None, cap_dc=[float(v) for v in dc],
                 kurtosis=kurt, rho=[float(r) for r in rho[1:9]], sum_rho2=sum_rho2, F_gauss=2 * sum_rho2, F=F, clip_frac=clip)
 
 
@@ -97,7 +104,10 @@ def main():
         r = stat([b[i] for b in xs])
         out[names[i]] = r
         print(f"{names[i]}: {r['dbfs']:+.2f} dBFS（σ {r['sigma']:.1f} LSB・DC {r['mean']:+.2f}）・尖度 κ {r['kurtosis']:.3f}（ガウス 3）・"
-              f"振り切れ {r['clip_frac']:.1e}")
+              f"振り切れ {r['clip_frac']:.1e}・取得ごとの電力のばらつき {'-' if r['cap_rstd'] is None else '%.2f %%' % (100 * r['cap_rstd'])}"
+              f"・DC {min(r['cap_dc']):+.2f}〜{max(r['cap_dc']):+.2f}")
+        if r["dbfs"] < -45:
+            print("      **入力がほぼ無い（−45 dBFS 未満）**: ノイズソースが切れている・ATT が 100 dB のまま、では？ TP の切り分けにはノイズを入れて取る")
         print(f"      ρ(1..4) = " + ", ".join(f"{v:+.3f}" for v in r["rho"][:4]) +
               f"・ガウスなら F = 2Σρ² = {r['F_gauss']:.3f}（予言の {r['F_gauss'] / 2:.2f} 倍）")
         for L, d in r["F"].items():
