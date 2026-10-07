@@ -1,7 +1,7 @@
 # proj020 — SAM45-Fine rev2: 窓の分光に PFB（T = 4）を入れ、ch の応答のサイドローブを下げる
 
 日付: 2026-10-07
-状態: **RTL と単体の sim まで**（2026-10-07。ビルド・実機は未）
+状態: **`-1` で閉じた**（2026-10-08、Performance_Explore で WNS +0.047 ns。実機は未）
 
 ## 目的
 
@@ -166,6 +166,21 @@ sim-top・sim-t4adc は係数を替える前の通過（係数は ROM の中身�
   `make IMPL=Performance_ExplorePostRoutePhysOpt`（build-PEPRPO/、proj015 rev3 はこれで 0.000）を並べる。**予言: どちらかが WNS −0.03〜+0.06 ns で閉じる**。
   閉じなければ、群 C を RTL で直す（gb_gate の出口に段を足して enb のファンアウトを切る。ただし全帯域・TP の入口の遅れ M が 1 ビート変わるので、
   F-2 の較正をやり直す前提。proj020 は timebase の CAL を未較正で持っているので、やるなら今が安い）
+
+### ビルド rev1 の実装の戦略（2026-10-08）
+
+| 戦略 | 出力 | WNS | WHS | CRITICAL WARNING | 資源 |
+|---|---|---|---|---|---|
+| 既定 | build/ | −0.063 | +0.010 | Timing 38-282 | DSP 2600・BRAM 305・URAM 56・LUT 48.19 % |
+| **Performance_Explore** | **build-PE/** | **+0.047** | **+0.010** | なし | DSP 2600・BRAM 305・URAM 56・LUT 48.16 % |
+| Performance_ExplorePostRoutePhysOpt | build-PEPRPO/ | +0.047 | +0.010 | なし | 同上 |
+
+- **閉じた**（予言 −0.03〜+0.06 の中）。proj017（既定）の +0.038 と同じくらいの余裕。CDC は 3 本とも proj017 と同じ数
+- PE と PEPRPO は WNS・WHS が小数 6 桁まで同じ（+0.047121 / +0.009645）。PEPRPO は PE に「配線の後の物理最適化」を足しただけで、
+  それはタイミングが負のときにしか働かないので、同じ配置・配線になったと読む（未確認: PEPRPO の runme.log で post-route の phys_opt が飛ばされたこと）
+- **実機には build-PE/ を使う**（RTL は build/ と同じなので ID・BUILD_TAG も同じ。`grep BUILD_TAG build-PE/vivado.log` で今の RTL が焼けたことを確かめてから）
+- 既定の戦略で閉じないのは proj015 rev3 と同じ状態（余裕は配置の運で ±0.1 ns 動く）。次に資源を足す proj（SAM45-Wide）では、群 C（gb_gate → gb_fifo の enb、ファンアウト 780）を先に直すことを考える
+
 
 ## 結論・次にやること
 
