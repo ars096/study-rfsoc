@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //
-// wspec_core — 窓 1 つの分光: z（FFT の入力、複素 18 bit・Q4）→ フレームの溜め → 複素 4096 点 FFT → 電力 → 積分（4096 ch）
+// wspec_core — 窓 1 つの分光: z（複素 18 bit・Q4）→ フレームの溜め（5 面）→ PFB（T = 4）→ 複素 4096 点 FFT → 電力 → 積分（4096 ch）
+//
+// **proj020: 溜めと FFT の間に PFB（T = 4）**。ch の応答のサイドローブを矩形の −13 dB から −84 dB に（原型 sinc × Kaiser β 8、
+// Σh² = 4096 で雑音の電力を保つ。model/pfb4.py が正）。溜めを 5 面のリング（URAM）にして履歴を兼ね、IP へ流す 4096 語を
+// 4 面から同じ番地で読んで積和する。出力フレームの番号は最新の入力フレーム（fin・F0・dstamp の区切りの意味は変えない）。
+// 出力フレーム r は入力フレーム r − 3 … r を重みつきで含むので、**区切りの重心は矩形より 1.5·L 前**（L = 窓のフレーム長。PS の側で扱う）。
+// スナップショットは PFB の出口（FFT の入力）を残す。読みの段は自走で、tready の握手は段の後の FIFO（深さ 16）と出口のレジスタで取る。
+// 以下の rev2 の話の「出口のレジスタ」はその FIFO の後ろのもの。
 //
 // **溜めを置く理由**: realtime の FFT IP は入力の途切れを待たずに進む（proj011）。窓の出力は W MSPS（W = 8 なら 32 クロックに 1 個）で
 // 必ず途切れるので、4096 語を 2 面の溜めに書き、溜まった面を 4096 クロック途切れなく IP へ流す。次のフレームが溜まるには
@@ -37,7 +44,8 @@
 //   **N_ACC = 1 ならスナップショットの FFT とダンプが 1 対 1**（PS 側の --golden の型）
 //
 // FLAGS（粘着、cmd_clr で消す）: [0] XK_INDEX が 1 ずつ進まなかった / [1] 溜めの読み出しが間に合わなかった /
-//   [2] IP の TLAST 事象 / [3] IP の data_in_channel_halt / [4] IP に待たされた（f_v = 1 で tready = 0。rev2 はデータを保って待つ）
+//   [2] IP の TLAST 事象 / [3] IP の data_in_channel_halt / [4] IP に待たされた（f_v = 1 で tready = 0。rev2 はデータを保って待つ）/
+//   [5] proj020: PFB の出口が 18 bit で飽和した
 // 見張り（rst から）: stall_cnt = 待たされたクロック数（飽和）/ rdy0 = rst の解除から tready が最初に 1 になるまでのクロック数
 //
 // 段（FFT の出力を受けたクロックを S0）: S1 丸めと飽和 → S2 二乗の入口・積分の読み出し番地 → S3 二乗 → S4 電力・読み値
@@ -96,34 +104,51 @@ module wspec_core #(
     localparam integer PW = 2 * QW + 1;    // 37
 
     // =====================================================================
-    // 溜め（2 面 × 4096 × {im, re}）と、IP への流し込み
+    // 溜め（proj020: 5 面のリング × 4096 × {im, re}、URAM）→ PFB（T = 4）→ 小さな FIFO → IP
     // =====================================================================
-    reg [2*ZW-1:0] fbuf [0:2*NF-1];
+    // 面: フレーム f は面 f mod 5（WRST の後の 0 番から）。フレーム r が溜まったら、出力フレーム r（最新の入力フレームの番号で呼ぶ）を
+    //   面 r − 3 … r（= rbk + 2, + 3, + 4, + 0 mod 5）から同じ番地 a で読み、y[a] = sat18((Σ_t c[a + 4096t]·z_{r−3+t}[a] + 2^15) >> 16)。
+    //   r − 3 + t < 0 のタップは 0（WRST の直後の 3 フレーム。面に前の走りの値が残っていても混ぜない）。式の正は model/pfb4.py
+    // 読みは自走の段（P0 … P7）で、IP の tready では止めない。段の出口を深さ 16 の FIFO に入れ、IP へは FIFO から握手で出す。
+    //   読みを出す（issue）のは、出して FIFO から抜けていない語の数 ocnt < 16 のときだけ（貸し借り。FIFO は溢れない）
+    // 書き込みが、読み中の出力の最古の面（rbk − 3）の未読の番地（≧ ra）/ 予約中の出力の最古の面 に来たら FLAGS[1]（従来と同じ意味）
+    localparam integer NB = 5;
+    localparam integer CF = 16;            // 係数の小数部（model/pfb4.py）
+    localparam integer FD = 16;            // FIFO の深さ
     reg [11:0]     wa;
-    reg            wb;
+    reg [2:0]      wb;                    // 書いている面（0..4）
     reg            rd_go;                 // 読み出し中（ra = 次に出す番地）
-    reg            rbk;
+    reg [2:0]      rbk;                   // 読み中の出力フレームの最新の面
+    reg [3:0]      rvm;                   // 読み中の出力のタップの有効（[t]、t = 3 が最新）
+    reg            rsn, rsn_b;            // 読み中の出力をスナップショットに残す・その面
     reg [11:0]     ra;
-    reg            pend, pbk;             // 溜まったがまだ読み始めていない面
-    reg            ovr;                   // 書き込みが未読の番地に追いついた
+    reg            pend;                  // 溜まったがまだ読み始めていない出力
+    reg [2:0]      pbk;
+    reg [FW-1:0]   pfr;
+    reg            ovr;
+    reg [4:0]      ocnt;                  // 出して FIFO から抜けていない語の数（≦ 16）
     reg            f_v, f_last;           // 出口（IP の入力）
     wire           s_tready;
-`ifdef WSPEC_NOREADY
-    wire           adv = 1'b1;            // 陽性対照: rev1 と同じく tready を見ない
-`else
-    wire           adv = !f_v || s_tready;   // 出口が空いている / IP が今の語を受けた → 次の語を出してよい
-`endif
-    wire           issue  = rd_go && adv;
+    wire           issue  = rd_go && (ocnt < FD);
     wire           rd_end = issue && (ra == 12'd4095);
     wire           fdone  = z_valid && (wa == 12'd4095);
     wire           can_st = !rd_go || rd_end;
-    // スナップショットの予約（ダンプ k の最初のフレーム）
+    wire           st_now = can_st && (pend || fdone);
+    wire [FW-1:0]  st_fr  = pend ? pfr : fin;               // 読み始める出力の番号
+    function [2:0] bplus;                                   // (b + k) mod 5（b ≦ 4、k ≦ 4）
+        input [2:0] b, k;
+        reg   [3:0] s;
+        begin s = b + k; bplus = (s >= 4'd5) ? s - 4'd5 : s[2:0]; end
+    endfunction
+    wire [2:0]     r_old = bplus(rbk, 3'd2);                // 読み中の出力の最古の面（rbk − 3）
+    wire [2:0]     p_old = bplus(pbk, 3'd2);
+    // スナップショットの予約（ダンプ k の最初のフレーム = 出力フレーム F0 + k·N）。proj020: 読みの側で PFB の出口（FFT の入力）を残す
     reg            sn_on;                 // RUN から N_DUMP 回ぶん
     reg  [FW-1:0]  sn_next;
     reg  [31:0]    sn_k;
-    reg            sn_act, sn_buf;
     reg  [31:0]    run_n, run_ndump;
     wire [31:0]    n_eff = (run_n == 0) ? 32'd1 : run_n;
+    wire           st_hit = sn_on && (st_fr == sn_next);
     // proj017: F0 を格子に（冒頭）。gmask = M − 1（≦ 127）、run_q = RUN の次のクロック、g_add = 2M − 2 − (fin mod M)
     reg  [7:0]     gmask;
     reg            run_q;
@@ -139,54 +164,42 @@ module wspec_core #(
     end
     wire [7:0]     g_fin = run_f0[7:0] - 8'd2;                          // RUN の時点の fin の下位（run_f0 は fin + 2 のまま）
     wire [7:0]     g_add = {gmask[6:0], 1'b0} - (g_fin & gmask);        // 2(M − 1) − (fin mod M) = 2M − 2 − (fin mod M)
-    wire           sn_hit = sn_on && (fin == sn_next);        // wa == 0 のときだけ意味を持つ
-    wire           sn_we  = z_valid && ((wa == 12'd0) ? sn_hit : sn_act);
-    wire           sn_wb  = (wa == 12'd0) ? sn_k[0] : sn_buf;
-
-    always @(posedge clk) begin
-        if (z_valid) fbuf[{wb, wa}] <= {z_im, z_re};
-    end
-    assign sn_wen   = sn_we;
-    assign sn_waddr = {sn_wb, wa};
-    assign sn_wdata = {z_im, z_re};
 
     always @(posedge clk) begin
         ovr <= 1'b0;
         if (rst) begin
-            wa <= 12'd0; wb <= 1'b0; fin <= {FW{1'b0}};
-            rd_go <= 1'b0; rbk <= 1'b0; ra <= 12'd0; pend <= 1'b0; pbk <= 1'b0;
-            sn_on <= 1'b0; sn_next <= {FW{1'b0}}; sn_k <= 32'd0; sn_act <= 1'b0; sn_buf <= 1'b0;
+            wa <= 12'd0; wb <= 3'd0; fin <= {FW{1'b0}};
+            rd_go <= 1'b0; rbk <= 3'd0; rvm <= 4'd0; rsn <= 1'b0; rsn_b <= 1'b0; ra <= 12'd0;
+            pend <= 1'b0; pbk <= 3'd0; pfr <= {FW{1'b0}};
+            sn_on <= 1'b0; sn_next <= {FW{1'b0}}; sn_k <= 32'd0;
             snap_f0 <= {FW{1'b1}}; snap_f1 <= {FW{1'b1}};
         end else begin
             if (issue) begin
                 ra <= ra + 12'd1;
                 if (ra == 12'd4095) rd_go <= 1'b0;
             end
-            // 面の読み始め: 予約（pend）が先、無ければ今溜まった面。読み中なら予約する
-            if (can_st && (pend || fdone)) begin
+            // 出力の読み始め: 予約（pend）が先、無ければ今溜まった出力。読み中なら予約する
+            if (st_now) begin
                 rd_go <= 1'b1; ra <= 12'd0; rbk <= pend ? pbk : wb;
+                rvm   <= {1'b1, st_fr >= 1, st_fr >= 2, st_fr >= 3};
+                rsn   <= st_hit; rsn_b <= sn_k[0];
+                if (st_hit) begin
+                    if (sn_k[0]) snap_f1 <= st_fr; else snap_f0 <= st_fr;
+                    sn_k    <= sn_k + 32'd1;
+                    sn_next <= sn_next + n_eff;
+                    if (run_ndump != 32'd0 && sn_k + 32'd1 == run_ndump) sn_on <= 1'b0;
+                end
                 pend  <= pend && fdone;
             end else if (fdone) begin
                 pend <= 1'b1;
             end
-            if (fdone) pbk <= wb;
-            // 書き込みが未読のところを潰す: 読み中の面の未読の番地（≧ ra）/ 予約中の面
-            if (z_valid && ((rd_go && wb == rbk && wa >= ra) || (pend && wb == pbk))) ovr <= 1'b1;
+            if (fdone) begin pbk <= wb; pfr <= fin; end
+            // 書き込みが未読のところを潰す
+            if (z_valid && ((rd_go && wb == r_old && wa >= ra) || (pend && wb == p_old))) ovr <= 1'b1;
             if (z_valid) begin
                 wa <= wa + 12'd1;
-                if (wa == 12'd0) begin
-                    sn_act <= sn_hit;
-                    sn_buf <= sn_k[0];
-                    if (sn_hit) begin
-                        if (sn_k[0]) snap_f1 <= fin; else snap_f0 <= fin;
-                        sn_k    <= sn_k + 32'd1;
-                        sn_next <= sn_next + n_eff;
-                        if (run_ndump != 32'd0 && sn_k + 32'd1 == run_ndump) sn_on <= 1'b0;
-                    end
-                end
                 if (wa == 12'd4095) begin
-                    sn_act <= 1'b0;
-                    wb  <= ~wb;
+                    wb  <= bplus(wb, 3'd1);
                     fin <= fin + 1'b1;
                 end
             end
@@ -198,16 +211,136 @@ module wspec_core #(
         end
     end
 
-    reg [2*ZW-1:0] fd;
-    always @(posedge clk) if (adv) fd <= fbuf[{rbk, ra}];
+    // ---- 読みの段 P0 … P7（自走）----
+    // P0: 番地・印 → P1: 面と ROM の読み → P2: 出力レジスタ → P3: タップの選択・係数 → P4: 積 → P5: 2 つずつの和 → P6: 和・丸めの定数 → P7: 右へ・飽和
+    reg            p0_v, p0_l, p0_sn, p0_snb;
+    reg [11:0]     p0_a;
+    reg [2:0]      p0_bk;
+    reg [3:0]      p0_vm;
+    reg [22:0]     p1_t, p2_t, p3_t, p4_t, p5_t, p6_t;     // {v, l, sn, snb, a[11:0], bk[2:0], vm[3:0]}（下の define）
     always @(posedge clk) begin
         if (rst) begin
-            f_v <= 1'b0; f_last <= 1'b0;
-        end else if (adv) begin
-            f_v    <= rd_go;
-            f_last <= rd_go && (ra == 12'd4095);
+            p0_v <= 1'b0;
+            p1_t <= 23'd0; p2_t <= 23'd0; p3_t <= 23'd0; p4_t <= 23'd0; p5_t <= 23'd0; p6_t <= 23'd0;
+        end else begin
+            p0_v <= issue;
+            p1_t <= {p0_v, p0_l, p0_sn, p0_snb, p0_a, p0_bk, p0_vm};
+            p2_t <= p1_t; p3_t <= p2_t; p4_t <= p3_t; p5_t <= p4_t; p6_t <= p5_t;
         end
+        p0_l <= (ra == 12'd4095); p0_a <= ra; p0_bk <= rbk; p0_vm <= rvm; p0_sn <= rsn; p0_snb <= rsn_b;
     end
+    `define PV(t)   t[22]
+    `define PL(t)   t[21]
+    `define PSN(t)  t[20]
+    `define PSB(t)  t[19]
+    `define PA(t)   t[18:7]
+    `define PBK(t)  t[6:4]
+    `define PVM(t)  t[3:0]
+    // 面（URAM）。読みの番地は P0 の p0_a、値は P2 に出る
+    wire [2*ZW-1:0] bq [0:NB-1];
+    genvar gb;
+    generate
+        for (gb = 0; gb < NB; gb = gb + 1) begin : g_ring
+            (* ram_style = "ultra" *) reg [2*ZW-1:0] mem [0:NF-1];
+            reg [2*ZW-1:0] q1, q2;
+            always @(posedge clk) begin
+                if (z_valid && wb == gb) mem[wa] <= {z_im, z_re};
+                q1 <= mem[p0_a];
+                q2 <= q1;
+            end
+            assign bq[gb] = q2;
+        end
+    endgenerate
+    // 係数（P2 に出る）: タップ 0・3 = ROM 0 の番地 a・4095 − a、タップ 1・2 = ROM 1 の番地 a・4095 − a
+    wire signed [17:0] c0, c1, c2, c3;
+    pfb4_rom #(.P(0)) u_rom0 (.clk(clk), .addr_a(p0_a), .addr_b(12'd4095 - p0_a), .c_a(c0), .c_b(c3));
+    pfb4_rom #(.P(1)) u_rom1 (.clk(clk), .addr_a(p0_a), .addr_b(12'd4095 - p0_a), .c_a(c1), .c_b(c2));
+    // P3: タップ t の面 = rbk + 2 + t（mod 5）、無効なタップは 0
+    reg signed [ZW-1:0] zr3 [0:3], zi3 [0:3];
+    reg signed [17:0]   cc3 [0:3];
+    reg [2*ZW-1:0]      zsel;
+    integer             tt;
+    always @(posedge clk) begin
+        for (tt = 0; tt < 4; tt = tt + 1) begin
+`ifdef WSPEC_PFB_POSCTL
+            // 陽性対照: フレームの順を逆に（タップ t に面 rbk − t を当てる。有効の印も同じ面に付けて X を混ぜない）→ スナップショットが模型と合わないこと
+            zsel = bq[bplus(`PBK(p2_t), 3'd5 - tt)];
+            if (p2_t[3 - tt]) begin
+`else
+            zsel = bq[bplus(`PBK(p2_t), 3'd2 + tt)];
+            if (p2_t[tt]) begin
+`endif
+                zr3[tt] <= zsel[ZW-1:0]; zi3[tt] <= zsel[2*ZW-1:ZW];
+            end else begin
+                zr3[tt] <= {ZW{1'b0}};   zi3[tt] <= {ZW{1'b0}};
+            end
+        end
+        cc3[0] <= c0; cc3[1] <= c1; cc3[2] <= c2; cc3[3] <= c3;
+    end
+    // P4: 積（18 × 18）
+    reg signed [ZW+17:0] mr4 [0:3], mi4 [0:3];
+    always @(posedge clk) for (tt = 0; tt < 4; tt = tt + 1) begin
+        mr4[tt] <= zr3[tt] * cc3[tt];
+        mi4[tt] <= zi3[tt] * cc3[tt];
+    end
+    // P5: 2 つずつ
+    reg signed [ZW+18:0] ar5 [0:1], ai5 [0:1];
+    always @(posedge clk) begin
+        ar5[0] <= mr4[0] + mr4[1]; ar5[1] <= mr4[2] + mr4[3];
+        ai5[0] <= mi4[0] + mi4[1]; ai5[1] <= mi4[2] + mi4[3];
+    end
+    // P6: 和と丸めの定数
+    reg signed [ZW+19:0] ar6, ai6;
+    always @(posedge clk) begin
+        ar6 <= ar5[0] + ar5[1] + (1 <<< (CF - 1));
+        ai6 <= ai5[0] + ai5[1] + (1 <<< (CF - 1));
+    end
+    // P7: 右へ・飽和 → FIFO とスナップショット
+    localparam signed [ZW+19:0] YMAX =  (1 <<< (ZW-1)) - 1;
+    localparam signed [ZW+19:0] YMIN = -(1 <<< (ZW-1));
+    wire signed [ZW+19:0] yr6 = ar6 >>> CF, yi6 = ai6 >>> CF;
+    reg  signed [ZW-1:0]  pf_re, pf_im;
+    reg                   pf_sat, p7_v, p7_l, p7_sn, p7_snb;
+    reg  [11:0]           p7_a;
+    always @(posedge clk) begin
+        pf_re  <= (yr6 > YMAX) ? YMAX[ZW-1:0] : (yr6 < YMIN) ? YMIN[ZW-1:0] : yr6[ZW-1:0];
+        pf_im  <= (yi6 > YMAX) ? YMAX[ZW-1:0] : (yi6 < YMIN) ? YMIN[ZW-1:0] : yi6[ZW-1:0];
+        pf_sat <= `PV(p6_t) && ((yr6 > YMAX) || (yr6 < YMIN) || (yi6 > YMAX) || (yi6 < YMIN));
+        p7_v   <= !rst && `PV(p6_t);
+        p7_l   <= `PL(p6_t); p7_sn <= `PSN(p6_t); p7_snb <= `PSB(p6_t); p7_a <= `PA(p6_t);
+    end
+    wire pfb_sat = p7_v && pf_sat;
+
+    // FIFO（深さ 16、{last, im, re}）と出口
+    reg [2*ZW:0]  ff [0:FD-1];
+    reg [4:0]     fwp, frp;
+    wire          f_ne = (fwp != frp);
+`ifdef WSPEC_NOREADY
+    wire          oadv = 1'b1;                    // 陽性対照: rev1 と同じく tready を見ない
+`else
+    wire          oadv = !f_v || s_tready;        // 出口が空いている / IP が今の語を受けた
+`endif
+    wire          f_pop = f_ne && oadv;
+    reg [2*ZW-1:0] fd;
+    always @(posedge clk) begin
+        if (p7_v) ff[fwp[3:0]] <= {p7_l, pf_im, pf_re};
+        if (rst) begin
+            fwp <= 5'd0; frp <= 5'd0; ocnt <= 5'd0; f_v <= 1'b0; f_last <= 1'b0;
+        end else begin
+            if (p7_v)  fwp <= fwp + 5'd1;
+            if (f_pop) frp <= frp + 5'd1;
+            ocnt <= ocnt + {4'd0, issue} - {4'd0, f_pop};
+            if (oadv) begin
+                f_v    <= f_ne;
+                f_last <= f_ne && ff[frp[3:0]][2*ZW];
+            end
+        end
+        if (oadv) fd <= ff[frp[3:0]][2*ZW-1:0];
+    end
+    // スナップショットの書き込み（P7、出力の番地 a）
+    assign sn_wen   = p7_v && p7_sn;
+    assign sn_waddr = {p7_snb, p7_a};
+    assign sn_wdata = {pf_im, pf_re};
     // 見張り
     reg rdy_seen;
     always @(posedge clk) begin
@@ -466,7 +599,7 @@ module wspec_core #(
             reg [2*ZW-1:0] snap_mem [0:2*NF-1];
             reg [2*ZW-1:0] sn1, sn2;
             always @(posedge clk) begin
-                if (sn_we) snap_mem[{sn_wb, wa}] <= {z_im, z_re};
+                if (sn_wen) snap_mem[sn_waddr] <= sn_wdata;
                 sn1 <= snap_mem[{sn_bk, sn_a}];
                 sn2 <= sn1;
             end
@@ -477,7 +610,7 @@ module wspec_core #(
     endgenerate
 
     // ---- FLAGS ----
-    wire [7:0] f_now = {3'd0, f_v && !s_tready, ev_halt, ev_tu | ev_tm, ovr, o_valid && (o_k != k_exp)};
+    wire [7:0] f_now = {2'd0, pfb_sat, f_v && !s_tready, ev_halt, ev_tu | ev_tm, ovr, o_valid && (o_k != k_exp)};
     always @(posedge clk) begin
         if (rst || cmd_clr) flags <= 8'd0;
         else                flags <= flags | f_now;

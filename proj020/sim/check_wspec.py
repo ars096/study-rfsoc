@@ -6,17 +6,23 @@
 
 判定は 4 層（proj013 の check.py の型）:
   A. bit 単位: FFT のモデルの出力（fft.txt）を電力・積分の整数模型（sat18(Y >>> SHIFT) → re² + im² → 和）に通した値 = ダンプ（全 ch）。飽和の回数も
-  B. FFT のモデル = numpy の複素 4096 点 FFT（z のフレーム f と FFT の出力のフレーム f が同じもの。差 ≦ 1 LSB）
-  C. 帳簿: ダンプ k の f0 = RUN_F0 + k·N、n = N、SEQ が 1 ずつ、面が交互、スナップショットの番号 = f0 で中身 = z のフレーム f0
+  B. FFT のモデル = numpy の複素 4096 点 FFT（PFB の模型 y のフレーム f と FFT の出力のフレーム f が同じもの。差 ≦ 1 LSB）
+  C. 帳簿: ダンプ k の f0 = RUN_F0 + k·N、n = N、SEQ が 1 ずつ、面が交互、スナップショットの番号 = f0 で
+     **中身 = PFB の模型（model/pfb4.py の pfb4_fixed）の出力フレーム f0 と bit 単位で一致**（proj020: PFB の bit 単位の照合はここ）
   D. FLAGS = 0（ただし [4] 待たされた は、FFT のモデルが待たせる変種（RDLY > 4096 か STALL > 0）でだけ立ち、立つこと）、
      0 ≦ fin − fout ≦ 3（溜め切ったフレームは順に FFT を通っている。途中の 2 フレーム ＋ 待たされて予約中の 1 面まで）
 陽性対照 1（SIM_WSPEC_POSCTL=1、RTL の -DWSPEC_POSCTL: 初回のフレームでも読み値に足す）: A が落ちること
 陽性対照 2（SIM_WSPEC_POSCTL=2、RTL の -DWSPEC_NOREADY: tready を見ない = rev1）: 待たせる変種で B が落ちること
+陽性対照 3（SIM_WSPEC_POSCTL=3、RTL の -DWSPEC_PFB_POSCTL: PFB のフレームの順を逆に）: スナップショットの照合（C）が落ちること
+変種の名前が e で始まるもの（tb の +RUNAT=0）は RUN を最初のフレームが溜まる前に打ち、WRST の直後の 3 フレーム（欠けたタップを 0）を通す
 """
 import os
 import sys
 
 import numpy as np
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "model"))
+import pfb4  # noqa: E402
 
 NF = 4096
 NFRM = 28
@@ -44,7 +50,9 @@ def sat18(y, sh):
 
 def check(d, nacc, ndump, shift, posctl, rdly=5, stall=0):
     z = np.load(os.path.join(os.path.dirname(os.path.normpath(d)), "z.npy"))   # 入力は変種の 1 つ上の DIR に共通
-    zc = z[0] + 1j * z[1]
+    pcnt = {}
+    yr, yi = pfb4.pfb4_fixed(z[0], z[1], cnt=pcnt)          # proj020: FFT の入力 = PFB の出口
+    zc = yr + 1j * yi
     fft = np.loadtxt(os.path.join(d, "fft.txt"), dtype=np.int64, ndmin=2)
     meta = dict(l.split(" ", 1) for l in open(os.path.join(d, "meta.txt")).read().splitlines())
     run_f0 = int(meta["run_f0"])
@@ -83,6 +91,7 @@ def check(d, nacc, ndump, shift, posctl, rdly=5, stall=0):
     judge(len(dumps) == ndump, f"ダンプ {len(dumps)} 個（NDUMP {ndump}）")
     seq0 = dumps[0][0][0]
     nbad_a = 0
+    nbad_sn = 0
     for j, (h, vals) in enumerate(dumps):
         seq, k, f0, n, satc, bank, snf = h
         judge(seq == seq0 + j and k == j and f0 == run_f0 + j * nacc and n == nacc and bank == (j & 1) and snf == f0,
@@ -100,13 +109,20 @@ def check(d, nacc, ndump, shift, posctl, rdly=5, stall=0):
         judge(nbad == 0 and satc == sc, f"A: ダンプ {j} の 4096 ch が模型と bit 単位で一致（不一致 {nbad}）、飽和 {satc}（模型 {sc}）")
         # スナップショット
         sn = snaps[j * NF:(j + 1) * NF]
-        judge(np.array_equal(sn[:, 0], z[0][f0 * NF:(f0 + 1) * NF]) and np.array_equal(sn[:, 1], z[1][f0 * NF:(f0 + 1) * NF]),
-              f"C: ダンプ {j} のスナップショット = z のフレーム {f0}")
+        nsn = int(np.count_nonzero((sn[:, 0] != yr[f0 * NF:(f0 + 1) * NF]) | (sn[:, 1] != yi[f0 * NF:(f0 + 1) * NF])))
+        nbad_sn += nsn
+        judge(nsn == 0, f"C: ダンプ {j} のスナップショット = PFB の模型の出力フレーム {f0}（不一致 {nsn}、模型の飽和 {pcnt or 0}）")
     judge((flags & 0xEF) == 0 and bool(flags & 0x10) == exp_wait,
           f"D: FLAGS = {flags:02x}（[4] 待たされた: {'立つはず' if exp_wait else '立たないはず'}）")
     judge((st_cnt > 0) == exp_wait and rdy0 == rdly,
           f"D: 待たされた {st_cnt} クロック / tready まで {rdy0} クロック（モデルの RDLY {rdly}、STALL {stall}）")
     judge(0 <= fin - fout <= 3, f"D: fin {fin} − fout {fout} = {fin - fout}（溜めの読み出しと FFT の中の 2 フレーム ＋ 予約 1 面以内）")
+    if posctl == 3:
+        if nbad_sn:
+            print("陽性対照 3: スナップショットの照合が落ちた → 結果: 全部通過")
+            return 0
+        print("陽性対照 3: スナップショットの照合が落ちなかった → 結果: 失敗（PFB の照合が効いていない）")
+        return 1
     if posctl == 2:
         if not b_ok:
             print("陽性対照 2: B が落ちた → 結果: 全部通過")

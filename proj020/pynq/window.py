@@ -37,7 +37,7 @@ try:
 except ImportError:                      # sg.py を置いていなければ --sg は使えない
     SGMOD = None
 
-ID_WIN = 0x0017_0100             # proj017 rev1: SAM45-Fine（NW 2 × 4 ADC）・TP の FLAGS[4]。proj016 rev1 = 0x0016_0100: 時刻・設定番号（SHIFT は RUN で取り込む）・健全性（窓の中身は proj015 rev3 と同じ）
+ID_WIN = 0x0020_0100             # proj020 rev1: SAM45-Fine rev2（窓の分光に PFB T = 4、FLAGS[5] = その飽和）。proj017 rev1 = 0x0017_0100: SAM45-Fine（NW 2 × 4 ADC）・TP の FLAGS[4]。proj016 rev1 = 0x0016_0100: 時刻・設定番号（SHIFT は RUN で取り込む）・健全性（窓の中身は proj015 rev3 と同じ）
 ID_WIN_P15 = (0x0015_0300,)      # proj015 rev3
 ID_WIN_R2 = (0x0015_0200,)       # proj015 rev2: rev1 の `-1` の最悪経路に段を足した（値は同じ。`-1` で -0.199 ns）
 ID_WIN_R1 = (0x0015_0100,)       # proj015 rev1（`-1` で閉じない。`-2` の build/ は +0.007 ns で閉じた）
@@ -49,7 +49,7 @@ WIN_STRIDE = 0x20000             # proj015: win_core の窓 w は 0x20000·w（1
 A_BASE = 0x80000                 # proj015: ADC の共通
 R_A_ID, R_A_NW, R_A_SNAP_SEL, R_A_BUILD, R_A_TP_CTRL = 0x00, 0x04, 0x08, 0x0C, 0x10
 R_A_TFIN_LO, R_A_TFIN_HI, R_A_GB_K, R_A_FULL_SEL, R_A_GB_STAT, R_A_ADC_STAT = 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28
-ID_ADC = 0x0017_A100
+ID_ADC = 0x0020_A100
 ID_ADC_R1 = (0x0015_A100, 0x0015_A200, 0x0015_A300)
 SEL = {"adc": WIN_CH, "win": 0}  # add_sel_args / set_sel で決める（open_win・open_full が使う）
 NFFT_W = 4096
@@ -61,7 +61,7 @@ R_WK, R_WDPHI, R_WNS, R_WCUR, R_WCUR_DPHI, R_PFB_SAT, R_DDC_SAT, R_BUILD = 0x58,
 R_WS_STALL, R_WS_RDY0 = 0x80, 0x84    # rev2
 CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_WRST = 1 << 0, 1 << 1, 1 << 8, 1 << 12
 SNAP_BASE, SPEC_BASE = 0x08000, 0x10000
-FLAG_NAMES = ["XK_INDEX の飛び", "溜めの読み出しが間に合わない", "IP の TLAST 事象", "IP の入力の途切れ", "IP に待たされた（tready = 0）"]
+FLAG_NAMES = ["XK_INDEX の飛び", "溜めの読み出しが間に合わない", "IP の TLAST 事象", "IP の入力の途切れ", "IP に待たされた（tready = 0）", "窓の PFB（T = 4）の飽和"]
 LINES_IF = (2048.0, 2560.0, 3072.0, 3584.0, 4096.0)   # k·fs/8（2048 = fs/2・4096 = DC も ADC の線が立つ）
 
 

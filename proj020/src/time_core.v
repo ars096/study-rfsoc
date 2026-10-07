@@ -89,7 +89,7 @@ module time_core #(
     output reg          go_out,
     output reg  [3:0]   ev_out
 );
-    localparam [31:0] ID = 32'h0017_7101;   // proj017: 中身は proj016 rev1 と同一。ID だけ（timebase.CAL を bit ごと・ADC ごとに持つため）
+    localparam [31:0] ID = 32'h0020_7101;   // proj020: 中身は proj017 と同一（timebase.CAL を bit ごとに持つため）。proj017 0x0017_7101: 中身は proj016 rev1 と同一。ID だけ（timebase.CAL を bit ごと・ADC ごとに持つため）
     wire rst = ~aresetn;
 
     // ---------------------------------------------------------------- 書き込み

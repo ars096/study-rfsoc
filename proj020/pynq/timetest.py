@@ -610,7 +610,7 @@ def main():
         except TimebaseError as e:
             log(f"ERROR: 錨を打てない: {e}"); sys.exit(1)
         log(f"錨: UTC {anc['utc_sec']} 秒 = スタンプ {anc['stamp']}（PPS {anc['count']} 個目、EPOCH {anc['epoch']}）/ 精度 {tb.accuracy()}")
-        wrst_on_grid(tc, tb, wins, full, wms, ns_list, a.if_c, 0x0017_0001)   # proj017: 格子の START_AT で一斉に WRST
+        wrst_on_grid(tc, tb, wins, full, wms, ns_list, a.if_c, 0x0020_0001)   # proj017: 格子の START_AT で一斉に WRST
     if a.t1:
         ok &= t1(tc, tb, wins, full, wms, ns_list, a.seconds, a.tint, a.out)
     if a.t2:

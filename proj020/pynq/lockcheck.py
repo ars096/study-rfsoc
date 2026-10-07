@@ -42,7 +42,7 @@ def check(ol, tiles, watch):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--bitfile", default="proj017.bit")
+    p.add_argument("--bitfile", default="proj020.bit")
     p.add_argument("--clkin", default="stock", choices=("stock", "0", "1", "2"))
     p.add_argument("--ref", type=float, default=10.0)
     p.add_argument("--pwr", default="31,20,10,5,3,1,0", help="試す PWR（0〜63、上から順に）")

@@ -30,7 +30,7 @@ module tb_wspec;
         .snap_f0(snap_f0), .snap_f1(snap_f1), .flags(flags), .stall_cnt(stall_cnt), .rdy0(rdy0),
         .rd_bk(rbk), .rd_ch(rch), .rd_data(rdat), .sn_bk(sbk), .sn_a(sa), .sn_data(sdat));
 
-    integer fi, ff, fd, fs, fm, r, a0, a1, gap, seed, nd, i, done;
+    integer fi, ff, fd, fs, fm, r, a0, a1, gap, seed, nd, i, done, runat;
     reg [8*256-1:0] fin_s, dir;
     reg [31:0] seq_seen;
     initial begin
@@ -38,6 +38,7 @@ module tb_wspec;
         if (!$value$plusargs("NDUMP=%d", ndump)) ndump = 4;
         if (!$value$plusargs("SHIFT=%d", shift)) shift = 4;
         if (!$value$plusargs("GAP=%d", gap)) gap = 0;
+        if (!$value$plusargs("RUNAT=%d", runat)) runat = 3;   // proj020: 0 なら WRST の直後（PFB の欠けたタップを通す）
         if (!$value$plusargs("IN=%s", fin_s)) fin_s = "z.txt";
         if (!$value$plusargs("DIR=%s", dir)) dir = ".";
         seed = 3;
@@ -64,7 +65,7 @@ module tb_wspec;
     initial begin
         nd = 0; done = 0;
         wait (!rst);
-        wait (fin == 3);
+        wait (fin == runat);
         @(posedge clk); run <= 1; @(posedge clk); run <= 0;
         @(posedge clk);
         $fwrite(fm, "run_f0 %0d\n", run_f0);

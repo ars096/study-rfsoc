@@ -1,4 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
+# proj020 — SAM45-Fine rev2: proj017 の wspec_core の溜めと FFT の間に PFB（T = 4）を入れる
+#
+# ---- proj017 からの変更点 ----
+#   1. src/pfb4_rom.v（PFB の係数 ROM、model/pfb4.py gen の生成物）を足す。wspec_core の溜めは 5 面のリング（URAM）
+#   2. ID: win_core 0x0020_0100 / 0x0020_A100、spec_core 0x0020_01xx、time_core 0x0020_7101（spec_core・time_core は中身は同じ）
+#   3. 資源の予言: wspec 32 → 40（PFB の積 8）、win_core 504 → 520、全体 2520 → 2584。URAM 16 → 56（窓ごとに 5）、BRAM36 −4 / 窓
+#
+# （以下は proj017 の記録）
 # proj017 — SAM45-Fine（BITS.md）: proj016 を **4 ADC × 2 窓**（win_core × 4、NW = 2）に。全帯域 1 本（spec_core_0）・time_core_0 は proj016 のまま
 #
 # ---- proj016 からの変更点 ----
@@ -95,7 +103,7 @@
 # RFDC・Clocking Wizard・ギアボックス・spec_core の本体は proj010 と同一。
 # ナイキストゾーン（2）は実行時に PYNQ から設定する（pynq/spectrometer.py）。
 
-set proj         proj017
+set proj         proj020
 # proj015: **既定の part を -1 に**（実機の .bit を -1 で配置配線する。チップの刻印が未確認で、遅い方で閉じたものだけを載せる）。
 #   -1 のビルドは board_part を使わず、src/ps_preset.tcl（make ps-preset で書き出したボードプリセットの PS の設定）を当てる。
 #   -2（board_part の宣言値）は PART=xczu48dr-ffvg1517-2-e で build-2-e/ に（board_part ＋ プリセット。proj014 までの build/ と同じ作り）
@@ -338,7 +346,7 @@ if {$use_board} {
 add_files -norecurse [list ./src/spec_core.v ./src/tp_core.v ./src/cmul.v ./src/dft16.v ./src/tw_rom.v ./src/gb_adc.v ./src/gb_gate.v]
 # proj014: 窓（win_core）。win_coef.vh は make coef の生成物（手で直さない）
 add_files -norecurse [list ./src/win_core.v ./src/pfb_core.v ./src/dft16f.v ./src/ddc_core.v ./src/hb2.v ./src/hb2s.v ./src/pair2.v \
-                           ./src/nco_rom.v ./src/wspec_core.v ./src/win_coef.vh ./src/axis_sel4.v]
+                           ./src/nco_rom.v ./src/wspec_core.v ./src/pfb4_rom.v ./src/win_coef.vh ./src/axis_sel4.v]
 # proj016: 時刻・健全性
 add_files -norecurse [list ./src/time_core.v ./src/dstamp.v ./src/adc_ev.v]
 set_property file_type {Verilog Header} [get_files win_coef.vh]
@@ -1647,7 +1655,7 @@ if {[llength $ffts] > 0} {
     }
 }
 puts "  DSP48E2 lane_fft [llength $ffts] 個の合計 = $dsp_fft（予言 16 × 21 = 336）"
-puts "  DSP48E2 全体            = $dsp_all（予言 ≒ 2584 = win_core (288 ＋ 104 × 2 ＋ 24) × 4 ＋ spec_core_0 504。proj017）"
+puts "  DSP48E2 全体            = $dsp_all（予言 ≒ 2584 = win_core (272 ＋ 112 × 2 ＋ 24) × 4 ＋ spec_core_0 504。proj020: wspec に PFB の積 8）"
 set n 0
 foreach x $dsp_names { if {[string first "/spec_core_0/" "/$x"] >= 0} { incr n } }
 puts "  DSP48E2 spec_core_0     = $n（予言 504）"
@@ -1656,9 +1664,9 @@ puts "  DSP48E2 spec_core_0     = $n（予言 504）"
 for {set i 0} {$i < $nch} {incr i} {
     set n 0
     foreach x $dsp_names { if {[string first "/win_core_${i}/" "/$x"] >= 0} { incr n } }
-    puts [format "  DSP48E2 win_core_%d（%s） = %d（予言 %d = 288 ＋ (72 ＋ 32) × %d ＋ 24）" $i [lindex $ch_labels $i] $n [expr {288 + 104 * $WIN_NW + 24}] $WIN_NW]
+    puts [format "  DSP48E2 win_core_%d（%s） = %d（予言 %d = 256 ＋ (8 ＋ 72 ＋ 40) × %d ＋ 24）" $i [lindex $ch_labels $i] $n [expr {256 + 120 * $WIN_NW + 24}] $WIN_NW]
 }
-foreach {sub pred} {u_pfb 288 g_w[0].u_ddc 72 g_w[0].u_ws 32 g_tp.u_tp 24} {
+foreach {sub pred} {u_pfb 272 g_w[0].u_ddc 72 g_w[0].u_ws 40 g_tp.u_tp 24} {
     set pat "/win_core_0/inst/$sub/"
     set n 0
     foreach x $dsp_names { if {[string first $pat "/$x"] >= 0} { incr n } }

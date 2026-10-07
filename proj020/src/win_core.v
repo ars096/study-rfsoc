@@ -30,7 +30,7 @@
 //   0x0C N_ACC     RW  1 ダンプのフレーム数（0 は 1）。RUN の時点で取り込む。1 フレーム = 4096 / W µs
 //   0x10 N_DUMP    RW  ダンプの回数。0 = 止めるまで
 //   0x14 SHIFT     RW  [3:0] 電力の前の右シフト（FFT の出力 31 bit → 18 bit）。既定 SHIFT_DEFAULT
-//   0x18 FLAGS     R   [7:0] wspec_core の FLAGS（粘着、CTRL[8] で消す）/ [8] pfb の飽和あり / [9] ddc の飽和あり /
+//   0x18 FLAGS     R   [7:0] wspec_core の FLAGS（粘着、CTRL[8] で消す。proj020: [5] = 窓の PFB（T = 4）の飽和）/ [8] pfb（粗い PFB）の飽和あり / [9] ddc の飽和あり /
 //                      [10] ddc の時分割の追い越しあり（0 のはず）（[8]〜[10] は WRST で消える）
 //   0x1C SEQ       R   閉じたダンプの通し番号
 //   0x20 FIN_LO    R   溜め終えたフレーム数。**LO を読むと HI を固定**   0x24 FIN_HI
@@ -151,8 +151,8 @@ module win_core #(
     input  wire [3:0]   tev_in
 );
     localparam integer FW = 48;
-    localparam [31:0]  ID   = 32'h0017_0100;   // proj017 rev1: SAM45-Fine（NW 2 × 4 ADC）・TP の FLAGS[4]。proj016 rev1 は 0x0016_0100
-    localparam [31:0]  ID_A = 32'h0017_A100;
+    localparam [31:0]  ID   = 32'h0020_0100;   // proj020 rev1: SAM45-Fine rev2（wspec に PFB T = 4、FLAGS[5] = PFB の飽和）。proj017 rev1 = 0x0017_0100: SAM45-Fine（NW 2 × 4 ADC）・TP の FLAGS[4]。proj016 rev1 は 0x0016_0100
+    localparam [31:0]  ID_A = 32'h0020_A100;
     wire rst = ~aresetn;
     assign s_axis_tready = 1'b1;       // 上流に backpressure をかけない
 

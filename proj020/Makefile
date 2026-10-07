@@ -213,11 +213,11 @@ WIN_DIR       := build-sim-win$(if $(SIM_WIN_POSCTL),-$(SIM_WIN_POSCTL))
 # SIM_WSPEC_POSCTL=1: 陽性対照（RTL の積分で初回のフレームでも読み値に足す）→ A が落ちること
 # SIM_WSPEC_POSCTL=2: 陽性対照（RTL が FFT IP の tready を見ない = rev1、-DWSPEC_NOREADY）→ B が落ちること
 SIM_WSPEC_POSCTL ?= 0
-WSPEC_DIR     := build-sim-wspec$(if $(filter 1,$(SIM_WSPEC_POSCTL)),-posctl)$(if $(filter 2,$(SIM_WSPEC_POSCTL)),-noready)
+WSPEC_DIR     := build-sim-wspec$(if $(filter 1,$(SIM_WSPEC_POSCTL)),-posctl)$(if $(filter 2,$(SIM_WSPEC_POSCTL)),-noready)$(if $(filter 3,$(SIM_WSPEC_POSCTL)),-pfbrev)
 # 変種: 名前:NACC:NDUMP:SHIFT:GAP:RDLY:STALL（GAP 0 = 途切れなし = 256 MHz 窓 / 3 / 32 = 8 MHz 窓の速さ。
 #   RDLY = FFT のモデルの tready が解除から 0 のクロック数（既定 5。6000 は最初のフレームが溜まっても IP が受けない = 実機 1 回目の形）/
 #   STALL = 3·4096 + 1234 クロックごとに tready を 0 にするクロック数）
-WSPEC_VARS    ?= g0:4:4:4:0:5:0 g3:2:4:7:3:5:0 g32:1:3:4:32:5:0 g0r:4:4:4:0:6000:0 g3s:2:4:7:3:5:40
+WSPEC_VARS    ?= g0:4:4:4:0:5:0 g3:2:4:7:3:5:0 g32:1:3:4:32:5:0 g0r:4:4:4:0:6000:0 g3s:2:4:7:3:5:40 e0:4:4:4:0:5:0
 WSPEC_NR_VARS ?= g0r:4:4:4:0:6000:0 g3s:2:4:7:3:5:40
 
 
@@ -326,12 +326,12 @@ sim-win-ts:
 sim-wspec:
 	mkdir -p $(WSPEC_DIR)
 	$(PYTHON) sim/check_wspec.py gen $(WSPEC_DIR)
-	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_WSPEC_POSCTL)),-DWSPEC_POSCTL)$(if $(filter 2,$(SIM_WSPEC_POSCTL)),-DWSPEC_NOREADY) -o $(WSPEC_DIR)/tb src/wspec_core.v src/dstamp.v sim/win_fft_model.v sim/tb_wspec.v
+	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_WSPEC_POSCTL)),-DWSPEC_POSCTL)$(if $(filter 2,$(SIM_WSPEC_POSCTL)),-DWSPEC_NOREADY)$(if $(filter 3,$(SIM_WSPEC_POSCTL)),-DWSPEC_PFB_POSCTL) -o $(WSPEC_DIR)/tb src/wspec_core.v src/dstamp.v src/pfb4_rom.v sim/win_fft_model.v sim/tb_wspec.v
 	rm -f $(WSPEC_DIR)/check.log
 	for v in $(WSPEC_VARS); do \
 	  nm=$${v%%:*}; r=$${v#*:}; na=$${r%%:*}; r=$${r#*:}; nd=$${r%%:*}; r=$${r#*:}; sh=$${r%%:*}; r=$${r#*:}; gp=$${r%%:*}; r=$${r#*:}; rd=$${r%%:*}; st=$${r#*:}; \
-	  mkdir -p $(WSPEC_DIR)/$$nm; \
-	  $(VVP) -n $(WSPEC_DIR)/tb +NACC=$$na +NDUMP=$$nd +SHIFT=$$sh +GAP=$$gp +FFT_RDLY=$$rd +FFT_STALL=$$st +IN=$(WSPEC_DIR)/z.txt +DIR=$(WSPEC_DIR)/$$nm | grep '^wspec:' ; \
+	  mkdir -p $(WSPEC_DIR)/$$nm; ru=3; case $$nm in e*) ru=0;; esac; \
+	  $(VVP) -n $(WSPEC_DIR)/tb +RUNAT=$$ru +NACC=$$na +NDUMP=$$nd +SHIFT=$$sh +GAP=$$gp +FFT_RDLY=$$rd +FFT_STALL=$$st +IN=$(WSPEC_DIR)/z.txt +DIR=$(WSPEC_DIR)/$$nm | grep '^wspec:' ; \
 	  echo "== $$nm" >> $(WSPEC_DIR)/check.log; \
 	  SIM_WSPEC_POSCTL=$(SIM_WSPEC_POSCTL) $(PYTHON) sim/check_wspec.py check $(WSPEC_DIR)/$$nm $$na $$nd $$sh $$rd $$st >> $(WSPEC_DIR)/check.log; \
 	done
@@ -340,10 +340,13 @@ sim-wspec-p:
 	$(MAKE) --no-print-directory sim-wspec SIM_WSPEC_POSCTL=1 WSPEC_VARS=g0:4:4:4:0:5:0
 sim-wspec-r:
 	$(MAKE) --no-print-directory sim-wspec SIM_WSPEC_POSCTL=2 WSPEC_VARS="$(WSPEC_NR_VARS)"
+# proj020: PFB のフレームの順を逆に → スナップショットの照合が落ちること
+sim-wspec-pfb:
+	$(MAKE) --no-print-directory sim-wspec SIM_WSPEC_POSCTL=3 WSPEC_VARS=g0:4:4:4:0:5:0
 
 # sim を全部並べる（iverilog は 1 本 1 コア）。成否は各 check.log の「結果: 全部通過」で読む（make の成功を信用しない）
 sim-win-all:
-	$(MAKE) --no-print-directory -j8 sim-pfb sim-ddc sim-win sim-wspec sim-pfb-p sim-ddc-p sim-wspec-p sim-wspec-r sim-win-g sim-win-ts sim-hb2s sim-pfbm sim-pfbm-p
+	$(MAKE) --no-print-directory -j8 sim-pfb sim-ddc sim-win sim-wspec sim-pfb-p sim-ddc-p sim-wspec-p sim-wspec-r sim-wspec-pfb sim-win-g sim-win-ts sim-hb2s sim-pfbm sim-pfbm-p
 	@grep -H "結果" build-sim-*/check.log
 sim-pfb-p:
 	$(MAKE) --no-print-directory sim-pfb SIM_PFB_POSCTL=1
@@ -364,7 +367,7 @@ survey:
 sim-top:
 	mkdir -p build-sim-top/ns1
 	$(PYTHON) sim/check_top.py gen build-sim-top 1
-	$(IVERILOG) -g2005 -Isrc -o build-sim-top/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) src/wspec_core.v src/dstamp.v src/tp_core.v src/win_core.v src/adc_ev.v sim/win_fft_model.v sim/tb_top.v
+	$(IVERILOG) -g2005 -Isrc -o build-sim-top/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) src/wspec_core.v src/dstamp.v src/pfb4_rom.v src/tp_core.v src/win_core.v src/adc_ev.v sim/win_fft_model.v sim/tb_top.v
 	$(VVP) -n build-sim-top/tb +K=5 +DPHI=3977774351 +NS=1 +NACC=2 +NDUMP=3 +SHIFT=4 +GAP=1 +NSAMP=917504 +IN=build-sim-top/x.hex +DIR=build-sim-top/ns1 | grep '^tb_top:'
 	$(PYTHON) sim/check_top.py check build-sim-top 1 2 3 4 | tee build-sim-top/check.log
 
@@ -373,7 +376,7 @@ sim-top:
 sim-win4:
 	mkdir -p build-sim-win4
 	$(PYTHON) sim/check_win4.py gen build-sim-win4
-	$(IVERILOG) -g2005 -Isrc -o build-sim-win4/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) src/wspec_core.v src/dstamp.v src/tp_core.v src/win_core.v src/adc_ev.v sim/win_fft_model.v sim/tb_win4.v
+	$(IVERILOG) -g2005 -Isrc -o build-sim-win4/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) src/wspec_core.v src/dstamp.v src/pfb4_rom.v src/tp_core.v src/win_core.v src/adc_ev.v sim/win_fft_model.v sim/tb_win4.v
 	$(VVP) -n build-sim-win4/tb +IN=build-sim-win4/x.hex +CFG=build-sim-win4/cfg.txt +DIR=build-sim-win4 +NSAMP=1048576 | grep '^tb_win4:'
 	$(PYTHON) sim/check_win4.py check build-sim-win4 | tee build-sim-win4/check.log
 
@@ -392,7 +395,7 @@ WSTAMP_DIR  := build-sim-wstamp$(if $(filter 1,$(SIM_WSTAMP_POSCTL)),-posctl)
 sim-wstamp:
 	mkdir -p $(WSTAMP_DIR); rm -f $(WSTAMP_DIR)/check.log
 	for v in $(WSTAMP_VARS); do nm=$${v%%:*}; r=$${v#*:}; na=$${r%%:*}; r=$${r#*:}; nd=$${r%%:*}; r=$${r#*:}; gp=$${r%%:*}; lat=$${r#*:}; \
-	  $(IVERILOG) -g2005 -Isrc -DFFT_LAT=$$lat $(if $(filter 1,$(SIM_WSTAMP_POSCTL)),-DDSTAMP_POSCTL) -o $(WSTAMP_DIR)/tb_$$nm src/wspec_core.v src/dstamp.v sim/win_fft_model.v sim/tb_wstamp.v && \
+	  $(IVERILOG) -g2005 -Isrc -DFFT_LAT=$$lat $(if $(filter 1,$(SIM_WSTAMP_POSCTL)),-DDSTAMP_POSCTL) -o $(WSTAMP_DIR)/tb_$$nm src/wspec_core.v src/dstamp.v src/pfb4_rom.v sim/win_fft_model.v sim/tb_wstamp.v && \
 	  $(VVP) -n $(WSTAMP_DIR)/tb_$$nm +NACC=$$na +NDUMP=$$nd +GAP=$$gp | grep '^wstamp:' | sed "s/^/[$$nm] /" >> $(WSTAMP_DIR)/check.log; done
 	@cat $(WSTAMP_DIR)/check.log
 	@n=$$(grep -c '結果: 全部通過' $(WSTAMP_DIR)/check.log); if [ $$n -eq $(words $(WSTAMP_VARS)) ]; then echo "結果: 全部通過（$$n 変種）" | tee -a $(WSTAMP_DIR)/check.log; \
@@ -406,7 +409,7 @@ TSYS_DIR := build-sim-tsys$(if $(filter 1,$(SIM_TSYS_POSCTL)),-posctl)
 sim-tsys:
 	mkdir -p $(TSYS_DIR)
 	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_TSYS_POSCTL)),-DWIN_POSCTL_SHIFT -DSPEC_POSCTL_SHIFT) -o $(TSYS_DIR)/tb src/time_core.v src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) \
-	  src/wspec_core.v src/dstamp.v src/tp_core.v src/win_core.v src/adc_ev.v src/spec_core.v src/dft16.v src/tw_rom.v sim/win_fft_model.v sim/lane_fft_model.v sim/tb_tsys.v
+	  src/wspec_core.v src/dstamp.v src/pfb4_rom.v src/tp_core.v src/win_core.v src/adc_ev.v src/spec_core.v src/dft16.v src/tw_rom.v sim/win_fft_model.v sim/lane_fft_model.v sim/tb_tsys.v
 	$(VVP) -n $(TSYS_DIR)/tb | grep '^tb_tsys:' | tee $(TSYS_DIR)/check.log
 sim-tsys-p:
 	$(MAKE) --no-print-directory sim-tsys SIM_TSYS_POSCTL=1
@@ -415,7 +418,7 @@ sim-tsys-p:
 WGRID_DIR := build-sim-wgrid$(if $(filter 1,$(SIM_WGRID_POSCTL)),-posctl)
 sim-wgrid:
 	mkdir -p $(WGRID_DIR)
-	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_WGRID_POSCTL)),-DWSPEC_NOGRID) -o $(WGRID_DIR)/tb src/wspec_core.v src/dstamp.v sim/win_fft_model.v sim/tb_wgrid.v
+	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_WGRID_POSCTL)),-DWSPEC_NOGRID) -o $(WGRID_DIR)/tb src/wspec_core.v src/dstamp.v src/pfb4_rom.v sim/win_fft_model.v sim/tb_wgrid.v
 	$(VVP) -n $(WGRID_DIR)/tb | grep '^wgrid:' | tee $(WGRID_DIR)/check.log
 sim-wgrid-p:
 	$(MAKE) --no-print-directory sim-wgrid SIM_WGRID_POSCTL=1
@@ -425,7 +428,7 @@ T4_DIR := build-sim-t4adc$(if $(filter 1,$(SIM_T4_POSCTL)),-posctl)
 sim-t4adc:
 	mkdir -p $(T4_DIR)
 	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_T4_POSCTL)),-DT4_POSCTL) -o $(T4_DIR)/tb src/time_core.v src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) \
-	  src/wspec_core.v src/dstamp.v src/tp_core.v src/win_core.v src/adc_ev.v sim/win_fft_model.v sim/tb_t4adc.v
+	  src/wspec_core.v src/dstamp.v src/pfb4_rom.v src/tp_core.v src/win_core.v src/adc_ev.v sim/win_fft_model.v sim/tb_t4adc.v
 	$(VVP) -n $(T4_DIR)/tb | grep '^tb_t4adc:' | tee $(T4_DIR)/check.log
 sim-t4adc-p:
 	$(MAKE) --no-print-directory sim-t4adc SIM_T4_POSCTL=1

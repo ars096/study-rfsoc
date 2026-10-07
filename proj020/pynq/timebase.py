@@ -39,6 +39,10 @@ NS_NUM, NS_DEN = 125, 32          # 1 ビート = 125/32 ns（厳密）
 #   **T-2（閉ループ）で測れるのは差 M = adc_to_core − pps_det（＋ 2 本のケーブルの差）の 1 つだけ**なので、M を adc_to_core_ns に入れ、
 #   pps_det_ns = 0 とする（式の上では引く量は M で同じ）。
 CAL = {
+    # proj020: time_core・ギアボックスの RTL は proj017 と同じだが、別の Overlay・別の配置なので proj017 の値は持ち込まない（proj017 の流儀）。
+    #   F-2（閉ループ、4 ADC）で測るまで未較正
+    0x0020_7101: dict(pps_det_ns=0.0, adc_to_core_ns={0: None, 1: None, 2: None, 3: None}, bound_ns=50,
+                      source="proj020: 未較正（F-2 で測る）"),
     # proj017: adc_to_core_ns は ADC ごと（chans の添字 0..3 = ADC_A..D）。F-2 で 4 本とも測るまで None（未較正）。
     #   proj016 の ADC_A の 121.2 ns は別の Overlay・別の配置なので持ち込まない
     0x0017_7101: dict(pps_det_ns=0.0, adc_to_core_ns={0: 126.8, 1: 126.4, 2: 122.4, 3: 123.3}, bound_ns=50,
@@ -91,7 +95,7 @@ def pps_is_consistent(d_count, d_stamp, tol=2):
 
 class TimeCore:
     """time_core_0 のレジスタ（src/time_core.v の冒頭の表）。mmio は pynq.MMIO か、read(off) / write(off, v) を持つもの。"""
-    ID = 0x0017_7101
+    ID = 0x0020_7101
     CTRL_ARM, CTRL_CANCEL, CTRL_ASET, CTRL_ACLR, CTRL_NCLR = 1, 2, 8, 16, 256
 
     def __init__(self, mmio):

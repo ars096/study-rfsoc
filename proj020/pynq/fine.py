@@ -213,7 +213,7 @@ def f4(tc, tb, wins, full, wms, ndumps, tint, shift, keep, out=None, offgrid=0, 
         if (n * c.L) % G:
             log(f"ERROR: {c.name} の N·L = {n} × {c.L} が格子 G = {G} の倍数でない（--tint {tint} は 2.048 ms の倍数に）"); return False
     if offgrid:
-        T.wrst_on_grid(tc, tb, wins, full, wms, ns_list, if_c, 0x0017_00FF, offset=offgrid, only=[0])
+        T.wrst_on_grid(tc, tb, wins, full, wms, ns_list, if_c, 0x0020_00FF, offset=offgrid, only=[0])
     for c, n in zip(wins, nacc):
         c.wr(W.R_NACC, n); c.wr(W.R_NDUMP, 0); c.wr(W.R_SHIFT, shift)
     for wm in wms:
@@ -421,7 +421,7 @@ def main():
     except TimebaseError as e:
         log(f"ERROR: 錨を打てない: {e}"); sys.exit(1)
     log(f"錨: UTC {anc['utc_sec']} 秒 = スタンプ {anc['stamp']}（EPOCH {anc['epoch']}）")
-    T.wrst_on_grid(tc, tb, wins, full, wms, ns_list, a.if_c, 0x0017_0004)   # 格子の START_AT で一斉に WRST
+    T.wrst_on_grid(tc, tb, wins, full, wms, ns_list, a.if_c, 0x0020_0004)   # 格子の START_AT で一斉に WRST
     ok = True
     if a.f4:
         ok &= f4(tc, tb, wins, full, wms, a.dumps, a.tint, a.shift, a.keep, a.out, offgrid=a.offgrid, ns_list=ns_list, if_c=a.if_c)

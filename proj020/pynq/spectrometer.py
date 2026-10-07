@@ -49,13 +49,13 @@ import time
 
 import numpy as np
 
-BITFILE = "proj017.bit"
+BITFILE = "proj020.bit"
 FS_HZ = 4096.0e6
 NFFT = 8192
 NCH_OUT = 4096
 DF_HZ = FS_HZ / NFFT              # 0.5 MHz
 T_FRAME = NFFT / FS_HZ            # 2.000 µs
-ID_EXPECT = 0x00170000            # proj017（tp_core の FLAGS[4]）。proj016（spec_core に時刻・設定番号・健全性。SHIFT は RUN で取り込む）。proj015（spec_core は proj013 rev1 と同一で ID だけ。proj014 は 0x0014）。[15:8] は rev（1 / 2）、[7:0] は FFT_CFG（変種）なので比べない
+ID_EXPECT = 0x00200000            # proj020（spec_core の中身は proj017 と同じ）。proj017（tp_core の FLAGS[4]）。proj016（spec_core に時刻・設定番号・健全性。SHIFT は RUN で取り込む）。proj015（spec_core は proj013 rev1 と同一で ID だけ。proj014 は 0x0014）。[15:8] は rev（1 / 2）、[7:0] は FFT_CFG（変種）なので比べない
 ID_MASK = 0xFFFF0000
 
 
@@ -68,7 +68,7 @@ def feat_rev(ident):
     表示には生の rev（fft_cfg_str）を使う。
     """
     rev = (ident >> 8) & 0xFF
-    if (ident & ID_MASK) in (0x00120000, 0x00130000, 0x00140000, 0x00150000, 0x00160000, 0x00170000):   # proj012〜proj015 は proj011 rev6 の機能をすべて持つ
+    if (ident & ID_MASK) in (0x00120000, 0x00130000, 0x00140000, 0x00150000, 0x00160000, 0x00170000, 0x00200000):   # proj012〜proj015 は proj011 rev6 の機能をすべて持つ
         return 6
     return rev
 
