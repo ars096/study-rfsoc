@@ -32,6 +32,7 @@ import s45proto as P
 
 KEYS = [f"{a}{w}" for a in "ABCD" for w in "01"]
 TAU0 = 0.04096
+QMIN = 3.0                           # 1 フレームの ch の電力（SHIFT 後の LSB²）がこれ未満の窓は飛ばす（s45spur と同じ）
 TP_TAU0 = 512 * 512 / 256e6          # 1.024 ms
 
 
@@ -167,6 +168,13 @@ def analyze(paths, keys=None, chan_bin=25, tp_bw=1800.0, plot=True, out=None):
         W = 512.0 / (1 << meta["ns"])
         dnu = W * 1e6 / P.NCH
         band = np.array(r["band"][a:b]); lo = np.array(r["lo"][a:b]); hi = np.array(r["hi"][a:b])
+        # 量子化: 1 フレームの ch の電力（偏りを引いた後、SHIFT 後の LSB²）。QMIN 未満（無入力の狭い窓など）は
+        # χ² でなく量子化の形になり、偏りを引くと平均が 0 に近づいて相対の揺れが意味を持たない → 飛ばす
+        q = band.mean() / (P.NCH - 2 * int(round(P.NCH * 0.05))) / meta["nacc"]
+        if q < QMIN:
+            print(f"  {key}（{W:g} MHz）: 1 フレームの ch の電力 {q:.2g} LSB²（{QMIN:g} 未満、量子化に埋もれている）→ 飛ばす")
+            res[key] = dict(W=W, n=n, skipped=f"q {q:.3g} LSB2 < {QMIN:g}")
+            continue
         # 線の ch（束ねたもので決める）
         ch = np.array(r["ch"]) if r["ch"] else None
         if ch is not None:
@@ -192,6 +200,10 @@ def analyze(paths, keys=None, chan_bin=25, tp_bw=1800.0, plot=True, out=None):
         M = int(np.sum(use & good)) if ch is not None else int(np.sum(use))
         M_lo = int(np.sum((use & good)[:P.NCH // 2])) if ch is not None else M // 2
         M_hi = M - M_lo
+        if min(M_lo, M_hi) < 1:
+            print(f"  {key}: 使える ch が無い（線で外しきった）→ 飛ばす")
+            res[key] = dict(W=W, n=n, skipped="no usable channels")
+            continue
         out_k = {}
         ms = m_grid(n)
         taus = np.array(ms) * TAU0
@@ -250,7 +262,7 @@ def analyze(paths, keys=None, chan_bin=25, tp_bw=1800.0, plot=True, out=None):
               + ", ".join(f"{r:+.3f}" for r in ex['rho_hp'][:4]))
     json.dump(dict(paths=paths, chan_bin=chan_bin, tp_bw_mhz=tp_bw, res=res), open(out + ".allan.json", "w"), ensure_ascii=False, indent=1)
     print(f"まとめ: {out}.allan.json")
-    if plot:
+    if plot and rows_plot:
         _plot(out + ".allan.png", rows_plot)
     return res
 
