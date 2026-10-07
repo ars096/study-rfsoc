@@ -119,7 +119,7 @@ proj015 の Makefile は既定の part が `-1`（`make` → build/）、`-2` �
 | DAC_B | RF-DAC Tile 228 | RefMan A6 記載 |
 | ADC 入力のバラン | **MABA-011118**（10 MHz 〜 10 GHz） | 各 SMA と ADC の間に入る。**DC 結合ではない** |
 | **ADC のフルスケール** | **0 dBFS ≒ +5.8 dBm** | **2026-09-17 に proj005 で実測**（100 MHz・バラン込み。3 レベルのばらつき 0.35 dB）|
-| RFDC 基準クロック | 491.52 MHz（Tile 224 / 226 / 228 / 230） | LMX2594 が供給 |
+| RFDC 基準クロック | 491.52 MHz（Tile 224 / 226 / 228 / 230） | LMX2594 が供給。**出力の強さ OUTA・OUTB の PWR = 3**（proj019 で 31 → 3。specd `--lmx-pwr` の既定。タイル PLL は PWR 0 までロック、位相雑音は変わらない。強いとクロックの櫛 n × 163.84 MHz が立つ） |
 | システム REFCLK | 122.88 MHz DIFF | LMK04828 が供給 |
 | RF SYSREF | 7.68 MHz DIFF | |
 | 外部クロック入力 | **CLK_IN（SMA）** → LMK04828 | 実装済み。**基板改造は不要** |
