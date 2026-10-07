@@ -168,6 +168,11 @@ class HwBackend:
         from pynq import Overlay
         import xrfdc                               # Overlay() より前に import する（VERSIONS.md）
         S.setup_clocks(self.o.clkin, self.o.ref)
+        self.lmx = None
+        chdiv = getattr(self.o, "lmx_chdiv", 16)
+        if chdiv != 16:                            # proj019: LMX の VCO を動かす（櫛の出どころの試験）。出力 491.52 は同じ
+            import extref
+            self.lmx = extref.rewrite_lmx(chdiv)
         self.ol = Overlay(self.o.bitfile)
         if not isinstance(self.ol.rfdc, xrfdc.RFdc):
             raise RuntimeError("RFDC に xrfdc のドライバが当たっていない")
@@ -182,7 +187,8 @@ class HwBackend:
         self.tc.configure(src=self.o.path, tol=1)
         self.tb = TB.Timebase(self.tc, path=self.o.path)
         self.TpStream = make_tp_reader(S)
-        self.ids = dict(win=f"{W.ID_WIN:08x}", adc=f"{W.ID_ADC:08x}", time=f"{TB.TimeCore.ID:08x}")
+        self.ids = dict(win=f"{W.ID_WIN:08x}", adc=f"{W.ID_ADC:08x}", time=f"{TB.TimeCore.ID:08x}",
+                        lmx_vco=f"{self.lmx['vco_mhz']:.2f}" if self.lmx else "7864.32")
         self.clock = Clock(None, TB.WIN_DELAY_BEATS)
         self.anchor()
 

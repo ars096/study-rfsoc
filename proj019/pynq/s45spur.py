@@ -253,7 +253,7 @@ def _read_rec(paths, keys):
     return it, absval
 
 
-def run_rec(paths, keys=None, zth=8.0, bin_=25, tsys=139.0, plot=True):
+def run_rec(paths, keys=None, zth=8.0, bin_=25, tsys=139.0, plot=True, edge=EDGE):
     import s45proto as P
     keys = keys or KEYS
     it, absval = _read_rec(paths, keys)
@@ -279,7 +279,7 @@ def run_rec(paths, keys=None, zth=8.0, bin_=25, tsys=139.0, plot=True):
         if not cnt[k]:
             continue
         S = acc[k] / cnt[k]
-        n = len(S); use = np.zeros(n, bool); e = int(n * EDGE); use[e:n - e] = True
+        n = len(S); use = np.zeros(n, bool); e = int(n * edge); use[e:n - e] = True
         pks, b, zz = detect(S, zth, use)
         # 量子化: 1 フレームの ch の電力が SHIFT の後の LSB² で何個ぶんか（偏りを引いた後）。QMIN 未満なら（無入力の狭い窓など）
         # 値が LSB に近く、χ² でなく量子化の形が見える → 線を探さない。長い平均では床の細かい形（さざ波）が
@@ -394,11 +394,12 @@ def main():
     b = sub.add_parser("rec"); b.add_argument("paths", nargs="+"); b.add_argument("--keys", default=None)
     b.add_argument("--zth", type=float, default=8.0); b.add_argument("--bin", type=int, default=25)
     b.add_argument("--tsys", type=float, default=139.0); b.add_argument("--no-plot", action="store_true")
+    b.add_argument("--edge", type=float, default=EDGE, help="窓の両端で見ない割合（既定 0.05）")
     x = p.parse_args()
     if x.mode == "lin":
         run_lin(x.path, x.floor_att, x.zth, x.ref_dbfs, x.tsys, not x.no_plot)
     else:
-        run_rec(x.paths, x.keys.split(",") if x.keys else None, x.zth, x.bin, x.tsys, not x.no_plot)
+        run_rec(x.paths, x.keys.split(",") if x.keys else None, x.zth, x.bin, x.tsys, not x.no_plot, x.edge)
 
 
 if __name__ == "__main__":

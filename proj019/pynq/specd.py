@@ -134,7 +134,8 @@ class Server:
         if cmd == "ID":
             r = self.acq_cmd(dict(op="id"))
             return self._rep(r, lambda r: kv_line(dict(version=r["version"], win_id=r["ids"]["win"], adc_id=r["ids"]["adc"],
-                                                       time_id=r["ids"]["time"], adcs=r["adcs"], nw=r["nw"], fake=r["fake"],
+                                                       time_id=r["ids"]["time"], lmx_vco=r["ids"].get("lmx_vco", "-"),
+                                                       adcs=r["adcs"], nw=r["nw"], fake=r["fake"],
                                                        proto=P.VERSION)))
         if cmd == "STATUS":
             r = self.acq_cmd(dict(op="status"))
@@ -447,6 +448,8 @@ def main():
     p.add_argument("--bitfile", default="proj017.bit", help="proj017 の .bit（同じ名前の .hwh が同じ場所に要る）")
     p.add_argument("--clkin", default="stock", choices=("stock", "0", "1", "2"))
     p.add_argument("--ref", type=float, default=10.0)
+    p.add_argument("--lmx-chdiv", type=int, default=16, choices=(16, 24),
+                   help="LMX2594 の CHDIV（出力 491.52 は同じ）。16 = 出荷時（VCO 7864.32 MHz）、24 = VCO 11796.48 MHz（櫛の出どころの試験）")
     p.add_argument("--settle", type=float, default=5.0)
     p.add_argument("--path", default="trig", choices=("trig", "comp"))
     p.add_argument("--cpu", type=int, default=3, help="取得のプロセスを固定する CPU（-1 で固定しない）")

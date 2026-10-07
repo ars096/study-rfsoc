@@ -445,6 +445,81 @@ def set_clocks(clkin=None, ref_mhz=10.0, settle=2.0, verbose=True):
     return regs
 
 
+# --------------------------------------------------------------------- LMX2594 の VCO（proj019、櫛の出どころの試験）
+# 出荷時: 245.76 MHz / PLL_R 10 = 24.576 MHz × N 320 = **VCO 7864.32 MHz**、CHDIV 16 → 491.52 MHz。
+# 7864.32 = 48 × 163.84、fs = 4096 = 25 × 163.84 なので、VCO とその分周の途中・高調波は折り返して **n × 163.84 MHz** に立つ
+# （VCO 7864.32 − 4096 = 3768.32 = 櫛で一番強い線、VCO/2 = 3932.16、2·VCO − 3·4096 = 3440.64 …）。
+# 出力（491.52）を変えずに VCO だけ動かすには CHDIV を 24 に（VCO 11796.48 MHz、N 480）。VCO の範囲は 7500〜15000 MHz。
+CHDIV_CODE = {2: 0, 4: 1, 6: 2, 8: 3, 12: 4, 16: 5, 24: 6, 32: 7, 48: 8, 64: 9, 72: 10, 96: 11, 128: 12, 192: 13, 256: 14,
+              384: 15, 512: 16, 768: 17}
+
+
+def _lmx_get(regs, addr):
+    for w in regs:
+        if (w >> 16) & 0x7F == addr:
+            return w & 0xFFFF
+    raise KeyError(f"LMX のレジスタ R{addr} が無い")
+
+
+def _lmx_set(regs, addr, val):
+    out, hit = [], 0
+    for w in regs:
+        if (w >> 16) & 0x7F == addr:
+            w = (w & 0xFF0000) | (val & 0xFFFF)
+            hit += 1
+        out.append(w)
+    if not hit:
+        raise KeyError(f"LMX のレジスタ R{addr} が無い")
+    return out
+
+
+def lmx_patch_chdiv(regs, chdiv, ref_mhz=LMK_FREQ):
+    """出力の周波数（VCO / CHDIV）を変えずに CHDIV と N を差し替える。戻り値 (regs, 説明の dict)"""
+    if chdiv not in CHDIV_CODE:
+        raise ValueError(f"CHDIV {chdiv} は使えない（{sorted(CHDIV_CODE)}）")
+    osc2x = (_lmx_get(regs, 9) >> 12) & 1
+    mult = (_lmx_get(regs, 10) >> 7) & 0x1F
+    pll_r = (_lmx_get(regs, 11) >> 4) & 0xFF
+    r_pre = _lmx_get(regs, 12) & 0xFFF
+    fpd = ref_mhz * (2 if osc2x else 1) * max(mult, 1) / max(pll_r, 1) / max(r_pre, 1)
+    n0 = ((_lmx_get(regs, 34) & 7) << 16) | _lmx_get(regs, 36)
+    code0 = (_lmx_get(regs, 75) >> 6) & 0x1F
+    div0 = {v: k for k, v in CHDIV_CODE.items()}[code0]
+    vco0 = fpd * n0
+    fout = vco0 / div0
+    vco = fout * chdiv
+    n = vco / fpd
+    if abs(n - round(n)) > 1e-9:
+        raise ValueError(f"N = {n} が整数にならない（fPD {fpd} MHz・出力 {fout} MHz・CHDIV {chdiv}）")
+    if not 7500.0 <= vco <= 15000.0:
+        raise ValueError(f"VCO {vco} MHz が LMX2594 の範囲（7500〜15000 MHz）の外")
+    n = int(round(n))
+    regs = _lmx_set(regs, 36, n & 0xFFFF)
+    regs = _lmx_set(regs, 34, (_lmx_get(regs, 34) & ~7) | ((n >> 16) & 7))
+    regs = _lmx_set(regs, 75, (_lmx_get(regs, 75) & ~(0x1F << 6)) | (CHDIV_CODE[chdiv] << 6))
+    return regs, dict(fpd_mhz=fpd, n_old=n0, chdiv_old=div0, vco_old_mhz=vco0, n=n, chdiv=chdiv, vco_mhz=vco, fout_mhz=fout)
+
+
+def rewrite_lmx(chdiv, settle=0.5, verbose=True):
+    """出荷時の LMX の設定を CHDIV だけ差し替えて書き直す。**set_ref_clks（setup_clocks）の後、Overlay() の前に呼ぶ**
+    （タイルはビットストリームを読んだ時点で 491.52 を掴む）。最後の R0 の書き込みで VCO の較正が走る"""
+    xrfclk = _import_xrfclk()
+    path = find_stock_lmx_file()
+    if not path:
+        raise RuntimeError("LMX2594 のレジスタファイルが無い")
+    regs, info = lmx_patch_chdiv(read_tics(path), chdiv)
+    write_lmx, fn = _writer(xrfclk, "LMX")
+    if write_lmx is None:
+        raise RuntimeError("xrfclk に LMX を書く関数が無い")
+    for lmx in _devices(xrfclk, "lmx"):
+        write_lmx(regs, lmx)
+    time.sleep(settle)
+    if verbose:
+        log(f"LMX2594 を書き直した: CHDIV {info['chdiv_old']} → {info['chdiv']}、N {info['n_old']} → {info['n']}、"
+            f"VCO {info['vco_old_mhz']:.2f} → {info['vco_mhz']:.2f} MHz（出力 {info['fout_mhz']:.2f} MHz は同じ）")
+    return info
+
+
 # --------------------------------------------------------------------- CLI
 def show_api():
     """ボードの xrfclk が実際に持っているものを出す。
