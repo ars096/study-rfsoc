@@ -213,7 +213,7 @@ WIN_DIR       := build-sim-win$(if $(SIM_WIN_POSCTL),-$(SIM_WIN_POSCTL))
 # SIM_WSPEC_POSCTL=1: 陽性対照（RTL の積分で初回のフレームでも読み値に足す）→ A が落ちること
 # SIM_WSPEC_POSCTL=2: 陽性対照（RTL が FFT IP の tready を見ない = rev1、-DWSPEC_NOREADY）→ B が落ちること
 SIM_WSPEC_POSCTL ?= 0
-WSPEC_DIR     := build-sim-wspec$(if $(filter 1,$(SIM_WSPEC_POSCTL)),-posctl)$(if $(filter 2,$(SIM_WSPEC_POSCTL)),-noready)$(if $(filter 3,$(SIM_WSPEC_POSCTL)),-pfbrev)
+WSPEC_DIR     := build-sim-wspec$(if $(filter 1,$(SIM_WSPEC_POSCTL)),-posctl)$(if $(filter 2,$(SIM_WSPEC_POSCTL)),-noready)$(if $(filter 3,$(SIM_WSPEC_POSCTL)),-pfbrev)$(if $(filter 1,$(SIM_WSPEC_SAT)),-sat)
 # 変種: 名前:NACC:NDUMP:SHIFT:GAP:RDLY:STALL（GAP 0 = 途切れなし = 256 MHz 窓 / 3 / 32 = 8 MHz 窓の速さ。
 #   RDLY = FFT のモデルの tready が解除から 0 のクロック数（既定 5。6000 は最初のフレームが溜まっても IP が受けない = 実機 1 回目の形）/
 #   STALL = 3·4096 + 1234 クロックごとに tready を 0 にするクロック数）
@@ -325,7 +325,7 @@ sim-win-ts:
 # wspec_core の単体の sim（溜め → FFT のモデル → 電力 → 積分・スナップショット・帳簿）。4 層の判定（sim/check_wspec.py）
 sim-wspec:
 	mkdir -p $(WSPEC_DIR)
-	$(PYTHON) sim/check_wspec.py gen $(WSPEC_DIR)
+	SIM_WSPEC_SAT=$(SIM_WSPEC_SAT) $(PYTHON) sim/check_wspec.py gen $(WSPEC_DIR)
 	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_WSPEC_POSCTL)),-DWSPEC_POSCTL)$(if $(filter 2,$(SIM_WSPEC_POSCTL)),-DWSPEC_NOREADY)$(if $(filter 3,$(SIM_WSPEC_POSCTL)),-DWSPEC_PFB_POSCTL) -o $(WSPEC_DIR)/tb src/wspec_core.v src/dstamp.v src/pfb4_rom.v sim/win_fft_model.v sim/tb_wspec.v
 	rm -f $(WSPEC_DIR)/check.log
 	for v in $(WSPEC_VARS); do \
@@ -333,20 +333,23 @@ sim-wspec:
 	  mkdir -p $(WSPEC_DIR)/$$nm; ru=3; case $$nm in e*) ru=0;; esac; \
 	  $(VVP) -n $(WSPEC_DIR)/tb +RUNAT=$$ru +NACC=$$na +NDUMP=$$nd +SHIFT=$$sh +GAP=$$gp +FFT_RDLY=$$rd +FFT_STALL=$$st +IN=$(WSPEC_DIR)/z.txt +DIR=$(WSPEC_DIR)/$$nm | grep '^wspec:' ; \
 	  echo "== $$nm" >> $(WSPEC_DIR)/check.log; \
-	  SIM_WSPEC_POSCTL=$(SIM_WSPEC_POSCTL) $(PYTHON) sim/check_wspec.py check $(WSPEC_DIR)/$$nm $$na $$nd $$sh $$rd $$st >> $(WSPEC_DIR)/check.log; \
+	  SIM_WSPEC_SAT=$(SIM_WSPEC_SAT) SIM_WSPEC_POSCTL=$(SIM_WSPEC_POSCTL) $(PYTHON) sim/check_wspec.py check $(WSPEC_DIR)/$$nm $$na $$nd $$sh $$rd $$st >> $(WSPEC_DIR)/check.log; \
 	done
 	@cat $(WSPEC_DIR)/check.log | grep -v "  OK"
 sim-wspec-p:
 	$(MAKE) --no-print-directory sim-wspec SIM_WSPEC_POSCTL=1 WSPEC_VARS=g0:4:4:4:0:5:0
 sim-wspec-r:
 	$(MAKE) --no-print-directory sim-wspec SIM_WSPEC_POSCTL=2 WSPEC_VARS="$(WSPEC_NR_VARS)"
+# proj020: ch の間ちょうどの強い CW で PFB の出口を飽和させ、FLAGS[5] が立つこと・飽和した値も模型と bit 単位で一致すること
+sim-wspec-sat:
+	$(MAKE) --no-print-directory sim-wspec SIM_WSPEC_SAT=1 WSPEC_VARS=g0:4:4:4:0:5:0
 # proj020: PFB のフレームの順を逆に → スナップショットの照合が落ちること
 sim-wspec-pfb:
 	$(MAKE) --no-print-directory sim-wspec SIM_WSPEC_POSCTL=3 WSPEC_VARS=g0:4:4:4:0:5:0
 
 # sim を全部並べる（iverilog は 1 本 1 コア）。成否は各 check.log の「結果: 全部通過」で読む（make の成功を信用しない）
 sim-win-all:
-	$(MAKE) --no-print-directory -j8 sim-pfb sim-ddc sim-win sim-wspec sim-pfb-p sim-ddc-p sim-wspec-p sim-wspec-r sim-wspec-pfb sim-win-g sim-win-ts sim-hb2s sim-pfbm sim-pfbm-p
+	$(MAKE) --no-print-directory -j8 sim-pfb sim-ddc sim-win sim-wspec sim-pfb-p sim-ddc-p sim-wspec-p sim-wspec-r sim-wspec-pfb sim-wspec-sat sim-win-g sim-win-ts sim-hb2s sim-pfbm sim-pfbm-p
 	@grep -H "結果" build-sim-*/check.log
 sim-pfb-p:
 	$(MAKE) --no-print-directory sim-pfb SIM_PFB_POSCTL=1

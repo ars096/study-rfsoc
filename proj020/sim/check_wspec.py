@@ -28,12 +28,15 @@ NF = 4096
 NFRM = 28
 
 
-def gen(d):
+def gen(d, sat=False):
     rng = np.random.default_rng(17)
     n = np.arange(NF * NFRM)
     z = rng.normal(0, 500, NF * NFRM) + 1j * rng.normal(0, 500, NF * NFRM)
     z += 30000 * np.exp(2j * np.pi * 1000 * n / NF)            # ch 1000: SHIFT 4 で飽和する
     z += 300 * np.exp(2j * np.pi * (3000.37) * n / NF + 0.3)    # ch の間に落ちる弱い線
+    if sat:
+        # proj020 sim-wspec-sat: ch の間ちょうど（0.5 ch）の強い CW。PFB の出口が z の最大 1.405 倍になる場所（番地の端）で 18 bit を越える
+        z += 95000 * np.exp(2j * np.pi * 2000.5 * n / NF)
     zr = np.clip(np.round(z.real), -131072, 131071).astype(np.int64)
     zi = np.clip(np.round(z.imag), -131072, 131071).astype(np.int64)
     np.save(os.path.join(d, "z.npy"), np.stack([zr, zi]))
@@ -112,8 +115,12 @@ def check(d, nacc, ndump, shift, posctl, rdly=5, stall=0):
         nsn = int(np.count_nonzero((sn[:, 0] != yr[f0 * NF:(f0 + 1) * NF]) | (sn[:, 1] != yi[f0 * NF:(f0 + 1) * NF])))
         nbad_sn += nsn
         judge(nsn == 0, f"C: ダンプ {j} のスナップショット = PFB の模型の出力フレーム {f0}（不一致 {nsn}、模型の飽和 {pcnt or 0}）")
-    judge((flags & 0xEF) == 0 and bool(flags & 0x10) == exp_wait,
-          f"D: FLAGS = {flags:02x}（[4] 待たされた: {'立つはず' if exp_wait else '立たないはず'}）")
+    exp_sat = bool(pcnt)        # proj020: PFB の模型が飽和した入力なら FLAGS[5] が立つはず（sim-wspec-sat）
+    if os.environ.get("SIM_WSPEC_SAT") == "1":
+        judge(exp_sat, f"D: PFB の模型が飽和する入力（飽和 {pcnt.get('pfb_sat', 0)} 語）")
+    judge((flags & 0xCF) == 0 and bool(flags & 0x10) == exp_wait and bool(flags & 0x20) == exp_sat,
+          f"D: FLAGS = {flags:02x}（[4] 待たされた: {'立つはず' if exp_wait else '立たないはず'}、"
+          f"[5] PFB の飽和: {'立つはず' if exp_sat else '立たないはず'}）")
     judge((st_cnt > 0) == exp_wait and rdy0 == rdly,
           f"D: 待たされた {st_cnt} クロック / tready まで {rdy0} クロック（モデルの RDLY {rdly}、STALL {stall}）")
     judge(0 <= fin - fout <= 3, f"D: fin {fin} − fout {fout} = {fin - fout}（溜めの読み出しと FFT の中の 2 フレーム ＋ 予約 1 面以内）")
@@ -141,7 +148,7 @@ def check(d, nacc, ndump, shift, posctl, rdly=5, stall=0):
 
 if __name__ == "__main__":
     if sys.argv[1] == "gen":
-        gen(sys.argv[2])
+        gen(sys.argv[2], os.environ.get("SIM_WSPEC_SAT") == "1")
     else:
         ex = [int(v) for v in sys.argv[6:8]]
         sys.exit(check(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]),

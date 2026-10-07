@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """proj020 — 窓の分光の PFB（T = 4、4096 点）の係数と、RTL と bit 単位で同じ固定小数点の模型。numpy だけ。
 
-原型（README の「決めたこと」）:
-  h[n] = sinc((n − (L − 1)/2) / 4096) · kaiser(L, β = 8)、L = 16384。**Σh² = 4096 に規格化**（雑音の電力を保つ:
+原型（README の「決めたこと」。2026-10-07 に β 8・bw 1.00 → β 5・bw 1.198 に決め直した）:
+  h[n] = sinc(1.198 · (n − (L − 1)/2) / 4096) · kaiser(L, β = 5)、L = 16384。隣の ch と −3 dB で交わり、ch の間の谷が無い
+  （0.5 ch −3.00 dB・隣接 ch の和の波打ち 0.08 dB・≧ 1 ch −53.7 dB・≧ 1.5 ch −58.0 dB・≧ 3 ch −64.5 dB・ENBW 1.010）。**Σh² = 4096 に規格化**（雑音の電力を保つ:
   白色の z に対し PFB の出口の分散の平均 = z の分散。proj019 の abs の式と「窓の和 = TP」がそのまま成り立つ）
-  係数 c = round(h · 2^CF)、18 bit 符号付き（CF = 16、最大 ≒ 1.13 → 74,000 前後）。**c は左右対称に作る**（前半を作って鏡に写す）。
+  係数 c = round(h · 2^CF)、18 bit 符号付き（CF = 16、最大 78288 ≒ 1.19・最小 −7682。18 bit に入る）。**c は左右対称に作る**（前半を作って鏡に写す）。
   RTL は対称を使い、ROM 2 本（タップ 0・1）の 2 ポート目で タップ 3・2 を読む: c[a + 4096·(3 − t)] = c[(4095 − a) + 4096·t]
 
 フレームと式（wspec_core の冒頭と同じ）:
@@ -26,8 +27,8 @@ import numpy as np
 N = 4096
 T = 4
 L = N * T
-BETA = 8.0
-BW = 1.0
+BETA = 5.0       # 2026-10-07 決め直し（README「決めたこと」）: rev1 の β 8・bw 1.00 から
+BW = 1.198
 CF = 16          # 係数の小数部
 CW = 18          # 係数の bit 数
 ZW = 18          # z・y の bit 数
@@ -140,10 +141,16 @@ def resp(c=None):
     o = np.argsort(f)
     sc = 10 * np.log10(np.interp(0.5, f[o], H[o]))
     sl = 10 * np.log10(H[np.abs(f) >= 1.5].max())
+    s1 = 10 * np.log10(H[np.abs(f) >= 1.0].max())
+    s3 = 10 * np.log10(H[np.abs(f) >= 3.0].max())
+    s04 = 10 * np.log10(np.interp(0.4, f[o], H[o]))
+    ct = c.reshape(T, N).astype(float)
+    gmax = np.abs(ct).sum(0).max() / (1 << CF)
     enbw = H.sum() / (T * os_)
     S = H.reshape(-1, T * os_).sum(0)
-    print(f"半 ch の落ち {sc:.2f} dB・隣接 ch の和の波打ち {10 * np.log10(S.max() / S.min()):.2f} dB・"
-          f"|Δ| ≧ 1.5 ch の最大 {sl:.1f} dB・ENBW {enbw:.3f} ch・CW の山（矩形比）{10 * np.log10(1 / enbw):+.2f} dB")
+    print(f"0.5 ch {sc:.2f} dB・0.4 ch {s04:.2f} dB・隣接 ch の和の波打ち {10 * np.log10(S.max() / S.min()):.2f} dB・"
+          f"|Δ| ≧ 1 / 1.5 / 3 ch の最大 {s1:.1f} / {sl:.1f} / {s3:.1f} dB・ENBW {enbw:.3f} ch・CW の山（矩形比）{10 * np.log10(1 / enbw):+.2f} dB・"
+          f"ch の中心の CW の振幅の利得 {c.sum() / (1 << CF) / N:.3f}・番地ごとの Σ|c| の最大 {gmax:.3f}")
 
 
 if __name__ == "__main__":
