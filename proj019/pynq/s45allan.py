@@ -27,6 +27,7 @@ import sys
 
 import numpy as np
 
+import s45cal
 import s45proto as P
 
 KEYS = [f"{a}{w}" for a in "ABCD" for w in "01"]
@@ -92,10 +93,12 @@ def read(paths, keys, chan_bin, frac=0.9):
                         continue
                     r = w[key]
                     if r["meta"] is None:
-                        r["meta"] = dict(ns=d["ns"], nacc=d["nacc"], if_mhz=d["if_mhz"], shift=d["shift"])
+                        r["meta"] = dict(ns=d["ns"], nacc=d["nacc"], if_mhz=d["if_mhz"], shift=d["shift"], g=d["g"])
                     elif (d["ns"], d["nacc"], d["shift"]) != (r["meta"]["ns"], r["meta"]["nacc"], r["meta"]["shift"]):
                         raise SystemExit(f"{key}: 記録の途中で設定が変わった（START をまたいだ記録は分けて解析する）")
-                    x = d["data"].astype(np.float64)
+                    # 切り捨ての偏り（成分ごと +1/3 LSB²、ch で +2/3、N_ACC 回足す）を引く。引かないと、入力が LSB に近い窓
+                    # （狭い窓・無入力）で平均が膨らみ、相対の揺らぎが小さく見える（term で (b) が予言の 0.53 倍に見えた）
+                    x = d["data"].astype(np.float64) - (2.0 / 3.0) * d["nacc"]
                     r["k"].append(d["k"])
                     r["band"].append(x[sl].sum()); r["lo"].append(x[sl.start:half].sum()); r["hi"].append(x[half:sl.stop].sum())
                     if chan_bin:
@@ -112,6 +115,32 @@ def read(paths, keys, chan_bin, frac=0.9):
                     tp["ABCD"[d["adc"]]]["t"].append(e["t_beat"].astype(np.int64))
                     tp["ABCD"[d["adc"]]]["v"].append(e["sum"].astype(np.float64) / e["nfr"])
     return w, tp, nrec
+
+
+RHO_LAGS = (1, 2, 4, 8, 16, 64)
+
+
+def tp_extra(v, pred0):
+    """TP の補助の量。v = 区切りごとの Σx²/nfr（1 フレーム 8192 サンプルの和）
+    dbfs     平均の電力（σ² = v/8192、DC も含む）
+    white_ratio  2 階差分 x[i] − 2x[i+1] + x[i+2] の分散 / 6 を、τ0 の予言で割ったもの。
+             白い成分だけなら 1 倍の予言と比べられる（直線の漂いは消え、1/f の漏れも 1 階差分より小さい）
+    rho_hp   65 点の移動平均を引いた後の自己相関（RHO_LAGS）。区切りどうしが重なっていれば ρ(1) > 0 に出る"""
+    s2 = v / 8192.0
+    x = v / v.mean()
+    d2 = x[:-2] - 2 * x[1:-1] + x[2:]
+    white = float(np.mean(d2 * d2) / 6.0)
+    k = 65
+    if len(x) > 10 * k:
+        c = np.cumsum(np.r_[0.0, x])
+        ma = (c[k:] - c[:-k]) / k
+        h = x[k // 2: k // 2 + len(ma)] - ma
+        h = h - h.mean()
+        v0 = np.mean(h * h)
+        rho = [float(np.mean(h[:-L] * h[L:]) / v0) for L in RHO_LAGS]
+    else:
+        rho = []
+    return dict(dbfs=float(s45cal.dbfs(s2.mean())), sigma2=float(s2.mean()), white_ratio=white / pred0, rho_lags=list(RHO_LAGS), rho_hp=rho)
 
 
 def mask_lines(ch):
@@ -183,8 +212,15 @@ def analyze(paths, keys=None, chan_bin=25, tp_bw=1800.0, plot=True, out=None):
             over = np.flatnonzero(av > 2 * pr)
             d["allan_time"] = float(d["tau"][over[0]]) if len(over) else None
             d["ratio_first"] = float(av[0] / pr[0]) if len(av) else None
-        res[key] = dict(W=W, dnu_hz=dnu, n=n, dropped_before=int(a), M=M, lines=nline, q=out_k)
-        print(f"  {key}（{W:g} MHz、Δν {dnu / 1e3:.2f} kHz）: 連続 {n} ダンプ（{n * TAU0:.0f} s）・使う ch {M}・線で外した ch {nline}")
+        # 水準: ch の平均（切り捨ての偏りを引いた後、14 bit の LSB²。abs と同じ単位）と、偏りがその何割か
+        sl_n = P.NCH - 2 * a0
+        ch_raw = band.mean() / sl_n
+        bias = (2.0 / 3.0) * meta["nacc"]
+        scale = 4.0 ** meta["shift"] * 4.0 ** (4 - meta["g"]) / 2.0 ** 31 / meta["nacc"]
+        lvl = dict(ch_mean_abs=float(ch_raw * scale), bias_frac=float(bias / ch_raw) if ch_raw > 0 else None)
+        res[key] = dict(W=W, dnu_hz=dnu, n=n, dropped_before=int(a), M=M, lines=nline, level=lvl, q=out_k)
+        print(f"  {key}（{W:g} MHz、Δν {dnu / 1e3:.2f} kHz）: 連続 {n} ダンプ（{n * TAU0:.0f} s）・使う ch {M}・線で外した ch {nline}・"
+              f"ch の平均 {lvl['ch_mean_abs']:.3g} LSB²（切り捨ての偏りはその {lvl['bias_frac'] or 0:.2f} 倍）")
         for nm, lab in (("band", "(a) 帯域"), ("ch", "(b) ch ごと"), ("ch_cg", "(c) 共通利得を除く"), ("sub", "(d) 分光（下/上）")):
             if nm in out_k:
                 d = out_k[nm]
@@ -205,10 +241,13 @@ def analyze(paths, keys=None, chan_bin=25, tp_bw=1800.0, plot=True, out=None):
         over = np.flatnonzero(av > 2 * pr)
         d = dict(tau=taus.tolist(), avar=av.tolist(), pred=pr.tolist(), allan_time=float(taus[over[0]]) if len(over) else None,
                  ratio_first=float(av[0] / pr[0]))
-        res[f"TP {a}"] = dict(n=len(x), q=dict(tp=d))
+        ex = tp_extra(v[i0:i1], pr[0])
+        res[f"TP {a}"] = dict(n=len(x), q=dict(tp=d), **ex)
         rows_plot[f"TP {a}"] = dict(tp=d)
-        print(f"  TP {a}: 連続 {len(x)} 区切り（{len(x) * TP_TAU0:.0f} s）・最短の τ で 予言（B = {tp_bw:g} MHz）の {d['ratio_first']:.2f} 倍・"
+        print(f"  TP {a}: 連続 {len(x)} 区切り（{len(x) * TP_TAU0:.0f} s）・{ex['dbfs']:.2f} dBFS・最短の τ で 予言（B = {tp_bw:g} MHz）の {d['ratio_first']:.2f} 倍・"
               f"2 倍を越える τ {'%.3f s' % d['allan_time'] if d['allan_time'] else 'なし'}")
+        print(f"        白い部分（2 階差分）: 予言の {ex['white_ratio']:.2f} 倍・高域の自己相関 ρ(1,2,4,8) = "
+              + ", ".join(f"{r:+.3f}" for r in ex['rho_hp'][:4]))
     json.dump(dict(paths=paths, chan_bin=chan_bin, tp_bw_mhz=tp_bw, res=res), open(out + ".allan.json", "w"), ensure_ascii=False, indent=1)
     print(f"まとめ: {out}.allan.json")
     if plot:
