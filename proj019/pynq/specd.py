@@ -450,8 +450,9 @@ def main():
     p.add_argument("--ref", type=float, default=10.0)
     p.add_argument("--lmx-chdiv", type=int, default=16, choices=(16, 24),
                    help="LMX2594 の CHDIV（出力 491.52 は同じ）。16 = 出荷時（VCO 7864.32 MHz）、24 = VCO 11796.48 MHz（櫛の出どころの試験）")
-    p.add_argument("--lmx-pwr", type=int, default=None,
-                   help="LMX2594 の OUTA・OUTB の強さ（0〜63、出荷時 31）。周波数は変えない（櫛の出どころの試験）")
+    p.add_argument("--lmx-pwr", type=int, default=3,
+                   help="LMX2594 の OUTA・OUTB の強さ（0〜63）。既定 3（proj019: 櫛 n×163.84 MHz の和が −5.7 dB、ロック・位相雑音は"
+                        " PWR 0 まで問題なし）。出荷時は 31")
     p.add_argument("--settle", type=float, default=5.0)
     p.add_argument("--path", default="trig", choices=("trig", "comp"))
     p.add_argument("--cpu", type=int, default=3, help="取得のプロセスを固定する CPU（-1 で固定しない）")
