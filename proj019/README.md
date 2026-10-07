@@ -45,6 +45,7 @@ PL は変えない。全帯域コア（spec_core_0、試験用に残してある
   （ADC の 16 bit のまま。**14 bit の x = 値 >> 2**）。前後に EVENT `SNAP` / `SNAP_END`
 - `s45client.S45.snap(adc, n, every)` → (n, 8192) の配列（既定で 14 bit）と時刻。`specrecv` は数えるだけ（`snap=`）
 - `pynq/s45snap.py`: S-1 間隔（dump_t の差 = N_ACC × 512 ビート）・S-2 中身（下位 2 bit・振り切れ・dBFS・尖度）・S-3 SG の山・S-4 UTC の刻み
+- `pynq/s45snapplot.py <out>.snap.npz [--sg MHz] [--marks] [--zoom F0 F1]`: ADC ごとに時系列・ヒストグラム（ガウスと尖度）・スペクトル（Hann、塊の平均、dBFS/bin、横軸は入力の周波数 = 4096 − ベースバンド）・塊ごとの電力を 1 枚の図（`<out>.snap.png`）に
 - 塊は**連続ではない**（各 2 µs の塊の間が every ms）。長く連続したものが要るなら PL に URAM の取り込みを足す（proj020 以降の判断）
 - サーバーの版を proj019-0.2 に（記録の版 `VERSION` は 1 のまま。T_SNAP は SNAP 命令のときだけ出るので、古い受け側も SNAP を使わなければ動く）
 - 偽物（`--fake`）は 3000.25 MHz 相当の正弦波＋雑音を返す。test_fake.sh は全部通過
