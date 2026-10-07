@@ -39,10 +39,17 @@ QMIN = 3.0          # rec: 1 フレームの ch の電力がこれ（SHIFT 後�
 EDGE = 0.05         # 窓の両端 5 % は使わない（窓の肩）
 
 
-def baseline(s, w=WMED):
+def baseline(s, w=WMED, gap=HALF):
+    """ch ごとの床: 両側 w//2 ch のうち、自分と ±gap を除いた ch の中央値。
+    自分を含めた移動中央値は、雑音が小さく（長い積分）床が単調に傾いていると「自分の値」を返してしまい
+    （窓の中が単調なら中央値 = 真ん中）、r が 0 になる（allan2 の 1 時間で σ が 0 に見えた）。両側を対称に取れば、
+    傾きの 1 次は打ち消され、線そのもの（±gap）も床に入らない"""
     from numpy.lib.stride_tricks import sliding_window_view
-    p = np.pad(s, w // 2, mode="edge")
-    return np.median(sliding_window_view(p, w), axis=-1)
+    h = w // 2
+    p = np.pad(s, h, mode="edge")
+    win = sliding_window_view(p, w)
+    keep = np.ones(w, bool); keep[h - gap:h + gap + 1] = False
+    return np.median(win[:, keep], axis=-1)
 
 
 def rel_sigma(r, use):
@@ -319,14 +326,23 @@ def run_rec(paths, keys=None, zth=8.0, bin_=25, tsys=139.0, plot=True):
         npk = len(p["pks"])
         noise_sd = float(np.median(ser[:, npk:].std(axis=0))) if ser.shape[0] > 2 and ser.shape[1] > npk else None
         spurs = []
+        def rebin_var(x, m):
+            k = len(x) // m
+            if k < 8:
+                return None
+            y = x[:k * m].reshape(k, m, *x.shape[1:]).mean(axis=1)
+            return 0.5 * np.mean(np.diff(y, axis=0) ** 2, axis=0)            # アラン分散（重ならない）
+        MS = [m for m in (1, 10, 100) if ser.shape[0] // m >= 8]
+        ctrl_av = {m: float(np.median(rebin_var(ser[:, npk:], m))) for m in MS} if ser.shape[1] > npk else {}
         for j, pk in enumerate(p["pks"]):
             s = ser[:, j] if ser.shape[0] else np.array([])
+            stab = {str(m * bin_): (float(rebin_var(s, m)) / ctrl_av[m] if ctrl_av.get(m) else None) for m in MS}
             E = float(p["S"][max(pk - HALF, 0):pk + HALF + 1].sum() - p["b"][max(pk - HALF, 0):pk + HALF + 1].sum())
             r = float(p["S"][pk] / p["b"][pk] - 1)
             sd = float(s.std()) if len(s) > 2 else None
             spurs.append(dict(ch=pk, if_mhz=float(p["f"][pk]), z=float(p["z"][pk]), E=E, r=r, T_K=r * tsys,
                               E_rstd=sd / abs(E) if sd is not None and E else None,
-                              ratio=(sd / noise_sd) ** 2 if sd is not None and noise_sd else None))
+                              ratio=(sd / noise_sd) ** 2 if sd is not None and noise_sd else None, allan_ratio=stab))
         spurs.sort(key=lambda d: -d["r"])
         res[k] = dict(n_bins=int(ser.shape[0]), noise_sd=noise_sd, q_lsb2=p["q"], usable=bool(p["rad"]), sigma_meas=p["sg"], sigma_theory=p["th"], spurs=spurs)
         print(f"  {k}: 線 {len(spurs)} 本（{ser.shape[0]} 区間）・ch の電力 {p['q']:.2g} LSB²/フレーム・ch の相対の揺れ {p['sg']:.2e}（ラジオメータ {p['th']:.2e}）"
@@ -334,7 +350,8 @@ def run_rec(paths, keys=None, zth=8.0, bin_=25, tsys=139.0, plot=True):
         for d in spurs[:8]:
             print(f"      {d['if_mhz']:10.4f} MHz  z {d['z']:8.1f}  r {d['r']:9.3g}（{d['T_K']:.3g} K 相当、Tsys {tsys:g} K のとき）  "
                   f"E {d['E']:.3g} LSB²  区間ごとの揺れ {'-' if d['E_rstd'] is None else '%.1f %%' % (100 * d['E_rstd'])}"
-                  f"（雑音の {'-' if d['ratio'] is None else '%.3g' % d['ratio']} 倍の分散）")
+                  f"（雑音の {'-' if d['ratio'] is None else '%.3g' % d['ratio']} 倍の分散）・アラン分散 / 線の無い ch: "
+                  + " ".join(f"{int(k) * 0.04096:.0f}s {v:.3g}" for k, v in d["allan_ratio"].items() if v is not None))
     out = paths[0].rsplit(".s45", 1)[0]
     json.dump(dict(paths=paths, mode="rec", zth=zth, bin=bin_, tsys=tsys, res=res), open(out + ".spur.json", "w"), ensure_ascii=False, indent=1)
     print(f"まとめ: {out}.spur.json")
