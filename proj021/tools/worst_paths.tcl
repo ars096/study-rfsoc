@@ -32,7 +32,7 @@ set dcp    [lindex $argv 0]
 set outdir [lindex $argv 1]
 set N      [expr {[llength $argv] > 2 ? [lindex $argv 2] : 200}]
 set THR    [expr {[llength $argv] > 3 ? [lindex $argv 3] : 0.30}]
-set DEPTH  4    ;# 階層の束ね方の深さ（system_i/spec_core_0/inst/u_xxx まで）
+set DEPTH  5    ;# 階層の束ね方の深さ（system_i/s45_core_0/inst/u_win/u_xxx まで。proj021 手順 2-1 で 4 → 5: s45_core の中に u_win・g_full.u_full が 1 段増えた）
 file mkdir $outdir
 open_checkpoint $dcp
 
