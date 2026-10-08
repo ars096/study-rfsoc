@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# proj017 のブロックデザインの図 docs/block_design.svg を作る。`cd docs && python3 block_design.py`。build.tcl の配線を変えたらここも直す
+# proj020 のブロックデザインの図 docs/block_design.svg を作る（proj017 の図から、wspec の PFB・ID・M・資源を描き直した）。`cd docs && python3 block_design.py`。build.tcl の配線を変えたらここも直す
 # 土台は proj015（4 ADC の行）と proj016（time_core_0・PPS・時刻のバス）の docs/block_design.py。proj017: 4 ADC × win_core_i（NW 2）、
 #   smc の M00 rfdc・M01〜M04 win_core_0〜3・M05 spec_core_0・M06 time_core_0。時刻のバスは time_core_0 → win_core_0〜3・spec_core_0
 W, H = 1870, 1560
@@ -18,7 +18,7 @@ def path(d, cls):
 a(f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}"
      font-family="'Hiragino Sans','Noto Sans CJK JP','Yu Gothic',sans-serif">
   <!-- SPDX-License-Identifier: BSD-3-Clause -->
-  <!-- proj017 のブロックデザイン（build.tcl が組む配線）。docs/block_design.py で描いた。build.tcl を変えたらここも直す -->
+  <!-- proj020 のブロックデザイン（build.tcl が組む配線。配線は proj017 と同じ）。docs/block_design.py で描いた。build.tcl を変えたらここも直す -->
   <defs>
     <marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fb5"/></marker>
     <marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d9822b"/></marker>
@@ -60,14 +60,14 @@ a(f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" 
   <rect x="0" y="0" width="{W}" height="{H}" fill="#ffffff"/>''')
 
 
-t(20, 28, "proj017 ブロックデザイン（build.tcl の配線、SAM45-Fine、ID 0x0017_0100）: 4 ADC × 窓 2 ＋ total power × 4 ＋ 全帯域 1 本 ＋ 時刻（time_core・1PPS）", style="font-size:17px;font-weight:bold;fill:#111")
-t(20, 48, "proj015 の 4 ADC の形に proj016 の時刻（青緑）を載せ、窓を 2 つ（NW 2）に。proj017 で変えたもの: wspec の F0 を時刻の格子 2.048 ms に寄せる・tp の FLAGS[4]（振り切れ）・TP_N 512（1.024 ms）・full_sel の選択の bit の複製")
+t(20, 28, "proj020 ブロックデザイン（build.tcl の配線、SAM45-Fine rev2、ID 0x0020_0100）: 4 ADC × 窓 2 ＋ total power × 4 ＋ 全帯域 1 本 ＋ 時刻（time_core・1PPS）", style="font-size:17px;font-weight:bold;fill:#111")
+t(20, 48, "配線は proj017 と同じ。proj020 で変えたもの: wspec の溜めと FFT の間に PFB（T = 4、sinc × Kaiser β 5・bw 1.198）・溜めを 5 面のリング（URAM）・FLAGS[5]・ID 0x0020。`-1` は Performance_Explore で WNS +0.047 ns（DSP 2600・BRAM 305・URAM 56）")
 
 # ---------------- PS / SmartConnect ----------------
 box(40, 70, 250, 125, style="stroke:#2f6fb5")
 t(52, 92, "zynq_ultra_ps_e_0", "t"); t(52, 110, "PS（PYNQ / Linux）・-1 ＋ ps_preset.tcl")
-t(52, 128, "fine.py（F-4・F-5）・timetest.py・timebase.py", "xs")
-t(52, 143, "window.py（win_core_i）・spectrometer.py", "xs")
+t(52, 128, "fine.py（F-4）・timetest.py・timebase.py・specd.py", "xs")
+t(52, 143, "window.py（win_core_i）・s45resp.py・s45lin.py", "xs")
 t(282, 165, "M_AXI_HPM0_FPD ▶", "xs", "end"); t(282, 185, "pl_clk0 100 MHz / pl_resetn0 ▶", "xs", "end")
 box(420, 70, 240, 125, style="stroke:#2f6fb5")
 t(432, 92, "smc_ctrl", "t"); t(432, 110, "SmartConnect（NUM_MI 7）")
@@ -81,7 +81,7 @@ path("M290,161 L418,161", "wB"); t(302, 155, "AXI（制御）", "lbB")
 # ---------------- time_core_0 ----------------
 TX, TY, TW, TH = 1010, 66, 710, 160
 box(TX, TY, TW, TH, "tim")
-t(TX + 12, TY + 20, "time_core_0　DSP ドメイン 256 MHz・BUILD_TAG 0x50900000・ID 0x0017_7101（中身は proj016 と同じ）", "tm")
+t(TX + 12, TY + 20, "time_core_0　DSP ドメイン 256 MHz・BUILD_TAG 0x50900000・ID 0x0020_7101（中身は proj017 と同じ）", "tm")
 t(TX + TW - 8, TY + TH - 6, "s_axi ◀ M06", "xs", "end")
 cols = [("T（64 bit）", ["1 ビート = 3.906 ns", "1 s = 256,000,000", "aresetn でだけ 0 に", "t_out = T ＋ 1 を出す", "（コアで 1 段 → T）"]),
         ("PPS（TRIG・COMP）", ["同期器 3 段", "スタンプ・間隔・数", "グリッチ（< 0.5 s）", "欠落（1.5 s）", "BAD（|間隔 − 1 s| > TOL）"]),
@@ -104,7 +104,7 @@ path("M860,184 L860,176", "wK")
 labels = ["ADC_A", "ADC_B", "ADC_C", "ADC_D"]
 tiles  = [(226, 2, "m22_axis", "vin2_23"), (226, 0, "m20_axis", "vin2_01"),
           (224, 2, "m02_axis", "vin0_23"), (224, 0, "m00_axis", "vin0_01")]
-Mns = ["126.8", "126.4", "122.4", "123.3"]
+Mns = ["124.7", "124.9", "122.1", "121.9"]
 LH = 190
 tops = [330 + LH * i for i in range(4)]
 RX, RW = 200, 170
@@ -125,7 +125,7 @@ t(RX + 12, rtop + 73, "Real・Data_Width 12", "xs")
 ymid = tops[2] - 12
 a(f'<line x1="{RX}" y1="{ymid}" x2="{RX+RW}" y2="{ymid}" stroke="#999" stroke-dasharray="5 3"/>')
 t(RX + 12, tops[0] + 120, "Tile 226", "tm"); t(RX + 12, ymid + 26, "Tile 224", "tm")
-t(RX + 12, tops[0] + 136, "M ≒ 32.4 ビート", "xt"); t(RX + 12, ymid + 42, "M ≒ 31.4 ビート", "xt")
+t(RX + 12, tops[0] + 136, "M ≒ 32.0 ビート", "xt"); t(RX + 12, ymid + 42, "M ≒ 31.2 ビート", "xt")
 t(RX + 12, ymid - 8, "clk_adc2 → MMCM（源）", "xs")
 
 # AXI: M00 → rfdc、M01〜M04 → win_core_i、M05 → spec_core_0、M06 → time_core_0（time_core の箱を避けて下を通す）
@@ -186,7 +186,7 @@ for i in range(4):
     # ---- win_core_i（NW 2）----
     wy, wh = top + 2, LH - 14
     box(WX, wy, WW, wh, "win")
-    t(WX + 10, wy + 17, f"win_core_{i}（{labels[i]}）　NW 2・BUILD_TAG 0x50C0000{i}・DSP 504", "tm")
+    t(WX + 10, wy + 17, f"win_core_{i}（{labels[i]}）　NW 2・BUILD_TAG 0x50C0000{i}・DSP 524・URAM 14", "tm")
     t(WX + WW - 6, wy + 17, "s_axi ◀", "xs", "end")
     path(f"M{xtb},{wy+42} L{WX+WW+2},{wy+42}", "wT")
     py = wy + 28
@@ -199,22 +199,22 @@ for i in range(4):
     for w in range(2):
         yy = py + w * (rh + 8)
         box(wx2, yy, ww2, rh, "wsub")
-        t(wx2 + 6, yy + 13, f"窓 {w}: ddc（NS 1..8）→ wspec（4096 点・積分）", "xs")
-        t(wx2 + 6, yy + 26, "72 ＋ 32 DSP・N_ACC = 40.96 ms / L", "xs")
+        t(wx2 + 6, yy + 13, f"窓 {w}: ddc（NS 1..8）→ PFB T = 4 → wspec（4096 点）", "xs")
+        t(wx2 + 6, yy + 26, "72 ＋ 42 DSP・溜め 5 面（URAM）・FIFO 16", "xs")
         box(wx2 + 6, yy + 32, ww2 - 12, 26, "tsub")
-        t(wx2 + 10, yy + 44, "F0 = (⌊fin / M⌋ + 2)·M（M = 2^(8−NS)、新）", "xt")
-        t(wx2 + 10, yy + 55, "dstamp（DUMP_T・DUMP_H）・ARM・CFG_ID", "xt")
+        t(wx2 + 10, yy + 44, "F0 = (⌊fin / M⌋ + 2)·M・N_ACC = 40.96 ms / L", "xt")
+        t(wx2 + 10, yy + 55, "dstamp（DUMP_T・H）・ARM・CFG_ID・FLAGS[5]", "xt")
         path(f"M{WX+138},{py+(wh-38)//2} L{WX+144},{py+(wh-38)//2} L{WX+144},{yy+rh//2} L{wx2-2},{yy+rh//2}", "wR")
     rx2 = wx2 + ww2 + 10
     rw2 = WX + WW - 10 - rx2
     box(rx2, py, rw2, 56, "sub")
     t(rx2 + 6, py + 14, "tp_core（total power）", "xs")
     t(rx2 + 6, py + 28, "Σx²・512 フレーム = 1.024 ms", "xs")
-    t(rx2 + 6, py + 42, "FLAGS[4] 振り切れ（新）", "xt")
+    t(rx2 + 6, py + 42, "FLAGS[4] 振り切れ", "xt")
     box(rx2, py + 62, rw2, 46, "tsub")
     t(rx2 + 6, py + 76, "adc_ev: 振り切れ・途切れ", "xt")
     t(rx2 + 6, py + 90, "TANCH（ADC のフレーム, T）", "xt")
-    t(rx2 + 6, py + 104, "スナップショット 1 つ", "xs")
+    t(rx2 + 6, py + 104, "スナップショット 1 つ（PFB の出口）", "xs")
     t(rx2, py + 124, "窓 w 0x20000·w／共通 0x80000", "xs")
 
 # ---------------- full_sel → spec_core_0 ----------------
@@ -224,7 +224,7 @@ box(fx0, fy, fw, 90, style="stroke:#2e8b57;stroke-width:1.8")
 t(XS0 - 6, fy - 10, "gb_bc_0〜3 の M01 →", "xs", "end")
 t(fx0 + 8, fy + 18, "full_sel", "tm"); t(fx0 + 8, fy + 34, "axis_sel4（4 → 1）", "xs")
 t(fx0 + 8, fy + 49, "sel ← win_core_0", "xs"); t(fx0 + 8, fy + 64, "（FULL_SEL）", "xs")
-t(fx0 + 8, fy + 79, "選択 bit を複製（新）", "xt")
+t(fx0 + 8, fy + 79, "選択 bit を複製", "xt")
 SPX, SPW = fx0 + fw + 40, WX + WW - (fx0 + fw + 40)
 path(f"M{fx0+fw},{fy+45} L{SPX-2},{fy+45}", "wG")
 box(SPX, fy, SPW, 160, style="stroke:#2e8b57;stroke-width:2.2")
@@ -236,7 +236,7 @@ box(SPX + 220, fy + 48, SPW - 230, 40, "tsub")
 t(SPX + 228, fy + 64, "dstamp・adc_ev・ARM_RUN・CFG_ID", "xt")
 t(SPX + 228, fy + 80, "F0 = fin + 2（格子に寄せない）・k·N·512", "xt")
 t(SPX + 12, fy + 108, "用途: F-2 の閉ループ（ADC ごとの M）・W-6・W-1b・F-5 の基準。FULL_SEL で ADC を選び SRST", "xs")
-t(SPX + SPW - 8, fy + 150, "ID 0x0017_01CC・BUILD_TAG 0x50A00000・s_axi ◀ M05", "xs", "end")
+t(SPX + SPW - 8, fy + 150, "ID 0x0020_01CC・BUILD_TAG 0x50A00000・s_axi ◀ M05", "xs", "end")
 xv5 = XV0 + 40
 path(f"M660,162 L722,162 L722,276 L{xv5},276 L{xv5},{fy+146} L{SPX+SPW+2},{fy+146}", "wB")
 # 時刻のバスの縦線（右端）と spec_core_0 への枝

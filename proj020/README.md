@@ -3,6 +3,12 @@
 日付: 2026-10-07
 状態: **完了**（2026-10-08。`-1` は Performance_Explore で WNS +0.047 ns・build-PE/。実機 P-0〜P-8 通過）
 
+## ブロックデザイン
+
+![ブロックデザイン](docs/block_design.svg)
+
+（`docs/block_design.py` で描いた。配線は proj017 と同じで、窓の wspec に PFB T = 4・溜め 5 面（URAM）・FIFO を描き足し、ID・M（F-2）・資源を proj020 の値に。build.tcl の配線を変えたらこちらも直す）
+
 ## 目的
 
 **SAM45-Fine（proj017）の窓の分光の ch の応答を、矩形（第 1 サイドローブ −13 dB）から PFB（T = 4）に替える。**
