@@ -921,7 +921,7 @@ set tcore [create_bd_cell -type module -reference time_core time_core_0]
 set time_tag [expr {$build_tag_base | (1 << 20)}]
 foreach {k want} [list CONFIG.BUILD_TAG $time_tag CONFIG.BIT_KIND 2 CONFIG.BIT_REV 1 CONFIG.PROJ [expr {0x00210200}]] {
     set_property $k $want $tcore
-    if {[get_property $k $tcore] != $want} { puts "ERROR: time_core_0 の $k が要求と違う"; exit 1 }
+    if {[get_property $k $tcore] != $want} { puts "ERROR: time_core_0 の $k が [get_property $k $tcore]（要求 $want）"; exit 1 }
 }
 foreach {k want} {CONFIG.BEATS_PER_SEC 256000000 CONFIG.BLANK_BEATS 128000000 CONFIG.MISS_BEATS 384000000} {
     if {[get_property $k $tcore] != $want} { puts "ERROR: time_core_0 の $k が [get_property $k $tcore]（期待 $want）"; exit 1 }

@@ -37,7 +37,7 @@ module s45_core #(
     parameter integer G_L2          = 19,
     parameter integer BIT_KIND      = 2,
     parameter integer BIT_REV       = 1,
-    parameter integer PROJ          = 32'h0021_0200,
+    parameter integer PROJ          = 2163200,   // = 0x0021_0200。**10 進で書く**（32'h で書くと Vivado が CONFIG.PROJ を読み返しで別の形にし、build.tcl の照合が落ちた。2026-10-09）
     parameter integer CORE_PORT     = 0,
     parameter integer BASE_BEATS    = 2621440,
     // ---- FULL の流れ（spec_core）----

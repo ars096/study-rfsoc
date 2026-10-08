@@ -54,7 +54,7 @@ module time_core #(
     parameter integer BUILD_TAG     = 0,
     parameter integer BIT_KIND      = 2,            // proj021 手順 2-1: SAM45-Fine
     parameter integer BIT_REV       = 1,
-    parameter integer PROJ          = 32'h0021_0200
+    parameter integer PROJ          = 2163200   // = 0x0021_0200。**10 進で書く**（32'h で書くと Vivado が CONFIG.PROJ を読み返しで別の形にし、build.tcl の照合が落ちた。2026-10-09）
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axi, ASSOCIATED_RESET aresetn" *)

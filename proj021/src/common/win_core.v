@@ -126,7 +126,7 @@ module win_core #(
     // proj021 手順 2-1: 自己記述（INTERFACE 2.4）
     parameter integer BIT_KIND      = 2,      // SAM45-Fine（BITS.md の 9 本の番号）
     parameter integer BIT_REV       = 1,
-    parameter integer PROJ          = 32'h0021_0200,
+    parameter integer PROJ          = 2163200,   // = 0x0021_0200。**10 進で書く**（32'h で書くと Vivado が CONFIG.PROJ を読み返しで別の形にし、build.tcl の照合が落ちた。2026-10-09）
     parameter integer CORE_PORT     = 0,      // [3:0] ADC（0..3 = ADC_A..D）/ [11:8] タイル / [15:12] スライス（build.tcl が与える）
     parameter integer NFULL         = 0,      // このコアの FULL の流れの数（s45_core が持つ。NSTREAM = NW + NFULL）
     parameter integer BASE_BEATS    = 2621440 // 10.24 ms
