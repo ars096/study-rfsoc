@@ -114,18 +114,19 @@ sudo -E $(which python3) bench_ps.py --out runs/bench_ps_2.json 2>&1 | tee runs/
 
 **記録**: runs/m0_env.txt・m1_*.json・bench_ps_*.json / .log。README の結果に、M-1〜M-5 の値と上の決め方で決まったことを書く
 
-## 手順 1a — ソースの分け方（案）
+## 手順 1a — ソースの分け方
 
 製品リポジトリへほぼ機械的に写せるように、proj021 の中で分けて置く。**proj021 の自己完結は保つ**（上の階層を参照しない）。
 
-| 置き場 | 中身（案） | 理由 |
+| 置き場 | 中身 | 理由 |
 |---|---|---|
-| `src/common/` | time_core・dstamp・adc_ev・gb_adc・gb_gate・tp_core・spec_core（cmul・dft16・tw_rom）・win_core・pfb_core・ddc_core（hb2・hb2s・pair2・nco_rom）・wspec_core・axis_sel4、v2 で足すもの（流れのブロック・リングの司令・切り替え器） | どの bit も使う、または使いうる |
-| `src/sam45fine/` | このbit の組み立て（コアごとの流れの並び・BIT_KIND = 2・NW・N_ACC の既定）・pfb4_rom / win_coef（係数の表、原型を変える bit が出たら分ける）・fft_cfg.tcl | bit ごとに変わる |
-| `src/board/`（案） | timing.xdc・pps.xdc・ps_preset.tcl | ボード（RFSoC4x2）に固有で、bit に依らない |
+| `src/common/` | time_core・dstamp・adc_ev・gb_adc・gb_gate・tp_core・spec_core（cmul・dft16・tw_rom）・win_core・pfb_core・ddc_core（hb2・hb2s・pair2・nco_rom）・**win_coef.vh**（粗い PFB と DDC の係数。pfb_core・ddc_core が include する）・wspec_core・axis_sel4、v2 で足すもの（流れのブロック・リングの司令・切り替え器） | どの bit も使う、または使いうる |
+| `src/sam45fine/` | **pfb4_rom.v**（窓の精細 PFB T = 4 の係数。4096 点に結びつく）・**fft_cfg.tcl**、v2 で足すこの bit の組み立て（コアごとの流れの並び・BIT_KIND = 2） | bit ごとに変わる |
+| `src/board/` | timing.xdc・pps.xdc・ps_preset.tcl | ボード（RFSoC4x2）に固有で、bit に依らない |
 
 - 境目の決め方: **「別の bit で中身が変わるか」**。迷ったら sam45fine に置き、2 本目の bit（SAM45-Wide）で共通に上げる
-- 1a は構成替えだけなので、**ID・BUILD_TAG・係数も含めて RTL は proj020 と同じ**。WNS が小数 6 桁まで同じなら、構成替えで何も変わっていない（同じ RTL の作り直しは WNS まで再現する、の規約）
+- 2026-10-08 に分けた（commit 8264e62。`git mv` とパスの書き換え。RTL の中の変更はコメントの中のパスだけ。include の場所は `src/common`）。build.tcl の `set proj proj020` は変えていない（出力は proj020.bit のまま。1a は実機に載せない）
+- 1a は構成替えだけなので、**ID・BUILD_TAG・係数も含めて RTL は proj020 と同じ**。**予言: build-PE の WNS・WHS が proj020 と小数 6 桁まで同じ（+0.047121 / +0.009645）**。同じなら、構成替えで何も変わっていない（同じ RTL の作り直しは WNS まで再現する、の規約）
 
 ## 手順 1b — 群 C
 
@@ -133,12 +134,13 @@ proj020 の README「ビルド rev1」: 群 C = gb_gate の armed → `armed & g
 
 - 直し方（案）: ch ごとに gb_fifo と gb_gate の間に AXI4-Stream のレジスタスライスを 1 段（build.tcl で置き、照合を足す）。enb を駆動するのが LUT の AND ではなくスライスの FF になり、複製が効きやすくなる
 - 起動の対策（proj011 rev6）への影響: 起動の後、スライスが 2 語を先に取り込み、FIFO に K 語溜まるまで gb_gate が止める。溜まる語は K ＋ 2、FIFO の余裕は K − 1 語のまま（見込み。sim と実機で確かめる）
-- ギアボックスの遅れが 1〜2 ビート変わり、adc_to_core（M）が数 ns 動く → F-2 は手順 2 の Overlay でどのみち測り直す
+- ギアボックスの遅れ: 溜まる語が 2 語増える（1 語 = 3 クロック）ので **+6 ビート ≒ +23 ns の見込み**（M = adc_to_core が 122〜125 → 145〜148 ns 前後）→ F-2 は手順 2 の Overlay でどのみち測り直す
+- **予言（2026-10-08、1b の RTL を書く前）**: (1) 群 C は `-1`・既定の戦略で上位 200 本から消えるか、残っても最悪 slack ≧ +0.05 ns (2) 全体の WNS は既定で −0.07〜+0.05 ns（壁は残る u_pfb・u_ws、配置の運 ±0.1）、PE で 0〜+0.1 ns (3) CDC の分類ごとの件数は proj020 と同じ (4) FF が ≒ +6,100（768 bit × 2 段 × 4 ch）、LUT・BRAM・DSP・URAM は同じ (5) sim-gearbox の起動の試験は K ≧ 2 で途切れた起動 0（K 0 は今と同じく起きる）
 
 | 判定 | 何を | 合格 |
 |---|---|---|
 | G-1 | `make sim-gearbox`（tb_gearbox.v。起動の空振りの陽性対照を含む） | 全部通過・陽性対照が立つ |
-| G-2 | ビルド（`-1`、既定と PE） | 群 C の経路の最悪 slack が proj020 の −0.063 から改善する（**予言は 1b に着手するときに書く**）。CDC の分類ごとの件数が proj020 と同じ（スライスは同じクロックの中なので増えない） |
+| G-2 | ビルド（`-1`、既定と PE） | 群 C の経路の最悪 slack が proj020 の −0.063 から改善する（上の予言 (1)）。CDC の分類ごとの件数が proj020 と同じ（スライスは同じクロックの中なので増えない） |
 | G-3 | 実機: GRST による起動を多数回（proj011 rev6 の道具） | 空振り（gb_stat の under）0・TLAST 事象 0。回数は 1b に着手するときに決める（まれな事象は起動の回数で数える） |
 | G-4 | 実機: INJ の陽性対照 | 見張りが立つ |
 
@@ -224,6 +226,7 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 | リンク | eth0・1000 Mb/s・全二重 | 交渉は 1 GbE |
 
 - 疑い（未確認）: スイッチからの PAUSE（フロー制御）・スイッチのポートの帯域制限・NIC のドライバ／PHY の問題・qdisc。**直結（ボード ↔ PC）か別のポートで測れば、ボード側かスイッチ側かが分かる**
+- 1 ボードの予算の方針（案、2026-10-08 の相談）: 複数のボードを 1 台のダウンロード PC で受けるので、**1 ボード 100〜200 Mbps**が目安かもしれない → INTERFACE.md の 8. の 10。この予算なら、ボードの送り出しの頭打ち（≒ 230 Mbit/s）は差し支えない
 - 予算（今の経路）: 25.3 × 0.7 = **17.7 MB/s**。SAM45-Fine（float32 で 3.2 MB/s）には足りる。2G・512M・SpW（51.2 MB/s 以上）は、この天井を外すまで入らない。**proj021 は止めない**（ネットワークの調べは別に進める）
 
 **M-6（範囲を絞った invalidate）**: PYNQ 3.1.1 の `XrtDevice.invalidate(bo, offset, ptr, size)` は offset・size を**受け取るが使わず**、`bo.sync(FROM_DEVICE)` でバッファ全体を同期していた（M-3 の 0.073 ms / MiB はこれ）。pyxrt の `bo.sync(向き, size, offset)` を直に呼ぶと範囲を絞れた:
