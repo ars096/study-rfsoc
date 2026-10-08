@@ -188,7 +188,7 @@ def check(out, shift, skew=0, start=0):
         if "BDCHECK" in r:
             nchk, nmis = r["BDCHECK"]
             judge(nmis == 0, "裏口の読み出しが AXI4-Lite と %d か所中 %d か所で食い違う（0 が期待）" % (nchk, nmis))
-        judge(r["ID"] == 0x00200100, "ID = %08x（期待 00200100: proj020（中身は proj017）、proj017（spec_core に時刻・設定番号・健全性）、FFT_CFG は sim の既定 0）" % r["ID"])
+        judge(r["ID"] == 0x00210100, "ID = %08x（期待 00210100: proj021 1b（中身は proj020）、proj020（中身は proj017）、proj017（spec_core に時刻・設定番号・健全性）、FFT_CFG は sim の既定 0）" % r["ID"])
         after_g = name in ("t5", "t6")          # GRST の後
         # ---- rev6: ギアボックスの制御と見張り ----
         judge(r["GRST_CNT"] == (1 if after_g else 0) and r["INJ_CNT"] == {"t5": 1, "t6": 2}.get(name, 0)

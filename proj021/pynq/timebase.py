@@ -39,6 +39,10 @@ NS_NUM, NS_DEN = 125, 32          # 1 ビート = 125/32 ns（厳密）
 #   **T-2（閉ループ）で測れるのは差 M = adc_to_core − pps_det（＋ 2 本のケーブルの差）の 1 つだけ**なので、M を adc_to_core_ns に入れ、
 #   pps_det_ns = 0 とする（式の上では引く量は M で同じ）。
 CAL = {
+    # proj021 1b: gb_gate の入口に 2 語のスキッド（群 C）。ギアボックスの遅れが ≒ +2 語（+6 ビート ≒ +23 ns、sim）変わるので、
+    #   proj020 の値は持ち込まず未較正で足す（F-2 で測る）
+    0x0021_7101: dict(pps_det_ns=0.0, adc_to_core_ns=None, bound_ns=50,
+                      source="proj021 1b: 未較正（F-2 で測る。sim の見込みは proj020 の 122〜125 ns ＋ ≒ 23 ns）"),
     # proj020: time_core・ギアボックスの RTL は proj017 と同じだが、別の Overlay・別の配置なので proj017 の値は持ち込まず、F-2 で測り直した
     0x0020_7101: dict(pps_det_ns=0.0, adc_to_core_ns={0: 124.7, 1: 124.9, 2: 122.1, 3: 121.9}, bound_ns=50,
                       source="proj020 P-7（F-2、2026-10-08）: 全帯域の生サンプルで 1PPS の縁がコアに入った T − スタンプ（TRIG 系統）を 4 ADC、"
@@ -99,7 +103,7 @@ def pps_is_consistent(d_count, d_stamp, tol=2):
 
 class TimeCore:
     """time_core_0 のレジスタ（src/common/time_core.v の冒頭の表）。mmio は pynq.MMIO か、read(off) / write(off, v) を持つもの。"""
-    ID = 0x0020_7101
+    ID = 0x0021_7101
     CTRL_ARM, CTRL_CANCEL, CTRL_ASET, CTRL_ACLR, CTRL_NCLR = 1, 2, 8, 16, 256
 
     def __init__(self, mmio):

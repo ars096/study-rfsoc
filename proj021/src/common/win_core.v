@@ -151,8 +151,8 @@ module win_core #(
     input  wire [3:0]   tev_in
 );
     localparam integer FW = 48;
-    localparam [31:0]  ID   = 32'h0020_0100;   // proj020 rev1: SAM45-Fine rev2（wspec に PFB T = 4、FLAGS[5] = PFB の飽和）。proj017 rev1 = 0x0017_0100: SAM45-Fine（NW 2 × 4 ADC）・TP の FLAGS[4]。proj016 rev1 は 0x0016_0100
-    localparam [31:0]  ID_A = 32'h0020_A100;
+    localparam [31:0]  ID   = 32'h0021_0100;   // proj021 rev1（手順 1b）: 窓の中身は proj020 と同じ。gb_gate の入口に 2 語のスキッド（群 C）。proj020 rev1: SAM45-Fine rev2（wspec に PFB T = 4、FLAGS[5] = PFB の飽和）。proj017 rev1 = 0x0017_0100: SAM45-Fine（NW 2 × 4 ADC）・TP の FLAGS[4]。proj016 rev1 は 0x0016_0100
+    localparam [31:0]  ID_A = 32'h0021_A100;
     wire rst = ~aresetn;
     assign s_axis_tready = 1'b1;       // 上流に backpressure をかけない
 

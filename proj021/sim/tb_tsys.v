@@ -120,8 +120,8 @@ module tb_tsys;
         repeat (8) @(posedge clk);
         aresetn <= 1;
         repeat (16) @(posedge clk);
-        axr(0, 20'h00000); if (rv !== 32'h0020_0100) begin $display("tb_tsys: NG win_core の ID %08x", rv); ng = ng + 1; end
-        axr(2, 20'h00);    if (rv !== 32'h0020_7101) begin $display("tb_tsys: NG time_core の ID %08x", rv); ng = ng + 1; end
+        axr(0, 20'h00000); if (rv !== 32'h0021_0100) begin $display("tb_tsys: NG win_core の ID %08x", rv); ng = ng + 1; end
+        axr(2, 20'h00);    if (rv !== 32'h0021_7101) begin $display("tb_tsys: NG time_core の ID %08x", rv); ng = ng + 1; end
         $display("tb_tsys: 起動（T %0d）", T);
         axw(2, 20'h08, 32'h8);                         // ANCHORED
         // 窓 0・1: k 5・NS 1、窓 0 は CFG 0x1234 で WRST、窓 1 も 0x1234 で WRST した後 CFG を 0x5555 に（[6] が立つはず）

@@ -10,7 +10,7 @@
 //   - 読み出し: gb_gate（DUT）→ gb_dn の代わり（1 語を 3 拍に割る。最後の拍と同じクロックで次の語を受ける）
 //   - リセット: gb_adc（DUT）が DSP の hold を取り込んで書き込み側を放す。adj で位相を選ぶ。読み出し側は hold が落ちたら放す
 //
-// 遅延の組（DLY）× 再起動の位相（hold の長さ 3 通り × adj 4 通り = 12 通り）× しきい値 K（0 / 4）を回し、
+// 遅延の組（DLY）× 再起動の位相（hold の長さ 3 通り × adj 4 通り = 12 通り）× しきい値 K（0 / 2 / 4。proj021 1b で 2 を足した）を回し、
 // 出口（gb_dn の後）の valid が最初の拍の後に何回落ちたか・最初に落ちた位置・データの通し番号の連続を数える。
 //
 // 見立て（README の rev6 の節）の予言:
@@ -191,7 +191,7 @@ module tb_gearbox;
                 3: DLY[0] = 300 + 1800;
                 4: begin DLY[0] = 410; DLY[1] = 655; DLY[2] = 1230; DLY[3] = 380; DLY[4] = 920; DLY[5] = 700; end
             endcase
-            for (kk = 0; kk <= 4; kk = kk + 4) begin
+            for (kk = 0; kk <= 4; kk = kk + 2) begin   // proj021 1b: K 2（GB_K_RST の既定）も
                 ngap = 0; nerr = 0; nmulti = 0; fwset = 0; runs = 0; gap_by_phase = 0;
                 for (h = 0; h < 3; h = h + 1)
                     for (a = 0; a < 4; a = a + 1) begin
@@ -219,7 +219,7 @@ module tb_gearbox;
                 if ((prof == 1 || prof == 2) && kk == 0 && (ngap == 0 || ngap == runs || fwset != (1 << 3))) bad = bad + 1;
                 if (prof == 1 && kk == 0 && ngap * 2 > runs) bad = bad + 1;          // 4 位相のうち 1 つ（≒ 800 / 976 を切り下げ）
                 if (prof == 2 && kk == 0 && ngap * 4 < runs) bad = bad + 1;          // 4 位相のうち 2 つ
-                if (kk == 4 && ngap != 0) bad = bad + 1;
+                if (kk >= 2 && ngap != 0) bad = bad + 1;
             end
         end
         if (bad == 0) $display("結果: 全部通過");

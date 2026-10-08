@@ -221,7 +221,7 @@ module spec_core #(
     localparam integer PW = 2 * QW + 1;
     localparam integer FW = 48;        // フレーム番号（2 µs × 2^48 = 17 年）
     localparam [7:0]   FFT_CFG8 = FFT_CFG;
-    localparam [31:0]  ID = {16'h0020, 8'h01, FFT_CFG8};   // proj020（中身は proj017 と同一。ID だけ）。proj017（tp_core の FLAGS[4] だけ。proj016 は 0x0016）
+    localparam [31:0]  ID = {16'h0021, 8'h01, FFT_CFG8};   // proj021 1b（中身は proj020 と同一。ID だけ）。proj020（中身は proj017 と同一。ID だけ）。proj017（tp_core の FLAGS[4] だけ。proj016 は 0x0016）
 
     // 固定のパイプライン段数（S0 = レーン出力を受けたクロック）
     //   S0  +2 ROM → +4 cmul → V@6  +6 dft16 → Z@12  +1 飽和 → Q@13

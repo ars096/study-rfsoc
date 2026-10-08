@@ -15,11 +15,21 @@
 // 止めるのは起動の 1 回だけ。溜まった K 語は定常の残量として残る（FIFO の深さ 32 に対して K ≦ 24）。
 // K = 0 なら素通し（rev5 までと同じ）。
 //
+// **proj021 手順 1b: 入口に 2 語のスキッドバッファ（全部をレジスタで受ける AXI4-Stream のスライス）を置いた。**
+// 群 C（proj013 から。gb_gate の armed → `armed & 下流の tready` → gb_fifo の読み出しの許可 enb、ファンアウト 780）を切るため。
+// gb_fifo の m_axis_tready はこのモジュールの s_axis_tready = 「スキッドに空きがある」（**FF そのもの**。LUT を通らない）になり、
+// armed は出口の valid にだけ効く。データの出口も FF（d0）。
+//   - 起動の後、armed になる前にスキッドが 2 語を先に取り込み、FIFO に K 語溜まるまで出口を止める。溜まる語は K ＋ 2、
+//     **FIFO の余裕（K − 1 語）は今までと同じ**（スキッドは FIFO の下流にある）
+//   - K = 0 では起動の直後から流れ、スキッドは空のまま 1 段の管として働くので、余裕にならない（起動の途切れの陽性対照は残る）
+//   - 遅れ: 定常で 2 語（1 語 = 下流の 3 クロック）ぶん溜まりが増える → ギアボックスの遅れ ≒ +6 ビート（F-2 で測る）
+//
 // 見張り（spec_core に渡す。PS から読む）:
 //   gb_stat[31]    開始した（armed）
 //   gb_stat[29:24] 開始したときの残量（rd_count。63 で飽和）
 //   gb_stat[21:16] 最初の受け渡しの後に見た残量の最小
-//   gb_stat[15:0]  最初の受け渡しの後に、下流が欲しいのに FIFO が空だったクロック数（空振り。飽和）
+//   gb_stat[15:0]  最初の受け渡しの後に、下流が欲しいのに出口に語が無かったクロック数（空振り。飽和）
+//                  （proj021 1b から「出口（スキッド）が空」で数える。proj020 までは「FIFO が空」。意味は同じく下流の空振り）
 // adc_stat: gb_adc（ADC ドメイン）の数えを 2 段で取り込んだもの。**静的な値として読む**（起動の後にしか変わらない。
 //           PS は 2 回読んで一致を確かめる）。[31] RFDC の valid を見た / [15:0] RFDC の valid が落ちた回数
 //
@@ -60,9 +70,29 @@ module gb_gate #(
     reg [15:0] under;
     wire [5:0] cnt6 = (rd_count > 63) ? 6'd63 : rd_count[5:0];
 
-    assign m_axis_tdata  = s_axis_tdata;
-    assign m_axis_tvalid = armed & s_axis_tvalid;
-    assign s_axis_tready = armed & m_axis_tready;
+    // ---- スキッドバッファ（2 語）: d0 = 出口、d1 = 出口が詰まったときの受け皿 ----
+    reg [DW-1:0] d0, d1;
+    reg          v0, v1;
+    wire in_fire  = s_axis_tvalid & ~v1;               // s_axis_tready = ~v1（FF）
+    wire out_fire = armed & v0 & m_axis_tready;
+
+    assign m_axis_tdata  = d0;
+    assign m_axis_tvalid = armed & v0;
+    assign s_axis_tready = ~v1;
+
+    always @(posedge aclk) begin
+        if (rst) begin
+            v0 <= 1'b0; v1 <= 1'b0;
+        end else begin
+            if (out_fire || !v0) begin                 // 出口が空く（または空いている）
+                if (v1)           begin d0 <= d1;            v0 <= 1'b1; v1 <= 1'b0; end
+                else if (in_fire) begin d0 <= s_axis_tdata;  v0 <= 1'b1;             end
+                else                                         v0 <= 1'b0;
+            end else if (in_fire) begin                // 出口は詰まっていて、入口から来た → 受け皿へ（v1 = 0 のときだけ来る）
+                d1 <= s_axis_tdata; v1 <= 1'b1;
+            end
+        end
+    end
 
     always @(posedge aclk) begin
         if (rst) begin
@@ -72,10 +102,10 @@ module gb_gate #(
                 armed   <= 1'b1;
                 cnt_arm <= cnt6;
             end
-            if (armed && s_axis_tvalid && m_axis_tready) moved <= 1'b1;
+            if (out_fire) moved <= 1'b1;
             if (moved) begin
                 if (cnt6 < cnt_min) cnt_min <= cnt6;
-                if (m_axis_tready && !s_axis_tvalid && under != 16'hFFFF) under <= under + 16'd1;
+                if (m_axis_tready && !v0 && under != 16'hFFFF) under <= under + 16'd1;
             end
         end
     end

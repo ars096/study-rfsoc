@@ -119,7 +119,8 @@ sim-tp:
 
 # ---- 配置配線後の dcp で gb_fifo の gray ポインタの乗り換えをビットごとに測る（rev6。ビルド不要、数分）----
 # DCP を指定しなければ build/ の dcp。結果は dcp と同じ場所の gb_cdc.txt
-DCP ?= $(firstword $(wildcard $(OUTDIR)/vivado/proj016.runs/impl_1/*_routed.dcp))
+# proj021: proj016.runs のままだった（proj の名前に依らない形に）
+DCP ?= $(firstword $(wildcard $(OUTDIR)/vivado/*.runs/impl_1/*_routed.dcp))
 gb-cdc:
 	@test -n "$(DCP)" || { echo "DCP が無い（make gb-cdc DCP=...）"; exit 1; }
 	$(VIVADO) -mode batch -nojournal -nolog -source tools/gb_cdc.tcl -tclargs $(DCP) $(dir $(DCP))gb_cdc.txt

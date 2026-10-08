@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """proj018 — SAM45-Fine のデータ取得サーバー（PS）。制御 PC の命令で取得し、ダウンロード PC へ送る。
 
-    sudo -E $(which python3) specd.py --clkin 0 --ref 10            # 実機（proj020.bit）
+    sudo -E $(which python3) specd.py --clkin 0 --ref 10            # 実機（proj021.bit）
     python3 specd.py --fake                                          # PL なし（通信・溜まりの試験。偽の記録を同じ間隔で作る）
 
 プロセスは 2 つ（README の方針）:
@@ -458,7 +458,7 @@ def main():
     p.add_argument("--data-port", type=int, default=51001)
     p.add_argument("--buf-mb", type=int, default=256, help="溜まりの大きさ [MiB]（256 で ≒ 38 秒ぶん）")
     p.add_argument("--send-timeout", type=float, default=10.0, help="データの口の送信がこの秒数進まなければ切る")
-    p.add_argument("--bitfile", default="proj020.bit", help="proj020 の .bit（同じ名前の .hwh が同じ場所に要る）")
+    p.add_argument("--bitfile", default="proj021.bit", help="proj021 の .bit（同じ名前の .hwh が同じ場所に要る）")
     p.add_argument("--clkin", default="stock", choices=("stock", "0", "1", "2"))
     p.add_argument("--ref", type=float, default=10.0)
     p.add_argument("--lmx-chdiv", type=int, default=16, choices=(16, 24),

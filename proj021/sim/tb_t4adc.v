@@ -101,10 +101,10 @@ module tb_t4adc;
         aresetn <= 1;
         repeat (16) @(posedge clk);
         for (i = 0; i < 4; i = i + 1) begin
-            axr(i, 20'h00000); if (rv !== 32'h0020_0100) begin $display("tb_t4adc: NG win_core_%0d の ID %08x", i, rv); ng = ng + 1; end
+            axr(i, 20'h00000); if (rv !== 32'h0021_0100) begin $display("tb_t4adc: NG win_core_%0d の ID %08x", i, rv); ng = ng + 1; end
             axr(i, 20'h80004); if (rv !== 2) begin $display("tb_t4adc: NG win_core_%0d の NW %0d", i, rv); ng = ng + 1; end
         end
-        axr(4, 20'h00); if (rv !== 32'h0020_7101) begin $display("tb_t4adc: NG time_core の ID %08x", rv); ng = ng + 1; end
+        axr(4, 20'h00); if (rv !== 32'h0021_7101) begin $display("tb_t4adc: NG time_core の ID %08x", rv); ng = ng + 1; end
         // ---- 1・2. 8 窓と TP 4 本を ARM して予約 ----
         sa = T + 3000;
         axw(4, 20'h10, sa[31:0]); axw(4, 20'h14, sa[63:32]);
