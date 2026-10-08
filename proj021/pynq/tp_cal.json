@@ -1,0 +1,62 @@
+{
+ "version": 1,
+ "bit_id_win": [
+  "00170100",
+  "00200100"
+ ],
+ "unit": "dBm at ADC input (SMA)",
+ "adc": {
+  "A": {
+   "k_db": -69.231,
+   "k_unc_db": 0.03,
+   "provisional": false,
+   "valid_dbfs": [
+    -47.0,
+    -7.0
+   ],
+   "date": "2026-10-06",
+   "source": "adc_port_cal 1 回目: 口の電力 -11.268 dBm・σ_x² 6.255e+05。PM の監視 -0.016 dB・TP -0.045 dB の変化（口のつなぎ直しを含む）",
+   "previous_k_db": -69.357,
+   "remeasure": false
+  },
+  "B": {
+   "k_db": -69.356,
+   "k_unc_db": 0.09,
+   "provisional": false,
+   "valid_dbfs": [
+    -47.0,
+    -7.0
+   ],
+   "date": "2026-10-06",
+   "source": "adc_port_cal: PM を ADC の口で、2 回（K -69.424, -69.287）",
+   "previous_k_db": -69.306
+  },
+  "C": {
+   "k_db": -69.415,
+   "k_unc_db": 0.043,
+   "provisional": false,
+   "valid_dbfs": [
+    -47.0,
+    -7.0
+   ],
+   "date": "2026-10-06",
+   "source": "adc_port_cal 1 回目: 口の電力 -11.306 dBm・σ_x² 6.47e+05。PM の監視 -0.061 dB・TP -0.026 dB の変化（口のつなぎ直しを含む）",
+   "previous_k_db": -69.357,
+   "remeasure": false
+  },
+  "D": {
+   "k_db": -69.343,
+   "k_unc_db": 0.14,
+   "provisional": false,
+   "valid_dbfs": [
+    -47.0,
+    -7.0
+   ],
+   "date": "2026-10-06",
+   "source": "adc_port_cal: PM を ADC の口で、2 回（K -69.069, -69.616）",
+   "previous_k_db": -69.412
+  }
+ },
+ "note": "2026-10-06: PM を ADC の口で測った K。A・C は 1 回目、B・D は直した adc_port_cal（他の 3 本の TP で入力の揺らぎ）で 2 回ずつ。4 本の平均 −69.34 dB は暫定の見積もり −69.36（0 dBFS = +5.9 dBm）と一致。D は 2 回で 0.55 dB 離れた（ADC_D の口のつなぎの再現性が悪い。コネクタを点検）",
+ "note_proj020": "2026-10-08: proj020（0x0020_0100）を足した。TP の経路（ギアボックス → tp_core）は proj017 と同じ RTL で、lin_p20b の dBFS = PM + 4.72〜4.83 dB が lin4（proj017）の +4.65〜4.89 dB と 0.07 dB 内で一致したため。K は測り直していない"
+}
