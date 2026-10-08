@@ -128,6 +128,24 @@ sudo -E $(which python3) bench_ps.py --out runs/bench_ps_2.json 2>&1 | tee runs/
 - 2026-10-08 に分けた（commit 8264e62。`git mv` とパスの書き換え。RTL の中の変更はコメントの中のパスだけ。include の場所は `src/common`）。build.tcl の `set proj proj020` は変えていない（出力は proj020.bit のまま。1a は実機に載せない）
 - 1a は構成替えだけなので、**ID・BUILD_TAG・係数も含めて RTL は proj020 と同じ**。**予言: build-PE の WNS・WHS が proj020 と小数 6 桁まで同じ（+0.047121 / +0.009645）**。同じなら、構成替えで何も変わっていない（同じ RTL の作り直しは WNS まで再現する、の規約）
 
+### 1a の確かめ方
+
+クラウドの iverilog で: Makefile・build.tcl・tools・pynq が指す `src/…` の 26 個がすべて在ること、sim の 25 ターゲットが iverilog でコンパイルできること、`make sim-gb`（全部通過）・`sim-time`（全部通過）・`sim-time-p`（陽性対照が落ちる）・`sim-tp`（全部通過）を確かめた（2026-10-08）。
+
+Vivado サーバで（proj020 の build-PE/ と比べる。**実機には載せない**）:
+
+```bash
+cd ~/git/rfsoc && git pull && cd proj021 && pwd       # proj021 にいることを確かめる
+make IMPL=Performance_Explore > /dev/null 2>&1 &       # → build-PE/
+make > /dev/null 2>&1 &                                # → build/（既定の戦略。proj020 は −0.063）
+wait
+key() { grep -E 'TIMING \(確定\)|DSP48E2 全体|BRAM|URAM|^  (Unsafe|Unknown|Safely|No Common|Total)|CRITICAL WARNING' "$1" ; }
+diff <(key ../proj020/build-PE/vivado.log) <(key build-PE/vivado.log) && echo "build-PE: 同じ"
+diff <(key ../proj020/build/vivado.log)    <(key build/vivado.log)    && echo "build: 同じ"
+```
+
+合格: `diff` が何も出さない（WNS・WHS・CDC の分類ごとの件数・DSP・BRAM・URAM・CRITICAL WARNING が proj020 と同じ）。違ったら、どの行がどう違うかを残す（構成替えで何かが変わった証拠）
+
 ## 手順 1b — 群 C
 
 proj020 の README「ビルド rev1」: 群 C = gb_gate の armed → `armed & gb_dn の tready` → gb_fifo（XPM の FIFO）の読み出しの許可 enb、**ファンアウト 780**（768 bit の出口レジスタ）。
