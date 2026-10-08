@@ -1,0 +1,209 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 900" width="1500" height="900" font-family="'Hiragino Sans','Noto Sans CJK JP','Yu Gothic',sans-serif">
+  <!-- SPDX-License-Identifier: BSD-3-Clause -->
+  <!-- INTERFACE.md の 2.4・2.5・3.・4.2 の図。docs/interface_figs.py で描いた。INTERFACE.md を変えたらここも直す -->
+  <defs><marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fb5"/></marker><marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d9822b"/></marker><marker id="aG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2e8b57"/></marker><marker id="aR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/></marker><marker id="aT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f7c8c"/></marker><marker id="aK" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="aP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a4fb0"/></marker><style>
+      .blk  { fill:#f8f8f8; stroke:#333; stroke-width:1.5; }
+      .pl   { fill:#fbfbfb; stroke:#333; stroke-width:1.8; }
+      .ps   { fill:#f6f9fd; stroke:#2f6fb5; stroke-width:1.8; }
+      .pc   { fill:#f4faf6; stroke:#2e8b57; stroke-width:1.8; }
+      .sub  { fill:#ffffff; stroke:#555; stroke-width:1.1; }
+      .ddc  { fill:#fdf1f0; stroke:#c0392b; stroke-width:1.4; }
+      .full { fill:#fff6ea; stroke:#d9822b; stroke-width:1.4; }
+      .tim  { fill:#eef8f9; stroke:#0f7c8c; stroke-width:1.6; }
+      .ring { fill:#fff8ef; stroke:#d9822b; stroke-width:1.8; }
+      .note { fill:#fbf7ec; stroke:#b39a5a; stroke-width:1.2; }
+      .diag { fill:#eeeeee; stroke:#777; stroke-width:1.2; stroke-dasharray:4 3; }
+      .prom { fill:#eef5ff; stroke:#2f6fb5; stroke-width:1.4; }
+      .kind { fill:#fdf1f0; stroke:#c0392b; stroke-width:1.2; }
+      .rsv  { fill:#ffffff; stroke:#aaa; stroke-width:1.0; }
+      .pad  { fill:#e6e6e6; stroke:#888; stroke-width:1.0; }
+      .bad  { fill:#f3d3cf; stroke:#c0392b; stroke-width:1.4; stroke-dasharray:5 3; }
+      .t    { font-size:15px; font-weight:bold; fill:#111; }
+      .tm   { font-size:13px; font-weight:bold; fill:#111; }
+      .s    { font-size:12px; fill:#333; }
+      .xs   { font-size:11px; fill:#555; }
+      .mono { font-size:11.5px; fill:#333; font-family:'Menlo','DejaVu Sans Mono',monospace; }
+      .monob{ font-size:12px; fill:#111; font-weight:bold; font-family:'Menlo','DejaVu Sans Mono',monospace; }
+      .ttl  { font-size:19px; font-weight:bold; fill:#111; }
+      .wB   { stroke:#2f6fb5; stroke-width:2.0; fill:none; marker-end:url(#aB); }
+      .wO   { stroke:#d9822b; stroke-width:3.0; fill:none; marker-end:url(#aO); }
+      .wG   { stroke:#2e8b57; stroke-width:2.6; fill:none; marker-end:url(#aG); }
+      .wR   { stroke:#c0392b; stroke-width:2.4; fill:none; marker-end:url(#aR); }
+      .wT   { stroke:#0f7c8c; stroke-width:2.0; fill:none; marker-end:url(#aT); }
+      .wK   { stroke:#555; stroke-width:1.4; fill:none; marker-end:url(#aK); }
+      .wP   { stroke:#8a4fb0; stroke-width:1.4; fill:none; stroke-dasharray:4 3; marker-end:url(#aP); }
+      .ln   { stroke:#888; stroke-width:1.0; fill:none; stroke-dasharray:3 3; }
+      .lnK  { stroke:#333; stroke-width:1.2; fill:none; }
+      .lnT  { stroke:#0f7c8c; stroke-width:2.0; fill:none; }
+      .lbB  { font-size:11.5px; fill:#2f6fb5; }
+      .lbO  { font-size:11.5px; fill:#b8661a; }
+      .lbG  { font-size:11.5px; fill:#236b43; }
+      .lbR  { font-size:11.5px; fill:#a93226; }
+      .lbT  { font-size:11.5px; fill:#0b5d69; }
+      .lbP  { font-size:11px; fill:#6d3a8e; }
+</style></defs>
+  <rect x="0" y="0" width="1500" height="900" fill="#ffffff"/>
+<text x="20" y="32" class="ttl">INTERFACE v2 — アドレスの割り付け（AXI4-Lite、制御と状態だけ）</text>
+<text x="120" y="68" class="tm">s45_core_i（64 KiB。縮尺ではない）</text>
+<rect class="prom" x="120" y="82" width="250" height="56" rx="0"/>
+<text x="112" y="96" class="mono" text-anchor="end">0x0000</text>
+<text x="132" y="115.0" class="s">コアの共通（2.4）</text>
+<rect class="prom" x="120" y="138" width="250" height="36" rx="0"/>
+<text x="112" y="152" class="mono" text-anchor="end">0x0100</text>
+<text x="132" y="161.0" class="s">total power のレジスタ</text>
+<rect class="rsv" x="120" y="174" width="250" height="36" rx="0"/>
+<text x="112" y="188" class="mono" text-anchor="end">0x0200</text>
+<text x="132" y="197.0" class="s">（予約）</text>
+<rect class="diag" x="120" y="210" width="250" height="46" rx="0"/>
+<text x="112" y="224" class="mono" text-anchor="end">0x2000</text>
+<text x="132" y="238.0" class="s">TP のリング（移行用。4.6）</text>
+<rect class="ddc" x="120" y="256" width="250" height="50" rx="0"/>
+<text x="112" y="270" class="mono" text-anchor="end">0x4000</text>
+<text x="132" y="286.0" class="s">流れ s = 0（DDC）</text>
+<rect class="ddc" x="120" y="306" width="250" height="50" rx="0"/>
+<text x="112" y="320" class="mono" text-anchor="end">0x4400</text>
+<text x="132" y="336.0" class="s">流れ s = 1（DDC）</text>
+<rect class="full" x="120" y="356" width="250" height="50" rx="0"/>
+<text x="112" y="370" class="mono" text-anchor="end">0x4800</text>
+<text x="132" y="386.0" class="s">流れ s = 2（FULL、コア 0 だけ）</text>
+<rect class="rsv" x="120" y="406" width="250" height="60" rx="0"/>
+<text x="112" y="420" class="mono" text-anchor="end">0x4C00</text>
+<text x="132" y="441.0" class="s">…（1 KiB ずつ）</text>
+<rect class="rsv" x="120" y="466" width="250" height="40" rx="0"/>
+<text x="112" y="480" class="mono" text-anchor="end">0xFC00</text>
+<text x="132" y="491.0" class="s">流れ s = 47（最大）</text>
+<text x="112" y="510" class="mono" text-anchor="end">0xFFFF</text>
+<text x="40" y="542" class="xs">流れのブロックは 0x4000 + 0x400·s（s = 0..47）。</text>
+<text x="40" y="559" class="xs">SpW20 の 1 ADC に 20 窓も入る。</text>
+<text x="40" y="576" class="xs">1 つのコアの中では DDC が s = 0 から、</text>
+<text x="40" y="593" class="xs">FULL・SLICE はその後ろ。</text>
+<text x="40" y="610" class="xs"></text>
+<text x="40" y="627" class="xs">SAM45-Fine（proj021）:</text>
+<text x="40" y="644" class="xs">　コア 0〜3 に DDC × 2（s = 0, 1）</text>
+<text x="40" y="661" class="xs">　コア 0 に FULL × 1（s = 2、SRC で入力を選ぶ）</text>
+<text x="40" y="678" class="xs"></text>
+<text x="40" y="695" class="xs">.hwh の IP の名前で見つける（2.3）:</text>
+<text x="40" y="712" class="xs">　s45_core_0〜3・time_core_0・s45_ring_0</text>
+<text x="470" y="68" class="tm">流れのブロック（1 KiB）</text>
+<path class="ln" d="M370,256 L470,82"/>
+<path class="ln" d="M370,306 L470,842"/>
+<rect class="prom" x="470" y="82" width="430" height="470" rx="0"/>
+<text x="480" y="102" class="tm">0x000–0x0FF　約束（KIND に依らない。IF_VER で守る）</text>
+<text x="484" y="128" class="mono">0x00 SID</text>
+<text x="484" y="149" class="mono">0x04 PARAM</text>
+<text x="484" y="170" class="mono">0x08 CTRL</text>
+<text x="484" y="191" class="mono">0x0C N_ACC</text>
+<text x="484" y="212" class="mono">0x10 N_DUMP</text>
+<text x="484" y="233" class="mono">0x14 SHIFT</text>
+<text x="484" y="254" class="mono">0x18 FLAGS</text>
+<text x="484" y="275" class="mono">0x1C SEQ</text>
+<text x="484" y="296" class="mono">0x20 NCH</text>
+<text x="484" y="317" class="mono">0x24 FRAME_BEATS</text>
+<text x="484" y="338" class="mono">0x28 SRC</text>
+<text x="484" y="359" class="mono">0x2C CFG_ID</text>
+<text x="484" y="380" class="mono">0x30 RUN_CFG</text>
+<text x="484" y="401" class="mono">0x34 WRST_CFG</text>
+<text x="484" y="422" class="mono">0x38 RUN_SHIFT</text>
+<text x="484" y="443" class="mono">0x3C DUMP_K</text>
+<text x="690" y="128" class="mono">0x40 DUMP_F0_LO/HI</text>
+<text x="690" y="149" class="mono">0x48 DUMP_N</text>
+<text x="690" y="170" class="mono">0x4C DUMP_SAT</text>
+<text x="690" y="191" class="mono">0x50 DUMP_T_LO/HI</text>
+<text x="690" y="212" class="mono">0x58 DUMP_H</text>
+<text x="690" y="233" class="mono">0x5C DUMP_CFG</text>
+<text x="690" y="254" class="mono">0x60 RUN_T_LO/HI</text>
+<text x="690" y="275" class="mono">0x68 RUN_F0_LO/HI</text>
+<text x="690" y="296" class="mono">0x70 FIN_LO/HI</text>
+<text x="690" y="317" class="mono">0x78 FOUT_LO/HI</text>
+<text x="690" y="338" class="mono">0x80 NFFT_MIN_MAX</text>
+<text x="690" y="359" class="mono">0x84 REC_CTRL</text>
+<text x="690" y="380" class="mono">0x88 REC_LATE</text>
+<text x="690" y="401" class="mono">0x8C– 予約</text>
+<text x="484" y="482" class="xs">DUMP_* は SEQ と同じ commit で切り替わる（seqlock: SEQ → 中身 → SEQ）。</text>
+<text x="484" y="498" class="xs">REC_CTRL: [0] ALL（全部のダンプをレコードに）/ [1] ONE（次の 1 個だけ）/</text>
+<text x="484" y="514" class="xs">　　　　　[2] SNAP（ONE のダンプにスナップショットを付ける）。4.6</text>
+<text x="484" y="530" class="xs">0x8C– は時刻の補正の定数などを足す場所（足すだけなら IF_VER は上げない）</text>
+<rect class="kind" x="470" y="552" width="430" height="130" rx="0"/>
+<text x="480" y="572" class="tm">0x100–0x1FF　種類に固有の設定</text>
+<text x="484" y="596" class="s">DDC:  WK・WDPHI・WNS・WCUR・WCUR_DPHI・WSTART・</text>
+<text x="484" y="616" class="s">　　　NS_MIN_MAX・WRST_T（次の WRST で効く）</text>
+<text x="484" y="636" class="s">SLICE: 点数・切り出しの最初の ch</text>
+<text x="484" y="656" class="s">FULL:  なし</text>
+<rect class="diag" x="470" y="682" width="430" height="160" rx="0"/>
+<text x="480" y="702" class="tm">0x200–0x3FF　診断（約束の外）</text>
+<text x="484" y="726" class="xs">中身を変えても IF_VER を上げない。specd の約束の道は読まない</text>
+<text x="484" y="745" class="xs">（試験の道具だけが KIND と PROJ を見て読む）</text>
+<text x="484" y="764" class="xs">DDC:  PFB_SAT・DDC_SAT・WS_STALL・WS_RDY0・DDC_OVR・WRST_CNT</text>
+<text x="484" y="783" class="xs">FULL: DIAG_*・SRST・GRST・INJ・RAW_*・ST_*</text>
+<text x="484" y="802" class="xs">消したもの: SNAP_F・BANK・窓ごとの ID・WIDX・NW・SNAP_SEL・FULL_SEL</text>
+<rect class="prom" x="950" y="82" width="520" height="236" rx="0"/>
+<text x="960" y="102" class="tm">コアの共通（s45_core_i の 0x0000–0x00FF）</text>
+<text x="964" y="126" class="mono">0x00 IF_ID</text>
+<text x="964" y="147" class="mono">0x04 PROJ</text>
+<text x="964" y="168" class="mono">0x08 NSTREAM</text>
+<text x="964" y="189" class="mono">0x0C CAPS</text>
+<text x="964" y="210" class="mono">0x10 BASE_BEATS</text>
+<text x="964" y="231" class="mono">0x14 BUILD</text>
+<text x="964" y="252" class="mono">0x18 CORE_PORT</text>
+<text x="964" y="273" class="mono">0x20– 今の表 A</text>
+<text x="1120" y="126" class="xs">下の図</text>
+<text x="1120" y="147" class="xs">作った proj と rev（照合には使わない）</text>
+<text x="1120" y="168" class="xs">このコアの流れの数</text>
+<text x="1120" y="189" class="xs">[0] DMA のレコード / [1] TP をレコードで / [2] SNAP …</text>
+<text x="1120" y="210" class="xs">基本の単位 10.24 ms = 2,621,440 ビート</text>
+<text x="1120" y="231" class="xs">ビルドの指紋</text>
+<text x="1120" y="252" class="xs">[3:0] ADC（SMA のラベル）/ タイル / スライス</text>
+<text x="1120" y="273" class="xs">TP_RUN・TANCH・TFIN・GB_*・ANCH_*・OVR_CNT…</text>
+<text x="960" y="346" class="xs">IF_ID（コア・time_core・リングの 0x00）。CORE_KIND: 1 ADC のコア / 2 time_core / 3 リング</text>
+<rect class="sub" x="960.0" y="352" width="125.0" height="34" rx="0"/>
+<text x="1022.5" y="366" class="xs" text-anchor="middle">[31:24]</text>
+<text x="1022.5" y="381" class="s" text-anchor="middle">IF_VER = 2</text>
+<rect class="sub" x="1085.0" y="352" width="125.0" height="34" rx="0"/>
+<text x="1147.5" y="366" class="xs" text-anchor="middle">[23:16]</text>
+<text x="1147.5" y="381" class="s" text-anchor="middle">BIT_KIND</text>
+<rect class="sub" x="1210.0" y="352" width="125.0" height="34" rx="0"/>
+<text x="1272.5" y="366" class="xs" text-anchor="middle">[15:8]</text>
+<text x="1272.5" y="381" class="s" text-anchor="middle">BIT_REV</text>
+<rect class="sub" x="1335.0" y="352" width="125.0" height="34" rx="0"/>
+<text x="1397.5" y="366" class="xs" text-anchor="middle">[7:0]</text>
+<text x="1397.5" y="381" class="s" text-anchor="middle">CORE_KIND</text>
+<text x="960" y="412" class="xs">SID（流れのブロックの 0x00）。KIND: 1 FULL / 2 SLICE / 3 DDC</text>
+<rect class="sub" x="960.0" y="418" width="125.0" height="34" rx="0"/>
+<text x="1022.5" y="432" class="xs" text-anchor="middle">[31:24]</text>
+<text x="1022.5" y="447" class="s" text-anchor="middle">IF_VER</text>
+<rect class="sub" x="1085.0" y="418" width="125.0" height="34" rx="0"/>
+<text x="1147.5" y="432" class="xs" text-anchor="middle">[23:16]</text>
+<text x="1147.5" y="447" class="s" text-anchor="middle">KIND</text>
+<rect class="sub" x="1210.0" y="418" width="125.0" height="34" rx="0"/>
+<text x="1272.5" y="432" class="xs" text-anchor="middle">[15:8]</text>
+<text x="1272.5" y="447" class="s" text-anchor="middle">s</text>
+<rect class="sub" x="1335.0" y="418" width="125.0" height="34" rx="0"/>
+<text x="1397.5" y="432" class="xs" text-anchor="middle">[7:0]</text>
+<text x="1397.5" y="447" class="s" text-anchor="middle">0</text>
+<rect class="note" x="950" y="470" width="520" height="76" rx="0"/>
+<text x="960" y="490" class="tm">BIT_KIND（BITS.md の 9 本。proj の番号とは別の固定の番号）</text>
+<text x="964" y="512" class="s">1 SAM45-Wide　2 SAM45-Fine　3 2G　4 512M　5 256M</text>
+<text x="964" y="530" class="s">6 SpW6　7 SpW8　8 SpW20　9 Fine</text>
+<rect class="ring" x="950" y="566" width="520" height="276" rx="0"/>
+<text x="960" y="586" class="tm">s45_ring_0（4 KiB、CORE_KIND = 3。4.2）</text>
+<text x="964" y="610" class="mono">0x00 IF_ID</text>
+<text x="964" y="631" class="mono">0x04 CTRL</text>
+<text x="964" y="652" class="mono">0x08 BASE_LO/HI</text>
+<text x="964" y="673" class="mono">0x10 SIZE</text>
+<text x="964" y="694" class="mono">0x14 W</text>
+<text x="964" y="715" class="mono">0x18 R</text>
+<text x="964" y="736" class="mono">0x1C DROP_CNT</text>
+<text x="964" y="757" class="mono">0x20 REC_CNT</text>
+<text x="964" y="778" class="mono">0x24 PEAK</text>
+<text x="964" y="799" class="mono">0x28 ERR_STAT</text>
+<text x="1120" y="610" class="xs"></text>
+<text x="1120" y="631" class="xs">W: [0] EN / [1] RST。R: [0] EN / [1] 書いている / [2] ERR</text>
+<text x="1120" y="652" class="xs">64 バイト境界。EN = 0 のときだけ書ける</text>
+<text x="1120" y="673" class="xs">バイト、2 の冪（≦ 1 GiB）</text>
+<text x="1120" y="694" class="xs">R: 書き終えた位置（バイト、下位 32 bit）</text>
+<text x="1120" y="715" class="xs">RW: PS が読み終えた位置を書く</text>
+<text x="1120" y="736" class="xs">捨てたレコード（空きなし ＋ 出し切れず）</text>
+<text x="1120" y="757" class="xs">書いたレコード（PAD を除く）</text>
+<text x="1120" y="778" class="xs">使用の最大（余裕を測るため）</text>
+<text x="1120" y="799" class="xs">最初の誤りの BRESP と位置</text>
+</svg>

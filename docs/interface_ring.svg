@@ -1,0 +1,192 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 860" width="1500" height="860" font-family="'Hiragino Sans','Noto Sans CJK JP','Yu Gothic',sans-serif">
+  <!-- SPDX-License-Identifier: BSD-3-Clause -->
+  <!-- INTERFACE.md の 4.1・4.4・4.6 の図。docs/interface_figs.py で描いた。INTERFACE.md を変えたらここも直す -->
+  <defs><marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fb5"/></marker><marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d9822b"/></marker><marker id="aG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2e8b57"/></marker><marker id="aR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/></marker><marker id="aT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f7c8c"/></marker><marker id="aK" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="aP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a4fb0"/></marker><style>
+      .blk  { fill:#f8f8f8; stroke:#333; stroke-width:1.5; }
+      .pl   { fill:#fbfbfb; stroke:#333; stroke-width:1.8; }
+      .ps   { fill:#f6f9fd; stroke:#2f6fb5; stroke-width:1.8; }
+      .pc   { fill:#f4faf6; stroke:#2e8b57; stroke-width:1.8; }
+      .sub  { fill:#ffffff; stroke:#555; stroke-width:1.1; }
+      .ddc  { fill:#fdf1f0; stroke:#c0392b; stroke-width:1.4; }
+      .full { fill:#fff6ea; stroke:#d9822b; stroke-width:1.4; }
+      .tim  { fill:#eef8f9; stroke:#0f7c8c; stroke-width:1.6; }
+      .ring { fill:#fff8ef; stroke:#d9822b; stroke-width:1.8; }
+      .note { fill:#fbf7ec; stroke:#b39a5a; stroke-width:1.2; }
+      .diag { fill:#eeeeee; stroke:#777; stroke-width:1.2; stroke-dasharray:4 3; }
+      .prom { fill:#eef5ff; stroke:#2f6fb5; stroke-width:1.4; }
+      .kind { fill:#fdf1f0; stroke:#c0392b; stroke-width:1.2; }
+      .rsv  { fill:#ffffff; stroke:#aaa; stroke-width:1.0; }
+      .pad  { fill:#e6e6e6; stroke:#888; stroke-width:1.0; }
+      .bad  { fill:#f3d3cf; stroke:#c0392b; stroke-width:1.4; stroke-dasharray:5 3; }
+      .t    { font-size:15px; font-weight:bold; fill:#111; }
+      .tm   { font-size:13px; font-weight:bold; fill:#111; }
+      .s    { font-size:12px; fill:#333; }
+      .xs   { font-size:11px; fill:#555; }
+      .mono { font-size:11.5px; fill:#333; font-family:'Menlo','DejaVu Sans Mono',monospace; }
+      .monob{ font-size:12px; fill:#111; font-weight:bold; font-family:'Menlo','DejaVu Sans Mono',monospace; }
+      .ttl  { font-size:19px; font-weight:bold; fill:#111; }
+      .wB   { stroke:#2f6fb5; stroke-width:2.0; fill:none; marker-end:url(#aB); }
+      .wO   { stroke:#d9822b; stroke-width:3.0; fill:none; marker-end:url(#aO); }
+      .wG   { stroke:#2e8b57; stroke-width:2.6; fill:none; marker-end:url(#aG); }
+      .wR   { stroke:#c0392b; stroke-width:2.4; fill:none; marker-end:url(#aR); }
+      .wT   { stroke:#0f7c8c; stroke-width:2.0; fill:none; marker-end:url(#aT); }
+      .wK   { stroke:#555; stroke-width:1.4; fill:none; marker-end:url(#aK); }
+      .wP   { stroke:#8a4fb0; stroke-width:1.4; fill:none; stroke-dasharray:4 3; marker-end:url(#aP); }
+      .ln   { stroke:#888; stroke-width:1.0; fill:none; stroke-dasharray:3 3; }
+      .lnK  { stroke:#333; stroke-width:1.2; fill:none; }
+      .lnT  { stroke:#0f7c8c; stroke-width:2.0; fill:none; }
+      .lbB  { font-size:11.5px; fill:#2f6fb5; }
+      .lbO  { font-size:11.5px; fill:#b8661a; }
+      .lbG  { font-size:11.5px; fill:#236b43; }
+      .lbR  { font-size:11.5px; fill:#a93226; }
+      .lbT  { font-size:11.5px; fill:#0b5d69; }
+      .lbP  { font-size:11px; fill:#6d3a8e; }
+</style></defs>
+  <rect x="0" y="0" width="1500" height="860" fill="#ffffff"/>
+<text x="20" y="32" class="ttl">INTERFACE v2 — PL が書くリングとレコードの形</text>
+<text x="20" y="66" class="tm">DDR のリング（4.1）— 書き手は PL（s45_ring_0）1 つ、読み手は specd の取得のプロセス 1 つ。proj018 の s45ring と同じ約束</text>
+<rect class="full" x="80" y="140" width="170" height="52" rx="0"/>
+<text x="165.0" y="171.0" class="s" text-anchor="middle">SPEC c2 s1</text>
+<rect class="rsv" x="250" y="140" width="350" height="52" rx="0"/>
+<text x="425.0" y="171.0" class="s" text-anchor="middle">空き（PL がここに書く。読み終えた所も空きになる）</text>
+<rect class="full" x="600" y="140" width="160" height="52" rx="0"/>
+<text x="680.0" y="171.0" class="s" text-anchor="middle">SPEC c0 s0</text>
+<rect class="full" x="760" y="140" width="160" height="52" rx="0"/>
+<text x="840.0" y="171.0" class="s" text-anchor="middle">SPEC c0 s1</text>
+<rect class="tim" x="920" y="140" width="70" height="52" rx="0"/>
+<text x="955.0" y="171.0" class="s" text-anchor="middle">TP c1</text>
+<rect class="full" x="990" y="140" width="160" height="52" rx="0"/>
+<text x="1070.0" y="171.0" class="s" text-anchor="middle">SPEC c0 s2</text>
+<rect class="pad" x="1150" y="140" width="60" height="52" rx="0"/>
+<text x="1180.0" y="171.0" class="s" text-anchor="middle">PAD</text>
+<text x="80" y="132" class="mono">BASE</text>
+<text x="1210" y="132" class="mono" text-anchor="end">BASE + SIZE</text>
+<path class="wK" d="M1210,196 C1240,262 60,262 80,198"/>
+<text x="645" y="268" class="xs" text-anchor="middle">端に入らないときは PAD（type 0）で埋めて頭に戻る（SIZE は 2 の冪・長さは 64 バイトの倍数なので、端までは必ず 64 バイト以上）</text>
+<path class="wO" d="M250,106 L250,138"/>
+<text x="250" y="100" class="lbO" text-anchor="middle">W（書き終えた位置）</text>
+<path class="wB" d="M600,106 L600,138"/>
+<text x="600" y="100" class="lbB" text-anchor="middle">R（PS が読み終えた位置）</text>
+<text x="80" y="300" class="s">橙 = まだ読まれていないレコード（R から W まで。端で頭に戻る）。使用 = (W − R) mod 2³²　空き = SIZE − 使用　番地 = BASE + (位置 mod SIZE)</text>
+<text x="80" y="318" class="s">W・R は単調に増えるバイト数の下位 32 bit（1 回の読みで済む）</text>
+<rect class="note" x="1240" y="84" width="240" height="250" rx="4"/>
+<text x="1252" y="104" class="tm">約束（4.1）</text>
+<text x="1252" y="126" class="xs">① W はレコードの BRESP を全部</text>
+<text x="1252" y="146" class="xs">　 受けてから進む</text>
+<text x="1252" y="166" class="xs">② 書く前に 空き ≧ 長さ。足りなけ</text>
+<text x="1252" y="186" class="xs">　 れば丸ごと捨てて DROP_CNT++</text>
+<text x="1252" y="206" class="xs">③ 流れの中は SEQ の順。流れの</text>
+<text x="1252" y="226" class="xs">　 間の順は約束しない</text>
+<text x="1252" y="246" class="xs">④ 次のダンプが閉じる前に出し切る</text>
+<text x="1252" y="266" class="xs">　 （だめなら捨てて REC_LATE++）</text>
+<text x="1252" y="286" class="xs">⑤ PS: W を読む → キャッシュを捨て</text>
+<text x="1252" y="306" class="xs">　 る → 確かめる → 束ねる → R</text>
+<text x="20" y="380" class="tm">レコード（4.4・4.6）— 長さは 64 バイトの倍数。リトルエンディアン</text>
+<rect class="prom" x="80" y="426" width="260" height="44" rx="0"/>
+<text x="210" y="453" class="tm" text-anchor="middle">頭 64 バイト</text>
+<rect class="full" x="340" y="426" width="820" height="44" rx="0"/>
+<text x="750" y="445" class="tm" text-anchor="middle">中身（64 バイトの倍数に詰める）</text>
+<text x="750" y="462" class="xs" text-anchor="middle">SPEC: NCH × u64（FFT の ch の順、生の積分値）　TP: 16 バイト × DUMP_N　SNAP: FULL 8192 × i16 / DDC NFFT × (re, im) i32</text>
+<rect class="tim" x="1160" y="426" width="300" height="44" rx="0"/>
+<text x="1310" y="453" class="tm" text-anchor="middle">尾 64 バイト</text>
+<path class="lnK" d="M80,418 L80,410 L1160,410 L1160,418"/>
+<text x="620" y="404" class="s" text-anchor="middle">CRC-32（zlib.crc32 と同じ式）の範囲 = 頭 ＋ 中身</text>
+<text x="80" y="518" class="tm">頭（語 0〜7、上の数字はバイト）</text>
+<text x="153.0" y="536" class="xs" text-anchor="middle">0</text>
+<text x="219.0" y="536" class="xs" text-anchor="middle">1</text>
+<text x="285.0" y="536" class="xs" text-anchor="middle">2</text>
+<text x="351.0" y="536" class="xs" text-anchor="middle">3</text>
+<text x="417.0" y="536" class="xs" text-anchor="middle">4</text>
+<text x="483.0" y="536" class="xs" text-anchor="middle">5</text>
+<text x="549.0" y="536" class="xs" text-anchor="middle">6</text>
+<text x="615.0" y="536" class="xs" text-anchor="middle">7</text>
+<text x="110" y="562" class="mono" text-anchor="end">0</text>
+<rect class="prom" x="120" y="542" width="264" height="30" rx="0"/>
+<text x="252.0" y="562" class="s" text-anchor="middle">magic "S45R"</text>
+<rect class="sub" x="384" y="542" width="66" height="30" rx="0"/>
+<text x="417.0" y="562" class="s" text-anchor="middle">rec_ver</text>
+<rect class="sub" x="450" y="542" width="66" height="30" rx="0"/>
+<text x="483.0" y="562" class="s" text-anchor="middle">type</text>
+<rect class="sub" x="516" y="542" width="66" height="30" rx="0"/>
+<text x="549.0" y="562" class="s" text-anchor="middle">core</text>
+<rect class="sub" x="582" y="542" width="66" height="30" rx="0"/>
+<text x="615.0" y="562" class="s" text-anchor="middle">s</text>
+<text x="110" y="592" class="mono" text-anchor="end">1</text>
+<rect class="sub" x="120" y="572" width="264" height="30" rx="0"/>
+<text x="252.0" y="592" class="s" text-anchor="middle">SEQ</text>
+<rect class="sub" x="384" y="572" width="264" height="30" rx="0"/>
+<text x="516.0" y="592" class="s" text-anchor="middle">DUMP_K</text>
+<text x="110" y="622" class="mono" text-anchor="end">2</text>
+<rect class="sub" x="120" y="602" width="528" height="30" rx="0"/>
+<text x="384.0" y="622" class="s" text-anchor="middle">DUMP_F0</text>
+<text x="110" y="652" class="mono" text-anchor="end">3</text>
+<rect class="sub" x="120" y="632" width="528" height="30" rx="0"/>
+<text x="384.0" y="652" class="s" text-anchor="middle">DUMP_T（ビート）</text>
+<text x="110" y="682" class="mono" text-anchor="end">4</text>
+<rect class="sub" x="120" y="662" width="66" height="30" rx="0"/>
+<text x="153.0" y="682" class="s" text-anchor="middle">log2 NFFT</text>
+<rect class="sub" x="186" y="662" width="66" height="30" rx="0"/>
+<text x="219.0" y="682" class="s" text-anchor="middle">NS</text>
+<rect class="sub" x="252" y="662" width="66" height="30" rx="0"/>
+<text x="285.0" y="682" class="s" text-anchor="middle">SHIFT</text>
+<rect class="sub" x="318" y="662" width="66" height="30" rx="0"/>
+<text x="351.0" y="682" class="s" text-anchor="middle">G</text>
+<rect class="sub" x="384" y="662" width="66" height="30" rx="0"/>
+<text x="417.0" y="682" class="s" text-anchor="middle">fmt</text>
+<rect class="sub" x="450" y="662" width="66" height="30" rx="0"/>
+<text x="483.0" y="682" class="s" text-anchor="middle">src</text>
+<rect class="sub" x="516" y="662" width="132" height="30" rx="0"/>
+<text x="582.0" y="682" class="s" text-anchor="middle">DUMP_H</text>
+<text x="110" y="712" class="mono" text-anchor="end">5</text>
+<rect class="sub" x="120" y="692" width="264" height="30" rx="0"/>
+<text x="252.0" y="712" class="s" text-anchor="middle">DUMP_N</text>
+<rect class="sub" x="384" y="692" width="264" height="30" rx="0"/>
+<text x="516.0" y="712" class="s" text-anchor="middle">DUMP_SAT</text>
+<text x="110" y="742" class="mono" text-anchor="end">6</text>
+<rect class="sub" x="120" y="722" width="264" height="30" rx="0"/>
+<text x="252.0" y="742" class="s" text-anchor="middle">DUMP_CFG</text>
+<rect class="sub" x="384" y="722" width="264" height="30" rx="0"/>
+<text x="516.0" y="742" class="s" text-anchor="middle">FLAGS</text>
+<text x="110" y="772" class="mono" text-anchor="end">7</text>
+<rect class="sub" x="120" y="752" width="264" height="30" rx="0"/>
+<text x="252.0" y="772" class="s" text-anchor="middle">中身のバイト数</text>
+<rect class="rsv" x="384" y="752" width="264" height="30" rx="0"/>
+<text x="516.0" y="772" class="s" text-anchor="middle">予約</text>
+<path class="ln" d="M80,470 L120,502"/>
+<path class="ln" d="M340,470 L648,502"/>
+<text x="880" y="518" class="tm">尾（語 0〜7）</text>
+<text x="953.0" y="536" class="xs" text-anchor="middle">0</text>
+<text x="1019.0" y="536" class="xs" text-anchor="middle">1</text>
+<text x="1085.0" y="536" class="xs" text-anchor="middle">2</text>
+<text x="1151.0" y="536" class="xs" text-anchor="middle">3</text>
+<text x="1217.0" y="536" class="xs" text-anchor="middle">4</text>
+<text x="1283.0" y="536" class="xs" text-anchor="middle">5</text>
+<text x="1349.0" y="536" class="xs" text-anchor="middle">6</text>
+<text x="1415.0" y="536" class="xs" text-anchor="middle">7</text>
+<text x="910" y="562" class="mono" text-anchor="end">0</text>
+<rect class="tim" x="920" y="542" width="264" height="30" rx="0"/>
+<text x="1052.0" y="562" class="s" text-anchor="middle">magic "S45E"</text>
+<rect class="sub" x="1184" y="542" width="264" height="30" rx="0"/>
+<text x="1316.0" y="562" class="s" text-anchor="middle">SEQ の写し</text>
+<text x="910" y="592" class="mono" text-anchor="end">1</text>
+<rect class="sub" x="920" y="572" width="264" height="30" rx="0"/>
+<text x="1052.0" y="592" class="s" text-anchor="middle">CRC-32</text>
+<rect class="rsv" x="1184" y="572" width="264" height="30" rx="0"/>
+<text x="1316.0" y="592" class="s" text-anchor="middle">予約</text>
+<text x="910" y="622" class="mono" text-anchor="end">2–7</text>
+<rect class="rsv" x="920" y="602" width="528" height="30" rx="0"/>
+<text x="1184.0" y="622" class="s" text-anchor="middle">0</text>
+<path class="ln" d="M1160,470 L920,502"/>
+<path class="ln" d="M1460,470 L1448,502"/>
+<text x="880" y="662" class="xs">PS は頭と尾の SEQ・magic・CRC を確かめてから束ねる。</text>
+<text x="880" y="679" class="xs">合わなければそのレコードを捨て、ERROR の EVENT（黙って使わない）。</text>
+<text x="880" y="696" class="xs">拾うもの: 古いキャッシュの行・書きかけ・DMA の誤り。</text>
+<text x="880" y="713" class="xs">全部のレコードで確かめられるかは proj021 で測る</text>
+<text x="880" y="730" class="xs">（間に合わない bit は間引き、どれだけ確かめたかを STATUS に）。</text>
+<text x="880" y="747" class="xs"></text>
+<text x="880" y="764" class="xs">ネットワークへは specd が float32 にした中身で</text>
+<text x="880" y="781" class="xs">新しい CRC を付ける（s45proto の頭、今と同じ）。</text>
+<text x="80" y="804" class="xs">type: 0 PAD（語 7 = 端までのバイト数）・1 SPEC・2 TP（s = 0xFF、ADC ごとに区切り 10 個）・4 SNAP（SPEC の直後に同じ SEQ）</text>
+<text x="80" y="821" class="xs">頭の項目は今の DUMP_* と同じ値（1 つのレコードの中で揃っていることを PL が保証する。seqlock の代わり）。</text>
+<text x="80" y="838" class="xs">fmt はリングの中では常に 0（u64 の生）。src = そのダンプの入力の ADC。欠け = SEQ の飛び</text>
+</svg>

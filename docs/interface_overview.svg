@@ -1,0 +1,246 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1520 960" width="1520" height="960" font-family="'Hiragino Sans','Noto Sans CJK JP','Yu Gothic',sans-serif">
+  <!-- SPDX-License-Identifier: BSD-3-Clause -->
+  <!-- INTERFACE.md の 2.・4.・5. の全体図。docs/interface_figs.py で描いた。INTERFACE.md を変えたらここも直す -->
+  <defs><marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fb5"/></marker><marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d9822b"/></marker><marker id="aG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2e8b57"/></marker><marker id="aR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/></marker><marker id="aT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f7c8c"/></marker><marker id="aK" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="aP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a4fb0"/></marker><style>
+      .blk  { fill:#f8f8f8; stroke:#333; stroke-width:1.5; }
+      .pl   { fill:#fbfbfb; stroke:#333; stroke-width:1.8; }
+      .ps   { fill:#f6f9fd; stroke:#2f6fb5; stroke-width:1.8; }
+      .pc   { fill:#f4faf6; stroke:#2e8b57; stroke-width:1.8; }
+      .sub  { fill:#ffffff; stroke:#555; stroke-width:1.1; }
+      .ddc  { fill:#fdf1f0; stroke:#c0392b; stroke-width:1.4; }
+      .full { fill:#fff6ea; stroke:#d9822b; stroke-width:1.4; }
+      .tim  { fill:#eef8f9; stroke:#0f7c8c; stroke-width:1.6; }
+      .ring { fill:#fff8ef; stroke:#d9822b; stroke-width:1.8; }
+      .note { fill:#fbf7ec; stroke:#b39a5a; stroke-width:1.2; }
+      .diag { fill:#eeeeee; stroke:#777; stroke-width:1.2; stroke-dasharray:4 3; }
+      .prom { fill:#eef5ff; stroke:#2f6fb5; stroke-width:1.4; }
+      .kind { fill:#fdf1f0; stroke:#c0392b; stroke-width:1.2; }
+      .rsv  { fill:#ffffff; stroke:#aaa; stroke-width:1.0; }
+      .pad  { fill:#e6e6e6; stroke:#888; stroke-width:1.0; }
+      .bad  { fill:#f3d3cf; stroke:#c0392b; stroke-width:1.4; stroke-dasharray:5 3; }
+      .t    { font-size:15px; font-weight:bold; fill:#111; }
+      .tm   { font-size:13px; font-weight:bold; fill:#111; }
+      .s    { font-size:12px; fill:#333; }
+      .xs   { font-size:11px; fill:#555; }
+      .mono { font-size:11.5px; fill:#333; font-family:'Menlo','DejaVu Sans Mono',monospace; }
+      .monob{ font-size:12px; fill:#111; font-weight:bold; font-family:'Menlo','DejaVu Sans Mono',monospace; }
+      .ttl  { font-size:19px; font-weight:bold; fill:#111; }
+      .wB   { stroke:#2f6fb5; stroke-width:2.0; fill:none; marker-end:url(#aB); }
+      .wO   { stroke:#d9822b; stroke-width:3.0; fill:none; marker-end:url(#aO); }
+      .wG   { stroke:#2e8b57; stroke-width:2.6; fill:none; marker-end:url(#aG); }
+      .wR   { stroke:#c0392b; stroke-width:2.4; fill:none; marker-end:url(#aR); }
+      .wT   { stroke:#0f7c8c; stroke-width:2.0; fill:none; marker-end:url(#aT); }
+      .wK   { stroke:#555; stroke-width:1.4; fill:none; marker-end:url(#aK); }
+      .wP   { stroke:#8a4fb0; stroke-width:1.4; fill:none; stroke-dasharray:4 3; marker-end:url(#aP); }
+      .ln   { stroke:#888; stroke-width:1.0; fill:none; stroke-dasharray:3 3; }
+      .lnK  { stroke:#333; stroke-width:1.2; fill:none; }
+      .lnT  { stroke:#0f7c8c; stroke-width:2.0; fill:none; }
+      .lbB  { font-size:11.5px; fill:#2f6fb5; }
+      .lbO  { font-size:11.5px; fill:#b8661a; }
+      .lbG  { font-size:11.5px; fill:#236b43; }
+      .lbR  { font-size:11.5px; fill:#a93226; }
+      .lbT  { font-size:11.5px; fill:#0b5d69; }
+      .lbP  { font-size:11px; fill:#6d3a8e; }
+</style></defs>
+  <rect x="0" y="0" width="1520" height="960" fill="#ffffff"/>
+<text x="20" y="32" class="ttl">INTERFACE v2 — 全体の構成（PL ↔ PS ↔ 制御 PC）</text>
+<rect class="pl" x="20" y="50" width="790" height="830" rx="8"/>
+<text x="36" y="74" class="t">PL（ファブリック）</text>
+<rect class="tim" x="40" y="88" width="560" height="52" rx="4"/>
+<text x="52" y="108" class="tm">time_core_0</text>
+<text x="52" y="128" class="xs">T（256 MHz のビート）・1PPS の錨・ARM / START_AT。全コアが同じビートで RUN・WRST・TP_ARM（1.）</text>
+<rect class="blk" x="40" y="168" width="520" height="168" rx="4"/>
+<text x="52" y="188" class="tm">s45_core_0（ADC_A、64 KiB）</text>
+<rect class="sub" x="52" y="200" width="170" height="124" rx="4"/>
+<text x="62" y="220" class="xs">前段</text>
+<text x="62" y="236" class="xs">ギアボックス・錨（TANCH）</text>
+<text x="62" y="252" class="xs">TP（1.024 ms の区切り）</text>
+<text x="62" y="268" class="xs">CORE_PORT = SMA のラベル</text>
+<rect class="ddc" x="250" y="200" width="296" height="36" rx="4"/>
+<text x="260" y="223" class="s">s = 0　DDC（窓）　PFB T = 4 ＋ FFT</text>
+<rect class="ddc" x="250" y="242" width="296" height="36" rx="4"/>
+<text x="260" y="265" class="s">s = 1　DDC（窓）</text>
+<path class="wK" d="M222,218 L248,218"/>
+<path class="wK" d="M222,260 L248,260"/>
+<path class="wT" d="M30,178 L38,178"/>
+<rect class="blk" x="40" y="348" width="520" height="128" rx="4"/>
+<text x="52" y="368" class="tm">s45_core_1（ADC_B、64 KiB）</text>
+<rect class="sub" x="52" y="380" width="170" height="84" rx="4"/>
+<text x="62" y="400" class="xs">前段</text>
+<text x="62" y="416" class="xs">ギアボックス・錨（TANCH）</text>
+<text x="62" y="432" class="xs">TP（1.024 ms の区切り）</text>
+<text x="62" y="448" class="xs">CORE_PORT = SMA のラベル</text>
+<rect class="ddc" x="250" y="380" width="296" height="36" rx="4"/>
+<text x="260" y="403" class="s">s = 0　DDC（窓）　PFB T = 4 ＋ FFT</text>
+<rect class="ddc" x="250" y="422" width="296" height="36" rx="4"/>
+<text x="260" y="445" class="s">s = 1　DDC（窓）</text>
+<path class="wK" d="M222,398 L248,398"/>
+<path class="wK" d="M222,440 L248,440"/>
+<path class="wT" d="M30,358 L38,358"/>
+<rect class="blk" x="40" y="490" width="520" height="128" rx="4"/>
+<text x="52" y="510" class="tm">s45_core_2（ADC_C、64 KiB）</text>
+<rect class="sub" x="52" y="522" width="170" height="84" rx="4"/>
+<text x="62" y="542" class="xs">前段</text>
+<text x="62" y="558" class="xs">ギアボックス・錨（TANCH）</text>
+<text x="62" y="574" class="xs">TP（1.024 ms の区切り）</text>
+<text x="62" y="590" class="xs">CORE_PORT = SMA のラベル</text>
+<rect class="ddc" x="250" y="522" width="296" height="36" rx="4"/>
+<text x="260" y="545" class="s">s = 0　DDC（窓）　PFB T = 4 ＋ FFT</text>
+<rect class="ddc" x="250" y="564" width="296" height="36" rx="4"/>
+<text x="260" y="587" class="s">s = 1　DDC（窓）</text>
+<path class="wK" d="M222,540 L248,540"/>
+<path class="wK" d="M222,582 L248,582"/>
+<path class="wT" d="M30,500 L38,500"/>
+<rect class="blk" x="40" y="632" width="520" height="128" rx="4"/>
+<text x="52" y="652" class="tm">s45_core_3（ADC_D、64 KiB）</text>
+<rect class="sub" x="52" y="664" width="170" height="84" rx="4"/>
+<text x="62" y="684" class="xs">前段</text>
+<text x="62" y="700" class="xs">ギアボックス・錨（TANCH）</text>
+<text x="62" y="716" class="xs">TP（1.024 ms の区切り）</text>
+<text x="62" y="732" class="xs">CORE_PORT = SMA のラベル</text>
+<rect class="ddc" x="250" y="664" width="296" height="36" rx="4"/>
+<text x="260" y="687" class="s">s = 0　DDC（窓）　PFB T = 4 ＋ FFT</text>
+<rect class="ddc" x="250" y="706" width="296" height="36" rx="4"/>
+<text x="260" y="729" class="s">s = 1　DDC（窓）</text>
+<path class="wK" d="M222,682 L248,682"/>
+<path class="wK" d="M222,724 L248,724"/>
+<path class="wT" d="M30,642 L38,642"/>
+<rect class="full" x="250" y="284" width="296" height="36" rx="4"/>
+<text x="260" y="307" class="s">s = 2　FULL（全帯域）　入力は SRC で選ぶ</text>
+<path class="lnT" d="M40,114 L30,114 L30,642"/>
+<path class="wP" d="M232,702 C236,512 236,468 248,308"/>
+<text x="34" y="160" class="lbT">時刻のバス</text>
+<rect class="sub" x="620" y="168" width="50" height="592" rx="4"/>
+<text x="645" y="330" class="s" text-anchor="middle">レ</text>
+<text x="645" y="348" class="s" text-anchor="middle">コ</text>
+<text x="645" y="366" class="s" text-anchor="middle">ー</text>
+<text x="645" y="384" class="s" text-anchor="middle">ド</text>
+<text x="645" y="402" class="s" text-anchor="middle">の</text>
+<text x="645" y="420" class="s" text-anchor="middle">切</text>
+<text x="645" y="438" class="s" text-anchor="middle">り</text>
+<text x="645" y="456" class="s" text-anchor="middle">替</text>
+<text x="645" y="474" class="s" text-anchor="middle">え</text>
+<text x="645" y="492" class="s" text-anchor="middle">器</text>
+<text x="645" y="560" class="xs" text-anchor="middle">tlast</text>
+<text x="645" y="576" class="xs" text-anchor="middle">で区切る</text>
+<path class="wR" d="M546,218 L618,218"/>
+<path class="wR" d="M546,260 L618,260"/>
+<path class="wR" d="M546,302 L618,302"/>
+<path class="wT" d="M137,324 L137,330 L618,330"/>
+<path class="wR" d="M546,398 L618,398"/>
+<path class="wR" d="M546,440 L618,440"/>
+<path class="wT" d="M137,464 L137,470 L618,470"/>
+<path class="wR" d="M546,540 L618,540"/>
+<path class="wR" d="M546,582 L618,582"/>
+<path class="wT" d="M137,606 L137,612 L618,612"/>
+<path class="wR" d="M546,682 L618,682"/>
+<path class="wR" d="M546,724 L618,724"/>
+<path class="wT" d="M137,748 L137,754 L618,754"/>
+<rect class="ring" x="690" y="330" width="108" height="250" rx="4"/>
+<text x="744" y="352" class="tm" text-anchor="middle">s45_ring_0</text>
+<text x="744" y="368" class="tm" text-anchor="middle">（4.2）</text>
+<text x="744" y="400" class="xs" text-anchor="middle">司令</text>
+<text x="744" y="415" class="xs" text-anchor="middle">空きの判定</text>
+<text x="744" y="430" class="xs" text-anchor="middle">足りなければ</text>
+<text x="744" y="445" class="xs" text-anchor="middle">丸ごと捨てる</text>
+<text x="744" y="460" class="xs" text-anchor="middle">PAD・W の更新</text>
+<text x="744" y="475" class="xs" text-anchor="middle"></text>
+<text x="744" y="490" class="xs" text-anchor="middle">DataMover</text>
+<text x="744" y="505" class="xs" text-anchor="middle">S2MM</text>
+<text x="744" y="520" class="xs" text-anchor="middle"></text>
+<text x="744" y="535" class="xs" text-anchor="middle">尾の CRC-32</text>
+<path class="wR" d="M670,455 L688,455"/>
+<rect class="prom" x="40" y="790" width="758" height="72" rx="4"/>
+<text x="52" y="812" class="tm">AXI4-Lite（M_AXI_HPM0）— 制御と状態だけ（3.）</text>
+<text x="52" y="832" class="xs">設定（WRST・RUN・CFG_ID・REC_CTRL）・seqlock の帳簿（試験と移行）・自己記述（IF_ID・NSTREAM・CAPS・BASE_BEATS）</text>
+<text x="52" y="848" class="xs">s45_ring_0 の BASE・SIZE・EN・W（読む）・R（書く）・DROP_CNT・PEAK。スペクトルとスナップショットの記憶は出さない</text>
+<path class="wB" d="M300,790 L300,760"/>
+<path class="wB" d="M560,790 L560,760"/>
+<path class="wB" d="M744,790 L744,582"/>
+<rect class="ps" x="840" y="50" width="400" height="830" rx="8"/>
+<text x="856" y="74" class="t">PS（A53・PYNQ）</text>
+<rect class="ring" x="860" y="320" width="360" height="122" rx="4"/>
+<text x="872" y="340" class="tm">DDR のリング（PYNQ の allocate、SIZE = 2 の冪）</text>
+<rect class="rsv" x="872" y="350" width="336" height="22" rx="2"/>
+<rect class="full" x="932" y="350" width="150" height="22" rx="2"/>
+<rect class="pad" x="1172" y="350" width="36" height="22" rx="2"/>
+<text x="1007" y="366" class="xs" text-anchor="middle">まだ読んでいないレコード</text>
+<text x="1190" y="366" class="xs" text-anchor="middle">PAD</text>
+<text x="932" y="386" class="monob" text-anchor="middle">R</text>
+<text x="1082" y="386" class="monob" text-anchor="middle">W</text>
+<text x="872" y="406" class="xs">使用 = (W − R) mod 2³²　空き = SIZE − 使用</text>
+<text x="872" y="426" class="lbO">PL → S_AXI_HP0（HPC0 かは測って決める）。W は BRESP の後</text>
+<path class="wO" d="M798,380 L858,380"/>
+<rect class="sub" x="860" y="452" width="360" height="240" rx="4"/>
+<text x="872" y="474" class="tm">specd — 取得のプロセス</text>
+<text x="872" y="498" class="xs">① W を読む（ポーリング。割り込みは使わない）</text>
+<text x="872" y="516" class="xs">② [R, W) の古いキャッシュを捨てて読む（PS の責任）</text>
+<text x="872" y="534" class="xs">③ 頭と尾の SEQ・magic・CRC-32 を確かめる</text>
+<text x="872" y="552" class="xs">④ 束ねる: u64 の和、n_sum = tint / 10.24 ms（5.1）</text>
+<text x="872" y="570" class="xs">　 欠け・設定の混ざった束は丸ごと捨てて DROP</text>
+<text x="872" y="588" class="xs">⑤ utc_ns = 実効の区間の始まり（5.2）</text>
+<text x="872" y="606" class="xs">⑥ float32 に丸める（4.5）</text>
+<text x="872" y="624" class="xs">⑦ R を書き戻す</text>
+<text x="872" y="642" class="xs">TP は束ねずに 1.024 ms の区切りのまま</text>
+<text x="872" y="660" class="xs">bits.json・較正の表（BIT_KIND・BIT_REV ごと）</text>
+<path class="wO" d="M1040,442 L1040,451"/>
+<path class="wB" d="M860,600 C820,600 830,826 800,826"/>
+<text x="806" y="700" class="lbB" text-anchor="end">R・設定</text>
+<rect class="sub" x="860" y="712" width="170" height="52" rx="4"/>
+<text x="872" y="732" class="xs">s45ring（共有メモリ）</text>
+<text x="872" y="748" class="xs">proj018 と同じ</text>
+<rect class="sub" x="1050" y="712" width="170" height="52" rx="4"/>
+<text x="1062" y="732" class="xs">specd — 通信のプロセス</text>
+<text x="1062" y="748" class="xs">命令の口・送り出し</text>
+<path class="wG" d="M945,692 L945,710"/>
+<path class="wG" d="M1030,738 L1048,738"/>
+<rect class="note" x="860" y="90" width="360" height="210" rx="4"/>
+<text x="872" y="112" class="tm">PS がコアを見つける（2.3）</text>
+<text x="872" y="134" class="xs">.hwh の IP の名前: s45_core_0〜3・time_core_0・s45_ring_0</text>
+<text x="872" y="152" class="xs">IF_ID（IF_VER・BIT_KIND・BIT_REV）を読んで照合</text>
+<text x="872" y="170" class="xs">IF_VER が知らない版なら止まる（7.）</text>
+<text x="872" y="188" class="xs">NSTREAM・各流れの SID（KIND）・NCH・FRAME_BEATS</text>
+<text x="872" y="206" class="xs">　 を読んで、bit の種類に依らずに動く</text>
+<text x="872" y="224" class="xs"></text>
+<text x="872" y="242" class="xs">LOAD bit=&lt;名前&gt;: bits.json にある bit だけ</text>
+<text x="872" y="260" class="xs">（取得のプロセスを起動し直し、錨を打ち直す）</text>
+<rect class="pc" x="1270" y="50" width="230" height="830" rx="8"/>
+<text x="1286" y="74" class="t">制御 PC・ダウンロード PC</text>
+<rect class="sub" x="1288" y="120" width="196" height="170" rx="4"/>
+<text x="1300" y="142" class="tm">制御 PC（命令）</text>
+<text x="1300" y="166" class="xs">SET（A0.if・A0.bw・A0.ns・</text>
+<text x="1300" y="183" class="xs">　 A0.shift・A2.src・tint）</text>
+<text x="1300" y="200" class="xs">START・STOP・SEND</text>
+<text x="1300" y="217" class="xs">BITS・LOAD bit=…</text>
+<text x="1300" y="234" class="xs">GET CAPS・STATUS</text>
+<text x="1300" y="251" class="xs">SNAP（REC_CTRL の</text>
+<text x="1300" y="268" class="xs">　 ONE | SNAP）</text>
+<rect class="sub" x="1288" y="560" width="196" height="230" rx="4"/>
+<text x="1300" y="582" class="tm">ダウンロード PC（受け側）</text>
+<text x="1300" y="606" class="xs">s45proto v2（6.）</text>
+<text x="1300" y="623" class="xs">SPEC: float32（fmt 1）</text>
+<text x="1300" y="640" class="xs">　 core・s・src・nch・df</text>
+<text x="1300" y="657" class="xs">　 n_sum・dump_t・utc_ns</text>
+<text x="1300" y="674" class="xs">TP: 1.024 ms の区切り</text>
+<text x="1300" y="691" class="xs">SNAP・EVENT（DROP・LOAD）</text>
+<text x="1300" y="708" class="xs"></text>
+<text x="1300" y="725" class="xs">ver 1 と 2 の両方を読む</text>
+<text x="1300" y="742" class="xs">u64（fmt 0）は試験の照合だけ</text>
+<path class="wB" d="M1286,210 C1250,210 1250,740 1222,740"/>
+<text x="1255" y="236" class="lbB" text-anchor="middle">命令</text>
+<path class="wG" d="M1220,752 C1250,752 1260,680 1286,680"/>
+<text x="1290" y="548" class="lbG">1 GbE（予算 = 実測の 70 %）</text>
+<rect class="rsv" x="20" y="896" width="1480" height="50" rx="4"/>
+<path class="wR" d="M40,921 L80,921"/>
+<text x="88" y="925" class="s">SPEC・SNAP のレコード</text>
+<path class="wT" d="M285,921 L325,921"/>
+<text x="333" y="925" class="s">TP のレコード・時刻のバス</text>
+<path class="wO" d="M530,921 L570,921"/>
+<text x="578" y="925" class="s">DDR のリング（W・R）</text>
+<path class="wG" d="M775,921 L815,921"/>
+<text x="823" y="925" class="s">specd の中・ネットワーク</text>
+<path class="wB" d="M1020,921 L1060,921"/>
+<text x="1068" y="925" class="s">AXI4-Lite の制御・命令</text>
+<path class="wP" d="M1265,921 L1305,921"/>
+<text x="1313" y="925" class="s">SRC（全帯域の入力の選択）</text>
+</svg>

@@ -1,0 +1,236 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 900" width="1500" height="900" font-family="'Hiragino Sans','Noto Sans CJK JP','Yu Gothic',sans-serif">
+  <!-- SPDX-License-Identifier: BSD-3-Clause -->
+  <!-- INTERFACE.md の 5.1・5.2 の図。docs/interface_figs.py で描いた。INTERFACE.md を変えたらここも直す -->
+  <defs><marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fb5"/></marker><marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d9822b"/></marker><marker id="aG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2e8b57"/></marker><marker id="aR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/></marker><marker id="aT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0f7c8c"/></marker><marker id="aK" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="aP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a4fb0"/></marker><style>
+      .blk  { fill:#f8f8f8; stroke:#333; stroke-width:1.5; }
+      .pl   { fill:#fbfbfb; stroke:#333; stroke-width:1.8; }
+      .ps   { fill:#f6f9fd; stroke:#2f6fb5; stroke-width:1.8; }
+      .pc   { fill:#f4faf6; stroke:#2e8b57; stroke-width:1.8; }
+      .sub  { fill:#ffffff; stroke:#555; stroke-width:1.1; }
+      .ddc  { fill:#fdf1f0; stroke:#c0392b; stroke-width:1.4; }
+      .full { fill:#fff6ea; stroke:#d9822b; stroke-width:1.4; }
+      .tim  { fill:#eef8f9; stroke:#0f7c8c; stroke-width:1.6; }
+      .ring { fill:#fff8ef; stroke:#d9822b; stroke-width:1.8; }
+      .note { fill:#fbf7ec; stroke:#b39a5a; stroke-width:1.2; }
+      .diag { fill:#eeeeee; stroke:#777; stroke-width:1.2; stroke-dasharray:4 3; }
+      .prom { fill:#eef5ff; stroke:#2f6fb5; stroke-width:1.4; }
+      .kind { fill:#fdf1f0; stroke:#c0392b; stroke-width:1.2; }
+      .rsv  { fill:#ffffff; stroke:#aaa; stroke-width:1.0; }
+      .pad  { fill:#e6e6e6; stroke:#888; stroke-width:1.0; }
+      .bad  { fill:#f3d3cf; stroke:#c0392b; stroke-width:1.4; stroke-dasharray:5 3; }
+      .t    { font-size:15px; font-weight:bold; fill:#111; }
+      .tm   { font-size:13px; font-weight:bold; fill:#111; }
+      .s    { font-size:12px; fill:#333; }
+      .xs   { font-size:11px; fill:#555; }
+      .mono { font-size:11.5px; fill:#333; font-family:'Menlo','DejaVu Sans Mono',monospace; }
+      .monob{ font-size:12px; fill:#111; font-weight:bold; font-family:'Menlo','DejaVu Sans Mono',monospace; }
+      .ttl  { font-size:19px; font-weight:bold; fill:#111; }
+      .wB   { stroke:#2f6fb5; stroke-width:2.0; fill:none; marker-end:url(#aB); }
+      .wO   { stroke:#d9822b; stroke-width:3.0; fill:none; marker-end:url(#aO); }
+      .wG   { stroke:#2e8b57; stroke-width:2.6; fill:none; marker-end:url(#aG); }
+      .wR   { stroke:#c0392b; stroke-width:2.4; fill:none; marker-end:url(#aR); }
+      .wT   { stroke:#0f7c8c; stroke-width:2.0; fill:none; marker-end:url(#aT); }
+      .wK   { stroke:#555; stroke-width:1.4; fill:none; marker-end:url(#aK); }
+      .wP   { stroke:#8a4fb0; stroke-width:1.4; fill:none; stroke-dasharray:4 3; marker-end:url(#aP); }
+      .ln   { stroke:#888; stroke-width:1.0; fill:none; stroke-dasharray:3 3; }
+      .lnK  { stroke:#333; stroke-width:1.2; fill:none; }
+      .lnT  { stroke:#0f7c8c; stroke-width:2.0; fill:none; }
+      .lbB  { font-size:11.5px; fill:#2f6fb5; }
+      .lbO  { font-size:11.5px; fill:#b8661a; }
+      .lbG  { font-size:11.5px; fill:#236b43; }
+      .lbR  { font-size:11.5px; fill:#a93226; }
+      .lbT  { font-size:11.5px; fill:#0b5d69; }
+      .lbP  { font-size:11px; fill:#6d3a8e; }
+</style></defs>
+  <rect x="0" y="0" width="1500" height="900" fill="#ffffff"/>
+<text x="20" y="32" class="ttl">INTERFACE v2 — 束ねの区切りと時刻の補正</text>
+<text x="20" y="66" class="tm">束ねの区切り（5.1）— 例: tint = 40.96 ms・n_sum = 4（BASE = 10.24 ms = 5G）</text>
+<path class="wK" d="M140,108 L1430,108"/>
+<path class="lnK" d="M170.0,104 L170.0,112"/>
+<path class="lnK" d="M192.0,104 L192.0,112"/>
+<path class="lnK" d="M214.0,104 L214.0,112"/>
+<path class="lnK" d="M236.0,104 L236.0,112"/>
+<path class="lnK" d="M258.0,104 L258.0,112"/>
+<path class="lnK" d="M280.0,104 L280.0,112"/>
+<path class="lnK" d="M302.0,104 L302.0,112"/>
+<path class="lnK" d="M324.0,104 L324.0,112"/>
+<path class="lnK" d="M346.0,104 L346.0,112"/>
+<path class="lnK" d="M368.0,104 L368.0,112"/>
+<path class="lnK" d="M390.0,104 L390.0,112"/>
+<path class="lnK" d="M412.0,104 L412.0,112"/>
+<path class="lnK" d="M434.0,104 L434.0,112"/>
+<path class="lnK" d="M456.0,104 L456.0,112"/>
+<path class="lnK" d="M478.0,104 L478.0,112"/>
+<path class="lnK" d="M500.0,104 L500.0,112"/>
+<path class="lnK" d="M522.0,104 L522.0,112"/>
+<path class="lnK" d="M544.0,104 L544.0,112"/>
+<path class="lnK" d="M566.0,104 L566.0,112"/>
+<path class="lnK" d="M588.0,104 L588.0,112"/>
+<path class="lnK" d="M610.0,104 L610.0,112"/>
+<path class="lnK" d="M632.0,104 L632.0,112"/>
+<path class="lnK" d="M654.0,104 L654.0,112"/>
+<path class="lnK" d="M676.0,104 L676.0,112"/>
+<path class="lnK" d="M698.0,104 L698.0,112"/>
+<path class="lnK" d="M720.0,104 L720.0,112"/>
+<path class="lnK" d="M742.0,104 L742.0,112"/>
+<path class="lnK" d="M764.0,104 L764.0,112"/>
+<path class="lnK" d="M786.0,104 L786.0,112"/>
+<path class="lnK" d="M808.0,104 L808.0,112"/>
+<path class="lnK" d="M830.0,104 L830.0,112"/>
+<path class="lnK" d="M852.0,104 L852.0,112"/>
+<path class="lnK" d="M874.0,104 L874.0,112"/>
+<path class="lnK" d="M896.0,104 L896.0,112"/>
+<path class="lnK" d="M918.0,104 L918.0,112"/>
+<path class="lnK" d="M940.0,104 L940.0,112"/>
+<path class="lnK" d="M962.0,104 L962.0,112"/>
+<path class="lnK" d="M984.0,104 L984.0,112"/>
+<path class="lnK" d="M1006.0,104 L1006.0,112"/>
+<path class="lnK" d="M1028.0,104 L1028.0,112"/>
+<path class="lnK" d="M1050.0,104 L1050.0,112"/>
+<path class="lnK" d="M1072.0,104 L1072.0,112"/>
+<path class="lnK" d="M1094.0,104 L1094.0,112"/>
+<path class="lnK" d="M1116.0,104 L1116.0,112"/>
+<path class="lnK" d="M1138.0,104 L1138.0,112"/>
+<path class="lnK" d="M1160.0,104 L1160.0,112"/>
+<path class="lnK" d="M1182.0,104 L1182.0,112"/>
+<path class="lnK" d="M1204.0,104 L1204.0,112"/>
+<path class="lnK" d="M1226.0,104 L1226.0,112"/>
+<path class="lnK" d="M1248.0,104 L1248.0,112"/>
+<path class="lnK" d="M1270.0,104 L1270.0,112"/>
+<path class="lnK" d="M1292.0,104 L1292.0,112"/>
+<path class="lnK" d="M1314.0,104 L1314.0,112"/>
+<path class="lnK" d="M1336.0,104 L1336.0,112"/>
+<path class="lnK" d="M1358.0,104 L1358.0,112"/>
+<path class="lnK" d="M1380.0,104 L1380.0,112"/>
+<path class="ln" d="M170,94 L170,438"/>
+<text x="170" y="90" class="xs" text-anchor="middle">START_AT = T の tint の倍数</text>
+<path class="ln" d="M610,94 L610,438"/>
+<text x="610" y="90" class="xs" text-anchor="middle">T = (j0 + 1)·tint</text>
+<path class="ln" d="M1050,94 L1050,438"/>
+<text x="1050" y="90" class="xs" text-anchor="middle">T = (j0 + 2)·tint</text>
+<text x="1434" y="112" class="monob">T</text>
+<text x="181.0" y="128" class="xs" text-anchor="middle">G</text>
+<text x="20" y="112" class="s">T（ビート）</text>
+<text x="20" y="172" class="s">DDC s = 0（NS 1）</text>
+<rect class="ddc" x="175" y="150" width="106" height="34" rx="2"/>
+<text x="228.0" y="172" class="s" text-anchor="middle">m0</text>
+<rect class="ddc" x="285" y="150" width="106" height="34" rx="2"/>
+<text x="338.0" y="172" class="s" text-anchor="middle">m0+1</text>
+<rect class="ddc" x="395" y="150" width="106" height="34" rx="2"/>
+<text x="448.0" y="172" class="s" text-anchor="middle">m0+2</text>
+<rect class="ddc" x="505" y="150" width="106" height="34" rx="2"/>
+<text x="558.0" y="172" class="s" text-anchor="middle">m0+3</text>
+<rect class="ddc" x="615" y="150" width="106" height="34" rx="2"/>
+<text x="668.0" y="172" class="s" text-anchor="middle">m0+4</text>
+<rect class="ddc" x="725" y="150" width="106" height="34" rx="2"/>
+<text x="778.0" y="172" class="s" text-anchor="middle">m0+5</text>
+<rect class="ddc" x="835" y="150" width="106" height="34" rx="2"/>
+<text x="888.0" y="172" class="s" text-anchor="middle">m0+6</text>
+<rect class="ddc" x="945" y="150" width="106" height="34" rx="2"/>
+<text x="998.0" y="172" class="s" text-anchor="middle">m0+7</text>
+<rect class="ddc" x="1055" y="150" width="106" height="34" rx="2"/>
+<text x="1108.0" y="172" class="s" text-anchor="middle">m0+8</text>
+<rect class="ddc" x="1165" y="150" width="106" height="34" rx="2"/>
+<text x="1218.0" y="172" class="s" text-anchor="middle">m0+9</text>
+<rect class="ddc" x="1275" y="150" width="106" height="34" rx="2"/>
+<text x="1328.0" y="172" class="s" text-anchor="middle">m0+10</text>
+<text x="20" y="228" class="s">FULL s = 2</text>
+<rect class="full" x="181" y="206" width="106" height="34" rx="2"/>
+<text x="234.0" y="228" class="s" text-anchor="middle">m0</text>
+<rect class="full" x="291" y="206" width="106" height="34" rx="2"/>
+<text x="344.0" y="228" class="s" text-anchor="middle">m0+1</text>
+<rect class="full" x="401" y="206" width="106" height="34" rx="2"/>
+<text x="454.0" y="228" class="s" text-anchor="middle">m0+2</text>
+<rect class="full" x="511" y="206" width="106" height="34" rx="2"/>
+<text x="564.0" y="228" class="s" text-anchor="middle">m0+3</text>
+<rect class="full" x="621" y="206" width="106" height="34" rx="2"/>
+<text x="674.0" y="228" class="s" text-anchor="middle">m0+4</text>
+<rect class="full" x="731" y="206" width="106" height="34" rx="2"/>
+<text x="784.0" y="228" class="s" text-anchor="middle">m0+5</text>
+<rect class="bad" x="841" y="206" width="106" height="34" rx="2"/>
+<text x="894.0" y="228" class="s" text-anchor="middle">欠け</text>
+<rect class="full" x="951" y="206" width="106" height="34" rx="2"/>
+<text x="1004.0" y="228" class="s" text-anchor="middle">m0+7</text>
+<rect class="full" x="1061" y="206" width="106" height="34" rx="2"/>
+<text x="1114.0" y="228" class="s" text-anchor="middle">m0+8</text>
+<rect class="full" x="1171" y="206" width="106" height="34" rx="2"/>
+<text x="1224.0" y="228" class="s" text-anchor="middle">m0+9</text>
+<rect class="full" x="1281" y="206" width="106" height="34" rx="2"/>
+<text x="1334.0" y="228" class="s" text-anchor="middle">m0+10</text>
+<path class="lnK" d="M170,144 L175,144"/>
+<text x="178" y="142" class="xs">r（KIND・NS ごとに一定。大きく描いた）</text>
+<text x="20" y="288" class="s">束 DDC</text>
+<rect class="ddc" x="172" y="264" width="432" height="38" rx="3"/>
+<text x="388.0" y="288" class="s" text-anchor="middle">j0：4 個そろった → u64 の和 → float32</text>
+<rect class="ddc" x="612" y="264" width="432" height="38" rx="3"/>
+<text x="828.0" y="288" class="s" text-anchor="middle">j0+1：4 個そろった → u64 の和 → float32</text>
+<rect class="bad" x="1052" y="264" width="322" height="38" rx="3"/>
+<text x="1213.0" y="288" class="s" text-anchor="middle">j0+2：STOP の前の半端な束 → 捨てる</text>
+<text x="20" y="336" class="s">束 FULL</text>
+<rect class="full" x="172" y="312" width="432" height="38" rx="3"/>
+<text x="388.0" y="336" class="s" text-anchor="middle">j0：4 個そろった → u64 の和 → float32</text>
+<rect class="bad" x="612" y="312" width="432" height="38" rx="3"/>
+<text x="828.0" y="336" class="s" text-anchor="middle">j0+1：欠けがある → 束ごと捨てて DROP の EVENT</text>
+<rect class="bad" x="1052" y="312" width="322" height="38" rx="3"/>
+<text x="1213.0" y="336" class="s" text-anchor="middle">j0+2：STOP の前の半端な束 → 捨てる</text>
+<path class="lnK" d="M1394,140 L1394,356"/>
+<text x="1400" y="370" class="monob">STOP</text>
+<rect class="note" x="20" y="384" width="1460" height="112" rx="4"/>
+<text x="34" y="406" class="xs">① m = round(DUMP_T / BASE_BEATS)（T の原点から。KIND・NS ごとのずれ r ≦ 5,344 ビートは BASE の半分より十分小さい）</text>
+<text x="34" y="426" class="xs">② 見張り: r = DUMP_T − m·BASE_BEATS が 1 回の RUN の中で一定（±1 ビート）、表があれば F(KIND, NS) と ±1 ビート。合わなければ ERROR、その流れは束ねない</text>
+<text x="34" y="446" class="xs">③ 束 j = floor(m / n_sum)。tint は 1 回の取得で全体に 1 つ。specd は RUN・WRST・TP_ARM の START_AT を T の tint の倍数に置く（G の格子にも乗る）</text>
+<text x="34" y="466" class="xs">④ そろう条件: n_sum 個すべて（SEQ の飛びなし）・DUMP_CFG・SRC・NFFT・NS・SHIFT が同じ・DUMP_N = BASE / L。一つでも欠けたら束ごと捨てる</text>
+<text x="34" y="486" class="xs">⑤ 束ね方: 中身は u64 の和 → float32、DUMP_SAT は和、FLAGS・DUMP_H は OR、dump_t は最初のダンプ、単位の式の N_ACC は ΣDUMP_N</text>
+<text x="20" y="530" class="tm">時刻の補正（5.2）— utc_ns = 実効の区間の始まり（区間の重心 = utc_ns + tint/2）</text>
+<rect class="sub" x="20" y="570" width="200" height="52" rx="4"/>
+<text x="120" y="592" class="tm" text-anchor="middle">ADC のサンプル</text>
+<text x="120" y="610" class="xs" text-anchor="middle">（求めたい時刻）</text>
+<rect class="sub" x="330" y="570" width="200" height="52" rx="4"/>
+<text x="430" y="592" class="tm" text-anchor="middle">コアの入口</text>
+<text x="430" y="610" class="xs" text-anchor="middle">ギアボックスの出口</text>
+<rect class="sub" x="640" y="570" width="200" height="52" rx="4"/>
+<text x="740" y="592" class="tm" text-anchor="middle">wspec に入る</text>
+<text x="740" y="610" class="xs" text-anchor="middle">DUMP_T のビート（DDC）</text>
+<path class="wT" d="M222,596 L328,596"/>
+<text x="275" y="564" class="lbT" text-anchor="middle">adc_to_core[src]</text>
+<text x="275" y="640" class="xs" text-anchor="middle">122〜125 ns（F-2 の実測）</text>
+<path class="wT" d="M532,596 L638,596"/>
+<text x="585" y="564" class="lbT" text-anchor="middle">D(NS)</text>
+<text x="585" y="640" class="xs" text-anchor="middle">PFB・DDC の遅れ（sim）</text>
+<text x="430" y="662" class="xs" text-anchor="middle">FULL は DUMP_T = コアの入口のビート（D = 0）</text>
+<rect class="prom" x="20" y="680" width="820" height="150" rx="4"/>
+<text x="34" y="706" class="monob">utc_ns = beat_utc(dump_t) − adc_to_core[src] − D_eff(KIND, NS)</text>
+<text x="34" y="732" class="xs">D_eff:  FULL = 0　/　DDC（PFB T = 4）= D(NS) ＋ 1.5·L(NS)　/　SLICE = 作るときに決める</text>
+<text x="34" y="752" class="xs">1.5·L: NS 1 で 24 µs・NS 6 で 768 µs・NS 8 で 3.07 ms（10.24 ms の 30 %）</text>
+<text x="34" y="772" class="xs">定数は PS の表に (BIT_KIND, BIT_REV) ごと（bits.json が指す較正ファイル）。無ければ「未較正」と明示</text>
+<text x="34" y="792" class="xs">生の dump_t（ビート）も s45proto v2 に残す。幅の違う窓の差 X(NS) ≦ 10 µs は受け入れ済み（10/3）</text>
+<text x="900" y="564" class="tm">ダンプ 1 個（N フレーム）の入力の重み</text>
+<path class="wK" d="M900,760 L1510,760"/>
+<path class="lnK" d="M900,757 L900,763"/>
+<path class="lnK" d="M950,757 L950,763"/>
+<path class="lnK" d="M1000,757 L1000,763"/>
+<path class="lnK" d="M1050,757 L1050,763"/>
+<path class="lnK" d="M1100,757 L1100,763"/>
+<path class="lnK" d="M1150,757 L1150,763"/>
+<path class="lnK" d="M1200,757 L1200,763"/>
+<path class="lnK" d="M1250,757 L1250,763"/>
+<path class="lnK" d="M1300,757 L1300,763"/>
+<path class="lnK" d="M1350,757 L1350,763"/>
+<path class="lnK" d="M1400,757 L1400,763"/>
+<path class="lnK" d="M1450,757 L1450,763"/>
+<text x="1050" y="778" class="mono" text-anchor="middle">F0</text>
+<text x="900" y="778" class="mono" text-anchor="middle">F0 − 3</text>
+<text x="1450" y="778" class="mono" text-anchor="middle">F0 + N</text>
+<text x="1514" y="764" class="xs">入力のフレーム</text>
+<rect x="1050" y="640" width="400" height="120" fill="none" stroke="#555" stroke-width="1.4" stroke-dasharray="5 3"/>
+<polygon points="900,760 1050,640 1300,640 1450,760" fill="#c0392b" fill-opacity="0.18" stroke="#c0392b" stroke-width="1.6"/>
+<path class="lnK" d="M1250.0,614 L1250.0,760"/>
+<path class="wR" d="M1175.0,614 L1175.0,760"/>
+<text x="1254.0" y="610" class="xs">矩形の重心</text>
+<text x="1171.0" y="610" class="lbR" text-anchor="end">PFB の重心</text>
+<path class="wR" d="M1250.0,628 L1177.0,628"/>
+<text x="1212.5" y="654" class="lbR" text-anchor="middle">1.5·L</text>
+<text x="900" y="804" class="xs">PFB の出口 k は入力 k − 3 … k に重みを持つので、ダンプの入力は F0 − 3 から始まり、</text>
+<text x="900" y="821" class="xs">重心は矩形より 1.5·L 前に来る。utc_ns はこのずれも引いた「実効の区間の始まり」で、</text>
+<text x="900" y="838" class="xs">受け側は KIND を知らなくても「utc_ns ＋ tint/2 = 中心」でアンテナの時系列と結べる</text>
+</svg>
