@@ -248,6 +248,67 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 
 同時にやること（INTERFACE 8.）: spec_core（FULL）の F0 を時刻の格子に寄せる（8. の 8）・sim-wdelay を PFB 入りの RTL で出し直す（8. の 9）・F-2
 
+### 手順 2-1 — 流れのブロックと自己記述（設計と予言、2026-10-09。RTL を書く前）
+
+**変えるのは番地と自己記述だけ**。窓・全帯域の中身（スペクトル・帳簿・時刻・TP）は変えない。読み出しは AXI4-Lite のまま。
+
+**決めたこと（2026-10-09 の相談）**:
+- **仮の読み窓を残す**: 2-1 ではコアの番地を 1 MiB のままにし、`0x80000`〜 に今のスペクトル・スナップショットの記憶を**約束の外**として残す（2-1 だけで実機の回帰まで確かめるため）。2-2（リング）で外し、64 KiB に縮める
+- **FULL は包むモジュールに入れる**: 新しい `s45_core.v` が今の `win_core`（コアの共通 ＋ DDC の流れ）と、`FULL = 1` のときだけ `spec_core`（FULL の流れ）を中に持つ。中に 1 → 2 の AXI4-Lite の振り分け（応答 1 つずつ、全部レジスタで受ける）。BD のセルは `s45_core_0`〜`3` の 4 個（`spec_core_0` のセルは無くなる）。axis_sel4 は外のまま、選んだ流れを `s45_core_0` の 2 本目の入力へ。選ぶのは FULL の流れの SRC（今の FULL_SEL）
+
+**コアの番地（2-1。1 MiB）**:
+
+| 範囲 | 中身 |
+|---|---|
+| 0x00000–0x000FF | コアの共通（INTERFACE 2.4）。0x20〜 は今の表 A を **+0x10 ずらしたもの**（0x30 の FULL_SEL は SRC に移ったので予約） |
+| 0x00100–0x001FF | TP のレジスタ（今と同じ並び） |
+| 0x02000–0x03FFF | TP のリング（今と同じ） |
+| 0x04000 + 0x400·s | 流れ s のブロック（INTERFACE 2.5）。DDC が s = 0, 1、FULL が s = 2（コア 0 だけ） |
+| **0x80000 + 0x20000·s**（s = 0, 1） | **仮の読み窓（約束の外。2-2 で外す）**: 今の win_core の窓 s と同じ中の並び（+0x08000 スナップショット・+0x10000 スペクトル） |
+| **0xC0000–0xCFFFF**（コア 0） | **仮の読み窓**: 今の spec_core と同じ中の並び（+0x2000 全帯域の TP のリング・+0x4000 スナップショット・+0x8000 スペクトル）。全帯域の TP のレジスタは +0x1100 |
+| **0xE0000** | **仮**: SNAP_SEL（窓のスナップショットを書く流れ。2-2 で REC_CTRL の SNAP に替わる） |
+| ほか | 約束の範囲（0x00000–0x0FFFF）の予約は 0 を返す。仮の範囲の空きは 0xDEADBEEF（今と同じ） |
+
+**コアの共通部の値（SAM45-Fine）**: IF_ID = 0x0202_0101（IF_VER 2・BIT_KIND 2 = SAM45-Fine・BIT_REV 1・CORE_KIND 1）／PROJ = 0x0021_0200（手順 2 の rev）／NSTREAM = 3（コア 0）・2（コア 1〜3）／CAPS = 0（レコードはまだ無い）／BASE_BEATS = 2,621,440／BUILD は今の BUILD_TAG／CORE_PORT = ADC の番号・タイル（0..3）・スライス（build.tcl の chans から）。time_core も IF_ID 0x0202_0102（CORE_KIND 2）・PROJ 0x0021_0200（0x5C）
+
+**流れのブロックへの移し方**（今の番地 → INTERFACE 2.5 の番地。意味は変えない）:
+
+| 2.5 | DDC（今の win_core の窓） | FULL（今の spec_core） |
+|---|---|---|
+| 0x00 SID | 新（KIND 3・s） | 新（KIND 1・s = 2） |
+| 0x04 PARAM | [7:0] 12 / [11:8] 今の WNS / [15:12] 今の G（種類に固有）/ [23:16] 64 / [31:24] 0 | [7:0] 13 / [23:16] 64 / [31:24] 0 |
+| 0x08〜0x1C CTRL・N_ACC・N_DUMP・SHIFT・FLAGS・SEQ | 同じ番地 | 同じ番地。CTRL の [9]〜[11]（診断を消す・SRST・GRST）は FULL の診断として残す。[12] WRST・[13] ARM_WRST は **SRC と CFG_ID を取り込むだけ**（FULL にはリセットする窓の経路が無い） |
+| 0x20 NCH・0x24 FRAME_BEATS | 4096・2048 << WNS（今効いている） | 4096・512 |
+| 0x28 SRC | [3:0] = コアの ADC、[31] = 0 | [3:0] 今効いている入力 / [31] = 1。書いた値は次の WRST で効く（**今の FULL_SEL は書いた瞬間に効く。ここだけ振る舞いが変わる**） |
+| 0x2C CFG_ID・0x30 RUN_CFG・0x34 WRST_CFG・0x38 RUN_SHIFT | 0x94・0x98・0x9C・0xB8 | 0xC0・0xC4・新（WRST で取り込んだ CFG_ID）・0xE0 |
+| 0x3C DUMP_K・0x40/44 DUMP_F0・0x48 DUMP_N・0x4C DUMP_SAT | 0x30・0x38/3C・0x34・0x40 | 同じ |
+| 0x50/54 DUMP_T・0x58 DUMP_H・0x5C DUMP_CFG・0x60/64 RUN_T | 0xA0/A4・0xA8・0xAC・0xB0/B4 | 0xC8/CC・0xD0・0xD4・0xD8/DC |
+| 0x68/6C RUN_F0・0x70/74 FIN・0x78/7C FOUT | 0x50/54・0x20/24・0x28/2C | 同じ |
+| 0x80 NFFT_MIN_MAX | [7:0] 最小 12 / [15:8] 最大 12 | 13 / 13 |
+| 0x84 REC_CTRL・0x88 REC_LATE | 0（2-2 で） | 0 |
+| 0x100〜（種類に固有） | WK・WDPHI・WNS・WCUR・WCUR_DPHI・WSTART・NS_MIN_MAX（新、1..8）・WRST_T = 0x100 から 4 バイトずつ（今の 0x58・0x5C・0x60・0x64・0x68・0x8C・新・0x78） | なし |
+| 0x200〜（診断、約束の外） | PFB_SAT・DDC_SAT・WS_STALL・WS_RDY0・DDC_OVR・WRST_CNT・SNAP_F_LO/HI・BANK | 今の 0x58〜0xB4 を 0x200〜0x25C に（DIAG_*・BUILD・SRST_*・ST_*・GB_K・ST_N・INJ・GRST_*・RAW_*・GB_STAT・ADC_STAT・INJ_CNT）、SNAP_F_LO/HI・BANK を 0x260〜 |
+
+- 消すもの（INTERFACE 2.5）: 窓ごとの ID・BUILD・WIDX（SID・コアの共通へ）、表 A の ID・NW・BUILD（IF_ID・NSTREAM・BUILD へ）、FULL_SEL（FULL の SRC へ）。SNAP_SEL・SNAP_F・BANK は 2-2 まで仮に残す（上）
+- **PS**: `pynq/s45core.py`（新）が .hwh の `s45_core_i`・`time_core_0` を名前で引き、IF_ID・CORE_PORT・NSTREAM・SID を読んで流れの表を作る（PORT の重複・IF_VER の不一致で止まる）。window・timetest・s45acq・spectrometer の TP と全帯域はこの表の番地で動く形に。**timebase.CAL の鍵は time_core の PROJ（0x0021_0200）に**（IF_ID は bit の種類と版しか持たないので）。照合を ID の数値でしていた道具（winsweep など、specd と判定に使わないもの）は 2-1 では直さず、古い bit 用として残す（README に一覧）
+
+**予言**:
+1. sim: 窓・全帯域のスペクトル・帳簿・時刻は **bit 単位で 1b と同じ**。長い sim（sim-top・sim-win4・sim-tsys・sim-t4adc・sim の spec_core）は tb の番地を直しただけで通る
+2. 新しい sim-regmap（コア 0 と 1 の全部の約束のレジスタを読み、表どおりの値・書けるものは書いて読み返す・予約は 0）が通る。陽性対照: 番地を 1 つずらした変種で落ちる
+3. 資源: DSP・BRAM・URAM は同じ。LUT +500〜+2,000（番地の振り分けと SID・定数の読み）、FF +300〜+1,000（振り分けのレジスタ）。spec_core_0 の 1 個ぶんの SmartConnect の M が減るので、SmartConnect は少し減る
+4. 時間: 既定で WNS −0.10〜+0.05（壁は今の u_ws・ddc のまま。振り分けは全部レジスタで受けるので新しい壁にしない）。**s45_core_0 の読みの選びが 1 段増える経路が上位に出たら、その段を足す**
+5. CDC の分類ごとの件数は 1b と同じ（乗り換えは足さない）
+6. 実機: P-1・P-2（W-G）・全帯域の golden・P-5 が 1b と同じに通る（PS は自己記述で番地を引く）。AXI4-Lite の読み 1 回は FULL の流れだけ 2 クロック遅い（≒ 20 クロックのうち 2）
+
+**判定（2-1）**:
+
+| ID | 何を | 合格 |
+|---|---|---|
+| S21-1 | `make sim-regmap`（新）と陽性対照 | 予言 2 |
+| S21-2 | `make sim-all`・sim-top・sim-win4・sim-tsys（番地を直した tb） | 全部通過（予言 1） |
+| S21-3 | ビルド（既定・PE）・`make worst-paths`・CDC | 予言 3〜5 |
+| S21-4 | 実機: `s45core.py --list`（自己記述の表）・P-1・P-2・全帯域の golden・P-5（specd 経由） | 表が上と同じ・P-* が 1b と同じ |
+
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
 判定 1 つにつき、次の 6 項目を書く。**環境に依る値（ホスト名・IP アドレス・パス）は書かない**（公開を前提にする）。
