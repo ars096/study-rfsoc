@@ -75,7 +75,21 @@
 // 読んだ中身は 1 つのダンプのもの。面はダンプ 1 つおきに再利用されるので、
 // 積分時間より十分速く読めばよい（100 ms に対して数 ms〜10 ms）。
 //
-// ---- アドレスマップ（バイト。16 bit）----
+// ---- proj021 手順 2-1: 番地を INTERFACE.md v2 の流れのブロック（2.5、KIND 1 = FULL）にそろえた（意味は変えない）----
+//   このモジュールは s45_core の中（FULL = 1 のコア）に置き、s45_core が番地を振る:
+//     コアの 0x04000 + 0x400·SID_S（流れのブロック）→ ここの 0x0000–0x03FF / コアの 0xC0000–0xCFFFF（仮の読み窓）→ ここの 0x0000–0xFFFF
+//   ここの番地（16 bit）:
+//     0x0000–0x03FF  流れのブロック: 0x00 SID / 0x04 PARAM（[7:0] 13・[15:8] FFT_CFG・[23:16] 64・[31:24] 0）/ 0x08〜0x1C は下の旧番地と同じ /
+//                    0x20 NCH 4096 / 0x24 FRAME_BEATS 512 / 0x28 SRC（[3:0] 今効いている入力・[31] 1。書いた値は次の WRST で効く）/
+//                    0x2C CFG_ID / 0x30 RUN_CFG / 0x34 WRST_CFG / 0x38 RUN_SHIFT / 0x3C DUMP_K / 0x40·44 DUMP_F0 / 0x48 DUMP_N / 0x4C DUMP_SAT /
+//                    0x50·54 DUMP_T / 0x58 DUMP_H / 0x5C DUMP_CFG / 0x60·64 RUN_T / 0x68·6C RUN_F0 / 0x70·74 FIN / 0x78·7C FOUT / 0x80 NFFT_MIN_MAX /
+//                    0x84 REC_CTRL・0x88 REC_LATE（0。2-2 で）/ 0x200〜0x25C 旧 0x58〜0xB4（診断。BUILD は 0x214）/ 0x260·264 SNAP_F / 0x268 BANK。空きは 0
+//                    CTRL の書き込みに [12] WRST・[13] ARM_WRST（time_core の発火で WRST）を足した: **SRC と CFG_ID を取り込むだけ**（FULL には
+//                    リセットする窓の経路が無い）。CTRL の読みの [6] = ARM_WRST 中。[9]〜[11]（診断を消す・SRST・GRST）は FULL の診断として残す
+//     0x1100–0x11FF  total power のレジスタ（旧 0x0100）/ 0x2000 TP のリング / 0x4000 スナップショット / 0x8000 スペクトル（**仮。2-2 で外す**）
+//     ほか           0xDEADBEEF
+//
+// ---- 旧アドレスマップ（proj020 まで。レジスタの意味はここに書いたまま）----
 //   0x0000–0x00FF  レジスタ（下の表）
 //   0x0100–0x01FF  total power のレジスタ（src/common/tp_core.v。proj013）
 //   0x2000–0x3FFF  total power のリングバッファ（512 個 × 16 バイト。src/common/tp_core.v。proj013）
@@ -160,6 +174,7 @@ module spec_core #(
     parameter integer BUILD_TAG     = 0,     // ビルドの指紋（build.tcl が与える。rev4）
     parameter integer STABLE_N      = 16384, // 起動の見張り: 入力がこのクロック数途切れずに続いたら口を開ける（64 µs）。0 = 見張らない。rev5（rev6 から ST_N の既定値）
     parameter integer GB_K_RST      = 0,     // gb_gate のしきい値 GB_K の既定値（ハードのリセットの起動に効く）。rev6
+    parameter integer SID_S         = 2,     // proj021 手順 2-1: この流れの番号 s（SID の [15:8]）
     parameter integer TPN_DEFAULT   = 512    // total power の 1 区切りのフレーム数の既定値（proj017: 512 = 1.024 ms。proj013〜016 は 500 = 1.000 ms）
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
@@ -208,7 +223,9 @@ module spec_core #(
     // ---- proj016: time_core から（ここで 1 段受ける）----
     input  wire [63:0]  t_in,
     input  wire         go_in,
-    input  wire [3:0]   tev_in
+    input  wire [3:0]   tev_in,
+    // proj021 手順 2-1: 入力の選び（FULL の流れの SRC。今効いている値。axis_sel4 へ）
+    output wire [1:0]   src_sel
 );
     localparam integer NL = 16;        // レーン
     localparam integer NB = 8;         // 1 クロックに出る ch（k2 = 0..7）
@@ -221,7 +238,8 @@ module spec_core #(
     localparam integer PW = 2 * QW + 1;
     localparam integer FW = 48;        // フレーム番号（2 µs × 2^48 = 17 年）
     localparam [7:0]   FFT_CFG8 = FFT_CFG;
-    localparam [31:0]  ID = {16'h0021, 8'h01, FFT_CFG8};   // proj021 1b（中身は proj020 と同一。ID だけ）。proj020（中身は proj017 と同一。ID だけ）。proj017（tp_core の FLAGS[4] だけ。proj016 は 0x0016）
+    localparam [7:0]   SS8 = SID_S;
+    // 旧 ID（0x00。手順 2-1 で SID に替えた。FFT_CFG は PARAM の [15:8] へ）: {16'h0021, 8'h01, FFT_CFG8}   // proj021 1b（中身は proj020 と同一。ID だけ）。proj020（中身は proj017 と同一。ID だけ）。proj017（tp_core の FLAGS[4] だけ。proj016 は 0x0016）
 
     // 固定のパイプライン段数（S0 = レーン出力を受けたクロック）
     //   S0  +2 ROM → +4 cmul → V@6  +6 dft16 → Z@12  +1 飽和 → Q@13
@@ -246,6 +264,9 @@ module spec_core #(
     always @(posedge aclk) begin t_loc <= t_in; go_loc <= go_in; tev_loc <= tev_in; end
     reg        arm_run;
     reg [31:0] r_cfg;
+    reg        arm_wrst, cmd_wrst;     // proj021 手順 2-1: WRST（SRC・CFG_ID を取り込む）
+    reg [3:0]  r_src, c_src;
+    reg [31:0] c_cfg;
     reg [15:0] r_sd, r_se;
     reg [5:0]  r_gbk;                  // rev6
     reg [15:0] r_stn;
@@ -263,7 +284,8 @@ module spec_core #(
 
     always @(posedge aclk) begin
         cmd_run <= go_loc && arm_run; cmd_stop <= 1'b0; cmd_clr <= 1'b0; cmd_dclr <= 1'b0; cmd_srst <= 1'b0; cmd_grst <= 1'b0;
-        if (go_loc) arm_run <= 1'b0;
+        cmd_wrst <= go_loc && arm_wrst;
+        if (go_loc) begin arm_run <= 1'b0; arm_wrst <= 1'b0; end
         if (inj_fire) inj_arm <= 1'b0;
         if (g_core) inj_pend <= 1'b0;          // 「次の起動の後から数える」の予約は GRST で解ける
         if (rst) begin
@@ -283,37 +305,50 @@ module spec_core #(
             r_se    <= 16'd0;
             arm_run <= 1'b0;
             r_cfg   <= 32'd0;
+            arm_wrst <= 1'b0;
+            r_src   <= 4'd0;
         end else begin
             if (s_axi_bvalid && s_axi_bready) s_axi_bvalid <= 1'b0;
             if (wr_go) begin
                 s_axi_bvalid <= 1'b1;
-                case (s_axi_awaddr[15:2])
-                    14'h02: begin
+                if (s_axi_awaddr[15:10] == 6'd0)   // proj021 手順 2-1: 流れのブロック（0x0000–0x03FF）
+                case (s_axi_awaddr[9:2])
+                    8'h02: begin
                         cmd_run  <= s_axi_wdata[0] | (go_loc && arm_run);
+                        cmd_wrst <= s_axi_wdata[12] | (go_loc && arm_wrst);
                         if (s_axi_wdata[2]) arm_run <= 1'b1;
-                        if (s_axi_wdata[3] || s_axi_wdata[1]) arm_run <= 1'b0;
+                        if (s_axi_wdata[13]) arm_wrst <= 1'b1;
+                        if (s_axi_wdata[3] || s_axi_wdata[1]) begin arm_run <= 1'b0; arm_wrst <= 1'b0; end
                         cmd_stop <= s_axi_wdata[1];
                         cmd_clr  <= s_axi_wdata[8];
                         cmd_dclr <= s_axi_wdata[9];
                         cmd_srst <= s_axi_wdata[10];
                         cmd_grst <= s_axi_wdata[11];
                     end
-                    14'h03: r_nacc  <= s_axi_wdata;
-                    14'h04: r_ndump <= s_axi_wdata;
-                    14'h05: r_shift <= s_axi_wdata[3:0];
-                    14'h30: r_cfg   <= s_axi_wdata;
-                    14'h1C: r_sd    <= s_axi_wdata[15:0];
-                    14'h1D: r_se    <= s_axi_wdata[15:0];
-                    14'h21: r_gbk   <= s_axi_wdata[5:0];
-                    14'h22: r_stn   <= s_axi_wdata[15:0];
-                    14'h23: begin r_inj_pos <= s_axi_wdata[23:0]; inj_arm <= s_axi_wdata[31]; inj_pend <= s_axi_wdata[30]; end
-                    14'h24: begin r_gt_adc <= s_axi_wdata[15:0]; r_gt_dsp <= s_axi_wdata[31:16]; end
-                    14'h25: r_gadj  <= s_axi_wdata[1:0];
+                    8'h03: r_nacc  <= s_axi_wdata;
+                    8'h04: r_ndump <= s_axi_wdata;
+                    8'h05: r_shift <= s_axi_wdata[3:0];
+                    8'h0A: r_src   <= s_axi_wdata[3:0];      // 0x28 SRC（次の WRST で効く）
+                    8'h0B: r_cfg   <= s_axi_wdata;           // 0x2C CFG_ID（旧 0xC0）
+                    8'h86: r_sd    <= s_axi_wdata[15:0];     // 0x218（旧 0x70）。以下 診断は 旧 + 0x1A8
+                    8'h87: r_se    <= s_axi_wdata[15:0];
+                    8'h8B: r_gbk   <= s_axi_wdata[5:0];
+                    8'h8C: r_stn   <= s_axi_wdata[15:0];
+                    8'h8D: begin r_inj_pos <= s_axi_wdata[23:0]; inj_arm <= s_axi_wdata[31]; inj_pend <= s_axi_wdata[30]; end
+                    8'h8E: begin r_gt_adc <= s_axi_wdata[15:0]; r_gt_dsp <= s_axi_wdata[31:16]; end
+                    8'h8F: r_gadj  <= s_axi_wdata[1:0];
                     default: ;
                 endcase
             end
         end
     end
+
+    // ---- proj021 手順 2-1: FULL の WRST（SRC・CFG_ID を取り込むだけ）----
+    always @(posedge aclk) begin
+        if (rst) begin c_src <= 4'd0; c_cfg <= 32'd0; end
+        else if (cmd_wrst) begin c_src <= r_src; c_cfg <= r_cfg; end
+    end
+    assign src_sel = c_src[1:0];
 
     // ---- 起動のやり直し（rev4）----
     // cmd_srst で SR_LEN クロックだけ rst_core を立て（16 個の IP の aresetn と、入力側・出力側・積分の数え）、
@@ -956,7 +991,7 @@ module spec_core #(
         .fin     (fin),
         .tdata   (s_axis_tdata),
         .cmd_run (cmd_run),
-        .wr_en   (wr_go && s_axi_awaddr[15:8] == 8'h01),
+        .wr_en   (wr_go && s_axi_awaddr[15:8] == 8'h11),   // proj021 手順 2-1: 0x1100（旧 0x0100）
         .wr_addr (s_axi_awaddr[7:2]),
         .wr_data (s_axi_wdata),
         .rd_addr (ar_addr),
@@ -973,63 +1008,69 @@ module spec_core #(
 
     reg [31:0] reg_rd;
     always @* begin
-        case (ar_addr[7:2])
-            6'h00: reg_rd = ID;
-            6'h01: reg_rd = {8'd14, 8'd18, 8'd4, 8'd13};
-            6'h02: reg_rd = {26'd0, arm_run, 1'b0, started, in_on, sched, acc_on};
-            6'h03: reg_rd = r_nacc;
-            6'h04: reg_rd = r_ndump;
-            6'h05: reg_rd = {28'd0, r_shift};
-            6'h06: reg_rd = {24'd0, flags};
-            6'h07: reg_rd = seq;
-            6'h08: reg_rd = fin_lat[31:0];
-            6'h09: reg_rd = {{(64-FW){1'b0}}, fin_lat[FW-1:32]};
-            6'h0A: reg_rd = fout_lat[31:0];
-            6'h0B: reg_rd = {{(64-FW){1'b0}}, fout_lat[FW-1:32]};
-            6'h0C: reg_rd = rd_k;
-            6'h0D: reg_rd = rd_n;
-            6'h0E: reg_rd = rd_f0[31:0];
-            6'h0F: reg_rd = {{(64-FW){1'b0}}, rd_f0[FW-1:32]};
-            6'h10: reg_rd = rd_sat;
-            6'h11: reg_rd = rd_bank ? snap_f1[31:0] : snap_f0[31:0];
-            6'h12: reg_rd = {{(64-FW){1'b0}}, rd_bank ? snap_f1[FW-1:32] : snap_f0[FW-1:32]};
-            6'h13: reg_rd = {31'd0, rd_bank};
-            6'h14: reg_rd = run_f0[31:0];
-            6'h15: reg_rd = {{(64-FW){1'b0}}, run_f0[FW-1:32]};
-            6'h16: reg_rd = {dg_miss, dg_unexp};
-            6'h17: reg_rd = {dg_ev_seen, dg_ev_type, 20'd0, dg_ev_min};
-            6'h18: reg_rd = {dg_fs_seen, dg_fs_var, dg_fs_lanes, 20'd0, dg_fs_min};
-            6'h19: reg_rd = dg_evcnt;
-            6'h1A: reg_rd = dg_fscnt;
-            6'h1B: reg_rd = BUILD_TAG;
-            6'h1C: reg_rd = {16'd0, r_sd};
-            6'h1D: reg_rd = {16'd0, r_se};
-            6'h1E: reg_rd = sr_n;
-            6'h1F: reg_rd = {!st_wait && (r_stn != 16'd0), 15'd0, st_gaps};
-            6'h20: reg_rd = st_cyc;
-            6'h21: reg_rd = {26'd0, r_gbk};
-            6'h22: reg_rd = {16'd0, r_stn};
-            6'h23: reg_rd = {inj_arm, inj_pend, 6'd0, r_inj_pos};
-            6'h24: reg_rd = {r_gt_dsp, r_gt_adc};
-            6'h25: reg_rd = {30'd0, r_gadj};
-            6'h26: reg_rd = g_n;
-            6'h27: reg_rd = rw_t0;
-            6'h28: reg_rd = {rw_seen, 15'd0, rw_gaps};
-            6'h29: reg_rd = rw_first;
-            6'h2A: reg_rd = {16'd0, rw_max};
-            6'h2B: reg_rd = gb_stat;
-            6'h2C: reg_rd = adc_stat;
-            6'h2D: reg_rd = inj_n;
-            6'h30: reg_rd = r_cfg;
-            6'h31: reg_rd = run_cfg;
-            6'h32: reg_rd = rd_t[31:0];
-            6'h33: reg_rd = rd_t[63:32];
-            6'h34: reg_rd = {16'd0, rd_h};
-            6'h35: reg_rd = rd_cfg;
-            6'h36: reg_rd = run_t[31:0];
-            6'h37: reg_rd = run_t[63:32];
-            6'h38: reg_rd = {28'd0, run_shift};
-            default: reg_rd = 32'hDEAD_BEEF;
+        case (ar_addr[9:2])                        // proj021 手順 2-1: 流れのブロック（INTERFACE 2.5）
+            8'h00: reg_rd = {8'd2, 8'd1, SS8, 8'd0};               // SID: IF_VER 2・KIND 1（FULL）
+            8'h01: reg_rd = {8'd0, 8'd64, FFT_CFG8, 8'd13};        // PARAM（[15:8] = FFT_CFG。旧 ID の下位 8 bit）
+            8'h02: reg_rd = {25'd0, arm_wrst, arm_run, 1'b0, started, in_on, sched, acc_on};
+            8'h03: reg_rd = r_nacc;
+            8'h04: reg_rd = r_ndump;
+            8'h05: reg_rd = {28'd0, r_shift};
+            8'h06: reg_rd = {24'd0, flags};
+            8'h07: reg_rd = seq;
+            8'h08: reg_rd = 32'd4096;                               // NCH
+            8'h09: reg_rd = 32'd512;                                // FRAME_BEATS
+            8'h0A: reg_rd = {1'b1, 27'd0, c_src};                   // SRC（書き換えられる流れ）
+            8'h0B: reg_rd = r_cfg;
+            8'h0C: reg_rd = run_cfg;
+            8'h0D: reg_rd = c_cfg;                                  // WRST_CFG
+            8'h0E: reg_rd = {28'd0, run_shift};
+            8'h0F: reg_rd = rd_k;
+            8'h10: reg_rd = rd_f0[31:0];
+            8'h11: reg_rd = {{(64-FW){1'b0}}, rd_f0[FW-1:32]};
+            8'h12: reg_rd = rd_n;
+            8'h13: reg_rd = rd_sat;
+            8'h14: reg_rd = rd_t[31:0];
+            8'h15: reg_rd = rd_t[63:32];
+            8'h16: reg_rd = {16'd0, rd_h};
+            8'h17: reg_rd = rd_cfg;
+            8'h18: reg_rd = run_t[31:0];
+            8'h19: reg_rd = run_t[63:32];
+            8'h1A: reg_rd = run_f0[31:0];
+            8'h1B: reg_rd = {{(64-FW){1'b0}}, run_f0[FW-1:32]};
+            8'h1C: reg_rd = fin_lat[31:0];
+            8'h1D: reg_rd = {{(64-FW){1'b0}}, fin_lat[FW-1:32]};
+            8'h1E: reg_rd = fout_lat[31:0];
+            8'h1F: reg_rd = {{(64-FW){1'b0}}, fout_lat[FW-1:32]};
+            8'h20: reg_rd = {16'd0, 8'd13, 8'd13};                  // NFFT_MIN_MAX
+            // 診断（約束の外）: 旧 0x58〜0xB4 → 0x200〜0x25C
+            8'h80: reg_rd = {dg_miss, dg_unexp};
+            8'h81: reg_rd = {dg_ev_seen, dg_ev_type, 20'd0, dg_ev_min};
+            8'h82: reg_rd = {dg_fs_seen, dg_fs_var, dg_fs_lanes, 20'd0, dg_fs_min};
+            8'h83: reg_rd = dg_evcnt;
+            8'h84: reg_rd = dg_fscnt;
+            8'h85: reg_rd = BUILD_TAG;
+            8'h86: reg_rd = {16'd0, r_sd};
+            8'h87: reg_rd = {16'd0, r_se};
+            8'h88: reg_rd = sr_n;
+            8'h89: reg_rd = {!st_wait && (r_stn != 16'd0), 15'd0, st_gaps};
+            8'h8A: reg_rd = st_cyc;
+            8'h8B: reg_rd = {26'd0, r_gbk};
+            8'h8C: reg_rd = {16'd0, r_stn};
+            8'h8D: reg_rd = {inj_arm, inj_pend, 6'd0, r_inj_pos};
+            8'h8E: reg_rd = {r_gt_dsp, r_gt_adc};
+            8'h8F: reg_rd = {30'd0, r_gadj};
+            8'h90: reg_rd = g_n;
+            8'h91: reg_rd = rw_t0;
+            8'h92: reg_rd = {rw_seen, 15'd0, rw_gaps};
+            8'h93: reg_rd = rw_first;
+            8'h94: reg_rd = {16'd0, rw_max};
+            8'h95: reg_rd = gb_stat;
+            8'h96: reg_rd = adc_stat;
+            8'h97: reg_rd = inj_n;
+            8'h98: reg_rd = rd_bank ? snap_f1[31:0] : snap_f0[31:0];
+            8'h99: reg_rd = {{(64-FW){1'b0}}, rd_bank ? snap_f1[FW-1:32] : snap_f0[FW-1:32]};
+            8'h9A: reg_rd = {31'd0, rd_bank};
+            default: reg_rd = 32'd0;
         endcase
     end
 
@@ -1047,8 +1088,8 @@ module spec_core #(
                 ar_bank <= rd_bank;
                 axi_k1  <= s_axi_araddr[11:3];   // スペクトル: k1 = A[11:3]
                 snap_ra <= s_axi_araddr[13:5];   // スナップショット: m = A[13:5]
-                if (s_axi_araddr[15:2] == 14'h08) fin_lat  <= fin;
-                if (s_axi_araddr[15:2] == 14'h0A) fout_lat <= fout;
+                if (s_axi_araddr[15:2] == 14'h1C) fin_lat  <= fin;    // proj021 手順 2-1: 0x70 FIN_LO（旧 0x20）
+                if (s_axi_araddr[15:2] == 14'h1E) fout_lat <= fout;   // 0x78 FOUT_LO（旧 0x28）
             end else if (ar_busy) begin
                 ar_wait <= ar_wait + 3'd1;
                 if (ar_wait == 3'd3) begin
@@ -1062,10 +1103,12 @@ module spec_core #(
                         s_axi_rdata <= snap_rd2[32*ar_addr[4:2] +: 32];
                     end else if (ar_addr[13]) begin
                         s_axi_rdata <= tp_ring_rd;                   // proj013: 0x2000–0x3FFF
-                    end else if (ar_addr[12:8] == 5'h01) begin
-                        s_axi_rdata <= tp_reg_rd;                    // proj013: 0x0100–0x01FF
+                    end else if (ar_addr[12:8] == 5'h11) begin
+                        s_axi_rdata <= tp_reg_rd;                    // proj021 手順 2-1: 0x1100–0x11FF（旧 0x0100）
+                    end else if (ar_addr[12:10] == 3'd0) begin
+                        s_axi_rdata <= reg_rd;                       // 流れのブロック 0x0000–0x03FF
                     end else begin
-                        s_axi_rdata <= reg_rd;
+                        s_axi_rdata <= 32'hDEAD_BEEF;
                     end
                 end
             end

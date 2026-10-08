@@ -8,7 +8,7 @@
   0. 窓ごとに、z が x[8·m_s:] → pfb_fixed → ddc_fixed（model/win_fixed.py）と bit 単位で一致。m_s = 2·WSTART − 10
      （WRST を入力の途中で打った窓は、共有の PFB の途中から始まる。z の数は模型の −2〜0）
   1. 窓 1 の SNAP_SEL のスナップショット = 窓 1 の z のフレーム SNAP_F（4096 語）、DUMP_F0 = SNAP_F。選ばれていない窓 0 の範囲は 0
-  2. レジスタ: ADC の共通の ID・NW・SNAP_SEL、窓ごとの ID・WIDX・WCUR、FLAGS（[4] 待たされた を除いて 0）・DDC_OVR 0、無い窓は DEAD_BEEF
+  2. レジスタ: ADC の共通の ID・NW・SNAP_SEL、窓ごとの ID・WIDX・WCUR、FLAGS（[4] 待たされた を除いて 0）・DDC_OVR 0、無い流れは 0（proj021 手順 2-1: 番地は v2）
   3. ADC の total power: リングの個ごとの Σx² が入力と一致、TP_RUN の後は TP_N = 8 フレームで F0 + 8n に揃う
 """
 import os
@@ -86,7 +86,7 @@ def check(d):
         allok &= judge((wc & 31) == k and ((wc >> 8) & 15) == ns, f"2: 窓 {g} の WCUR {wc:#x}")
         fl = mi[f"flags{g}"]
         allok &= judge((fl & ~0x10) == 0 and mi[f"ovr{g}"] == 0, f"2: 窓 {g} の FLAGS {fl:#x}（[4] を除いて 0）・DDC_OVR {mi[f'ovr{g}']}")
-        allok &= judge(mi[f"id{g}"] == 0x0021_0100 and mi[f"widx{g}"] == g, f"2: 窓 {g} の ID {mi[f'id{g}']:#010x}・WIDX {mi[f'widx{g}']}")
+        allok &= judge(mi[f"id{g}"] == (0x0203_0000 | (g << 8)) and mi[f"widx{g}"] == g, f"2: 窓 {g} の SID {mi[f'id{g}']:#010x}・WIDX {mi[f'widx{g}']}")
     snap = np.loadtxt(os.path.join(d, "snap.txt"), dtype=np.int64, ndmin=2)
     f = mi["snap_f"]
     # proj020: スナップショットは PFB の出口（FFT の入力）。z のフレーム 0 = WSTART の後の最初の z（wspec の rst と同じ原点）
@@ -96,9 +96,9 @@ def check(d):
                    f"1: 窓 1 のスナップショット（SNAP_SEL 1）= PFB の模型の出力フレーム {f}（DUMP_F0 {mi['dump_f0']}、不一致 "
                    f"{int(np.count_nonzero(snap != ref)) if len(ref) == 4096 else '長さ違い'}）")
     allok &= judge(mi["snap_w0"] == 0 and mi["snap_w0i"] == 0, f"1: 選ばれていない窓 0 のスナップショットの範囲 = {mi['snap_w0']} / {mi['snap_w0i']}（0 のはず）")
-    allok &= judge(mi["id_a"] == 0x0021_A100 and mi["nw"] == 4 and mi["snap_sel"] == 1,
-                   f"2: ADC の共通 ID {mi['id_a']:#010x}・NW {mi['nw']}・SNAP_SEL {mi['snap_sel']}")
-    allok &= judge(mi["bad_sel"] == 0xDEADBEEF, f"2: 無い窓（0xA0000）の読み = {mi['bad_sel']:#010x}")
+    allok &= judge(mi["id_a"] == 0x0202_0101 and mi["nw"] == 4 and mi["snap_sel"] == 1,
+                   f"2: コアの共通 IF_ID {mi['id_a']:#010x}・NSTREAM {mi['nw']}・SNAP_SEL {mi['snap_sel']}")
+    allok &= judge(mi["bad_sel"] == 0, f"2: 無い流れ（0x05400）の読み = {mi['bad_sel']:#010x}")
     # 3. total power（ADC の共通、tp_core）: リングの個ごとに Σx²（x = 14 bit）を x14 から数えて比べる。RUN の後は F0 + 8n に揃う
     tp = np.loadtxt(os.path.join(d, "tp.txt"), dtype=np.int64, ndmin=2)
     wp, f0r = mi["tp_wp"], mi["tp_f0"]

@@ -14,7 +14,24 @@
 //   幅 W = 512 / 2^WNS MHz（WNS = 1..8 → 256..2 MHz。proj015 で 7・8 = 4・2 MHz を足した）
 // **入力の途切れ（ギアボックスの出口の tvalid = 0）は値を変えない**: pfb_core は valid なビートだけで窓を進め、以降は組ごとに進む。
 //
-// ---- アドレスマップ（バイト。20 bit = 1 MiB）----
+// ---- proj021 手順 2-1: 番地を INTERFACE.md v2（2.4・2.5）にそろえた（意味は変えない。対応表は proj021/README の手順 2-1）----
+//   このモジュールは s45_core（src/common/s45_core.v）の中に置く。コアの番地は 1 MiB（2-2 で 64 KiB に縮める）:
+//     0x00000–0x000FF  コアの共通（2.4）: 0x00 IF_ID / 0x04 PROJ / 0x08 NSTREAM / 0x0C CAPS / 0x10 BASE_BEATS / 0x14 BUILD / 0x18 CORE_PORT /
+//                      0x20〜 下の表 A の CTRL 以降を **+0x10** ずらしたもの（0x20 CTRL・0x24 TFIN・0x2C GB_K・0x34 GB_STAT・…・0x5C GAP_CNT）。
+//                      表 A の ID・NW・SNAP_SEL・BUILD・FULL_SEL は無くなった（IF_ID・NSTREAM・仮の SNAP_SEL・BUILD・FULL の流れの SRC へ）
+//     0x00100–0x001FF  TP のレジスタ / 0x02000–0x03FFF TP のリング（中の並びは今と同じ）
+//     0x04000 + 0x400·w 窓 w の流れのブロック（2.5、KIND 3 = DDC、s = w）。下の旧番地からの対応:
+//                      0x00 SID / 0x04 PARAM（[23:16] 64・[31:24] 0）/ 0x08〜0x1C は同じ / 0x20 NCH / 0x24 FRAME_BEATS / 0x28 SRC / 0x2C CFG_ID /
+//                      0x30 RUN_CFG / 0x34 WRST_CFG / 0x38 RUN_SHIFT / 0x3C DUMP_K / 0x40·44 DUMP_F0 / 0x48 DUMP_N / 0x4C DUMP_SAT / 0x50·54 DUMP_T /
+//                      0x58 DUMP_H / 0x5C DUMP_CFG / 0x60·64 RUN_T / 0x68·6C RUN_F0 / 0x70·74 FIN / 0x78·7C FOUT / 0x80 NFFT_MIN_MAX / 0x84 REC_CTRL・0x88 REC_LATE（0）/
+//                      0x100 WK / 0x104 WDPHI / 0x108 WNS / 0x10C WCUR / 0x110 WCUR_DPHI / 0x114 WSTART / 0x118 NS_MIN_MAX / 0x11C WRST_T /
+//                      0x200〜（診断、約束の外）PFB_SAT / DDC_SAT / WS_STALL / WS_RDY0 / DDC_OVR / WRST_CNT / SNAP_F_LO / SNAP_F_HI / BANK
+//     0x80000 + 0x20000·w **仮の読み窓（約束の外。2-2 で外す）**: 下の旧番地の窓 w の +0x08000 スナップショット・+0x10000 スペクトルと同じ
+//     0xE0000          **仮**: SNAP_SEL（2-2 で REC_CTRL の SNAP に替わる）
+//     0xC0000–0xCFFFF は FULL = 1 のコアでは s45_core が FULL の流れ（spec_core）へ振る（そのときは NW ≦ 2。窓 2 の仮の読み窓と重なるため）
+//   約束の範囲（0x00000–0x0FFFF）の空きは 0、仮の範囲の空きは 0xDEADBEEF
+//
+// ---- 旧アドレスマップ（proj020 まで。レジスタの意味はここに書いたまま）----
 //   窓 w（0..NW−1）: 0x20000·w + 下の 128 KiB（proj014 の win_core と同じ並び）
 //     0x00000–0x000FF  レジスタ（下の表）
 //     0x08000–0x0FFFF  スナップショット: サンプル i の re が 0x08000 + 8i、im が +4（18 bit を 32 bit に符号拡張）。
@@ -105,7 +122,14 @@ module win_core #(
     parameter integer TP            = 1,      // 1: ADC の total power（tp_core）を持つ
     parameter integer TPN_DEFAULT   = 512,    // proj017: 1.024 ms（窓の区切り 40.96 ms・10.24 ms の 1/40・1/10）。proj016 までは 500 = 1 ms
     parameter integer GB_K_RST      = 2,      // gb_gate のしきい値の既定（proj012 rev3 の K = 2）
-    parameter integer G_L2          = 19      // proj017: 時刻の格子 2^G_L2 ビート（wspec_core の F0 の切り上げ。sim は小さくしてよい）
+    parameter integer G_L2          = 19,     // proj017: 時刻の格子 2^G_L2 ビート（wspec_core の F0 の切り上げ。sim は小さくしてよい）
+    // proj021 手順 2-1: 自己記述（INTERFACE 2.4）
+    parameter integer BIT_KIND      = 2,      // SAM45-Fine（BITS.md の 9 本の番号）
+    parameter integer BIT_REV       = 1,
+    parameter integer PROJ          = 32'h0021_0200,
+    parameter integer CORE_PORT     = 0,      // [3:0] ADC（0..3 = ADC_A..D）/ [11:8] タイル / [15:12] スライス（build.tcl が与える）
+    parameter integer NFULL         = 0,      // このコアの FULL の流れの数（s45_core が持つ。NSTREAM = NW + NFULL）
+    parameter integer BASE_BEATS    = 2621440 // 10.24 ms
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axis:s_axi, ASSOCIATED_RESET aresetn:gb_dn_rstn" *)
@@ -144,15 +168,17 @@ module win_core #(
     output wire [5:0]   gb_k,             // gb_gate へ: GB_K（0x8001C）
     input  wire [31:0]  gb_stat,          // gb_gate から（0x80024 で読む）
     input  wire [31:0]  adc_stat,         // gb_gate から（0x80028。ADC ドメインの数え。2 回読んで一致を確かめる）
-    output wire [1:0]   full_sel,         // 全帯域の分光（spec_core_0）につなぐ ADC（axis_sel4 へ。0x80020。win_core_0 のものだけ使う）
     // proj016: time_core から（ここで 1 段受ける。受けた t_loc が time_core の T と同じ値になるよう、time_core が先に足して出す）
     input  wire [63:0]  t_in,
     input  wire         go_in,
     input  wire [3:0]   tev_in
 );
     localparam integer FW = 48;
-    localparam [31:0]  ID   = 32'h0021_0100;   // proj021 rev1（手順 1b）: 窓の中身は proj020 と同じ。gb_gate の入口に 2 語のスキッド（群 C）。proj020 rev1: SAM45-Fine rev2（wspec に PFB T = 4、FLAGS[5] = PFB の飽和）。proj017 rev1 = 0x0017_0100: SAM45-Fine（NW 2 × 4 ADC）・TP の FLAGS[4]。proj016 rev1 は 0x0016_0100
-    localparam [31:0]  ID_A = 32'h0021_A100;
+    localparam [7:0]   BK8 = BIT_KIND, BR8 = BIT_REV;
+    localparam [15:0]  CP16 = CORE_PORT;
+    localparam [31:0]  IF_ID = {8'd2, BK8, BR8, 8'd1};   // proj021 手順 2-1: IF_VER 2・CORE_KIND 1（ADC のコア）。PROJ（0x04）は 0x0021_0200
+    // 旧 ID（0x00 の数値で照合していた。手順 2-1 で IF_ID・PROJ に替えた）: proj021 rev1（手順 1b）= 0x0021_0100 / 0x0021_A100
+    //   窓の中身は proj020 と同じ。gb_gate の入口に 2 語のスキッド（群 C）。proj020 rev1: SAM45-Fine rev2（wspec に PFB T = 4、FLAGS[5] = PFB の飽和）。proj017 rev1 = 0x0017_0100: SAM45-Fine（NW 2 × 4 ADC）・TP の FLAGS[4]。proj016 rev1 は 0x0016_0100
     wire rst = ~aresetn;
     assign s_axis_tready = 1'b1;       // 上流に backpressure をかけない
 
@@ -167,13 +193,16 @@ module win_core #(
     reg [5:0]  ev_a;
     always @(posedge aclk) ev_a <= {a_gap, a_ovr, tev_loc};
 
-    // ---- 書き込みの受け口（1 回に 1 つ）。番地の [19:17] = 窓（4 = ADC の共通）----
+    // ---- 書き込みの受け口（1 回に 1 つ）。proj021 手順 2-1: 番地は冒頭の v2 の表 ----
     wire wr_go = s_axi_awvalid && s_axi_wvalid && !s_axi_bvalid;
     assign s_axi_awready = wr_go;
     assign s_axi_wready  = wr_go;
     assign s_axi_bresp   = 2'b00;
-    wire [2:0] wr_sel = s_axi_awaddr[19:17];
-    wire       wr_reg = (s_axi_awaddr[16:8] == 9'd0);
+    wire       wr_com = (s_axi_awaddr[19:8] == 12'h000);                         // コアの共通
+    wire       wr_tpr = (s_axi_awaddr[19:8] == 12'h001);                         // TP のレジスタ
+    wire       wr_blk = (s_axi_awaddr[19:16] == 4'd0) && (s_axi_awaddr[15:14] != 2'd0);   // 流れのブロック（0x04000–0x0FFFF）
+    wire [5:0] wr_s   = {s_axi_awaddr[15:14] - 2'd1, s_axi_awaddr[13:10]};       // 流れの番号
+    wire       wr_ss  = (s_axi_awaddr[19:0] == 20'hE0000);                       // 仮の SNAP_SEL
     always @(posedge aclk) begin
         if (rst) s_axi_bvalid <= 1'b0;
         else begin
@@ -185,20 +214,17 @@ module win_core #(
     // ---- ADC の共通 ----
     reg [3:0] snap_sel;
     reg [5:0] r_gbk;
-    reg [1:0] r_fsel;
-    wire      wr_a = wr_go && wr_sel == 3'd4 && wr_reg;
+    wire      wr_a = wr_go && wr_com;
     always @(posedge aclk) begin
-        if (rst) begin snap_sel <= 4'd0; r_gbk <= GB_K_RST; r_fsel <= 2'd0; end
+        if (rst) begin snap_sel <= 4'd0; r_gbk <= GB_K_RST; end
         else begin
-            if (wr_a && s_axi_awaddr[7:2] == 6'h02) snap_sel <= s_axi_wdata[3:0];
-            if (wr_a && s_axi_awaddr[7:2] == 6'h07) r_gbk    <= s_axi_wdata[5:0];
-            if (wr_a && s_axi_awaddr[7:2] == 6'h08) r_fsel   <= s_axi_wdata[1:0];
+            if (wr_go && wr_ss)                     snap_sel <= s_axi_wdata[3:0];
+            if (wr_a && s_axi_awaddr[7:2] == 6'h0B) r_gbk    <= s_axi_wdata[5:0];   // 0x2C GB_K（表 A の 0x1C）
         end
     end
     assign gb_hold = 1'b0;
     assign gb_adj = 2'd0;
     assign gb_k = r_gbk;
-    assign full_sel = r_fsel;
     always @(posedge aclk) gb_dn_rstn <= aresetn;
 
     // ---- ADC のフレーム（total power の区切りの物差し）と total power ----
@@ -212,7 +238,7 @@ module win_core #(
     reg  [FW-1:0] anch_f;
     reg  [63:0]   anch_t, tp_run_t;
     reg  [31:0]   n_ovr, n_gap;
-    wire wr_tpc = wr_go && wr_sel == 3'd4 && wr_reg && s_axi_awaddr[7:2] == 6'h04;
+    wire wr_tpc = wr_go && wr_com && s_axi_awaddr[7:2] == 6'h08;           // 0x20 CTRL（表 A の 0x10）
     always @(posedge aclk) begin
         tp_run <= (wr_tpc && s_axi_wdata[0]) || (tp_arm && go_loc);
         if (rst) begin
@@ -238,7 +264,7 @@ module win_core #(
             tp_core #(.TPN_DEFAULT(TPN_DEFAULT), .FW(FW)) u_tp (
                 .clk(aclk), .rst(rst), .in_acc(s_axis_tvalid), .m_in(a_cnt[8:0]), .fin(a_fin), .tdata(s_axis_tdata),
                 .cmd_run(tp_run),
-                .wr_en(wr_go && wr_sel == 3'd4 && s_axi_awaddr[16:8] == 9'h001), .wr_addr(s_axi_awaddr[7:2]), .wr_data(s_axi_wdata),
+                .wr_en(wr_go && wr_tpr), .wr_addr(s_axi_awaddr[7:2]), .wr_data(s_axi_wdata),
                 .rd_addr(tp_rd_addr), .rd_ring(tp_ring_rd), .rd_reg(tp_reg_rd));
         end else begin : g_notp
             assign tp_ring_rd = 32'd0;
@@ -252,7 +278,14 @@ module win_core #(
     reg          ar_busy;
     assign s_axi_arready = !ar_busy && !s_axi_rvalid;
     assign s_axi_rresp   = 2'b00;
-    wire [2:0] ar_sel = ar_addr[19:17];
+    // proj021 手順 2-1: 応答の選び（ar_addr から。ar_addr はレジスタ）
+    wire       ar_blk  = (ar_addr[19:16] == 4'd0) && (ar_addr[15:14] != 2'd0);
+    wire [5:0] ar_s    = {ar_addr[15:14] - 2'd1, ar_addr[13:10]};
+    wire       ar_leg  = ar_addr[19];                                 // 仮の読み窓（0x80000 + 0x20000·w。0xE0000 は SNAP_SEL が先）
+    wire [5:0] ar_w    = ar_blk ? ar_s : {4'd0, ar_addr[18:17]};
+    wire       ar_win  = (ar_blk || ar_leg) && (ar_w < NW);
+    wire       ar_com  = (ar_addr[19:14] == 6'd0) || (ar_addr[19:0] == 20'hE0000);
+    wire       ar_prom = (ar_addr[19:16] == 4'd0);                    // 約束の範囲（空きは 0）
     assign tp_rd_addr = ar_addr[15:0];
     wire       ar_go  = s_axi_arvalid && s_axi_arready;
     // rev3: LO の読みで HI を固定するのは ar_go の 1 クロック後に、ar_addr（レジスタ）で決める。rev2 は SmartConnect の
@@ -305,7 +338,8 @@ module win_core #(
     genvar g;
     generate
         for (g = 0; g < NW; g = g + 1) begin : g_w
-            wire wr_me = wr_go && wr_sel == g && wr_reg;
+            localparam [7:0] GS8 = g;
+            wire wr_me = wr_go && wr_blk && wr_s == g;
             reg [31:0] r_nacc, r_ndump, r_dphi;
             reg [3:0]  r_shift;
             reg [4:0]  r_k;
@@ -331,8 +365,8 @@ module win_core #(
                     r_k <= 5'd0; r_dphi <= 32'd0; r_ns <= 4'd1; r_wt <= 16'd64;
                     arm_run <= 1'b0; arm_wrst <= 1'b0; r_cfg <= 32'd0; run_defer <= 1'b0;
                 end else if (wr_me) begin
-                    case (s_axi_awaddr[7:2])
-                        6'h02: begin
+                    case (s_axi_awaddr[9:2])           // proj021 手順 2-1: 流れのブロックの番地
+                        8'h02: begin
                             cmd_run  <= s_axi_wdata[0]  | run_go;
                             cmd_stop <= s_axi_wdata[1];
                             cmd_clr  <= s_axi_wdata[8];
@@ -341,14 +375,14 @@ module win_core #(
                             if (s_axi_wdata[13]) arm_wrst <= 1'b1;
                             if (s_axi_wdata[3] || s_axi_wdata[1]) begin arm_run <= 1'b0; arm_wrst <= 1'b0; run_defer <= 1'b0; end
                         end
-                        6'h25: r_cfg   <= s_axi_wdata;
-                        6'h03: r_nacc  <= s_axi_wdata;
-                        6'h04: r_ndump <= s_axi_wdata;
-                        6'h05: r_shift <= s_axi_wdata[3:0];
-                        6'h16: r_k     <= s_axi_wdata[4:0];
-                        6'h17: r_dphi  <= s_axi_wdata;
-                        6'h18: r_ns    <= s_axi_wdata[3:0];
-                        6'h1E: r_wt    <= s_axi_wdata[15:0];
+                        8'h0B: r_cfg   <= s_axi_wdata;          // 0x2C CFG_ID
+                        8'h03: r_nacc  <= s_axi_wdata;
+                        8'h04: r_ndump <= s_axi_wdata;
+                        8'h05: r_shift <= s_axi_wdata[3:0];
+                        8'h40: r_k     <= s_axi_wdata[4:0];     // 0x100 WK
+                        8'h41: r_dphi  <= s_axi_wdata;          // 0x104 WDPHI
+                        8'h42: r_ns    <= s_axi_wdata[3:0];     // 0x108 WNS
+                        8'h47: r_wt    <= s_axi_wdata[15:0];    // 0x11C WRST_T
                         default: ;
                     endcase
                 end
@@ -438,62 +472,66 @@ module win_core #(
             reg [FW-1:0] fin_lat, fout_lat;
             always @(posedge aclk) begin
                 if (rst) begin fin_lat <= {FW{1'b0}}; fout_lat <= {FW{1'b0}}; end
-                else if (ar_go_d && ar_addr[19:17] == g) begin
-                    if (ar_addr[16:2] == 15'h08) fin_lat  <= fin;
-                    if (ar_addr[16:2] == 15'h0A) fout_lat <= fout;
+                else if (ar_go_d && ar_blk && ar_s == g) begin
+                    if (ar_addr[9:2] == 8'h1C) fin_lat  <= fin;      // 0x70 FIN_LO
+                    if (ar_addr[9:2] == 8'h1E) fout_lat <= fout;     // 0x78 FOUT_LO
                 end
             end
             reg [31:0] rr;
             always @* begin
-                case (ar_addr[7:2])
-                    6'h00: rr = ID;
-                    6'h01: rr = {8'd18, 8'd18, (c_ns >= 4'd7) ? 4'd5 : 4'd4, c_ns, 8'd12};
-                    6'h02: rr = {24'd0, run_defer, arm_wrst, arm_run, w_rst, z_seen, 1'b0, sched, acc_on};
-                    6'h03: rr = r_nacc;
-                    6'h04: rr = r_ndump;
-                    6'h05: rr = {28'd0, r_shift};
-                    6'h06: rr = {21'd0, ddc_ovr != 16'd0, ddc_sat != 16'd0, psat != 16'd0, wflags};
-                    6'h07: rr = seq;
-                    6'h08: rr = fin_lat[31:0];
-                    6'h09: rr = {{(64-FW){1'b0}}, fin_lat[FW-1:32]};
-                    6'h0A: rr = fout_lat[31:0];
-                    6'h0B: rr = {{(64-FW){1'b0}}, fout_lat[FW-1:32]};
-                    6'h0C: rr = rd_k;
-                    6'h0D: rr = rd_n;
-                    6'h0E: rr = rd_f0[31:0];
-                    6'h0F: rr = {{(64-FW){1'b0}}, rd_f0[FW-1:32]};
-                    6'h10: rr = rd_sat;
-                    6'h11: rr = rd_bank ? snap_f1[31:0] : snap_f0[31:0];
-                    6'h12: rr = {{(64-FW){1'b0}}, rd_bank ? snap_f1[FW-1:32] : snap_f0[FW-1:32]};
-                    6'h13: rr = {31'd0, rd_bank};
-                    6'h14: rr = run_f0[31:0];
-                    6'h15: rr = {{(64-FW){1'b0}}, run_f0[FW-1:32]};
-                    6'h16: rr = {27'd0, r_k};
-                    6'h17: rr = r_dphi;
-                    6'h18: rr = {28'd0, r_ns};
-                    6'h19: rr = {20'd0, c_ns, 3'd0, c_k};
-                    6'h1A: rr = c_dphi;
-                    6'h1B: rr = {16'd0, psat};
-                    6'h1C: rr = {16'd0, ddc_sat};
-                    6'h1D: rr = BUILD_TAG;
-                    6'h1E: rr = {16'd0, r_wt};
-                    6'h1F: rr = wrst_n;
-                    6'h20: rr = ws_stall;
-                    6'h21: rr = ws_rdy0;
-                    6'h22: rr = {16'd0, ddc_ovr};
-                    6'h23: rr = q_start[32*g +: 32];
-                    6'h24: rr = g;
-                    6'h25: rr = r_cfg;
-                    6'h26: rr = run_cfg;
-                    6'h27: rr = c_cfg;
-                    6'h28: rr = rd_t[31:0];
-                    6'h29: rr = rd_t[63:32];
-                    6'h2A: rr = {16'd0, rd_h};
-                    6'h2B: rr = rd_cfg;
-                    6'h2C: rr = run_t[31:0];
-                    6'h2D: rr = run_t[63:32];
-                    6'h2E: rr = {28'd0, run_shift};
-                    default: rr = 32'hDEAD_BEEF;
+                case (ar_addr[9:2])                // proj021 手順 2-1: 流れのブロック（INTERFACE 2.5）
+                    8'h00: rr = {8'd2, 8'd3, GS8, 8'd0};           // SID: IF_VER 2・KIND 3（DDC）・s = g
+                    8'h01: rr = {8'd0, 8'd64, (c_ns >= 4'd7) ? 4'd5 : 4'd4, c_ns, 8'd12};   // PARAM
+                    8'h02: rr = {24'd0, run_defer, arm_wrst, arm_run, w_rst, z_seen, 1'b0, sched, acc_on};
+                    8'h03: rr = r_nacc;
+                    8'h04: rr = r_ndump;
+                    8'h05: rr = {28'd0, r_shift};
+                    8'h06: rr = {21'd0, ddc_ovr != 16'd0, ddc_sat != 16'd0, psat != 16'd0, wflags};
+                    8'h07: rr = seq;
+                    8'h08: rr = 32'd4096;                                   // NCH
+                    8'h09: rr = 32'd2048 << c_ns;                           // FRAME_BEATS
+                    8'h0A: rr = {28'd0, CP16[3:0]};                    // SRC（固定）
+                    8'h0B: rr = r_cfg;
+                    8'h0C: rr = run_cfg;
+                    8'h0D: rr = c_cfg;
+                    8'h0E: rr = {28'd0, run_shift};
+                    8'h0F: rr = rd_k;
+                    8'h10: rr = rd_f0[31:0];
+                    8'h11: rr = {{(64-FW){1'b0}}, rd_f0[FW-1:32]};
+                    8'h12: rr = rd_n;
+                    8'h13: rr = rd_sat;
+                    8'h14: rr = rd_t[31:0];
+                    8'h15: rr = rd_t[63:32];
+                    8'h16: rr = {16'd0, rd_h};
+                    8'h17: rr = rd_cfg;
+                    8'h18: rr = run_t[31:0];
+                    8'h19: rr = run_t[63:32];
+                    8'h1A: rr = run_f0[31:0];
+                    8'h1B: rr = {{(64-FW){1'b0}}, run_f0[FW-1:32]};
+                    8'h1C: rr = fin_lat[31:0];
+                    8'h1D: rr = {{(64-FW){1'b0}}, fin_lat[FW-1:32]};
+                    8'h1E: rr = fout_lat[31:0];
+                    8'h1F: rr = {{(64-FW){1'b0}}, fout_lat[FW-1:32]};
+                    8'h20: rr = {16'd0, 8'd12, 8'd12};                      // NFFT_MIN_MAX
+                    // 0x84 REC_CTRL・0x88 REC_LATE は 2-2 で（今は 0）
+                    8'h40: rr = {27'd0, r_k};
+                    8'h41: rr = r_dphi;
+                    8'h42: rr = {28'd0, r_ns};
+                    8'h43: rr = {20'd0, c_ns, 3'd0, c_k};
+                    8'h44: rr = c_dphi;
+                    8'h45: rr = q_start[32*g +: 32];
+                    8'h46: rr = {16'd0, 8'd8, 8'd1};                        // NS_MIN_MAX
+                    8'h47: rr = {16'd0, r_wt};
+                    8'h80: rr = {16'd0, psat};
+                    8'h81: rr = {16'd0, ddc_sat};
+                    8'h82: rr = ws_stall;
+                    8'h83: rr = ws_rdy0;
+                    8'h84: rr = {16'd0, ddc_ovr};
+                    8'h85: rr = wrst_n;
+                    8'h86: rr = rd_bank ? snap_f1[31:0] : snap_f0[31:0];
+                    8'h87: rr = {{(64-FW){1'b0}}, rd_bank ? snap_f1[FW-1:32] : snap_f0[FW-1:32]};
+                    8'h88: rr = {31'd0, rd_bank};
+                    default: rr = 32'd0;
                 endcase
             end
             assign reg_rd_v[g] = rr;
@@ -504,31 +542,33 @@ module win_core #(
     reg [FW-1:0] afin_lat;
     always @(posedge aclk) begin
         if (rst) afin_lat <= {FW{1'b0}};
-        else if (ar_go_d && ar_addr[19:17] == 3'd4 && ar_addr[16:2] == 15'h05) afin_lat <= a_fin;
+        else if (ar_go_d && ar_addr[19:2] == 18'h00009) afin_lat <= a_fin;   // 0x24 TFIN_LO
     end
     reg [31:0] reg_a;
     always @* begin
-        case (ar_addr[7:2])
-            6'h00: reg_a = ID_A;
-            6'h01: reg_a = NW;
-            6'h02: reg_a = {28'd0, snap_sel};
-            6'h03: reg_a = BUILD_TAG;
-            6'h05: reg_a = afin_lat[31:0];
-            6'h06: reg_a = {{(64-FW){1'b0}}, afin_lat[FW-1:32]};
-            6'h07: reg_a = {26'd0, r_gbk};
-            6'h08: reg_a = {30'd0, r_fsel};
-            6'h09: reg_a = gb_stat;
-            6'h0A: reg_a = adc_stat;
-            6'h0B: reg_a = anch_f[31:0];
-            6'h0C: reg_a = {{(64-FW){1'b0}}, anch_f[FW-1:32]};
-            6'h0D: reg_a = anch_t[31:0];
-            6'h0E: reg_a = anch_t[63:32];
-            6'h0F: reg_a = {29'd0, tp_arm, anch_done, anch_req};
-            6'h10: reg_a = tp_run_t[31:0];
-            6'h11: reg_a = tp_run_t[63:32];
-            6'h12: reg_a = n_ovr;
-            6'h13: reg_a = n_gap;
-            default: reg_a = 32'hDEAD_BEEF;
+        case (ar_addr[7:2])                        // proj021 手順 2-1: コアの共通（INTERFACE 2.4。表 A は +0x10）
+            6'h00: reg_a = IF_ID;
+            6'h01: reg_a = PROJ;
+            6'h02: reg_a = NW + NFULL;                     // NSTREAM
+            6'h03: reg_a = 32'd0;                          // CAPS（レコードは 2-2 で）
+            6'h04: reg_a = BASE_BEATS;
+            6'h05: reg_a = BUILD_TAG;
+            6'h06: reg_a = {16'd0, CP16};
+            6'h09: reg_a = afin_lat[31:0];
+            6'h0A: reg_a = {{(64-FW){1'b0}}, afin_lat[FW-1:32]};
+            6'h0B: reg_a = {26'd0, r_gbk};
+            6'h0D: reg_a = gb_stat;
+            6'h0E: reg_a = adc_stat;
+            6'h0F: reg_a = anch_f[31:0];
+            6'h10: reg_a = {{(64-FW){1'b0}}, anch_f[FW-1:32]};
+            6'h11: reg_a = anch_t[31:0];
+            6'h12: reg_a = anch_t[63:32];
+            6'h13: reg_a = {29'd0, tp_arm, anch_done, anch_req};
+            6'h14: reg_a = tp_run_t[31:0];
+            6'h15: reg_a = tp_run_t[63:32];
+            6'h16: reg_a = n_ovr;
+            6'h17: reg_a = n_gap;
+            default: reg_a = 32'd0;
         endcase
     end
 
@@ -541,20 +581,23 @@ module win_core #(
     reg  [31:0] rq_a;
     reg  [31:0] rq_w [0:NW-1];
     always @(posedge aclk) begin
-        rq_a <= (ar_addr[16:8] == 9'd0)      ? reg_a :
-                (ar_addr[16:8] == 9'h001)    ? tp_reg_rd :
-                (ar_addr[16:13] == 4'b0001)  ? tp_ring_rd : 32'hDEAD_BEEF;
+        rq_a <= ar_addr[19]                  ? {28'd0, snap_sel} :      // 0xE0000（仮の SNAP_SEL）
+                (ar_addr[13:8] == 6'd0)      ? reg_a :
+                (ar_addr[13:8] == 6'h01)     ? tp_reg_rd :
+                ar_addr[13]                  ? tp_ring_rd : 32'd0;
     end
     generate
         for (g = 0; g < NW; g = g + 1) begin : g_rq
             always @(posedge aclk) begin
-                if (ar_addr[16])
+                if (!ar_leg)
+                    rq_w[g] <= reg_rd_v[g];
+                else if (ar_addr[16])
                     rq_w[g] <= ar_addr[2] ? sp_data_v[g][63:32] : sp_data_v[g][31:0];
                 else if (ar_addr[15])
                     rq_w[g] <= (g != ss) ? 32'd0 :
                                ar_addr[2] ? {{14{sn_data[35]}}, sn_data[35:18]} : {{14{sn_data[17]}}, sn_data[17:0]};
                 else
-                    rq_w[g] <= reg_rd_v[g];
+                    rq_w[g] <= 32'hDEAD_BEEF;
             end
         end
     endgenerate
@@ -568,16 +611,17 @@ module win_core #(
                 ar_busy <= 1'b1;
                 ar_wait <= 3'd0;
                 ar_addr <= s_axi_araddr;
-                ax_bank <= (s_axi_araddr[19:17] < NW) ? rd_bank_v[s_axi_araddr[19:17]] : 1'b0;
+                ax_bank <= (s_axi_araddr[18:17] < NW) ? rd_bank_v[s_axi_araddr[18:17]] : 1'b0;   // 仮の読み窓の w
                 ax_ch   <= s_axi_araddr[14:3];      // スナップショット・スペクトルとも 8 バイト / 語
             end else if (ar_busy) begin
                 ar_wait <= ar_wait + 3'd1;
                 if (ar_wait == 3'd4) begin          // rq_* は ar_wait == 3 のクロックの候補（rev2 の応答と同じ値）
                     ar_busy      <= 1'b0;
                     s_axi_rvalid <= 1'b1;
-                    if (ar_sel == 3'd4)      s_axi_rdata <= rq_a;
-                    else if (ar_sel >= NW)   s_axi_rdata <= 32'hDEAD_BEEF;
-                    else                     s_axi_rdata <= rq_w[ar_sel];
+                    if (ar_com)              s_axi_rdata <= rq_a;
+                    else if (ar_win)         s_axi_rdata <= rq_w[ar_w];
+                    else if (ar_prom)        s_axi_rdata <= 32'd0;
+                    else                     s_axi_rdata <= 32'hDEAD_BEEF;
                 end
             end
         end

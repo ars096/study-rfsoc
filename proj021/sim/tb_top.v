@@ -18,13 +18,16 @@ module tb_top;
     wire [31:0] rdata;
     wire [1:0]  bresp, rresp;
     wire        tready;
-    win_core #(.N_ACC_DEFAULT(2), .G_L2(12)) dut (
+    // proj021 手順 2-1: BD と同じく s45_core（FULL = 0）越しに。番地は v2（窓 0 の流れのブロック 0x04000、仮の読み窓 0x80000）
+    s45_core #(.N_ACC_DEFAULT(2), .G_L2(12)) dut (
         .aclk(clk), .aresetn(aresetn), .s_axis_tdata(tdata), .s_axis_tvalid(tvalid), .s_axis_tready(tready),
         .s_axi_awaddr(awaddr), .s_axi_awprot(3'd0), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
         .s_axi_wdata(wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(wvalid), .s_axi_wready(wready),
         .s_axi_bresp(bresp), .s_axi_bvalid(bvalid), .s_axi_bready(bready),
         .s_axi_araddr(araddr), .s_axi_arprot(3'd0), .s_axi_arvalid(arvalid), .s_axi_arready(arready),
-        .s_axi_rdata(rdata), .s_axi_rresp(rresp), .s_axi_rvalid(rvalid), .s_axi_rready(rready));
+        .s_axi_rdata(rdata), .s_axi_rresp(rresp), .s_axi_rvalid(rvalid), .s_axi_rready(rready),
+        .s_axis_full_tdata(256'd0), .s_axis_full_tvalid(1'b0), .full_gb_stat(32'd0), .full_adc_stat(32'd0),
+        .gb_stat(32'd0), .adc_stat(32'd0), .t_in(64'd0), .go_in(1'b0), .tev_in(4'd0));
 
     task axw(input [19:0] a, input [31:0] d);
         begin
@@ -76,53 +79,53 @@ module tb_top;
         repeat (8) @(posedge clk);
         aresetn <= 1;
         repeat (8) @(posedge clk);
-        axr(17'h00000);
-        if (rv !== 32'h0021_0100) $display("tb_top: ID が違う %08x", rv);
+        axr(20'h04000);                          // proj021 手順 2-1: 窓 0 の SID（旧 ID）
+        if (rv !== 32'h0203_0000) $display("tb_top: SID が違う %08x", rv);
         $fwrite(fm, "id %0d\n", rv);
         // proj015: WNS の 4 bit（7・8 = 4・2 MHz）と範囲外（9・0 → 1）、PARAM の G を読み返す（入力は止めたまま）
         for (rc = 0; rc < 4; rc = rc + 1) begin
-            axw(17'h00060, (rc == 0) ? 7 : (rc == 1) ? 8 : (rc == 2) ? 9 : 0);
-            axw(17'h00008, 32'h1000);             // WRST
+            axw(20'h04108, (rc == 0) ? 7 : (rc == 1) ? 8 : (rc == 2) ? 9 : 0);
+            axw(20'h04008, 32'h1000);             // WRST
             repeat (100) @(posedge clk);
-            axr(17'h00064); rc_w = rv;
-            axr(17'h00004);
+            axr(20'h0410C); rc_w = rv;
+            axr(20'h04004);
             $fwrite(fm, "regchk%0d %0d %0d\n", rc, rc_w, rv);
         end
-        axw(17'h00058, kk); axw(17'h0005C, dp); axw(17'h00060, nsv);
-        axw(17'h0000C, na); axw(17'h00010, ndm); axw(17'h00014, shv);
-        axw(17'h00008, 32'h1000);                 // WRST
+        axw(20'h04100, kk); axw(20'h04104, dp); axw(20'h04108, nsv);
+        axw(20'h0400C, na); axw(20'h04010, ndm); axw(20'h04014, shv);
+        axw(20'h04008, 32'h1000);                 // WRST
         repeat (100) @(posedge clk);
-        axr(17'h00064);
+        axr(20'h0410C);
         $fwrite(fm, "wcur %0d\n", rv);
         pause <= 0;
         // 3 フレーム溜まるまで待つ（FIN を読む）
         rv = 0;
-        while (rv < 3) begin repeat (2000) @(posedge clk); axr(17'h00020); end
-        axw(17'h00008, 32'h1);                    // RUN
-        axr(17'h00050); $fwrite(fm, "run_f0 %0d\n", rv);
-        axr(17'h0001C); seq_seen = rv;
+        while (rv < 3) begin repeat (2000) @(posedge clk); axr(20'h04070); end
+        axw(20'h04008, 32'h1);                    // RUN
+        axr(20'h04068); $fwrite(fm, "run_f0 %0d\n", rv);
+        axr(20'h0401C); seq_seen = rv;
         nd = 0;
         while (nd < ndm) begin
             repeat (500) @(posedge clk);
-            axr(17'h0001C);
+            axr(20'h0401C);
             if (rv != seq_seen) begin
                 pause <= 1;
                 repeat (20) @(posedge clk);
                 seq_seen = rv;
-                axr(17'h00030); dk = rv;  axr(17'h00034); dn = rv;  axr(17'h00038); df0 = rv;
-                axr(17'h00040); dsat = rv; axr(17'h0004C); dbk = rv; axr(17'h00044); dsnf = rv;
+                axr(20'h0403C); dk = rv;  axr(20'h04048); dn = rv;  axr(20'h04040); df0 = rv;
+                axr(20'h0404C); dsat = rv; axr(20'h04220); dbk = rv; axr(20'h04218); dsnf = rv;
                 $fwrite(fd, "# %0d %0d %0d %0d %0d %0d %0d\n", seq_seen, dk, df0, dn, dsat, dbk, dsnf);
                 for (i = 0; i < 4096; i = i + 1) begin
-                    axr(17'h08000 + 8 * i);     lo = rv;
-                    axr(17'h08000 + 8 * i + 4);
+                    axr(20'h88000 + 8 * i);     lo = rv;
+                    axr(20'h88000 + 8 * i + 4);
                     $fwrite(fs, "%0d %0d\n", $signed(lo), $signed(rv));
                 end
                 for (i = 0; i < 4096; i = i + 1) begin
-                    axr(17'h10000 + 8 * i);     lo = rv;
-                    axr(17'h10000 + 8 * i + 4);
+                    axr(20'h90000 + 8 * i);     lo = rv;
+                    axr(20'h90000 + 8 * i + 4);
                     $fwrite(fd, "%0d\n", {rv, lo});
                 end
-                axr(17'h0001C);
+                axr(20'h0401C);
                 if (rv != seq_seen) $display("tb_top: 読み出しの間に SEQ が進んだ（%0d → %0d）", seq_seen, rv);
                 nd = nd + 1;
                 pause <= 0;
@@ -130,12 +133,12 @@ module tb_top;
         end
         pause <= 1;
         repeat (100) @(posedge clk);
-        axr(17'h00018); $fwrite(fm, "flags %0d\n", rv & 32'hFF);
+        axr(20'h04018); $fwrite(fm, "flags %0d\n", rv & 32'hFF);
         $fwrite(fm, "satflags %0d\n", (rv >> 8) & 7);     // proj015: [10] = 時分割の追い越し
-        axr(17'h00020); lo = rv; axr(17'h00028);
+        axr(20'h04070); lo = rv; axr(20'h04078);
         $fwrite(fm, "fin %0d fout %0d\n", lo, rv);
-        axr(17'h00080); $fwrite(fm, "stall %0d\n", rv);
-        axr(17'h00084); $fwrite(fm, "rdy0 %0d\n", rv);
+        axr(20'h04208); $fwrite(fm, "stall %0d\n", rv);
+        axr(20'h0420C); $fwrite(fm, "rdy0 %0d\n", rv);
         $display("tb_top: K=%0d NS=%0d NACC=%0d NDUMP=%0d SHIFT=%0d ダンプ %0d 個、入力 %0d / %0d ビート", kk, nsv, na, ndm, shv, nd, b, nbeat);
         $fclose(fz); $fclose(ff); $fclose(fd); $fclose(fs); $fclose(fm);
         $finish;
@@ -151,7 +154,7 @@ module tb_top;
         end
     end
     always @(posedge clk) begin
-        if (dut.g_w[0].zv) $fwrite(fz, "%0d %0d\n", dut.g_w[0].zr, dut.g_w[0].zi);
-        if (dut.g_w[0].u_ws.m_tv) $fwrite(ff, "%0d %0d %0d\n", dut.g_w[0].u_ws.m_tu[11:0], $signed(dut.g_w[0].u_ws.m_td[30:0]), $signed(dut.g_w[0].u_ws.m_td[62:32]));
+        if (dut.u_win.g_w[0].zv) $fwrite(fz, "%0d %0d\n", dut.u_win.g_w[0].zr, dut.u_win.g_w[0].zi);
+        if (dut.u_win.g_w[0].u_ws.m_tv) $fwrite(ff, "%0d %0d %0d\n", dut.u_win.g_w[0].u_ws.m_tu[11:0], $signed(dut.u_win.g_w[0].u_ws.m_td[30:0]), $signed(dut.u_win.g_w[0].u_ws.m_td[62:32]));
     end
 endmodule

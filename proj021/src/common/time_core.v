@@ -24,7 +24,9 @@
 //   - EPOCH は ctrl_aclk 側（rst_ctrl。MMCM に依らない）で aresetn の解除を数える（proj007 rev2 と同じ）。gray で DSP 側へ渡す
 //
 // ---- レジスタ（AXI4-Lite、DSP ドメイン。番地はバイト）----
-//   0x00 ID        R   0x0016_7101（proj016・time_core rev1）
+//   0x00 ID        R   proj021 手順 2-1: **IF_ID**（INTERFACE 2.4 の形。[31:24] IF_VER 2 / [23:16] BIT_KIND / [15:8] BIT_REV / [7:0] CORE_KIND 2 = 時刻のコア）。
+//                      proj021 1b までは 0x0021_7101 のような数値（proj016・time_core rev1 = 0x0016_7101）
+//   0x5C PROJ      R   proj021 手順 2-1: 作った proj と rev（0x0021_0200）。**timebase.CAL の鍵**（追跡のため。IF_ID は bit の種類と版しか持たない）
 //   0x04 PARAM     R   1 秒のビート数（256,000,000）
 //   0x08 CTRL      W   [0] ARM（START_AT で発火）/ [1] 取り消し / [3] ANCHORED を 1 / [4] ANCHORED を 0 / [8] 数え（GLITCH・BAD・MISS）を 0
 //                  R   [0] 予約中 / [1] 遅すぎ（START_AT − T < 16）/ [2] 遠すぎ（≧ 2^40 ≒ 72 分）/ [3] 発火した（次の ARM まで）/
@@ -49,7 +51,10 @@ module time_core #(
     parameter integer BEATS_PER_SEC = 256000000,
     parameter integer BLANK_BEATS   = 128000000,    // 0.5 s より短い間隔の縁はグリッチ
     parameter integer MISS_BEATS    = 384000000,    // 1.5 s 来なければ「来ていない」
-    parameter integer BUILD_TAG     = 0
+    parameter integer BUILD_TAG     = 0,
+    parameter integer BIT_KIND      = 2,            // proj021 手順 2-1: SAM45-Fine
+    parameter integer BIT_REV       = 1,
+    parameter integer PROJ          = 32'h0021_0200
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axi, ASSOCIATED_RESET aresetn" *)
@@ -89,7 +94,8 @@ module time_core #(
     output reg          go_out,
     output reg  [3:0]   ev_out
 );
-    localparam [31:0] ID = 32'h0021_7101;   // proj021 1b: 中身は proj020 と同一（ギアボックスの遅れが変わり timebase.CAL を測り直すため ID だけ）。proj020: 中身は proj017 と同一（timebase.CAL を bit ごとに持つため）。proj017 0x0017_7101: 中身は proj016 rev1 と同一。ID だけ（timebase.CAL を bit ごと・ADC ごとに持つため）
+    localparam [7:0]  BK8 = BIT_KIND, BR8 = BIT_REV;
+    localparam [31:0] ID = {8'd2, BK8, BR8, 8'd2};   // proj021 手順 2-1: IF_ID（CORE_KIND 2）。旧: 0x0021_7101（proj021 1b: 中身は proj020 と同一（ギアボックスの遅れが変わり timebase.CAL を測り直すため ID だけ）。proj020: 中身は proj017 と同一（timebase.CAL を bit ごとに持つため）。proj017 0x0017_7101: 中身は proj016 rev1 と同一。ID だけ（timebase.CAL を bit ごと・ADC ごとに持つため）
     wire rst = ~aresetn;
 
     // ---------------------------------------------------------------- 書き込み
@@ -320,6 +326,7 @@ module time_core #(
             6'h14: rr = fired_t[31:0];
             6'h15: rr = fired_t[63:32];
             6'h16: rr = BUILD_TAG;
+            6'h17: rr = PROJ;
             default: rr = 32'hDEAD_BEEF;
         endcase
     end

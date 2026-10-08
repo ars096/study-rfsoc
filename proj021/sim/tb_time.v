@@ -74,7 +74,8 @@ module tb_time;
         axw(8'h08, 32'h8);   // ANCHORED を 1
         repeat (4) @(posedge clk);
         if (ev_loc[3] !== 1'b0) begin $display("tb_time: NG ANCHORED を立てても ev[3] が 1"); ng = ng + 1; end
-        axr(8'h00); if (rd_v !== 32'h0021_7101) begin $display("tb_time: NG ID"); ng = ng + 1; end
+        axr(8'h00); if (rd_v !== 32'h0202_0102) begin $display("tb_time: NG IF_ID %08x", rd_v); ng = ng + 1; end   // proj021 手順 2-1
+        axr(8'h5C); if (rd_v !== 32'h0021_0200) begin $display("tb_time: NG PROJ %08x", rd_v); ng = ng + 1; end
         axr(8'h04); if (rd_v !== BPS) begin $display("tb_time: NG PARAM"); ng = ng + 1; end
         // ---- T の読み（LO で HI を固定）----
         axr(8'h18); lo = rd_v; axr(8'h1C); hi = rd_v;

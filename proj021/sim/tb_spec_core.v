@@ -116,10 +116,25 @@ module tb_spec_core;
     end
 
     // ---- AXI4-Lite ----
+    // proj021 手順 2-1: tb の中は旧番地のまま書き、ここで v2 の番地（spec_core の中の 16 bit。src/common/spec_core.v の冒頭）に直す
+    function [15:0] xs(input [15:0] a);
+        if (a[15:8] == 8'h01) xs = 16'h1100 + a[7:0];                 // total power のレジスタ
+        else if (a[15:8] != 8'h00) xs = a;                             // リング・スナップショット・スペクトル
+        else if (a[7:0] < 8'h20) xs = a;
+        else if (a[7:0] >= 8'h58 && a[7:0] <= 8'hB4) xs = a + 16'h01A8;   // 診断
+        else case (a[7:0])
+            8'h20: xs = 16'h070; 8'h24: xs = 16'h074; 8'h28: xs = 16'h078; 8'h2C: xs = 16'h07C; 8'h30: xs = 16'h03C;
+            8'h34: xs = 16'h048; 8'h38: xs = 16'h040; 8'h3C: xs = 16'h044; 8'h40: xs = 16'h04C; 8'h44: xs = 16'h260;
+            8'h48: xs = 16'h264; 8'h4C: xs = 16'h268; 8'h50: xs = 16'h068; 8'h54: xs = 16'h06C; 8'hC0: xs = 16'h02C;
+            8'hC4: xs = 16'h030; 8'hC8: xs = 16'h050; 8'hCC: xs = 16'h054; 8'hD0: xs = 16'h058; 8'hD4: xs = 16'h05C;
+            8'hD8: xs = 16'h060; 8'hDC: xs = 16'h064; 8'hE0: xs = 16'h038;
+            default: begin xs = 16'h03FC; $display("tb_spec_core: 旧番地の表に無いレジスタ %02x", a[7:0]); end
+        endcase
+    endfunction
     task axi_wr(input [15:0] a, input [31:0] d);
         begin
             @(posedge clk);
-            awaddr <= a; wdata <= d; awvalid <= 1'b1; wvalid <= 1'b1; bready <= 1'b1;
+            awaddr <= xs(a); wdata <= d; awvalid <= 1'b1; wvalid <= 1'b1; bready <= 1'b1;
             @(posedge clk);
             while (!(awready && wready)) @(posedge clk);
             awvalid <= 1'b0; wvalid <= 1'b0;
@@ -132,7 +147,7 @@ module tb_spec_core;
     task axi_rd(input [15:0] a, output [31:0] d);
         begin
             @(posedge clk);
-            araddr <= a; arvalid <= 1'b1; rready <= 1'b1;
+            araddr <= xs(a); arvalid <= 1'b1; rready <= 1'b1;
             @(posedge clk);
             while (!arready) @(posedge clk);
             arvalid <= 1'b0;

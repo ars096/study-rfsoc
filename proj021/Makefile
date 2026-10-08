@@ -82,7 +82,7 @@ SIM_DEFS  := $(if $(filter 1 2,$(SIM_START)),-DSTART_GAPS) $(if $(filter 2,$(SIM
 SIMDIR    := build-sim-s$(SIM_SHIFT)$(if $(filter-out 0,$(SIM_SKEW)),-k$(SIM_SKEW))$(if $(filter-out 0,$(SIM_START)),-g$(SIM_START))
 RTL       := src/common/spec_core.v src/common/tp_core.v src/common/cmul.v src/common/dft16.v src/common/tw_rom.v src/common/dstamp.v src/common/adc_ev.v
 
-.PHONY: sim-time sim-time-p sim-wstamp sim-wstamp-p sim-tsys sim-tsys-p sim-wdelay sim-t-all sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p
+.PHONY: sim-regmap sim-regmap-p sim-time sim-time-p sim-wstamp sim-wstamp-p sim-tsys sim-tsys-p sim-wdelay sim-t-all sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p
 .PHONY: all sim sim-gb sim-tp sim-all sim-spec-all gb-cdc worst-paths survey twiddle prog id timing-check ps-preset clean
 
 all: $(OUTDIR)
@@ -377,7 +377,7 @@ survey:
 sim-top:
 	mkdir -p build-sim-top/ns1
 	$(PYTHON) sim/check_top.py gen build-sim-top 1
-	$(IVERILOG) -g2005 -Isrc/common -o build-sim-top/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/adc_ev.v sim/win_fft_model.v sim/tb_top.v
+	$(IVERILOG) -g2005 -Isrc/common -o build-sim-top/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/s45_core.v src/common/adc_ev.v sim/win_fft_model.v sim/tb_top.v
 	$(VVP) -n build-sim-top/tb +K=5 +DPHI=3977774351 +NS=1 +NACC=2 +NDUMP=3 +SHIFT=4 +GAP=1 +NSAMP=917504 +IN=build-sim-top/x.hex +DIR=build-sim-top/ns1 | grep '^tb_top:'
 	$(PYTHON) sim/check_top.py check build-sim-top 1 2 3 4 | tee build-sim-top/check.log
 
@@ -386,7 +386,7 @@ sim-top:
 sim-win4:
 	mkdir -p build-sim-win4
 	$(PYTHON) sim/check_win4.py gen build-sim-win4
-	$(IVERILOG) -g2005 -Isrc/common -o build-sim-win4/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/adc_ev.v sim/win_fft_model.v sim/tb_win4.v
+	$(IVERILOG) -g2005 -Isrc/common -o build-sim-win4/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/s45_core.v src/common/adc_ev.v sim/win_fft_model.v sim/tb_win4.v
 	$(VVP) -n build-sim-win4/tb +IN=build-sim-win4/x.hex +CFG=build-sim-win4/cfg.txt +DIR=build-sim-win4 +NSAMP=1048576 | grep '^tb_win4:'
 	$(PYTHON) sim/check_win4.py check build-sim-win4 | tee build-sim-win4/check.log
 
@@ -419,7 +419,7 @@ TSYS_DIR := build-sim-tsys$(if $(filter 1,$(SIM_TSYS_POSCTL)),-posctl)
 sim-tsys:
 	mkdir -p $(TSYS_DIR)
 	$(IVERILOG) -g2005 -Isrc/common $(if $(filter 1,$(SIM_TSYS_POSCTL)),-DWIN_POSCTL_SHIFT -DSPEC_POSCTL_SHIFT) -o $(TSYS_DIR)/tb src/common/time_core.v src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) \
-	  src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/adc_ev.v src/common/spec_core.v src/common/dft16.v src/common/tw_rom.v sim/win_fft_model.v sim/lane_fft_model.v sim/tb_tsys.v
+	  src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/s45_core.v src/common/adc_ev.v src/common/spec_core.v src/common/dft16.v src/common/tw_rom.v sim/win_fft_model.v sim/lane_fft_model.v sim/tb_tsys.v
 	$(VVP) -n $(TSYS_DIR)/tb | grep '^tb_tsys:' | tee $(TSYS_DIR)/check.log
 sim-tsys-p:
 	$(MAKE) --no-print-directory sim-tsys SIM_TSYS_POSCTL=1
@@ -438,18 +438,30 @@ T4_DIR := build-sim-t4adc$(if $(filter 1,$(SIM_T4_POSCTL)),-posctl)
 sim-t4adc:
 	mkdir -p $(T4_DIR)
 	$(IVERILOG) -g2005 -Isrc/common $(if $(filter 1,$(SIM_T4_POSCTL)),-DT4_POSCTL) -o $(T4_DIR)/tb src/common/time_core.v src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) \
-	  src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/adc_ev.v sim/win_fft_model.v sim/tb_t4adc.v
+	  src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/s45_core.v src/common/adc_ev.v sim/win_fft_model.v sim/tb_t4adc.v
 	$(VVP) -n $(T4_DIR)/tb | grep '^tb_t4adc:' | tee $(T4_DIR)/check.log
 sim-t4adc-p:
 	$(MAKE) --no-print-directory sim-t4adc SIM_T4_POSCTL=1
+# proj021 手順 2-1 S21-1: コアの番地（INTERFACE v2 の 2.4・2.5）と自己記述を端から。陽性対照 sim-regmap-p（tb の番地を 4 バイトずらす）
+#   → 落ちるべき。成否は「結果:」の行。数分
+REGMAP_DIR := build-sim-regmap$(if $(filter 1,$(SIM_REGMAP_POSCTL)),-posctl)
+sim-regmap:
+	mkdir -p $(REGMAP_DIR)
+	$(IVERILOG) -g2005 -Isrc/common $(if $(filter 1,$(SIM_REGMAP_POSCTL)),-DREGMAP_POSCTL) -o $(REGMAP_DIR)/tb src/common/time_core.v src/common/cmul.v src/common/dft16f.v \
+	  src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v \
+	  src/common/s45_core.v src/common/adc_ev.v src/common/spec_core.v src/common/dft16.v src/common/tw_rom.v sim/win_fft_model.v sim/lane_fft_model.v sim/tb_regmap.v
+	$(VVP) -n $(REGMAP_DIR)/tb +DUMP=$(REGMAP_DIR)/regs.txt | grep '^tb_regmap:' | tee $(REGMAP_DIR)/check.log
+	$(if $(filter 1,$(SIM_REGMAP_POSCTL)),,cd pynq && $(PYTHON) test_regmap.py ../$(REGMAP_DIR)/regs.txt | tee -a ../$(REGMAP_DIR)/check.log)
+sim-regmap-p:
+	$(MAKE) --no-print-directory sim-regmap SIM_REGMAP_POSCTL=1
 # sim-wdelay: 窓の遅れ D(NS)（ADC のビート → z が wspec に入るまで）。pynq/timebase.py の WIN_DELAY_BEATS の出どころ
 sim-wdelay:
 	mkdir -p build-sim-wdelay
 	$(IVERILOG) -g2005 -Isrc/common -o build-sim-wdelay/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) sim/tb_wdelay.v
 	for n in 1 2 3 4 5 6 7 8; do $(VVP) -n build-sim-wdelay/tb +NS=$$n +LEN=$$(( n < 4 ? 8000 : 1000 << (n - 2) )) | grep -E '^(wdelay|wfirst):'; done | tee build-sim-wdelay/delay.log
 sim-t-all:
-	$(MAKE) --no-print-directory -j4 sim-time sim-time-p sim-wstamp sim-wstamp-p sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p
-	@grep -H "結果" build-sim-time/check.log build-sim-time/check1.log build-sim-wstamp/check.log build-sim-wstamp-posctl/check.log \
+	$(MAKE) --no-print-directory -j4 sim-time sim-time-p sim-wstamp sim-wstamp-p sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p sim-regmap sim-regmap-p
+	@grep -H "結果" build-sim-regmap/check.log build-sim-regmap-posctl/check.log build-sim-time/check.log build-sim-time/check1.log build-sim-wstamp/check.log build-sim-wstamp-posctl/check.log \
 	  build-sim-t4adc/check.log build-sim-t4adc-posctl/check.log build-sim-wgrid/check.log build-sim-wgrid-posctl/check.log
 
 # spec_core の sim と窓の sim を全部（proj016: ＋ 時刻の速い sim。sim-tsys・sim-win4 は別に回す）
