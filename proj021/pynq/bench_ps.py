@@ -25,6 +25,7 @@ M-5  束ねの 1 周: リングを模したバッファに 1 BASE（10.24 ms）�
 **specd を止めてから測る**（同じ A53 を取り合うと数が意味を持たない）。測る前に README の予言を書く。
 """
 import argparse
+import faulthandler
 import json
 import os
 import struct
@@ -239,6 +240,9 @@ def m5(args):
                         f = acc[s].astype(np.float32)   # 4.5: 束ねた u64 を最も近い float32 に
                         zlib.crc32(f)                   # 送り出しの CRC（s45proto の頭）
                 ts.append(time.perf_counter() - t0)
+        # 2026-10-08: バッファを解放する前に、そのバッファを指す numpy の view を全部手放す
+        # （view が残ったまま freebuffer すると、後で view が消えるときに解放済みの領域を触る疑い）
+        del u8, hdr, trl, pay, recs
         b.free()
         a = np.array(ts) * 1e3
         r = dict(nstream=nstream, nch=nch, n_sum=n_sum, MBps_per_base=per_base / BASE_S / 1e6,
@@ -252,6 +256,7 @@ def m5(args):
 
 
 def main():
+    faulthandler.enable()          # 2026-10-08: M-5 が traceback なしに sam45fine の後で止まった。落ちたら場所を stderr に出す
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--only", nargs="+", choices=["m2", "m3", "m4", "m5"], default=["m2", "m3", "m4", "m5"])
     p.add_argument("--no-pynq", dest="pynq", action="store_false", help="PYNQ の無い計算機で道具を確かめる")
@@ -280,7 +285,14 @@ def main():
     if {"m3", "m4"} & set(args.only):
         res.update(m3m4(args, set(args.only)))
     if "m5" in args.only:
-        res["m5"] = m5(args)
+        res["m5"] = {}
+        for name in args.configs:          # 構成ごとに。1 つが落ちても残りを測り、結果を残す
+            a1 = argparse.Namespace(**{**vars(args), "configs": [name]})
+            try:
+                res["m5"].update(m5(a1))
+            except Exception as e:  # noqa: BLE001  落ちた理由を結果に残す
+                log(f"M-5 {name}: 落ちた（{type(e).__name__}: {e}）")
+                res["m5"][name] = dict(error=f"{type(e).__name__}: {e}")
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(res, f, indent=1, ensure_ascii=False)
