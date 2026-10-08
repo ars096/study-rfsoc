@@ -328,7 +328,7 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 | sim-tsys | **全部通過**（s45_core（FULL = 1）1 個に窓と全帯域、旧番地 → v2 の表で。同時開始・DUMP_T・SHIFT と CFG の取り込み・健全性・TANCH・予約の WRST） |
 | sim（spec_core、7-0-0・7-0-1） | 全部通過（spec_core の中の番地の表で。FULL の診断の SRST・GRST・INJ・起動の見張り） |
 | sim-time・sim-time-p | 通過（IF_ID 0x0202_0102・PROJ）・陽性対照が落ちた（6 件） |
-| 残り（Vivado サーバの `make sim-all`） | sim の 4-0-0・7-5-0・7-0-2、sim-gb・sim-tp（RTL は 1b と同じ）、sim-win-all（触っていない部品）、sim-wstamp・sim-wgrid |
+| 残り（Vivado サーバの `make sim-all` と sim-tsys-p） | sim の 4-0-0・7-5-0・7-0-2、sim-gb・sim-tp（RTL は 1b と同じ）、sim-win-all（触っていない部品）、sim-wstamp・sim-wgrid、sim-tsys の陽性対照 |
 
 - 気にしておくこと（ビルド）: s45_core_1〜3 の FULL の入口（s_axis_full・full_gb_stat・full_adc_stat）はつながない。IP Integrator が 0 に結ぶはずだが、**CRITICAL WARNING が出たら定数のセルで結ぶ**（1b までは CRITICAL WARNING なし）
 
@@ -339,6 +339,7 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 cd ~/git/rfsoc && git pull && cd proj021 && pwd
 mv build build-1b; mv build-PE build-1b-PE
 make sim-all > sim-all.log 2>&1 &                       # 残りの sim（成否は各ログの「結果:」）
+make sim-tsys-p > /dev/null 2>&1 &                      # → build-sim-tsys-posctl/check.log が「失敗」になること（陽性対照）
 make IMPL=Performance_Explore > /dev/null 2>&1 &        # → build-PE/
 make > /dev/null 2>&1 &                                 # → build/（既定）
 wait
