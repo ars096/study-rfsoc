@@ -276,7 +276,7 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 | 2.5 | DDC（今の win_core の窓） | FULL（今の spec_core） |
 |---|---|---|
 | 0x00 SID | 新（KIND 3・s） | 新（KIND 1・s = 2） |
-| 0x04 PARAM | [7:0] 12 / [11:8] 今の WNS / [15:12] 今の G（種類に固有）/ [23:16] 64 / [31:24] 0 | [7:0] 13 / [23:16] 64 / [31:24] 0 |
+| 0x04 PARAM | [7:0] 12 / [11:8] 今の WNS / [15:12] 今の G（種類に固有）/ [23:16] 64 / [31:24] 0 | [7:0] 13 / [15:8] FFT_CFG（旧 ID の下位 8 bit）/ [23:16] 64 / [31:24] 0 |
 | 0x08〜0x1C CTRL・N_ACC・N_DUMP・SHIFT・FLAGS・SEQ | 同じ番地 | 同じ番地。CTRL の [9]〜[11]（診断を消す・SRST・GRST）は FULL の診断として残す。[12] WRST・[13] ARM_WRST は **SRC と CFG_ID を取り込むだけ**（FULL にはリセットする窓の経路が無い） |
 | 0x20 NCH・0x24 FRAME_BEATS | 4096・2048 << WNS（今効いている） | 4096・512 |
 | 0x28 SRC | [3:0] = コアの ADC、[31] = 0 | [3:0] 今効いている入力 / [31] = 1。書いた値は次の WRST で効く（**今の FULL_SEL は書いた瞬間に効く。ここだけ振る舞いが変わる**） |
@@ -298,7 +298,7 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 3. 資源: DSP・BRAM・URAM は同じ。LUT +500〜+2,000（番地の振り分けと SID・定数の読み）、FF +300〜+1,000（振り分けのレジスタ）。spec_core_0 の 1 個ぶんの SmartConnect の M が減るので、SmartConnect は少し減る
 4. 時間: 既定で WNS −0.10〜+0.05（壁は今の u_ws・ddc のまま。振り分けは全部レジスタで受けるので新しい壁にしない）。**s45_core_0 の読みの選びが 1 段増える経路が上位に出たら、その段を足す**
 5. CDC の分類ごとの件数は 1b と同じ（乗り換えは足さない）
-6. 実機: P-1・P-2（W-G）・全帯域の golden・P-5 が 1b と同じに通る（PS は自己記述で番地を引く）。AXI4-Lite の読み 1 回は FULL の流れだけ 2 クロック遅い（≒ 20 クロックのうち 2）
+6. 実機: P-1・P-2（W-G）・全帯域の golden・P-5 が 1b と同じに通る（PS は自己記述で番地を引く）。AXI4-Lite の読み 1 回は 3〜4 クロック遅い（≒ 20 クロックのうち。振り分けは全部のコアの入口にあるので、窓も同じ）
 
 **判定（2-1）**:
 
@@ -308,6 +308,65 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 | S21-2 | `make sim-all`・sim-top・sim-win4・sim-tsys（番地を直した tb） | 全部通過（予言 1） |
 | S21-3 | ビルド（既定・PE）・`make worst-paths`・CDC | 予言 3〜5 |
 | S21-4 | 実機: `s45core.py --list`（自己記述の表）・P-1・P-2・全帯域の golden・P-5（specd 経由） | 表が上と同じ・P-* が 1b と同じ |
+
+**実装（2026-10-09）**:
+
+- RTL: `src/common/s45_core.v`（新。振り分け・win_core・FULL = 1 で spec_core）、`win_core.v`（番地・自己記述。full_sel の出口は s45_core へ）、`spec_core.v`（番地・SRC・WRST・ARM_WRST、src_sel の出口）、`time_core.v`（IF_ID・PROJ）。窓・全帯域・TP の中身の論理には触っていない
+  - **FULL = 1 は NW ≦ 2 のときだけ**（0xC0000 は窓 2 の仮の読み窓と重なる。s45_core の initial で止める。2-2 で仮の読み窓が無くなれば外れる）
+- build.tcl: セル s45_core_i・CORE_PORT・BIT_KIND・PROJ、spec_core_0 のセルと SmartConnect の M を 1 本減らす、結線と番地の照合・資源の数え（`s45_core_0/inst/g_full.u_full`・`s45_core_i/inst/u_win`）。`tools/worst_paths.tcl` の束ねの深さ 4 → 5（u_win の 1 段）
+- sim: **sim-regmap（新、S21-1）**と陽性対照 sim-regmap-p、tb_regmap の読みを `pynq/test_regmap.py` に通して PS の定数を確かめる。tb_t4adc・tb_top・tb_win4 は s45_core 越しに v2 の番地で、tb_tsys は s45_core（FULL = 1）1 個に旧番地 → v2 の表（xa）で、tb_spec_core は spec_core の中の番地の表（xs）で。check.py・check_top.py・check_win4.py の ID の照合を SID・IF_ID に。sim-t-all に sim-regmap を足した
+- PS: `pynq/s45core.py`（新。discover・表・`--list`）。window・spectrometer（Spec に base・lbase、open_full_stream）・timetest（open_all・select_full）・timebase（IF_ID・CAL の鍵 = PROJ）・s45acq・s45cal（PROJ で照らす）・fine・gbboot（.hwh の名前で旧と v2 を見分ける）・winwrst を v2 の番地に。**直していないもの**: win16.py（proj015 の 4 ADC × 4 窓専用。SAM45-Fine では使わない）
+
+**sim（クラウドの iverilog 12、2026-10-09）**:
+
+| sim | 結果 |
+|---|---|
+| **sim-regmap（S21-1）** | **全部通過（176 項目）**。陽性対照 sim-regmap-p（tb の流れのブロックの番地を 4 バイトずらす）は **95 件で落ちた**。tb の読みを `pynq/test_regmap.py` に通して **PS の定数（s45core・window・spectrometer・timetest・timebase）も通過（76 項目）**。1 回目は tb の CORE_PORT の書き間違い（ADC_B を 0x2001 と書いた。正は 0x0201 = タイル 2・スライス 0）を test_regmap が拾った（RTL・build.tcl の式は正しい） |
+| sim-t4adc・sim-t4adc-p | 通過・陽性対照が落ちた（s45_core × 4 越し、v2 の番地。8 窓・TP 4 本が同じクロックに RUN） |
+| sim-top | **全部通過**（s45_core 越し、仮の読み窓で 3 ダンプ × 4096 ch を読み、**模型と bit 単位で一致**・スナップショット = PFB の模型。予言 1 どおり） |
+| sim-win4 | **全部通過**（NW 4・FULL 0 の s45_core。SID・WIDX・SNAP_SEL・TP、無い流れは 0） |
+| sim-tsys | **全部通過**（s45_core（FULL = 1）1 個に窓と全帯域、旧番地 → v2 の表で。同時開始・DUMP_T・SHIFT と CFG の取り込み・健全性・TANCH・予約の WRST） |
+| sim（spec_core、7-0-0・7-0-1） | 全部通過（spec_core の中の番地の表で。FULL の診断の SRST・GRST・INJ・起動の見張り） |
+| sim-time・sim-time-p | 通過（IF_ID 0x0202_0102・PROJ）・陽性対照が落ちた（6 件） |
+| 残り（Vivado サーバの `make sim-all`） | sim の 4-0-0・7-5-0・7-0-2、sim-gb・sim-tp（RTL は 1b と同じ）、sim-win-all（触っていない部品）、sim-wstamp・sim-wgrid |
+
+- 気にしておくこと（ビルド）: s45_core_1〜3 の FULL の入口（s_axis_full・full_gb_stat・full_adc_stat）はつながない。IP Integrator が 0 に結ぶはずだが、**CRITICAL WARNING が出たら定数のセルで結ぶ**（1b までは CRITICAL WARNING なし）
+
+### 2-1 のビルドと実機
+
+```bash
+# Vivado サーバ（1b の build/・build-PE/ は比べるために名前を変えて残す。同じ proj021 の名前なので、残すと worst-paths が混ざる）
+cd ~/git/rfsoc && git pull && cd proj021 && pwd
+mv build build-1b; mv build-PE build-1b-PE
+make sim-all > sim-all.log 2>&1 &                       # 残りの sim（成否は各ログの「結果:」）
+make IMPL=Performance_Explore > /dev/null 2>&1 &        # → build-PE/
+make > /dev/null 2>&1 &                                 # → build/（既定）
+wait
+grep -E 'TIMING \(確定\)' build/vivado.log build-PE/vivado.log
+grep -c 'CRITICAL WARNING' build/vivado.log build-PE/vivado.log
+grep -E 's45_core_|FULL の流れ|DSP48E2' build/vivado.log | head -20   # CORE_PORT・FULL・資源の数え（FULL 504・u_win 520）
+grep -E '照合した行|陽性対照' build/vivado.log                       # 結線の照合（spec_core_* のセルが無い、を含む）
+make worst-paths                                                       # 束ねの深さ 5（s45_core_i/inst/u_win/…）
+
+# Vivado サーバ → ボード（WNS の良い方。glob で送らず名前を指定する）
+scp build/proj021.bit build/proj021.hwh xilinx@$B:~/proj021/
+scp pynq/*.py pynq/tp_cal.json xilinx@$B:~/proj021/
+
+# ボード（root。specd を止めてから）。S21-4
+cd ~/proj021
+python3 s45core.py --list --clkin 0 --ref 10                           # 自己記述の表（上の「コアの共通部の値」と同じこと）
+python3 timetest.py --clkin 0 --ref 10 --t0 --seconds 30               # P-0: IF_ID・PROJ・PPS
+python3 window.py --clkin 0 --ref 10 --probe --adc 0 --win 0           # P-1（A0）
+python3 window.py --clkin 0 --ref 10 --probe --adc 3 --win 1 --w 8     # P-1（D1）
+python3 window.py --clkin 0 --ref 10 --golden --w 256                  # P-2（W-G）
+python3 window.py --clkin 0 --ref 10 --golden --w 8
+python3 spectrometer.py --clkin 0 --ref 10 --ch A --golden             # 全帯域の golden（FULL の SRC → WRST → SRST の道）
+python3 window.py --clkin 0 --ref 10 --tone 3010.5 --w6 --w 256        # P-3（W-6: 窓 / 全帯域。FULL を窓の ADC に選ぶ道）
+python3 timetest.py --clkin 0 --ref 10 --t1 --seconds 120              # P-4（F-1: 13 コアが START_AT + 1 で RUN）
+# P-5: specd を proj021.bit で起こし、s45resp.py（proj020 の P-5 と同じ配置・レベル）
+```
+
+
 
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
