@@ -8,7 +8,7 @@ dBm への換算は受け側で行う（係数を測り直しても、過去の�
   dBm（ADC の入口、SMA）= 10·log10(σ_x²) + K_adc、σ_x² = Σx² / (フレーム数 · 8192)（14 bit の LSB²、TP の 1 サンプルの平均の電力）
 
 tp_cal.json の形:
-  {"version": 1, "bit_id_win": "00170100", "unit": "dBm at ADC input (SMA)",
+  {"version": 1, "bit_id_win": "00170100"（proj020 から一覧も可: ["00170100", "00200100"]）, "unit": "dBm at ADC input (SMA)",
    "adc": {"A": {"k_db": -69.37, "valid_dbfs": [-47, -7], "provisional": true, "source": "...", "date": "2026-10-06"}, ...},
    "note": "..."}
   provisional: true = 見積もりを含む暫定（0 dBFS ≒ +5.9 dBm の正弦波の値を使ったなど）。PM を ADC の口で測って置き換えたら false
@@ -38,12 +38,13 @@ def check(cal, ids):
     """載っている bit の ID と較正ファイルの bit_id_win を照らす（timebase の CAL と同じく、違えば使わない）。戻り値 (使えるか, 説明)"""
     if cal is None:
         return False, "較正ファイルが無い"
-    want = str(cal.get("bit_id_win", "")).lower()
+    w = cal.get("bit_id_win", "")
+    wants = [str(v).lower() for v in (w if isinstance(w, list) else [w]) if str(v)]   # proj020: 一覧も許す（TP の経路が同じ bit）
     got = str((ids or {}).get("win", "")).lower()
     if got == "fake":
         return True, "偽物（ID を照らさない）"
-    if want and want != got:
-        return False, f"bit の ID が違う（較正 {want}・載っている {got}）"
+    if wants and got not in wants:
+        return False, f"bit の ID が違う（較正 {'/'.join(wants)}・載っている {got}）"
     return True, "ok"
 
 
