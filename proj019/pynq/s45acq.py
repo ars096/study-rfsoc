@@ -77,6 +77,7 @@ class Clock:
         self.tb, self.wd = tb, win_delay
         self.ok = tb is not None and tb._anchor is not None
         self.err = None
+        self.lost = None                        # 落ちた瞬間の記録（EVENT CLOCK_LOST で 1 回だけ出す）
         self.t_next = 0.0
 
     def poll(self):
@@ -87,6 +88,13 @@ class Clock:
             self.tb.check()
         except Exception as e:                  # TimebaseError
             self.ok, self.err = False, str(e)
+            # proj019（2026-10-08、cwnight1 で 1.45 h 目から時刻が落ち、原因を残していなかった）: 落ちた瞬間の time_core の中を残す
+            try:
+                tc = self.tb.tc
+                self.lost = dict(err=str(e), host_time=time.time(), status=tc.status(), counters=tc.counters(),
+                                 pps=tc.pps(self.tb.path), anchor={k: int(v) for k, v in self.tb._anchor.items()})
+            except Exception as e2:
+                self.lost = dict(err=str(e), snapshot_error=str(e2))
 
     def utc_ns(self, beat, ns=None, adc=0):
         if not self.ok:
@@ -824,6 +832,10 @@ class Acq:
             be.poll_tp(i)
             self._flush_tp(i)
         be.clock.poll()
+        if getattr(be.clock, "lost", None) is not None:
+            self.event(dict(ev="CLOCK_LOST", **be.clock.lost))     # 以後の記録は H_NOTIME（錨を打ち直すまで）
+            self.log(f"時刻を答えられなくなった: {be.clock.lost.get('err')}")
+            be.clock.lost = None
         dt = time.perf_counter() - ts
         self.hist[min(1000, int(dt * 1e4))] += 1
         self.loop_max = max(self.loop_max, dt)
