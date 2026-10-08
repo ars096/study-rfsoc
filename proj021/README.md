@@ -150,17 +150,50 @@ diff <(key ../proj020/build/vivado.log)    <(key build/vivado.log)    && echo "b
 
 proj020 の README「ビルド rev1」: 群 C = gb_gate の armed → `armed & gb_dn の tready` → gb_fifo（XPM の FIFO）の読み出しの許可 enb、**ファンアウト 780**（768 bit の出口レジスタ）。
 
-- 直し方（案）: ch ごとに gb_fifo と gb_gate の間に AXI4-Stream のレジスタスライスを 1 段（build.tcl で置き、照合を足す）。enb を駆動するのが LUT の AND ではなくスライスの FF になり、複製が効きやすくなる
-- 起動の対策（proj011 rev6）への影響: 起動の後、スライスが 2 語を先に取り込み、FIFO に K 語溜まるまで gb_gate が止める。溜まる語は K ＋ 2、FIFO の余裕は K − 1 語のまま（見込み。sim と実機で確かめる）
-- ギアボックスの遅れ: 溜まる語が 2 語増える（1 語 = 3 クロック）ので **+6 ビート ≒ +23 ns の見込み**（M = adc_to_core が 122〜125 → 145〜148 ns 前後）→ F-2 は手順 2 の Overlay でどのみち測り直す
-- **予言（2026-10-08、1b の RTL を書く前）**: (1) 群 C は `-1`・既定の戦略で上位 200 本から消えるか、残っても最悪 slack ≧ +0.05 ns (2) 全体の WNS は既定で −0.07〜+0.05 ns（壁は残る u_pfb・u_ws、配置の運 ±0.1）、PE で 0〜+0.1 ns (3) CDC の分類ごとの件数は proj020 と同じ (4) FF が ≒ +6,100（768 bit × 2 段 × 4 ch）、LUT・BRAM・DSP・URAM は同じ (5) sim-gearbox の起動の試験は K ≧ 2 で途切れた起動 0（K 0 は今と同じく起きる）
+**直し方（2026-10-08、commit dc69360）**: BD に IP を足すのではなく、**gb_gate.v の入口に 2 語のスキッドバッファ**（全部をレジスタで受ける AXI4-Stream のスライスと同じ働き）を書いた。
+gb_fifo の m_axis_tready = `~v1`（FF そのもの）、armed は出口の valid にだけ効く、データの出口も FF。BD・build.tcl の配線は変えていない（gb_gate のポートは同じ）。
+RTL に書いたので、起動の試験（sim-gb）がそのまま新しい形を通る。
+
+- gb_stat[15:0]（空振り）は「出口（スキッド）が空なのに下流が欲しい」で数える（proj020 までは「FIFO が空」。どちらも下流の空振り）
+- ID: win_core 0x0021_0100 / 0x0021_A100、spec_core 0x0021_01xx、time_core 0x0021_7101（中身は proj020 と同じ）。proj の名前も proj021（出力は proj021.bit）
+- PS: spectrometer・window・timebase・specd の ID と .bit の名前を 0x0021 系に。**timebase.CAL 0x0021_7101 は未較正**（F-2 で測る）。tp_cal.json に 00210100 は足していない（specd は TP の dBm を出さない。TP の経路の利得は同じなので、確かめてから足す）
+- sim の ID の照合（tb_time・tb_t4adc・tb_tsys・tb_top・check・check_top・check_win4）を 0x0021 系に。Makefile の `DCP` の既定が `proj016.runs` のままだったのを、proj の名前に依らない形に直した（`make worst-paths` で群 C を見るのに要る）
+
+**予言（2026-10-08、1b の RTL を書く前）**: (1) 群 C は `-1`・既定の戦略で上位 200 本から消えるか、残っても最悪 slack ≧ +0.05 ns (2) 全体の WNS は既定で −0.07〜+0.05 ns（壁は残る u_pfb・u_ws、配置の運 ±0.1）、PE で 0〜+0.1 ns (3) CDC の分類ごとの件数は proj020 と同じ (4) FF が ≒ +6,100（768 bit × 2 段 × 4 ch）、LUT・BRAM・DSP・URAM は同じ (5) sim-gearbox の起動の試験は K ≧ 2 で途切れた起動 0（K 0 は今と同じく起きる） (6) ギアボックスの遅れ +2 語（+6 ビート ≒ +23 ns）、FIFO の余裕（残量の最小）は同じ
+
+**sim（クラウドの iverilog 12、2026-10-08）**:
+
+| sim | 結果 |
+|---|---|
+| sim-gb（K 0 / 2 / 4。K 2 を足した） | **全部通過**。K 0 の陽性対照は proj020 と同じ数（bit 2 +800 ps で 5 / 12、+1800 ps で 7 / 12、ばらばらで 5 / 12、途切れる語はどれも語 3）、K 2・4 は 0 / 12。古い gb_gate（proj020）でも同じ表（K 2 を足した tb で） |
+| 遅れと余裕（tb に表示を足した一時の試験、同じ遅延の組） | 出口の遅れ（書き込みの通し番号 − 出口の通し番号）: K 0 / 2 / 4 で **3 / 6 / 8 語**（proj020 の gb_gate は 2 / 4 / 6）→ 運転の K 2 で **+2 語 = +6 ビート ≒ +23 ns**（予言 (6) どおり）。FIFO の残量の最小: **2 / 4（proj020 は 1 / 3）＝ 余裕が 1 語増えた**（予言 (6) の「同じ」は外れ、良い向き。スキッドが FIFO から先に 1 語引くぶん、FIFO の中に語が残る） |
+| sim-time・sim-time-p | 通過・陽性対照が落ちる（ID 0x0021_7101） |
+| sim-t4adc・sim-spec-all | （回している） |
 
 | 判定 | 何を | 合格 |
 |---|---|---|
-| G-1 | `make sim-gearbox`（tb_gearbox.v。起動の空振りの陽性対照を含む） | 全部通過・陽性対照が立つ |
-| G-2 | ビルド（`-1`、既定と PE） | 群 C の経路の最悪 slack が proj020 の −0.063 から改善する（上の予言 (1)）。CDC の分類ごとの件数が proj020 と同じ（スライスは同じクロックの中なので増えない） |
-| G-3 | 実機: GRST による起動を多数回（proj011 rev6 の道具） | 空振り（gb_stat の under）0・TLAST 事象 0。回数は 1b に着手するときに決める（まれな事象は起動の回数で数える） |
-| G-4 | 実機: INJ の陽性対照 | 見張りが立つ |
+| G-1 | `make sim-gb` | 上の表（**通過**） |
+| G-2 | ビルド（`-1`、既定と PE）・`make worst-paths` | 予言 (1)〜(4) |
+| G-3 | 実機: Overlay の読み込み直し 50 回（`pynq/gbboot.py`。**proj015 から GRST は無い**ので、起動は Overlay でしか起こせない） | 全部の回・4 ADC で armed・空振り 0・dwell の間に増えない・RFDC の valid の落ち 0・GB_K 2 |
+| G-4 | 実機の陽性対照: `make GB_K=0` のビルドで同じく 50 回（**proj020 の README の G-4「INJ」は spec_core の入口に注入するもので、gb_gate を通らないのでやめた**） | 空振りのある起動が 1 回以上（proj011〜012 の K 0 と同じ形）。出なければ G-3 を「起動の途切れが無い」とは読まない |
+
+### 1b のビルドと実機
+
+```bash
+# Vivado サーバ
+cd ~/git/rfsoc && git pull && cd proj021 && pwd
+make IMPL=Performance_Explore > /dev/null 2>&1 &        # → build-PE/（実機に載せる候補）
+make > /dev/null 2>&1 &                                 # → build/（既定。群 C の比べ）
+wait
+grep BUILD_TAG build-PE/vivado.log | head -2            # 今の RTL が焼けたこと
+grep -E 'TIMING \(確定\)' build/vivado.log build-PE/vivado.log
+make worst-paths                                        # build/ の上位 200 本 → build/worst_paths/（群 C が残るか）
+make GB_K=0 IMPL=Performance_Explore > /dev/null 2>&1 & # → build-k0-PE/（G-4 の陽性対照。実機の測定には使わない）
+
+# ボード（build-PE の .bit・.hwh と pynq/ を送る。.bit は proj021.bit、陽性対照は proj021_k0.bit に名前を変えて）
+sudo -E $(which python3) gbboot.py --loads 50 --clkin 0 --ref 10 --out runs/g3
+sudo -E $(which python3) gbboot.py --loads 50 --clkin 0 --ref 10 --bitfile proj021_k0.bit --expect-k 0 --out runs/g4
+```
 
 ## 手順 2 — v2 の判定
 
@@ -203,6 +236,8 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 ## やったこと
 
 - 2026-10-08: proj020 の追跡されているファイルを複製（`runs/` と README を除く。RTL・build.tcl・Makefile・pynq は proj020 のまま、ID も 0x0020 系のまま）。README を起こした
+- 2026-10-08: 手順 1a（構成替え、8264e62）→ Vivado サーバで build-PE の WNS / WHS が proj020 と小数 6 桁まで同じ（+0.047121 / +0.009645）、既定の戦略も −0.063186 / +0.009660。DSP 2600・BRAM 305（RAMB36 129・RAMB18 352）・URAM 56・LUT 48.16 %・CDC-3 105 / CDC-6 5 / CDC-15 3137・CRITICAL WARNING なしも proj020 と同じ → **1a 通過**（構成替えで何も変わっていない）
+- 2026-10-08: 手順 1b（gb_gate のスキッド・ID 0x0021、dc69360）。sim-gb 通過（上の 1b の節）
 - 2026-10-08: `pynq/bench_ps.py`（M-2〜M-5）を書いた。PYNQ の無い計算機で `--no-pynq --quick` が通ること、陽性対照（`--corrupt` で 1 バイト壊すと M-5 の不一致が周ごとに 1 件、`--no-crc` では 0 件）を確かめた。ボードではまだ走らせていない
 
 ## 結果
