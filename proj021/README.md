@@ -186,6 +186,10 @@ RTL に書いたので、起動の試験（sim-gb）がそのまま新しい形�
 | Performance_Explore（build-PE/） | **−0.128548** | +0.005292 | 0〜+0.1 | **外れ**。proj020 では PE が既定より +0.11 良かったが、今回は −0.14 悪い。戦略の良し悪しは配置の運の幅（±0.1）の中で入れ替わる → PE を「良い戦略」として固定しない |
 
 - 実機には **build/（既定）** を載せる（閉じたほう）。群 C が消えたかは `make worst-paths` で見る（WNS は構造の指紋にならない）
+- **worst-paths（1b の dcp、`proj021.runs` を読んだことを確かめた）**:
+  - 既定（build/、WNS +0.008）: **群 C（gb_gate → gb_fifo）は最悪の 14 群（slack ≦ +0.080）に出てこない** → 予言 (1)「消えるか ≧ +0.05」どおり。いちばん際どいのは win_core_1 の窓 1 の wspec（u_ws、+0.008、21 本。proj020 からある電力・積分の経路）、次に gb_dn_0 → full_sel（+0.023、8 本）・spec_core_0 の g_bin[7] の m_re（+0.045）
+  - PE（build-PE/、WNS −0.129）: **群 C ではない**。最悪は **win_core_0 の上の階層 → 窓 1 の ddc（u_ddc）146 本・−0.129**、ほかに win_core_3 の ddc・u_pfb・u_ws が −0.09〜−0.13。win_core の上の階層から ddc へのファンアウトの経路が、この配置では伸びた。**手順 2 で資源を足したときの次の壁の候補**として残す（PE は実機に載せない）
+  - G-2: **通過**（群 C は消えた。CDC の件数はまだ見ていない）
 - FF（CLB Registers）: 329,546（proj020 322,408 から **+7,138**。予言 +6,100 より 1,000 多い。enb を駆動する FF の複製の分か → worst-paths で見る）。BUILD_TAG 0x50a00000（spec_core_0、プリセットあり・`-1`）
 - **手順の誤り（2026-10-08）**: 1 回目の `make worst-paths` は、Makefile の `DCP` の既定を `*.runs` で拾う形に直していたため、同じ build/ に残っていた **1a の proj020.runs の dcp を読んだ**（出力の WNS −0.063・`gb_gate_3/armed_reg → gb_fifo_3 … enb（780）` は proj020 / 1a のもの。1b の結果ではない）。
   `DCP` は build.tcl の `set proj` の名前で指定し、dcp がちょうど 1 個であることを確かめる形に直した。**ビルドのディレクトリに古い proj の成果物を残さない**（1a の build/・build-PE/ の proj020.* と vivado/proj020.runs は消す。結果は上に残してある）
