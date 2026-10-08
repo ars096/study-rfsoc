@@ -233,8 +233,8 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 ## 結論・次にやること
 
 - 手順 0 の残り:
-  - HPC0 か、範囲を絞った invalidate か（PYNQ の invalidate が中で範囲つきの bo.sync を呼んでいるなら、範囲を絞るのは小さな手間）
-- 別に進める: ボードの送り出しが ≒ 220 Mbit/s で絞られる件（PAUSE・スイッチ・NIC。直結で切り分け）
+  - HPC0 か、範囲を絞った invalidate か → PYNQ 3.1.1 の `XrtDevice.invalidate(bo, offset, ptr, size)` は offset・size を**受け取るが使わず** `bo.sync(FROM_DEVICE)` でバッファ全体を同期していた（これが M-3 の 0.073 ms / MiB）。pyxrt の `bo.sync(向き, size, offset)` を直に呼べば範囲を絞れる見込み → bench_ps.py に M-6 を足した（`--only m6`）
+- 別に進める: ボードの送り出しが ≒ 220 Mbit/s で絞られる件。iperf3 10 s の前後の `ethtool -S eth0`: tx_frames +175,294・tx_octets +266 MB（26.6 MB/s）、**PAUSE と誤りの数えは 0 のまま**、qdisc は mq ＋ pfifo_fast（普通）、`ethtool -a` は未対応。UDP の損失 0 % と合わせて、**ボードの NIC が自分で ≒ 220 Mbit/s でしか出していない**と読む（スイッチなら捨てるので損失か再送が出る）。次: `ethtool -k / -c / -g eth0`、測っている間の eth0 の割り込みの数、直結
 
 ## 公開について
 

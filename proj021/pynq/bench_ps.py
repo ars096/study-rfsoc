@@ -20,6 +20,9 @@ M-5  束ねの 1 周: リングを模したバッファに 1 BASE（10.24 ms）�
      **PL は使わない**（バッファに試験の値を書いて読む）。ソケットへは送らない（M-1 の iperf3 で別に測る）
      invalidate はバッファ全体にかかる（PYNQ の invalidate に範囲の指定が無い）。リングが大きいほど重くなるので、
      M-3 の「invalidate だけ」の時間と合わせて読む（HPC0 にすれば要らなくなる、が手順 0 で決めたいこと）
+M-6  範囲を絞った invalidate（2026-10-08 追加）: PYNQ 3.1.1 の XrtDevice.invalidate は offset・size を受け取るが使わず、
+     bo.sync(FROM_DEVICE) でバッファ全体を同期する。pyxrt の bo.sync(向き, size, offset) を直に呼び、大きさごとの時間を測る。
+     **中身が正しく見えるか（PL が書いた後に古い行が残らないか）は PL が要るので、手順 2 の V2-g で確かめる**
      陽性対照: --corrupt で 1 つのレコードの中身を 1 バイト壊し、不一致が周ごとに 1 件ずつ数えられることを確かめる
 
 **specd を止めてから測る**（同じ A53 を取り合うと数が意味を持たない）。測る前に README の予言を書く。
@@ -168,6 +171,39 @@ def m3m4(args, which):
     return res
 
 
+# ------------------------------------------------------------------ M-6
+def m6(args):
+    res = {}
+    if not args.pynq:
+        log("M-6: --no-pynq なので飛ばす")
+        return res
+    import pyxrt
+    nbytes = args.buf_mib * MiB
+    b = Buf(nbytes, True, True)
+    b.a[:] = 1
+    b.flush()
+    bo = b.a.bo
+    d = pyxrt.xclBOSyncDirection.XCL_BO_SYNC_BO_FROM_DEVICE
+    try:
+        bo.sync(d, 4096, 0)
+    except Exception as e:  # noqa: BLE001  この版の pyxrt が範囲の指定を受けるか
+        log(f"M-6: bo.sync(向き, size, offset) が使えない（{type(e).__name__}: {e}）")
+        res["error"] = f"{type(e).__name__}: {e}"
+        b.free()
+        return res
+    for kb in (64, 256, 1024, 4096, 16384, nbytes // 1024):
+        sz = kb * 1024
+        off = (nbytes - sz) // 2 & ~4095          # 真ん中あたり（4 KiB 境界）
+        med, lo, hi = timeit(lambda: bo.sync(d, sz, off), args.rep * 3)
+        res[f"{kb}KiB_ms"] = med * 1e3
+        log(f"M-6 範囲の invalidate {kb:6d} KiB: {med * 1e3:7.3f} ms（{med * 1e6 / (sz / MiB):6.1f} µs / MiB）")
+    medw, _, _ = timeit(b.invalidate, args.rep)
+    res["whole_pynq_ms"] = medw * 1e3
+    log(f"M-6 PYNQ の invalidate（全体 {args.buf_mib} MiB）: {medw * 1e3:.2f} ms")
+    b.free()
+    return res
+
+
 # ------------------------------------------------------------------ M-5
 def build_ring(b, cfg, nbase, rng):
     """1 BASE ぶん（nstream 個）のレコードを nbase 回ぶん並べ、CRC を正しく付ける。戻り: レコードの (位置, 長さ) の表"""
@@ -258,7 +294,7 @@ def m5(args):
 def main():
     faulthandler.enable()          # 2026-10-08: M-5 が traceback なしに sam45fine の後で止まった。落ちたら場所を stderr に出す
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--only", nargs="+", choices=["m2", "m3", "m4", "m5"], default=["m2", "m3", "m4", "m5"])
+    p.add_argument("--only", nargs="+", choices=["m2", "m3", "m4", "m5", "m6"], default=["m2", "m3", "m4", "m5", "m6"])
     p.add_argument("--no-pynq", dest="pynq", action="store_false", help="PYNQ の無い計算機で道具を確かめる")
     p.add_argument("--quick", action="store_true", help="量を減らす（道具の確かめ用）")
     p.add_argument("--buf-mib", type=int, default=64, help="M-3・M-4・M-5 のバッファ（MiB）")
@@ -293,6 +329,8 @@ def main():
             except Exception as e:  # noqa: BLE001  落ちた理由を結果に残す
                 log(f"M-5 {name}: 落ちた（{type(e).__name__}: {e}）")
                 res["m5"][name] = dict(error=f"{type(e).__name__}: {e}")
+    if "m6" in args.only:
+        res["m6"] = m6(args)
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(res, f, indent=1, ensure_ascii=False)
