@@ -117,13 +117,13 @@ def main():
         prev = (if_g, w)
         true11 = max(0.3, 4.9 * w / 256.0)
         shift = int(np.clip(11 - round(np.log(a.floor / true11) / np.log(4.0)), 0, 15))
-        n0 = wn.rd(0x7C)                               # WRST_CNT
+        n0 = wn.rd(WN.R_WRST_CNT)                             # WRST_CNT
         err = []
         try:
             wn.set_window(k, dphi, ns)
         except RuntimeError as e:
             err.append(f"WRST: {e}")
-        n1 = wn.rd(0x7C)
+        n1 = wn.rd(WN.R_WRST_CNT)
         if n1 != (n0 + 1) & 0xFFFFFFFF:
             err.append(f"WRST_CNT {n0} → {n1}（1 増えない）")
         time.sleep(0.01)

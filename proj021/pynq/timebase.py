@@ -39,6 +39,10 @@ NS_NUM, NS_DEN = 125, 32          # 1 ビート = 125/32 ns（厳密）
 #   **T-2（閉ループ）で測れるのは差 M = adc_to_core − pps_det（＋ 2 本のケーブルの差）の 1 つだけ**なので、M を adc_to_core_ns に入れ、
 #   pps_det_ns = 0 とする（式の上では引く量は M で同じ）。
 CAL = {
+    # proj021 手順 2-1: 鍵を time_core の PROJ（0x5C）に替えた（ID の 0x00 は IF_ID = bit の種類と版だけになった）。
+    #   ギアボックス・time_core の RTL は 1b と同じ。1b も未較正なので、F-2 で測るまで未較正のまま（1b の値が出たら持ち込める）
+    0x0021_0200: dict(pps_det_ns=0.0, adc_to_core_ns=None, bound_ns=50,
+                      source="proj021 2-1: 未較正（F-2 で測る。ギアボックスは 1b と同じ。sim の見込みは proj020 の 122〜125 ns ＋ ≒ 23 ns）"),
     # proj021 1b: gb_gate の入口に 2 語のスキッド（群 C）。ギアボックスの遅れが ≒ +2 語（+6 ビート ≒ +23 ns、sim）変わるので、
     #   proj020 の値は持ち込まず未較正で足す（F-2 で測る）
     0x0021_7101: dict(pps_det_ns=0.0, adc_to_core_ns=None, bound_ns=50,
@@ -103,14 +107,18 @@ def pps_is_consistent(d_count, d_stamp, tol=2):
 
 class TimeCore:
     """time_core_0 のレジスタ（src/common/time_core.v の冒頭の表）。mmio は pynq.MMIO か、read(off) / write(off, v) を持つもの。"""
-    ID = 0x0021_7101
+    ID = 0x0202_0102              # proj021 手順 2-1: IF_ID（IF_VER 2・BIT_KIND 2 = SAM45-Fine・BIT_REV 1・CORE_KIND 2）。旧 0x0021_7101
+    PROJ = 0x0021_0200            # 0x5C。CAL の鍵
     CTRL_ARM, CTRL_CANCEL, CTRL_ASET, CTRL_ACLR, CTRL_NCLR = 1, 2, 8, 16, 256
 
     def __init__(self, mmio):
         self.m = mmio
         idv = self.rd(0x00)
+        if idv >> 24 != 2 or idv & 0xFF != 2:
+            raise TimebaseError(f"time_core の IF_ID 0x{idv:08x}（IF_VER 2・CORE_KIND 2 でない）。載っている .bit が違う")
         if idv != self.ID:
-            raise TimebaseError(f"time_core の ID 0x{idv:08x}（期待 0x{self.ID:08x}）。載っている .bit が違う")
+            raise TimebaseError(f"time_core の IF_ID 0x{idv:08x}（期待 0x{self.ID:08x}: BIT_KIND・BIT_REV が違う）")
+        self.proj = self.rd(0x5C)
         if self.rd(0x04) != BEATS_PER_SEC:
             raise TimebaseError(f"time_core の 1 秒のビート数 {self.rd(0x04)}（期待 {BEATS_PER_SEC}）")
 
@@ -166,9 +174,10 @@ class Timebase:
     def __init__(self, tc, path="trig", cal=None):
         self.tc = tc
         cal = CAL if cal is None else cal
-        if TimeCore.ID not in cal:
-            raise TimebaseError(f"ID 0x{TimeCore.ID:08x} の較正定数を持っていない")
-        self.cal = dict(cal[TimeCore.ID])
+        key = getattr(tc, "proj", TimeCore.PROJ)
+        if key not in cal:
+            raise TimebaseError(f"PROJ 0x{key:08x} の較正定数を持っていない")
+        self.cal = dict(cal[key])
         self.path = path
         self._anchor = None
 

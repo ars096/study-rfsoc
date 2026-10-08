@@ -55,7 +55,8 @@ NFFT = 8192
 NCH_OUT = 4096
 DF_HZ = FS_HZ / NFFT              # 0.5 MHz
 T_FRAME = NFFT / FS_HZ            # 2.000 µs
-ID_EXPECT = 0x00210000            # proj021 1b（spec_core の中身は proj020 と同じ。ギアボックスの gb_gate にスキッド）。proj020（spec_core の中身は proj017 と同じ）。proj017（tp_core の FLAGS[4]）。proj016（spec_core に時刻・設定番号・健全性。SHIFT は RUN で取り込む）。proj015（spec_core は proj013 rev1 と同一で ID だけ。proj014 は 0x0014）。[15:8] は rev（1 / 2）、[7:0] は FFT_CFG（変種）なので比べない
+ID_EXPECT = 0x00210000            # 旧（proj021 1b まで）。proj021 手順 2-1 からは SID で照合する（feat_rev・probe）。
+#   旧の注: proj021 1b（spec_core の中身は proj020 と同じ。ギアボックスの gb_gate にスキッド）。proj020（spec_core の中身は proj017 と同じ）。proj017（tp_core の FLAGS[4]）。proj016（spec_core に時刻・設定番号・健全性。SHIFT は RUN で取り込む）。proj015（spec_core は proj013 rev1 と同一で ID だけ。proj014 は 0x0014）。[15:8] は rev（1 / 2）、[7:0] は FFT_CFG（変種）なので比べない
 ID_MASK = 0xFFFF0000
 
 
@@ -68,6 +69,8 @@ def feat_rev(ident):
     表示には生の rev（fft_cfg_str）を使う。
     """
     rev = (ident >> 8) & 0xFF
+    if ident >> 24 == 2:          # proj021 手順 2-1: SID（IF_VER 2）。proj011 rev6 の機能をすべて持つ
+        return 6
     if (ident & ID_MASK) in (0x00120000, 0x00130000, 0x00140000, 0x00150000, 0x00160000, 0x00170000, 0x00200000, 0x00210000):   # proj012〜proj015 は proj011 rev6 の機能をすべて持つ
         return 6
     return rev
@@ -91,25 +94,30 @@ LMX_FREQ = 491.52
 CHANS = [("ADC_A", 2, 1), ("ADC_B", 2, 0), ("ADC_C", 0, 1), ("ADC_D", 0, 0)]
 BUILD_4CH = 1 << 23               # BUILD の [23] 4ch のビルド / [1:0] ch の番号（build.tcl の BUILD_TAG）
 BUILD_SEL = 1 << 21               # proj015: spec_core_0 は 1 本だけで、4 ADC から選ぶ（win_core_0 の FULL_SEL）
-WIN_A_FULL_SEL = 0x80020          # proj015: win_core_i の ADC の共通の FULL_SEL（win_core_0 のものだけが効く）
+# （proj021 手順 2-1: win_core_0 の FULL_SEL は無くなった。FULL の流れの SRC を書いて WRST する。open_full_stream）
 
 # ---- レジスタ（src/common/spec_core.v の冒頭と対）----
-R_ID, R_PARAM, R_CTRL, R_NACC, R_NDUMP, R_SHIFT = 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14
-R_FLAGS, R_SEQ, R_FIN_LO, R_FIN_HI, R_FOUT_LO, R_FOUT_HI = 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C
-R_DUMP_K, R_DUMP_N, R_DUMP_F0_LO, R_DUMP_F0_HI, R_DUMP_SAT = 0x30, 0x34, 0x38, 0x3C, 0x40
-R_SNAP_F_LO, R_SNAP_F_HI, R_BANK, R_RUN_F0_LO, R_RUN_F0_HI = 0x44, 0x48, 0x4C, 0x50, 0x54
+# proj021 手順 2-1: FULL の流れのブロック（INTERFACE 2.5。s45_core_0 の 0x4000 + 0x400·s）の中の番地。Spec.rd は base ＋ 番地を読む。
+#   TP のレジスタ（0x100–0x1FF）だけは仮の読み窓（lbase ＋ 0x1100）を読む（FULL には種類に固有のレジスタが無いので重ならない）。
+#   Spec.block は仮の読み窓（lbase）の中を読む（TP のリング 0x2000・スナップショット 0x4000・スペクトル 0x8000。2-2 でリングに替わる）
+R_ID, R_PARAM, R_CTRL, R_NACC, R_NDUMP, R_SHIFT = 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14     # R_ID は SID
+R_FLAGS, R_SEQ, R_FIN_LO, R_FIN_HI, R_FOUT_LO, R_FOUT_HI = 0x18, 0x1C, 0x70, 0x74, 0x78, 0x7C
+R_DUMP_K, R_DUMP_N, R_DUMP_F0_LO, R_DUMP_F0_HI, R_DUMP_SAT = 0x3C, 0x48, 0x40, 0x44, 0x4C
+R_SNAP_F_LO, R_SNAP_F_HI, R_BANK, R_RUN_F0_LO, R_RUN_F0_HI = 0x260, 0x264, 0x268, 0x68, 0x6C
+R_SRC = 0x28
 SNAP_BASE, SPEC_BASE = 0x4000, 0x8000
-CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_DCLR = 1 << 0, 1 << 1, 1 << 8, 1 << 9
+CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_DCLR, CTRL_WRST = 1 << 0, 1 << 1, 1 << 8, 1 << 9, 1 << 12
 # ---- total power（src/common/tp_core.v の冒頭と対。proj013）----
 R_TP_N, R_TP_NEFF, R_TP_WP, R_TP_F0_LO, R_TP_F0_HI, R_TP_PARAM, R_TP_STAT = 0x100, 0x104, 0x108, 0x10C, 0x110, 0x114, 0x118
 TP_BASE, TP_DEPTH, TP_PARAM_EXPECT = 0x2000, 512, (512 << 16) | (16 << 8) | 2
 TPF_SHORT, TPF_RUN, TPF_GAP, TPF_BOOT = 1, 2, 4, 8
-R_DIAG_TL, R_DIAG_EV, R_DIAG_FS, R_DIAG_EVCNT, R_DIAG_FSCNT = 0x58, 0x5C, 0x60, 0x64, 0x68   # rev3
-R_BUILD, R_SRST_D, R_SRST_E, R_SRST_CNT = 0x6C, 0x70, 0x74, 0x78                             # rev4
-R_ST_GAPS, R_ST_CYC = 0x7C, 0x80                                                              # rev5
-R_GB_K, R_ST_N, R_INJ, R_GRST_T, R_GRST_ADJ, R_GRST_CNT = 0x84, 0x88, 0x8C, 0x90, 0x94, 0x98     # rev6
-R_RAW_T0, R_RAW_GAPS, R_RAW_FIRST, R_RAW_MAXLEN = 0x9C, 0xA0, 0xA4, 0xA8
-R_GB_STAT, R_ADC_STAT, R_INJ_CNT = 0xAC, 0xB0, 0xB4
+# 診断（約束の外）: 旧番地 ＋ 0x1A8
+R_DIAG_TL, R_DIAG_EV, R_DIAG_FS, R_DIAG_EVCNT, R_DIAG_FSCNT = 0x200, 0x204, 0x208, 0x20C, 0x210   # rev3
+R_BUILD, R_SRST_D, R_SRST_E, R_SRST_CNT = 0x214, 0x218, 0x21C, 0x220                         # rev4
+R_ST_GAPS, R_ST_CYC = 0x224, 0x228                                                            # rev5
+R_GB_K, R_ST_N, R_INJ, R_GRST_T, R_GRST_ADJ, R_GRST_CNT = 0x22C, 0x230, 0x234, 0x238, 0x23C, 0x240     # rev6
+R_RAW_T0, R_RAW_GAPS, R_RAW_FIRST, R_RAW_MAXLEN = 0x244, 0x248, 0x24C, 0x250
+R_GB_STAT, R_ADC_STAT, R_INJ_CNT = 0x254, 0x258, 0x25C
 CTRL_GRST = 1 << 11
 INJ_ARM, INJ_AFTER_GRST = 1 << 31, 1 << 30
 F_CORE = 256.0e6                  # spec_core のクロック（clk_adc2 = fs/16）
@@ -137,19 +145,28 @@ def if_of_ch(k, zone=2):
 
 # --------------------------------------------------------------------- spec_core
 class Spec:
-    """spec_core の AXI4-Lite。**読んだ中身は seqlock で 1 つのダンプのものと保証する。**"""
+    """FULL の流れ（spec_core）の AXI4-Lite。**読んだ中身は seqlock で 1 つのダンプのものと保証する。**
+    proj021 手順 2-1: base = 流れのブロック、lbase = 仮の読み窓（s45core.LEG_FULL）"""
 
-    def __init__(self, mmio, slow=False, idx=0, label="?"):
+    def __init__(self, mmio, slow=False, idx=0, label="?", base=0x4800, lbase=0xC0000):
         self.m = mmio
         self.slow = slow
         self.idx = idx
         self.label = label
+        self.base, self.lbase = base, lbase
+
+    def _a(self, a):
+        return self.lbase + 0x1000 + a if 0x100 <= a < 0x200 else self.base + a
 
     def rd(self, a):
-        return self.m.read(a)
+        return self.m.read(self._a(a))
 
     def wr(self, a, v):
-        self.m.write(a, int(v))
+        self.m.write(self._a(a), int(v))
+
+    def legacy_id(self):
+        """表示用: 旧 ID の形（0x0021_02CC。CC = FFT_CFG = PARAM の [15:8]）"""
+        return 0x0021_0200 | ((self.rd(R_PARAM) >> 8) & 0xFF)
 
     def rd64(self, lo, hi):
         l = self.rd(lo)                      # LO を読むと HI が固定される（FIN / FOUT）
@@ -158,8 +175,8 @@ class Spec:
     def block(self, base, nwords):
         """32 bit 語を nwords 個読む。既定は numpy で一括（速い）。--slow-read で 1 語ずつ。"""
         if self.slow:
-            return np.array([self.rd(base + 4 * i) for i in range(nwords)], dtype=np.uint32)
-        i0 = base // 4
+            return np.array([self.m.read(self.lbase + base + 4 * i) for i in range(nwords)], dtype=np.uint32)
+        i0 = (self.lbase + base) // 4
         return np.array(self.m.array[i0:i0 + nwords], dtype=np.uint32)
 
     def flags(self):
@@ -262,67 +279,43 @@ def check_tiles(rfdc, zone):
         log(f"ch {i}（{lbl} = Tile {224 + t} / blocks[{b}]）: SamplingFreq {st.get('SamplingFreq')} GSPS / NyquistZone = {zone}")
 
 
+def open_full_stream(st, adc, slow=False):
+    """proj021 手順 2-1: FULL の流れ st（s45core.Stream）の SRC を ADC adc にし、WRST で効かせ、SRST で起動し直して Spec を返す
+    （旧: win_core_0 の FULL_SEL を書いて spec_core_0 を SRST）"""
+    sp = Spec(st.m, slow=slow, idx=adc, label=CHANS[adc][0], base=st.base, lbase=st.lbase)
+    sp.wr(R_SRC, adc)
+    sp.wr(R_CTRL, CTRL_WRST)
+    time.sleep(0.001)
+    got = sp.rd(R_SRC)
+    if (got & 0xF) != adc or not got >> 31:
+        raise RuntimeError(f"FULL の SRC を {adc} にして WRST したのに {got:#010x}")
+    time.sleep(0.01)
+    sp.wr(R_CTRL, CTRL_SRST)                 # 流れを入れ替えたので、FULL の起動をやり直す
+    time.sleep(0.1)
+    log(f"全帯域: FULL の流れ（{st.core.name} の s {st.s}）の SRC = {adc}（{CHANS[adc][0]}）で WRST・SRST")
+    return sp
+
+
 def open_specs(ol, args):
-    """spec_core_0..3 を開き、**全部について** ID と BUILD の ch の番号を確かめる。選んだ ch の Spec を返す。
-
-    同じ RTL の 4 個を見分けるのは BUILD の [1:0] だけ。セル名 spec_core_i と BUILD の ch = i が合わなければ、
-    ch の取り違え（ラベルと中身が別の ch）なので止める。
-    """
-    ip0 = getattr(ol, "spec_core_0", None)
-    if ip0 is not None and (ip0.mmio.read(R_BUILD) & BUILD_SEL):
-        return open_spec_sel(ol, ip0, args)
-    specs = []
-    for i, (lbl, _, _) in enumerate(CHANS):
-        ip = getattr(ol, f"spec_core_{i}", None)
-        if ip is None:
-            log(f"ERROR: ol.spec_core_{i} が無い。1ch の .bit（proj011 など）が載っていないか")
-            sys.exit(1)
-        sp = Spec(ip.mmio, slow=args.slow_read, idx=i, label=lbl)
-        ident = sp.rd(R_ID)
-        if (ident & ID_MASK) != ID_EXPECT:
-            log(f"ERROR: spec_core_{i} の ID {ident:08x} の上位 16 bit が {ID_EXPECT >> 16:04x} でない。別の proj の .bit が載っている")
-            sys.exit(1)
-        bt = sp.rd(R_BUILD)
-        preset, grade, is4, chn = (bt >> 30) & 1, (bt >> 28) & 3, bool(bt & BUILD_4CH), bt & 3
-        log(f"spec_core_{i}（{lbl}）: ID {ident:08x} / {fft_cfg_str(ident)} / BUILD {bt:08x}"
-            f"（プリセット {'あり' if preset else '**なし**'} / -{grade} / 4ch {int(is4)} / ch {chn}）")
-        if not is4 or chn != i:
-            log(f"ERROR: spec_core_{i} の BUILD が「4ch・ch {i}」でない（4ch {int(is4)} / ch {chn}）。セルと ch の対応が崩れている")
-            sys.exit(1)
-        if (bt >> 27) & 1:
-            log(f"NOTE: **遅いビットの検証ビルド**（gb_fifo の gray の bit {(bt >> 24) & 7} をわざと遅らせてある。本番に使わない）")
-        if not preset and not args.allow_nopreset:
-            log("ERROR: プリセットの無い検証ビルド（build-1-e*/ など）が載っている。実機には build/ の .bit を使う")
-            sys.exit(1)
-        specs.append(sp)
-    return [specs[i] for i in args.chs]
-
-
-def open_spec_sel(ol, ip0, args):
-    """proj015: 全帯域の分光は spec_core_0 の 1 本だけ。win_core_0 の FULL_SEL で ch を選び、SRST で起動し直してから返す。
-    **1 回に 1 ch**（--ch で 1 つ）。Spec の idx は選んだ ch（タイル・blocks の対応に使う）"""
+    """proj021 手順 2-1: 全帯域は FULL の流れ 1 本（s45_core_0 の s = 2）。自己記述（s45core）で見つけ、--ch の ADC につないで返す。
+    **1 回に 1 ch**。Spec の idx は選んだ ch（タイル・blocks の対応に使う）"""
+    import s45core as SC
     if len(args.chs) != 1:
-        log(f"ERROR: この .bit（proj015）の全帯域の分光は 1 本だけ。--ch で 1 つ選ぶ（今 {args.chs}）")
+        log(f"ERROR: 全帯域の分光は 1 本だけ。--ch で 1 つ選ぶ（今 {args.chs}）")
         sys.exit(1)
     i = args.chs[0]
-    lbl = CHANS[i][0]
-    sp = Spec(ip0.mmio, slow=args.slow_read, idx=i, label=lbl)
-    ident, bt = sp.rd(R_ID), sp.rd(R_BUILD)
-    if (ident & ID_MASK) != ID_EXPECT:
-        log(f"ERROR: spec_core_0 の ID {ident:08x} の上位 16 bit が {ID_EXPECT >> 16:04x} でない"); sys.exit(1)
+    try:
+        cores, _ = SC.discover(ol)
+        st = SC.full_stream(cores)
+    except SC.S45Error as e:
+        log(f"ERROR: {e}"); sys.exit(1)
+    bt = st.rd(R_BUILD)
     if not (bt >> 30) & 1 and not args.allow_nopreset:
         log("ERROR: プリセットの無い検証ビルドが載っている"); sys.exit(1)
-    wc0 = getattr(ol, "win_core_0", None)
-    if wc0 is None:
-        log("ERROR: ol.win_core_0 が無い（FULL_SEL を書けない）"); sys.exit(1)
-    wc0.mmio.write(WIN_A_FULL_SEL, i)
-    got = wc0.mmio.read(WIN_A_FULL_SEL) & 3
-    if got != i:
-        log(f"ERROR: FULL_SEL を {i} に書いたのに {got}"); sys.exit(1)
-    time.sleep(0.01)
-    sp.wr(R_CTRL, CTRL_SRST)                 # 流れを入れ替えたので、spec_core_0 の起動をやり直す
-    time.sleep(0.1)
-    log(f"spec_core_0（選べる全帯域）: ID {ident:08x} / {fft_cfg_str(ident)} / BUILD {bt:08x} → FULL_SEL = ch {i}（{lbl}）、SRST")
+    if (bt >> 27) & 1:
+        log(f"NOTE: **遅いビットの検証ビルド**（gb_fifo の gray の bit {(bt >> 24) & 7} をわざと遅らせてある。本番に使わない）")
+    sp = open_full_stream(st, i, slow=args.slow_read)
+    log(f"FULL の流れ: SID {st.sid:08x} / {fft_cfg_str(sp.legacy_id())} / BUILD {bt:08x} / PROJ {st.core.proj:08x}")
     return [sp]
 
 
@@ -433,9 +426,9 @@ def multi_probe(specs, exact_ok=True):
 def probe(sp):
     """判定 0: 流れているか。fin − fout が一定か。フレームが 1 秒に 500,000 進むか。"""
     ident, prm = sp.rd(R_ID), sp.rd(R_PARAM)
-    log(f"ID = {ident:08x}（期待 {ID_EXPECT:08x} の上位 16 bit、{fft_cfg_str(ident)}） / PARAM = {prm:08x}"
-        f"（log2 N = {prm & 0xFF} / log2 レーン = {prm >> 8 & 0xFF} / QW = {prm >> 16 & 0xFF} / IW = {prm >> 24}）")
-    ok = (ident & ID_MASK) == ID_EXPECT
+    log(f"SID = {ident:08x}（期待 0x0201_xx00 = IF_VER 2・KIND 1 FULL。{fft_cfg_str(sp.legacy_id())}） / PARAM = {prm:08x}"
+        f"（log2 N = {prm & 0xFF} / FFT_CFG = {prm >> 8 & 0xFF:#04x} / 積分値の幅 = {prm >> 16 & 0xFF} / 値の形 = {prm >> 24}）")
+    ok = (ident >> 16) == 0x0201 and (prm & 0xFF) == 13
     fin0, t0 = sp.rd64(R_FIN_LO, R_FIN_HI), time.time()
     time.sleep(1.0)
     fin1, t1 = sp.rd64(R_FIN_LO, R_FIN_HI), time.time()
@@ -552,7 +545,7 @@ def flag_timeline(ol, args, t_ov):
     rev6 以降の .bit なら生の見張りも出す。**FLAGS は消さない。**
     """
     i = args.chs[0]
-    sp = Spec(getattr(ol, f"spec_core_{i}").mmio, slow=args.slow_read, idx=i, label=CHANS[i][0])
+    sp = open_specs(ol, args)[0]             # proj021 手順 2-1: FULL の流れ（SRC で ch を選ぶ。SRST するので起動の瞬間は見えない）
     log(f"ch {i}（{CHANS[i][0]}）を見る")
     ident = sp.rd(R_ID)
     rev = feat_rev(ident)
@@ -562,7 +555,7 @@ def flag_timeline(ol, args, t_ov):
     def snap(label):
         f, c = sp.flags(), sp.rd(R_CTRL)
         extra = ""
-        if (ident & ID_MASK) == ID_EXPECT and rev >= 6:
+        if rev >= 6:
             r = raw_state(sp)
             extra = f" / 生の途切れ {r['gaps']}（最初 {r['first']}）・最初の valid まで {r['t0'] / F_CORE * 1e3:.3f} ms"
         log(f"  [{time.time() - t_ov:7.3f} s] {label}: FLAGS {f:02x}（{flag_text(f)}）/ 流れ始めた {(c >> 3) & 1}{extra}")
@@ -1136,7 +1129,7 @@ def record(sp, nacc, seconds, shift, prefix, meta_info, auto_recover=True):
     spec_f = np.lib.format.open_memmap(prefix + ".spec.npy", mode="w+", dtype=np.uint64, shape=(ndump, NCH_OUT))
     meta_f = np.lib.format.open_memmap(prefix + ".meta.npy", mode="w+", dtype=np.int64, shape=(ndump, 7))
     ident = sp.rd(R_ID)
-    info = dict(meta_info, id=f"{ident:08x}", fft_cfg=fft_cfg_str(ident),
+    info = dict(meta_info, id=f"{ident:08x}", fft_cfg=fft_cfg_str(sp.legacy_id()),
                 nacc=nacc, tau_s=tau, shift=shift, ndump_planned=ndump, nch=NCH_OUT,
                 cols=["seq", "k", "n", "f0", "sat", "flags", "t_unix_ns"], start_unix=time.time())
     seq = sp.run(nacc, 0, shift)

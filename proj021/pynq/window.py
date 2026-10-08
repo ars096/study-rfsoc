@@ -37,30 +37,32 @@ try:
 except ImportError:                      # sg.py を置いていなければ --sg は使えない
     SGMOD = None
 
-ID_WIN = 0x0021_0100             # proj021 rev1（手順 1b）: 窓の中身は proj020 と同じ（ギアボックスの gb_gate にスキッド）。proj020 rev1: SAM45-Fine rev2（窓の分光に PFB T = 4、FLAGS[5] = その飽和）。proj017 rev1 = 0x0017_0100: SAM45-Fine（NW 2 × 4 ADC）・TP の FLAGS[4]。proj016 rev1 = 0x0016_0100: 時刻・設定番号（SHIFT は RUN で取り込む）・健全性（窓の中身は proj015 rev3 と同じ）
-ID_WIN_P15 = (0x0015_0300,)      # proj015 rev3
-ID_WIN_R2 = (0x0015_0200,)       # proj015 rev2: rev1 の `-1` の最悪経路に段を足した（値は同じ。`-1` で -0.199 ns）
-ID_WIN_R1 = (0x0015_0100,)       # proj015 rev1（`-1` で閉じない。`-2` の build/ は +0.007 ns で閉じた）
-ID_WIN_OLD = (0x0014_0100,)      # proj014 rev1（FFT IP の tready を見ない版。枠がずれる）
-ID_WIN_P14 = (0x0014_0200,)      # proj014 rev2（幅は 256〜8 MHz だけ。G は 4 固定）
+import s45core as SC
+
+# proj021 手順 2-1: 番地は INTERFACE v2（s45core.py）。照合は自己記述（IF_ID・SID・CORE_PORT）で行い、ID の数値では見ない。
+#   旧（proj020 まで）: 窓 w = 0x20000·w ＋ 旧レジスタ、ADC の共通 = 0x80000 ＋ 表 A、ID 0x0021_0100 / 0x0021_A100
+ID_WIN_P15 = (0x0015_0300,)      # （旧 ID の表。proj021 2-1 の .bit では使わない）
+ID_WIN_R2 = (0x0015_0200,)
+ID_WIN_R1 = (0x0015_0100,)
+ID_WIN_OLD = (0x0014_0100,)
+ID_WIN_P14 = (0x0014_0200,)
 BUILD_WIN = 1 << 22
 WIN_CH = 0                       # 既定の ADC（proj017: 4 本 = ADC_A..D。proj016 は ADC_A の 1 本、proj015 は 1 = ADC_B）
-WIN_STRIDE = 0x20000             # proj015: win_core の窓 w は 0x20000·w（1 ADC に NW 窓）
-A_BASE = 0x80000                 # proj015: ADC の共通
-R_A_ID, R_A_NW, R_A_SNAP_SEL, R_A_BUILD, R_A_TP_CTRL = 0x00, 0x04, 0x08, 0x0C, 0x10
-R_A_TFIN_LO, R_A_TFIN_HI, R_A_GB_K, R_A_FULL_SEL, R_A_GB_STAT, R_A_ADC_STAT = 0x14, 0x18, 0x1C, 0x20, 0x24, 0x28
-ID_ADC = 0x0021_A100
-ID_ADC_R1 = (0x0015_A100, 0x0015_A200, 0x0015_A300)
+WIN_STRIDE = SC.BLK_STRIDE       # 窓 w の流れのブロックは SC.blk(w) = 0x4000 + 0x400·w
+A_BASE = 0                       # コアの共通（0x00000–）。下の R_A_* はコアの番地そのもの
+R_A_ID, R_A_NW, R_A_SNAP_SEL, R_A_BUILD, R_A_TP_CTRL = SC.C_IF_ID, SC.C_NSTREAM, SC.LEG_SNAP_SEL, SC.C_BUILD, SC.C_TP_CTRL
+R_A_TFIN_LO, R_A_TFIN_HI, R_A_GB_K, R_A_GB_STAT, R_A_ADC_STAT = SC.C_TFIN_LO, SC.C_TFIN_HI, SC.C_GB_K, SC.C_GB_STAT, SC.C_ADC_STAT
 SEL = {"adc": WIN_CH, "win": 0}  # add_sel_args / set_sel で決める（open_win・open_full が使う）
 NFFT_W = 4096
-R_ID, R_PARAM, R_CTRL, R_NACC, R_NDUMP, R_SHIFT, R_FLAGS, R_SEQ = 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C
-R_FIN_LO, R_FIN_HI, R_FOUT_LO, R_FOUT_HI = 0x20, 0x24, 0x28, 0x2C
-R_DUMP_K, R_DUMP_N, R_DUMP_F0_LO, R_DUMP_F0_HI, R_DUMP_SAT = 0x30, 0x34, 0x38, 0x3C, 0x40
-R_SNAP_F_LO, R_SNAP_F_HI, R_BANK, R_RUN_F0_LO, R_RUN_F0_HI = 0x44, 0x48, 0x4C, 0x50, 0x54
-R_WK, R_WDPHI, R_WNS, R_WCUR, R_WCUR_DPHI, R_PFB_SAT, R_DDC_SAT, R_BUILD = 0x58, 0x5C, 0x60, 0x64, 0x68, 0x6C, 0x70, 0x74
-R_WS_STALL, R_WS_RDY0 = 0x80, 0x84    # rev2
+# 流れのブロックの中（v2）
+R_ID, R_PARAM, R_CTRL, R_NACC, R_NDUMP, R_SHIFT, R_FLAGS, R_SEQ = SC.S_SID, SC.S_PARAM, SC.S_CTRL, SC.S_NACC, SC.S_NDUMP, SC.S_SHIFT, SC.S_FLAGS, SC.S_SEQ
+R_FIN_LO, R_FIN_HI, R_FOUT_LO, R_FOUT_HI = SC.S_FIN, SC.S_FIN + 4, SC.S_FOUT, SC.S_FOUT + 4
+R_DUMP_K, R_DUMP_N, R_DUMP_F0_LO, R_DUMP_F0_HI, R_DUMP_SAT = SC.S_DUMP_K, SC.S_DUMP_N, SC.S_DUMP_F0, SC.S_DUMP_F0 + 4, SC.S_DUMP_SAT
+R_SNAP_F_LO, R_SNAP_F_HI, R_BANK, R_RUN_F0_LO, R_RUN_F0_HI = SC.D_SNAP_F, SC.D_SNAP_F + 4, SC.D_BANK, SC.S_RUN_F0, SC.S_RUN_F0 + 4
+R_WK, R_WDPHI, R_WNS, R_WCUR, R_WCUR_DPHI, R_PFB_SAT, R_DDC_SAT = SC.S_WK, SC.S_WDPHI, SC.S_WNS, SC.S_WCUR, SC.S_WCUR_DPHI, SC.D_PFB_SAT, SC.D_DDC_SAT
+R_WS_STALL, R_WS_RDY0, R_WRST_CNT, R_WSTART, R_DDC_OVR = SC.D_WS_STALL, SC.D_WS_RDY0, SC.D_WRST_CNT, SC.S_WSTART, SC.D_DDC_OVR
 CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_WRST = 1 << 0, 1 << 1, 1 << 8, 1 << 12
-SNAP_BASE, SPEC_BASE = 0x08000, 0x10000
+SNAP_BASE, SPEC_BASE = 0x08000, 0x10000   # 仮の読み窓（SC.leg_win(w)）の中
 FLAG_NAMES = ["XK_INDEX の飛び", "溜めの読み出しが間に合わない", "IP の TLAST 事象", "IP の入力の途切れ", "IP に待たされた（tready = 0）", "窓の PFB（T = 4）の飽和"]
 LINES_IF = (2048.0, 2560.0, 3072.0, 3584.0, 4096.0)   # k·fs/8（2048 = fs/2・4096 = DC も ADC の線が立つ）
 
@@ -116,12 +118,13 @@ def ch_if(c, w):
 
 
 class Win:
-    """win_core の窓 1 つの AXI4-Lite（proj015: win_core_i の窓 w、base = 0x20000·w）。読んだ中身は seqlock（SEQ → 中身 → SEQ）で
-    1 つのダンプのものと保証する。ADC の共通（0x80000–）は ard / awr"""
+    """DDC の流れ 1 本（s45_core_i の流れ w）。proj021 手順 2-1: base = 流れのブロック（SC.blk(w)）、lbase = 仮の読み窓（SC.leg_win(w)）。
+    読んだ中身は seqlock（SEQ → 中身 → SEQ）で 1 つのダンプのものと保証する。コアの共通（0x00000–）は ard / awr"""
 
-    def __init__(self, mmio, base=0, adc=None, win=0):
+    def __init__(self, mmio, base=None, adc=None, win=0, lbase=None):
         self.m = mmio
-        self.base = base
+        self.base = SC.blk(win) if base is None else base
+        self.lbase = SC.leg_win(win) if lbase is None else lbase
         self.adc = adc
         self.win = win
 
@@ -138,7 +141,8 @@ class Win:
         self.m.write(A_BASE + a, int(v))
 
     def block(self, base, nwords):
-        i0 = (self.base + base) // 4
+        """仮の読み窓（lbase）の中を読む（スペクトル・スナップショット。2-2 でリングに替わる）"""
+        i0 = (self.lbase + base) // 4
         return np.array(self.m.array[i0:i0 + nwords], dtype=np.uint32)
 
     def set_window(self, k, dphi, ns):
@@ -208,48 +212,31 @@ def set_sel(a):
 
 
 def open_full(ol):
-    """全帯域の分光（W-6・W-2・W-3 の基準）。proj015 は spec_core_0 の 1 本を FULL_SEL で窓と同じ ADC につなぎ、SRST で起動し直す"""
+    """全帯域の分光（W-6・W-2・W-3 の基準）。proj021 手順 2-1: FULL の流れ（s45_core_0 の s = 2）の SRC を窓と同じ ADC にし、
+    WRST で効かせ、SRST で起動し直す（旧: spec_core_0 を win_core_0 の FULL_SEL で）"""
     adc = SEL["adc"]
-    ip0 = ol.spec_core_0
-    if ip0.mmio.read(S.R_BUILD) & S.BUILD_SEL:
-        ol.win_core_0.mmio.write(A_BASE + R_A_FULL_SEL, adc)
-        if (ol.win_core_0.mmio.read(A_BASE + R_A_FULL_SEL) & 3) != adc:
-            raise RuntimeError("FULL_SEL が書けない")
-        time.sleep(0.01)
-        ip0.mmio.write(S.R_CTRL, S.CTRL_SRST)
-        time.sleep(0.1)
-        log(f"全帯域: spec_core_0 を FULL_SEL = ch {adc}（{S.CHANS[adc][0]}）につないで SRST")
-        return S.Spec(ip0.mmio, idx=adc, label=S.CHANS[adc][0])
-    return S.Spec(getattr(ol, f"spec_core_{adc}").mmio, idx=adc, label=S.CHANS[adc][0])
+    cores, _ = SC.discover(ol)
+    return S.open_full_stream(SC.full_stream(cores), adc)
 
 
 def open_win(ol, allow_nopreset=False, allow_rev1=False):
+    """proj021 手順 2-1: 自己記述（s45core.discover）で ADC SEL["adc"] のコアと DDC の流れ SEL["win"] を見つける。
+    ID の数値の照合（旧 ID_WIN・ID_ADC）はやめた。allow_rev1 は旧 .bit のためのもので、ここでは使わない"""
     adc, win = SEL["adc"], SEL["win"]
-    name = f"win_core_{adc}"
-    ip = getattr(ol, name, None)
-    if ip is None:
-        log(f"ERROR: ol.{name} が無い。proj015 の窓の .bit（4 ADC × 4 窓）が載っていないか"); sys.exit(1)
-    wn = Win(ip.mmio, base=WIN_STRIDE * win, adc=adc, win=win)
-    ia, nw = wn.ard(R_A_ID), wn.ard(R_A_NW)
-    if ia not in (ID_ADC,) + ID_ADC_R1 or not (0 <= win < nw):
-        log(f"ERROR: {name} の ADC の共通 ID {ia:08x}（期待 {ID_ADC:08x}）・NW {nw}（窓 {win}）"); sys.exit(1)
-    ident, bt = wn.rd(R_ID), wn.rd(R_BUILD)
-    log(f"{name} の窓 {win}: ID {ident:08x} / BUILD {bt:08x}（プリセット {'あり' if bt >> 30 & 1 else '**なし**'} / -{bt >> 28 & 3} / 窓 {bt >> 22 & 1} / ch {bt & 3}）/ NW {nw}")
-    if wn.rd(0x90) != win:
-        log(f"ERROR: 窓の WIDX {wn.rd(0x90)} が {win} でない"); sys.exit(1)
-    wn.awr(R_A_SNAP_SEL, win)                     # スナップショットはこの窓（ADC で 1 つ）
-    if ident in ID_WIN_OLD and allow_rev1:
-        log(f"注意: ID {ident:08x} は rev1。--allow-rev1 で続ける（W-G・W-0 の FLAGS は NG になる。W-1・W-6 は下見。rev2 でやり直す）")
-    elif ident in ID_WIN_OLD:
-        log(f"ERROR: ID {ident:08x} は rev1（FFT IP の tready を見ない版。枠がずれる）。rev2（{ID_WIN:08x}）の .bit を載せる"); sys.exit(1)
-    elif ident in ID_WIN_R2:
-        log(f"注意: ID {ident:08x} は proj015 rev2（中身は rev3 と同じ。読み出しの応答が 1 クロック早いだけ）。続ける")
-    elif ident in ID_WIN_R1:
-        log(f"注意: ID {ident:08x} は proj015 rev1（中身は rev2 と同じ。`-1` で閉じなかった版）。続ける")
-    elif ident in ID_WIN_P14:
-        log(f"ERROR: ID {ident:08x} は proj014 rev2（4・2 MHz が無く、PARAM に G が無い）。proj015 の .bit（{ID_WIN:08x}）を載せる"); sys.exit(1)
-    elif ident != ID_WIN:
-        log(f"ERROR: ID が {ID_WIN:08x} でない"); sys.exit(1)
+    try:
+        cores, _ = SC.discover(ol)
+    except SC.S45Error as e:
+        log(f"ERROR: {e}"); sys.exit(1)
+    core = [c for c in cores if c.adc == adc][0]
+    ddc = core.ddc()
+    if not (0 <= win < len(ddc)):
+        log(f"ERROR: {core.name}（{core.adc_name}）に DDC の流れ {win} が無い（{len(ddc)} 本）"); sys.exit(1)
+    st = ddc[win]
+    wn = Win(core.m, base=st.base, adc=adc, win=win, lbase=st.lbase)
+    bt = core.build
+    log(f"{core.name}（{core.adc_name}）の流れ {st.s}: SID {st.sid:08x} / IF_ID {core.if_id:08x} / PROJ {core.proj:08x} / BUILD {bt:08x}"
+        f"（プリセット {'あり' if bt >> 30 & 1 else '**なし**'} / -{bt >> 28 & 3} / 窓 {bt >> 22 & 1} / ch {bt & 3}）/ NSTREAM {core.nstream}")
+    wn.awr(R_A_SNAP_SEL, win)                     # スナップショットはこの窓（ADC で 1 つ。仮の SNAP_SEL）
     if not (bt & BUILD_WIN) or (bt & 3) != adc:
         log(f"ERROR: BUILD が「窓・ch {adc}」でない"); sys.exit(1)
     if not (bt >> 30 & 1) and not allow_nopreset:
@@ -334,7 +321,7 @@ def main():
     time.sleep(0.2)
     f_run = wn.rd(R_FLAGS)
     log(f"FLAGS: WRST の後 50 ms = {f_start:#x}（{flag_text(f_start)}）/ 消してから 0.2 s = {f_run:#x}（{flag_text(f_run)}）")
-    if wn.rd(R_ID) == ID_WIN:
+    if True:
         log(f"FFT IP: WRST の解除から tready が 1 になるまで {wn.rd(R_WS_RDY0)} クロック / 待たされた {wn.rd(R_WS_STALL)} クロック（WRST 以来）")
     nacc = 1 if args.golden else nacc_for(w, args.tint)
     if args.golden:
@@ -368,7 +355,7 @@ def main():
         # FLAGS[4]（IP に待たされた）は rev2 ではデータを保って待つだけなので判定から外し、量（1 フレームあたりのクロック数）を出す。
         # 実機 4 回目（W = 8 MHz）: 待たされたのは 1 フレームにほぼ 1 クロック（途切れの後の面の頭で IP が 1 クロック待たせると読む。未確認）
         judge((flags & 0x3EF) == 0, f"W-0: FLAGS = {flags:#x}（{flag_text(flags)}）" + ("（[4] は判定に入れない）" if flags & 0x10 else ""))
-        if wn.rd(R_ID) == ID_WIN:
+        if True:
             fin_now = wn.rd(R_FIN_LO) | (wn.rd(R_FIN_HI) << 32)
             st = wn.rd(R_WS_STALL)
             log(f"  FFT IP に待たされた {st} クロック / 溜め終えたフレーム {fin_now}（1 フレームあたり {st / max(fin_now, 1):.3f}）"

@@ -7,7 +7,7 @@
                                      --expect-k 0 --out runs/g4                                 # G-4（陽性対照、GB_K=0 のビルド）
 
 proj015 から GRST（PS からの起動のやり直し）は無い（win_core.v の冒頭）ので、起動は Overlay の読み込みでしか起こせない。
-1 回ごとに、win_core_i の ADC の共通（0x80000 ＋ 表 A）を、読み込みの --settle 秒後と、さらに --dwell 秒後の 2 回読む:
+1 回ごとに、コアの共通（proj021 2-1 から s45_core_i の 0x00000 ＋。1b までは win_core_i の 0x80000 ＋ 表 A）を、読み込みの --settle 秒後と、さらに --dwell 秒後の 2 回読む:
   GB_STAT  [31] 開始した（armed）/ [29:24] 開始したときの FIFO の残量 / [21:16] その後の FIFO の残量の最小 / [15:0] 空振り（出口が空なのに下流が欲しかったクロック）
   ADC_STAT [31] RFDC の valid を見た / [15:0] RFDC の valid が落ちた回数（2 回読んで一致を確かめる）
   GB_K     起動に効いたしきい値
@@ -24,8 +24,12 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-A_BASE = 0x80000
-R_A_ID, R_A_NW, R_A_GB_K, R_A_GB_STAT, R_A_ADC_STAT = 0x00, 0x04, 0x1C, 0x24, 0x28
+# 旧（proj021 1b まで、win_core_i）: ADC の共通 = 0x80000 ＋ 表 A。proj021 手順 2-1 から（s45_core_i）: コアの共通 = 0x00000 ＋（表 A ＋ 0x10）。
+#   どちらの .bit かは .hwh の IP の名前で決める（LAYOUT）
+LAYOUT = {
+    "win_core": dict(base=0x80000, r_id=0x00, r_gb_k=0x1C, r_gb_stat=0x24, r_adc_stat=0x28, id=None),
+    "s45_core": dict(base=0x00000, r_id=0x00, r_gb_k=0x2C, r_gb_stat=0x34, r_adc_stat=0x38, id=0x0202_0101),
+}
 LABELS = ["ADC_A", "ADC_B", "ADC_C", "ADC_D"]
 
 
@@ -37,11 +41,12 @@ def gb_fields(v):
     return dict(armed=(v >> 31) & 1, cnt_arm=(v >> 24) & 0x3F, cnt_min=(v >> 16) & 0x3F, under=v & 0xFFFF)
 
 
-def read_adc(mm):
-    gs = mm.read(A_BASE + R_A_GB_STAT)
-    a1 = mm.read(A_BASE + R_A_ADC_STAT)
-    a2 = mm.read(A_BASE + R_A_ADC_STAT)
-    return dict(id=mm.read(A_BASE + R_A_ID), gb_k=mm.read(A_BASE + R_A_GB_K) & 0x3F, gb_stat=gs, adc_stat=a1,
+def read_adc(mm, L):
+    b = L["base"]
+    gs = mm.read(b + L["r_gb_stat"])
+    a1 = mm.read(b + L["r_adc_stat"])
+    a2 = mm.read(b + L["r_adc_stat"])
+    return dict(id=mm.read(b + L["r_id"]), gb_k=mm.read(b + L["r_gb_k"]) & 0x3F, gb_stat=gs, adc_stat=a1,
                 adc_stable=(a1 == a2), adc_seen=(a1 >> 31) & 1, adc_gaps=a1 & 0xFFFF, **gb_fields(gs))
 
 
@@ -71,21 +76,28 @@ def main():
         if not isinstance(ol.rfdc, xrfdc.RFdc):
             log("ERROR: RFDC に xrfdc のドライバが当たっていない"); sys.exit(1)
         S.check_tiles(ol.rfdc, 2)
-        mms = []
+        kind = "s45_core" if "s45_core_0" in ol.ip_dict else "win_core"
+        L = LAYOUT[kind]
+        mms = [None] * 4
         for i in range(4):
-            ip = ol.ip_dict.get(f"win_core_{i}")
+            ip = ol.ip_dict.get(f"{kind}_{i}")
             if ip is None:
-                log(f"ERROR: win_core_{i} が .hwh に無い"); sys.exit(1)
-            mms.append(MMIO(ip["phys_addr"], 0x100000))
+                log(f"ERROR: {kind}_{i} が .hwh に無い"); sys.exit(1)
+            m = MMIO(ip["phys_addr"], 0x100000)
+            adc = (m.read(0x18) & 0xF) if kind == "s45_core" else i      # v2: CORE_PORT の ADC の番号で並べる
+            mms[adc] = m
+        if any(m is None for m in mms):
+            log("ERROR: CORE_PORT の ADC が 0..3 を埋めていない"); sys.exit(1)
         time.sleep(a.settle)
-        r1 = [read_adc(m) for m in mms]
+        r1 = [read_adc(m, L) for m in mms]
         time.sleep(a.dwell)
-        r2 = [read_adc(m) for m in mms]
+        r2 = [read_adc(m, L) for m in mms]
         bad = []
         for i in range(4):
             x, y = r1[i], r2[i]
-            if not a.any_id and x["id"] != WN.ID_ADC:
-                bad.append(f"{LABELS[i]} ID {x['id']:#010x}（期待 {WN.ID_ADC:#010x}）")
+            want_id = L["id"] if L["id"] is not None else 0x0021_A100
+            if not a.any_id and x["id"] != want_id:
+                bad.append(f"{LABELS[i]} ID {x['id']:#010x}（期待 {want_id:#010x}）")
             if x["gb_k"] != a.expect_k:
                 bad.append(f"{LABELS[i]} GB_K {x['gb_k']}（期待 {a.expect_k}）")
             if not x["armed"]:

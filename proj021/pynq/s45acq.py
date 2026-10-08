@@ -180,7 +180,9 @@ class HwBackend:
         S.check_tiles(self.ol.rfdc, 2)
         time.sleep(self.o.settle)
         ns_list = [1] * (4 * NW)
-        self.tc, self.wms, self.wins, self.full = T.open_all(self.ol, ns_list)   # ID の照合（窓・ADC の共通・全帯域）は open_all の中
+        self.tc, self.wms, self.wins, self.full = T.open_all(self.ol, ns_list)   # 照合は自己記述（s45core.discover。open_all の中）
+        import s45core as SC
+        self.cores, _ = SC.discover(self.ol)
         for wm in self.wms:
             prm = int(wm.read(W.A_BASE + S.R_TP_PARAM)) & 0xFFFFFFFF
             if prm != S.TP_PARAM_EXPECT:
@@ -188,7 +190,9 @@ class HwBackend:
         self.tc.configure(src=self.o.path, tol=1)
         self.tb = TB.Timebase(self.tc, path=self.o.path)
         self.TpStream = make_tp_reader(S)
-        self.ids = dict(win=f"{W.ID_WIN:08x}", adc=f"{W.ID_ADC:08x}", time=f"{TB.TimeCore.ID:08x}",
+        c0 = self.cores[0]
+        self.ids = dict(win=f"{self.wins[0].rd(W.R_ID):08x}", adc=f"{c0.if_id:08x}", time=f"{TB.TimeCore.ID:08x}",
+                        proj=f"{c0.proj:08x}",
                         lmx_vco=f"{self.lmx['vco_mhz']:.2f}" if self.lmx else "7864.32",
                         lmx_pwr=str(self.lmx.get("outa_pwr", 31)) if self.lmx else "31")
         self.clock = Clock(None, TB.WIN_DELAY_BEATS)
@@ -243,7 +247,7 @@ class HwBackend:
                 time.sleep(0.001)
             cur = c.rd(T.R_WCUR)
             k, dphi, ns_ = c.want
-            if (cur & 31) != k or ((cur >> 8) & 15) != ns_ or c.rd(0x68) != dphi:
+            if (cur & 31) != k or ((cur >> 8) & 15) != ns_ or c.rd(W.R_WCUR_DPHI) != dphi:
                 raise RuntimeError(f"{c.name}: WRST の後の WCUR {cur:#x} が書いた値と違う")
             ws_.append(c.rd(T.R_WSTART))
         for i in range(4):
@@ -310,7 +314,7 @@ class HwBackend:
         s = c.rd(W.R_SEQ)
         if s == self.seq[j]:
             return None
-        i0 = (c.base + W.SPEC_BASE) // 4
+        i0 = (c.lbase + W.SPEC_BASE) // 4         # proj021 手順 2-1: 仮の読み窓（2-2 でリングに替わる）
         for _ in range(5):
             m = c.meta()
             m["sat"] = c.rd(W.R_DUMP_SAT)
@@ -343,7 +347,7 @@ class HwBackend:
         full.wr(S.R_CTRL, S.CTRL_CLR | S.CTRL_RUN)
         out = []
         t_end = time.time() + timeout + n * nacc * 2e-6
-        i0 = S.SNAP_BASE // 4
+        i0 = (full.lbase + S.SNAP_BASE) // 4      # proj021 手順 2-1: 仮の読み窓（2-2 で REC_CTRL の ONE | SNAP に替わる）
         while len(out) < n:
             if time.time() > t_end:
                 raise RuntimeError(f"SNAP: {len(out)}/{n} 個で時間切れ（全帯域コアのダンプが閉じない）")

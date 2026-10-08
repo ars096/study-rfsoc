@@ -28,16 +28,18 @@ import spectrometer as S
 import window as W
 from timebase import BEATS_PER_SEC, TimeCore, Timebase, TimebaseError, beats_to_ns
 
-# 窓（win_core_0 の窓 w = 0x20000·w ＋ 下）
-R_CFG, R_RUN_CFG, R_WRST_CFG = 0x94, 0x98, 0x9C
-R_DUMP_T, R_DUMP_H, R_DUMP_CFG, R_RUN_T, R_RUN_SHIFT = 0xA0, 0xA8, 0xAC, 0xB0, 0xB8
+import s45core as SC
+
+# proj021 手順 2-1: 流れのブロック（INTERFACE 2.5）の中。**窓（DDC）と全帯域（FULL）で同じ番地**（v2 の約束）
+R_CFG, R_RUN_CFG, R_WRST_CFG = SC.S_CFG, SC.S_RUN_CFG, SC.S_WRST_CFG
+R_DUMP_T, R_DUMP_H, R_DUMP_CFG, R_RUN_T, R_RUN_SHIFT = SC.S_DUMP_T, SC.S_DUMP_H, SC.S_DUMP_CFG, SC.S_RUN_T, SC.S_RUN_SHIFT
 CTRL_ARM, CTRL_DISARM, CTRL_ARM_WRST = 1 << 2, 1 << 3, 1 << 13
-# ADC の共通（0x80000 ＋）
-RA_TP_CTRL, RA_ANCH_F, RA_ANCH_T, RA_ANCH_ST, RA_TP_RUN_T, RA_OVR, RA_GAP = 0x10, 0x2C, 0x34, 0x3C, 0x40, 0x48, 0x4C
+# コアの共通（0x00000 ＋。表 A を +0x10）
+RA_TP_CTRL, RA_ANCH_F, RA_ANCH_T, RA_ANCH_ST, RA_TP_RUN_T, RA_OVR, RA_GAP = SC.C_TP_CTRL, SC.C_ANCH_F, SC.C_ANCH_T, SC.C_ANCH_ST, SC.C_TP_RUN_T, SC.C_OVR, SC.C_GAP
 TP_RUN, TP_ARM, TP_DISARM, TP_ANCH = 1, 4, 8, 16
 RA_TP_N, RA_TP_WP, RA_RING = 0x100, 0x108, 0x2000
-# 全帯域（spec_core_0）
-RS_CFG, RS_RUN_CFG, RS_DUMP_T, RS_DUMP_H, RS_DUMP_CFG, RS_RUN_T, RS_RUN_SHIFT = 0xC0, 0xC4, 0xC8, 0xD0, 0xD4, 0xD8, 0xE0
+# 全帯域（FULL の流れ）: 窓と同じ番地
+RS_CFG, RS_RUN_CFG, RS_DUMP_T, RS_DUMP_H, RS_DUMP_CFG, RS_RUN_T, RS_RUN_SHIFT = R_CFG, R_RUN_CFG, R_DUMP_T, R_DUMP_H, R_DUMP_CFG, R_RUN_T, R_RUN_SHIFT
 H_NAMES = {0: "PPS 来ていない", 1: "間隔の異常", 2: "グリッチ", 3: "原点なし", 4: "振り切れ", 5: "入力の途切れ", 6: "CFG 不一致",
            14: "帳簿の上書き", 15: "帳簿が閉じていない"}
 
@@ -78,50 +80,44 @@ class Core:
 
 
 def open_all(ol, ns_list):
-    """proj017: wms = ADC ごとの win_core_i の mmio（4 本）、wins = ADC の順・窓の順の全部の窓（4 × NW）"""
-    tc = TimeCore(ol.time_core_0.mmio)
-    wms = []
-    nw = None
-    for i in range(len(S.CHANS)):
-        wm = getattr(ol, f"win_core_{i}").mmio
-        if (int(wm.read(W.A_BASE + W.R_A_ID)) & 0xFFFFFFFF) != W.ID_ADC:
-            log(f"ERROR: win_core_{i} の ADC の共通 ID {int(wm.read(W.A_BASE)):08x}（期待 {W.ID_ADC:08x}）"); sys.exit(1)
-        n = int(wm.read(W.A_BASE + W.R_A_NW))
-        if nw is not None and n != nw:
-            log(f"ERROR: win_core_{i} の NW {n} が win_core_0 の {nw} と違う"); sys.exit(1)
-        nw = n
-        wms.append(wm)
+    """proj021 手順 2-1: 自己記述（s45core.discover）で。wms = ADC の順のコアの mmio（4 本）、wins = ADC の順・窓の順の全部の DDC の流れ、
+    full = FULL の流れ（s45_core_0 の s = 2）"""
+    cores, tmm = SC.discover(ol)
+    tc = TimeCore(tmm)
+    wms = [c.m for c in cores]
+    nw = {len(c.ddc()) for c in cores}
+    if len(nw) != 1:
+        log(f"ERROR: コアごとの DDC の流れの数が揃っていない {nw}"); sys.exit(1)
+    nw = nw.pop()
     if len(ns_list) != len(wms) * nw:
         log(f"ERROR: --ns は {len(wms)} ADC × {nw} 窓 = {len(wms) * nw} 個（{len(ns_list)} 個が与えられた）"); sys.exit(1)
+    regs = dict(cfg=R_CFG, run_cfg=R_RUN_CFG, dump_t=R_DUMP_T, dump_h=R_DUMP_H, dump_cfg=R_DUMP_CFG, run_t=R_RUN_T)
     wins = []
     for j, ns in enumerate(ns_list):
         i, w = divmod(j, nw)
-        c = Core(f"{S.CHANS[i][0]} 窓 {w}", wms[i], W.WIN_STRIDE * w,
-                 dict(cfg=R_CFG, run_cfg=R_RUN_CFG, dump_t=R_DUMP_T, dump_h=R_DUMP_H, dump_cfg=R_DUMP_CFG, run_t=R_RUN_T),
-                 4096 << (ns - 1), adc=i, widx=w)
+        st = cores[i].ddc()[w]
+        c = Core(f"{S.CHANS[i][0]} 窓 {w}", wms[i], st.base, regs, 4096 << (ns - 1), adc=i, widx=w)
+        c.lbase = st.lbase
         c.ns = ns
-        if c.rd(W.R_ID) != W.ID_WIN:
-            log(f"ERROR: {c.name} の ID {c.rd(W.R_ID):08x}（期待 {W.ID_WIN:08x}）"); sys.exit(1)
-        if c.rd(0x90) != w:
-            log(f"ERROR: {c.name} の WIDX {c.rd(0x90)}"); sys.exit(1)
         wins.append(c)
-    sm = ol.spec_core_0.mmio
-    full = Core("全帯域", sm, 0, dict(cfg=RS_CFG, run_cfg=RS_RUN_CFG, dump_t=RS_DUMP_T, dump_h=RS_DUMP_H, dump_cfg=RS_DUMP_CFG,
-                                     run_t=RS_RUN_T), 512)
-    if (full.rd(W.R_ID) & S.ID_MASK) != S.ID_EXPECT:
-        log(f"ERROR: spec_core_0 の ID {full.rd(W.R_ID):08x}"); sys.exit(1)
+    fs = SC.full_stream(cores)
+    full = Core("全帯域", fs.m, fs.base, regs, 512)
+    full.lbase = fs.lbase
     return tc, wms, wins, full
 
 
 def select_full(wms, full, adc):
-    """全帯域（spec_core_0）を ADC adc につなぎ、SRST で起動し直す（window.open_full と同じ手順）"""
-    wms[0].write(W.A_BASE + W.R_A_FULL_SEL, adc)
-    if (int(wms[0].read(W.A_BASE + W.R_A_FULL_SEL)) & 3) != adc:
-        raise RuntimeError("FULL_SEL が書けない")
+    """全帯域（FULL の流れ）を ADC adc につなぎ（SRC → WRST）、SRST で起動し直す（spectrometer.open_full_stream と同じ手順）"""
+    full.wr(S.R_SRC, adc)
+    full.wr(S.R_CTRL, S.CTRL_WRST)
+    time.sleep(0.001)
+    got = full.rd(S.R_SRC)
+    if (got & 0xF) != adc:
+        raise RuntimeError(f"FULL の SRC が {got:#010x}（書いた値 {adc}）")
     time.sleep(0.01)
     full.wr(S.R_CTRL, S.CTRL_SRST)
     time.sleep(0.1)
-    log(f"全帯域: spec_core_0 を FULL_SEL = {adc}（{S.CHANS[adc][0]}）につないで SRST")
+    log(f"全帯域: FULL の流れの SRC = {adc}（{S.CHANS[adc][0]}）で WRST・SRST")
 
 
 def tp_run_t(wm):
@@ -131,7 +127,7 @@ def tp_run_t(wm):
 # proj017: 時刻の格子（BITS.md）。WRST・RUN・TP_ARM の START_AT は G の倍数に置く。窓のフレーム長 L = 2^(11+NS) は G を割り切り、
 #   wspec_core が F0 を (⌊fin / M⌋ + 2)·M（M = G / L）に寄せるので、WSTART が揃った窓どうしはダンプの区切りがサンプルの時刻で揃う
 G_BEATS = 1 << 19                # 524,288 ビート = 2.048 ms
-R_WSTART, R_WCUR = 0x8C, 0x64
+R_WSTART, R_WCUR = SC.S_WSTART, SC.S_WCUR
 
 
 def start_at_grid(tb, lead_s=2, offset=0):
@@ -166,7 +162,7 @@ def wrst_on_grid(tc, tb, wins, full, wms, ns_list, if_c, cfg, offset=0, only=Non
             time.sleep(0.001)
         cur = c.rd(R_WCUR)
         k, dphi, ns_ = c.want
-        if (cur & 31) != k or ((cur >> 8) & 15) != ns_ or c.rd(0x68) != dphi:
+        if (cur & 31) != k or ((cur >> 8) & 15) != ns_ or c.rd(W.R_WCUR_DPHI) != dphi:
             raise RuntimeError(f"{c.name}: WRST の後の WCUR {cur:#x} が書いた値（k {k}・NS {ns_}）と違う")
     ws = [wins[j].rd(R_WSTART) for j in range(len(wins))]
     log(f"  WRST: START_AT {sa}（格子 {sa // G_BEATS}·G{f' ＋ {offset}' if offset else ''}）/ WSTART " +
@@ -184,7 +180,7 @@ def setup_windows(wins, ns_list, if_c, cfg):
         w_mhz = 512.0 / (1 << ns)
         _, k, dphi, ns_, _ = W.window_params(if_c, w_mhz)
         c.wr(R_CFG, cfg)
-        wn = W.Win(c.m, base=c.base)
+        wn = W.Win(c.m, base=c.base, win=c.widx or 0, lbase=getattr(c, "lbase", None))
         wn.set_window(k, dphi, ns_)
 
 
@@ -350,7 +346,7 @@ def t2(tc, tb, wins, full, wms, path="trig", n_trial=5, if_c=2200.0, out=None, a
     # (a) 全帯域（spec_core_0）のスナップショット = 1 フレーム 8192 サンプル（512 ビート = 2 µs）の**生の ADC 値**。フィルタを通らないので
     #     縁のサンプルがそのまま読める（proj008 の閉ループの型）。フレームは 512 ビートで 1 s = 500,000 フレームちょうどなので、
     #     フレームの位相（DUMP_T mod 512）は PPS に対して動かない → 1 回測って、縁（の見当）を含むフレームを狙う
-    sp = S.Spec(full.m, idx=adc, label=lbl)
+    sp = S.Spec(full.m, idx=adc, label=lbl, base=full.base, lbase=full.lbase)
     full.wr(W.R_NACC, 1); full.wr(W.R_NDUMP, 1); full.wr(W.R_SHIFT, 7)
     seq0 = full.rd(W.R_SEQ)
     full.wr(W.R_CTRL, W.CTRL_CLR | W.CTRL_RUN)
@@ -401,7 +397,7 @@ def t2(tc, tb, wins, full, wms, path="trig", n_trial=5, if_c=2200.0, out=None, a
     setup_windows([c], [1], if_c, 0)
     wm.write(W.A_BASE + W.R_A_SNAP_SEL, 0)
     c.wr(W.R_NACC, 1); c.wr(W.R_NDUMP, 1); c.wr(W.R_SHIFT, 7)
-    wn = W.Win(c.m, base=c.base)
+    wn = W.Win(c.m, base=c.base, win=c.widx or 0, lbase=getattr(c, "lbase", None))
     d1 = WIN_DELAY_BEATS[1]
     offs, snaps = [], []
     # 窓のフレーム（4096 ビート）も 1 s = 62,500 フレームちょうどで位相は PPS に対して動かない → (a) と同じく位相を 1 回測って狙う
@@ -530,7 +526,7 @@ def t4(tc, tb, wins, full, wms, ns_list):
         seq = c.rd(W.R_SEQ)
         sums = []
         cfgs = []
-        wn = W.Win(c.m, base=c.base) if c is not full else None
+        wn = W.Win(c.m, base=c.base, win=c.widx or 0, lbase=getattr(c, "lbase", None)) if c is not full else None
         for i in range(8):
             if i == 3:
                 c.wr(W.R_SHIFT, 2); c.wr(c.r["cfg"], 0x9999)          # RUN の間に書く

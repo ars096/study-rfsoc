@@ -120,7 +120,7 @@ def tanch(wm, timeout=0.5):
 
 def read_win(c, tries=5):
     """窓 c の閉じたダンプのメタとスペクトル（seqlock: SEQ → メタ・中身 → SEQ）"""
-    wn = W.Win(c.m, base=c.base)
+    wn = W.Win(c.m, base=c.base, win=c.widx or 0, lbase=getattr(c, "lbase", None))
     for _ in range(tries):
         m = c.meta()
         w = wn.block(W.SPEC_BASE, 2 * W.NFFT_W)
@@ -354,7 +354,7 @@ def f5(tc, tb, wins, full, wms, seconds=1.0):
         T.select_full(wms, full, i)                 # SRST で spec_core_0 の中の tp_core も起動し直す（TP_N は既定 512 = 1.024 ms）
         time.sleep(seconds + 0.1)                   # どちらの TP も RUN なしで自走している（区切りは起動からのフレーム）
         vals = []
-        for a in (WinTp(wm), S.Spec(full.m, idx=i, label=S.CHANS[i][0])):
+        for a in (WinTp(wm), S.Spec(full.m, idx=i, label=S.CHANS[i][0], base=full.base, lbase=full.lbase)):
             if a.rd(S.R_TP_NEFF) != TP_N:
                 log(f"  NG {S.CHANS[i][0]}: TP_NEFF {a.rd(S.R_TP_NEFF)}（期待 {TP_N}）"); bad += 1
             n = min(int(seconds * 1000), 480)

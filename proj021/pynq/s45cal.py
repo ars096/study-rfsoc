@@ -40,7 +40,8 @@ def check(cal, ids):
         return False, "較正ファイルが無い"
     w = cal.get("bit_id_win", "")
     wants = [str(v).lower() for v in (w if isinstance(w, list) else [w]) if str(v)]   # proj020: 一覧も許す（TP の経路が同じ bit）
-    got = str((ids or {}).get("win", "")).lower()
+    # proj021 手順 2-1: 窓の 0x00 は SID（bit を見分けない）になったので、PROJ（コアの 0x04）で照らす。PROJ が無い（旧 bit）なら窓の ID
+    got = str((ids or {}).get("proj") or (ids or {}).get("win", "")).lower()
     if got == "fake":
         return True, "偽物（ID を照らさない）"
     if wants and got not in wants:
