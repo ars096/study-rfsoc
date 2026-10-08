@@ -39,10 +39,14 @@ NS_NUM, NS_DEN = 125, 32          # 1 ビート = 125/32 ns（厳密）
 #   **T-2（閉ループ）で測れるのは差 M = adc_to_core − pps_det（＋ 2 本のケーブルの差）の 1 つだけ**なので、M を adc_to_core_ns に入れ、
 #   pps_det_ns = 0 とする（式の上では引く量は M で同じ）。
 CAL = {
-    # proj020: time_core・ギアボックスの RTL は proj017 と同じだが、別の Overlay・別の配置なので proj017 の値は持ち込まない（proj017 の流儀）。
-    #   F-2（閉ループ、4 ADC）で測るまで未較正
-    0x0020_7101: dict(pps_det_ns=0.0, adc_to_core_ns={0: None, 1: None, 2: None, 3: None}, bound_ns=50,
-                      source="proj020: 未較正（F-2 で測る）"),
+    # proj020: time_core・ギアボックスの RTL は proj017 と同じだが、別の Overlay・別の配置なので proj017 の値は持ち込まず、F-2 で測り直した
+    0x0020_7101: dict(pps_det_ns=0.0, adc_to_core_ns={0: 124.7, 1: 124.9, 2: 122.1, 3: 121.9}, bound_ns=50,
+                      source="proj020 P-7（F-2、2026-10-08）: 全帯域の生サンプルで 1PPS の縁がコアに入った T − スタンプ（TRIG 系統）を 4 ADC、"
+                             "ADC に入れるケーブルを A↔C・B↔D に入れ替えて 2 回（Overlay も 2 回）。値は各回 5 試行の中央値の 2 回の平均"
+                             "（A 31.62・32.25 / B 31.69・32.25 / C 31.12・31.38 / D 31.12・31.31 ビート）。"
+                             "2 回目は 4 ADC とも +0.19〜+0.63 ビート大きく、共通の分 ≒ +0.41 ビート（1.6 ns）は Overlay ごとのずれ、"
+                             "A・C と B・D で逆向きの分 ±0.19 ビートはケーブルの差。タイル 226（A・B）が 224（C・D）より 2.6〜3.0 ns 遅い（proj017 と同じ向き）。"
+                             "上限 50 ns は proj016 と同じ見当（45m の配線のケーブルの差は未測）"),
     # proj017: adc_to_core_ns は ADC ごと（chans の添字 0..3 = ADC_A..D）。F-2 で 4 本とも測るまで None（未較正）。
     #   proj016 の ADC_A の 121.2 ns は別の Overlay・別の配置なので持ち込まない
     0x0017_7101: dict(pps_det_ns=0.0, adc_to_core_ns={0: 126.8, 1: 126.4, 2: 122.4, 3: 123.3}, bound_ns=50,
