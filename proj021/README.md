@@ -38,6 +38,81 @@
 - M-3〜M-5 は PL を使わない（allocate したバッファに試験の値を書いて読む）。ボードで specd を止めて測る
 - 結果の書き方は判定の表の形（下の「判定の書き方」）
 
+### 手順 0 の測り方（2026-10-08）
+
+ボードは PL を変えない（proj020 の Overlay が載っていてもいなくてもよい。M-2〜M-5 は PL に触らない）。
+
+**0. 前準備**
+
+```bash
+# Mac
+scp proj021/pynq/bench_ps.py xilinx@<board>:~/proj021/
+
+# 制御 PC: specd を止める（同じ A53 を取り合うと数が意味を持たない）
+python3 specctl.py --host <board> SHUTDOWN confirm=1
+
+# ボード: 止まったこと・測るときの状態を残す
+pgrep -af 'specd|s45acq' || echo "止まっている"
+mkdir -p ~/proj021/runs && cd ~/proj021
+{ uname -a; grep -i cma /proc/meminfo; free -m
+  cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq
+  pip list 2>/dev/null | grep -i -E '^pynq|^numpy'; } > runs/m0_env.txt 2>&1
+```
+
+**1. M-1（1 GbE の実効）** — 運転と同じ経路（同じスイッチ・ケーブル・ダウンロード PC の NIC）で測る
+
+```bash
+# ダウンロード PC
+iperf3 -s
+
+# ボード（iperf3 が無ければ sudo apt install iperf3）
+for i in 1 2 3 4 5; do iperf3 -c <PC> -t 30 -J > runs/m1_tx_$i.json; done       # ボード → PC（送り出しの向き。これが予算）
+for i in 1 2 3 4 5; do iperf3 -c <PC> -t 30 -R -J > runs/m1_rx_$i.json; done    # PC → ボード（参考）
+for f in runs/m1_*.json; do python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(sys.argv[1], round(d['end']['sum_received']['bits_per_second']/8e6,1), 'MB/s')" $f; done
+```
+
+**2. M-2〜M-5（1 回目）**
+
+```bash
+sudo -E $(which python3) bench_ps.py --out runs/bench_ps_1.json 2>&1 | tee runs/bench_ps_1.log
+```
+
+**3. 陽性対照（CRC の見張りが働くこと）**
+
+```bash
+sudo -E $(which python3) bench_ps.py --only m5 --corrupt --m5-rep 3 --out runs/bench_ps_corrupt.json 2>&1 | tee runs/bench_ps_corrupt.log
+```
+
+合格: どの構成でも「不一致 3」（壊したレコード 1 つ × 3 周）。0 なら見張りが壊れている（他の結果も読まない）
+
+**4. リングを大きくしたとき（invalidate がバッファ全体にかかる重さ）**
+
+```bash
+sudo -E $(which python3) bench_ps.py --only m3 m5 --buf-mib 256 --out runs/bench_ps_256m.json 2>&1 | tee runs/bench_ps_256m.log
+```
+
+**5. 間引いたときの見当と、2 回目（揺れを見る）**
+
+```bash
+sudo -E $(which python3) bench_ps.py --only m5 --no-crc --out runs/bench_ps_nocrc.json 2>&1 | tee runs/bench_ps_nocrc.log
+sudo -E $(which python3) bench_ps.py --out runs/bench_ps_2.json 2>&1 | tee runs/bench_ps_2.log
+```
+
+**6. 後片付け**: 制御 PC から specd を起動し直す（`sudo -E $(which python3) specd.py --clkin 0 --ref 10`）。runs/ を Mac へ持ち帰り、下の決め方で結果の表を埋める
+
+**決め方（測る前に書く、2026-10-08）**
+
+| 決めること | 規則 |
+|---|---|
+| ネットワークの予算 | M-1 のボード → PC の 5 回の中央値 × 0.7。SpW6（float32 で 76.8 MB/s）が入らなければ、BITS.md の制限に SpW6 を足す |
+| リングの大きさ | 1 s 以上の止まりを吸収（SAM45-Fine 32 MiB・256M 256 MiB）。M-2 の allocate の最大がそれに届かなければ、CMA を広げる（ボードの設定）か目安を下げる |
+| HP0 か HPC0 か | 4. の 256 MiB で M-5 の 256m の p99 が 5 ms（BASE の半分）以下なら HP0（キャッシュあり＋invalidate）。超えるなら HPC0（一方向のコヒーレンシで invalidate を要らなくする）か、範囲を絞った invalidate を自分で書く |
+| CRC を全部で確かめるか | 2. の M-5 で全構成の p99 が 5 ms 以下なら全部。超える構成は間引き、5. の --no-crc との差で間引きの率を決める |
+| 取得を Python のままにするか | M-5 で全構成の平均が 10.24 ms の 50 % 以下・最大が 10.24 ms 未満なら Python のまま（proj018 の「C に移す基準」と同じ考え方）。超えるなら取得の環を C に |
+| 陽性対照 | 3. で不一致 3 が出なければ、ほかの結果を使わない |
+
+**記録**: runs/m0_env.txt・m1_*.json・bench_ps_*.json / .log。README の結果に、M-1〜M-5 の値と上の決め方で決まったことを書く
+
 ## 手順 1a — ソースの分け方（案）
 
 製品リポジトリへほぼ機械的に写せるように、proj021 の中で分けて置く。**proj021 の自己完結は保つ**（上の階層を参照しない）。
@@ -115,10 +190,7 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 
 ## 結論・次にやること
 
-- 手順 0: ボードで specd を止めて測る
-  - M-1: ダウンロード PC で `iperf3 -s`、ボードで `iperf3 -c <PC> -t 30`（5 回）と `-R`（5 回）。iperf3 がボードに無ければ入れる
-  - M-2〜M-5: `cd ~/proj021 && sudo python3 bench_ps.py`（→ runs/bench_ps.json）。陽性対照 `sudo python3 bench_ps.py --only m5 --corrupt --out runs/bench_ps_corrupt.json`
-  - 間引いたときの見当: `--only m5 --no-crc`
+- 手順 0: ボードで測る（上の「手順 0 の測り方」の 0〜6）
 
 ## 公開について
 
