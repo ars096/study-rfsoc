@@ -88,6 +88,7 @@ sudo -E $(which python3) bench_ps.py --only m5 --corrupt --m5-rep 3 --out runs/b
 **4. リングを大きくしたとき（invalidate がバッファ全体にかかる重さ）**
 
 ```bash
+# 2026-10-08: 256 は CMA（128 MiB）を越えて落ちた（手順の誤り）。invalidate の重さは M-3 から読む
 sudo -E $(which python3) bench_ps.py --only m3 m5 --buf-mib 256 --out runs/bench_ps_256m.json 2>&1 | tee runs/bench_ps_256m.log
 ```
 
@@ -186,11 +187,30 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 
 ## 結果
 
-（まだ）
+### 手順 0（2026-10-08、1 回目。specd を止めて、root で `bench_ps.py`）
+
+| 判定 | 結果 | 予言 | 読み |
+|---|---|---|---|
+| M-1 ボード → PC | **25.3 MB/s**（5 回とも 25.3、202 Mbit/s） | 110〜117 MB/s | **外れ**。PC → ボード（`-R`）は 51.6〜52.1 MB/s。値が揃いすぎていて、線路ではなく何かの天井に当たっている。**どの経路（eth0 か USB の網か）で測ったか・リンクの速さ・CPU の周波数をまだ確かめていない** → 予算は保留 |
+| M-2 CMA | CmaTotal 128 MiB（空き 116〜119 MiB）。allocate は 64 MiB まで取れ、128 MiB で失敗 | 見当なし | SAM45-Fine の目安 32 MiB は入る。256M の目安 256 MiB は入らない（CMA を広げる必要。256M を作るときに） |
+| M-3 キャッシュあり | sum 2166〜2184 MB/s・copy 1999〜2008 MB/s・**invalidate だけ 4.65 ms / 64 MiB（0.073 ms / MiB）** | 1 GB/s 以上 | 当たり |
+| M-3 キャッシュなし | sum 81.0 MB/s・copy 152.6〜152.9 MB/s | 数百 MB/s 以下 | 当たり（予言より 1 桁遅い）。**キャッシュなしは SAM45-Fine（25.7 MB/s）でも読むだけで A53 の 1/3 を使う → 使わない** |
+| M-4 CRC-32 | 普通のメモリ 349.5〜349.6 MB/s・キャッシュあり 340.2〜340.3・キャッシュなし 55.8 | 300〜600 MB/s | 当たり |
+| M-5 sam45fine（8 流れ × 4096 ch、n_sum 4） | 1 BASE 平均 3.88〜3.89 ms・p99 4.48〜4.50・最大 4.49〜4.51 ms（10.24 ms の 38 %）。CRC なしで 2.79・3.38・3.41 ms | 1 ms 以下 | **外れ**。データの量（263 KB / BASE）だけで見積もり、A53 の Python のレコードごとの手間を見ていなかった。差し引き: CRC 1.09 ms（量から 0.77 ms）・M-5 のバッファ（10.5 MiB）全体の invalidate ≒ 0.76 ms・残り ≒ 2.0 ms がレコード 8 個の Python の手間 |
+| M-5 2g・256m・spw6 | **出ていない**（ログが sam45fine の行で終わり、`→ runs/…` の行も無い。2 回とも同じ） | — | 原因未確認（例外なら traceback が出るはず。落ちたか止めたか） |
+| 陽性対照（`--corrupt --m5-rep 3`） | sam45fine で不一致 3 | 3 | 通過（ほかの構成は上と同じく出ていない） |
+
+- **手順の誤り**: 4.（`--buf-mib 256`）は CMA（128 MiB）を越えるので allocate で落ちた。手順を書いたときに M-2 の結果を待たずに 256 を置いた。invalidate の重さはバッファの大きさに比例する（M-3 の 0.073 ms / MiB）ので、4. は M-3 から読む
+- **決め方への当てはめ（sam45fine だけ）**: CRC は p99 4.50 ≦ 5 ms で全部確かめてよい（すれすれ）。取得は平均 38 % ≦ 50 %・最大 4.51 < 10.24 ms で Python のまま（すれすれ。実際のリングの invalidate と送り出しは入っていない）
+- **HP0 か HPC0 か**: 決め方の 4. は測れなかったが、M-3 から、PYNQ の invalidate（範囲を指定できずバッファ全体）を BASE ごとに呼ぶと、リング 32 MiB で 2.3 ms / BASE（23 %）かかる。新しく来た分だけなら SAM45-Fine で 0.26 MB ≒ 0.02 ms。**全体の invalidate は使えない → HPC0 か、範囲を絞った invalidate を自分で書くか**（未決）
+- 外挿（未測定）: 256m は 1 BASE 2.1 MB で、CRC だけで ≒ 6.2 ms、2g は ≒ 3.1 ms。**CRC を全部確かめるのは SAM45-Fine・Wide・Fine くらいまで**の見込み
 
 ## 結論・次にやること
 
-- 手順 0: ボードで測る（上の「手順 0 の測り方」の 0〜6）
+- 手順 0 の残り:
+  - M-1 の経路の確かめ（`ip route get <PC>`・`ethtool eth0`・測っている間の `top`）と、eth0 で測り直し
+  - M-5 の 2g・256m・spw6 が出ない原因（`--only m5 --configs 2g` を単独で、終了の状態と `dmesg` を見る）
+  - HPC0 か、範囲を絞った invalidate か
 
 ## 公開について
 
