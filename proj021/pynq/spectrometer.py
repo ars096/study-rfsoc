@@ -14,7 +14,7 @@ ch の番号 i = 0..3 = ADC_A..D（build.tcl の chans と対。VERSIONS.md の�
 
 PL の spec_core が 1 フレーム 8192 サンプル（2.000 µs）ごとに FFT して電力を積み、
 N_ACC フレームごとに 1 ダンプ（4096 ch × 64 bit）を閉じる。PS は AXI4-Lite で
-凍っている面を読むだけ。レジスタの意味は src/spec_core.v の冒頭が正。
+凍っている面を読むだけ。レジスタの意味は src/common/spec_core.v の冒頭が正。
 
 **周波数軸（ゾーン 2）: ch k は IF = 4096 − 0.5·k MHz。**ch 0 が 4096 MHz、ch 4095 が 2048.5 MHz。
 スペクトルは反転している（proj009 と同じ）。
@@ -74,7 +74,7 @@ def feat_rev(ident):
 
 
 def fft_cfg_str(ident):
-    """ID の下位 8 bit（src/fft_cfg.tcl の fft_cfg_code）を読める形にする。"""
+    """ID の下位 8 bit（src/sam45fine/fft_cfg.tcl の fft_cfg_code）を読める形にする。"""
     c = ident & 0xFF
     thr = "realtime" if c & 1 else "nonrealtime"
     cmul = "use_luts" if c & 8 else ("use_mults_resources" if c & 2 else "use_mults_performance")
@@ -93,14 +93,14 @@ BUILD_4CH = 1 << 23               # BUILD の [23] 4ch のビルド / [1:0] ch �
 BUILD_SEL = 1 << 21               # proj015: spec_core_0 は 1 本だけで、4 ADC から選ぶ（win_core_0 の FULL_SEL）
 WIN_A_FULL_SEL = 0x80020          # proj015: win_core_i の ADC の共通の FULL_SEL（win_core_0 のものだけが効く）
 
-# ---- レジスタ（src/spec_core.v の冒頭と対）----
+# ---- レジスタ（src/common/spec_core.v の冒頭と対）----
 R_ID, R_PARAM, R_CTRL, R_NACC, R_NDUMP, R_SHIFT = 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14
 R_FLAGS, R_SEQ, R_FIN_LO, R_FIN_HI, R_FOUT_LO, R_FOUT_HI = 0x18, 0x1C, 0x20, 0x24, 0x28, 0x2C
 R_DUMP_K, R_DUMP_N, R_DUMP_F0_LO, R_DUMP_F0_HI, R_DUMP_SAT = 0x30, 0x34, 0x38, 0x3C, 0x40
 R_SNAP_F_LO, R_SNAP_F_HI, R_BANK, R_RUN_F0_LO, R_RUN_F0_HI = 0x44, 0x48, 0x4C, 0x50, 0x54
 SNAP_BASE, SPEC_BASE = 0x4000, 0x8000
 CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_DCLR = 1 << 0, 1 << 1, 1 << 8, 1 << 9
-# ---- total power（src/tp_core.v の冒頭と対。proj013）----
+# ---- total power（src/common/tp_core.v の冒頭と対。proj013）----
 R_TP_N, R_TP_NEFF, R_TP_WP, R_TP_F0_LO, R_TP_F0_HI, R_TP_PARAM, R_TP_STAT = 0x100, 0x104, 0x108, 0x10C, 0x110, 0x114, 0x118
 TP_BASE, TP_DEPTH, TP_PARAM_EXPECT = 0x2000, 512, (512 << 16) | (16 << 8) | 2
 TPF_SHORT, TPF_RUN, TPF_GAP, TPF_BOOT = 1, 2, 4, 8

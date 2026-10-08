@@ -77,7 +77,7 @@ def main():
     ifs = np.arange(f_from, f_to + a.step / 2, a.step)
     ifs = ifs[(ifs > 2048.0 + 1.0) & (ifs < 4096.0 - 1.0)]          # ゾーン 2 の中（全帯域の端 1 MHz は基準にならない）
     f = 4096.0 - ifs
-    coef_path = a.coef or next((q for q in (os.path.join(HERE, "win_coef.vh"), os.path.join(HERE, "..", "src", "win_coef.vh"))
+    coef_path = a.coef or next((q for q in (os.path.join(HERE, "win_coef.vh"), os.path.join(HERE, "..", "src", "common", "win_coef.vh"))
                                 if os.path.exists(q)), None)
     if coef_path is None:
         log("ERROR: win_coef.vh が無い"); sys.exit(1)

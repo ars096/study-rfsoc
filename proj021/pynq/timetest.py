@@ -11,7 +11,7 @@ TP は 4 ADC とも同じ予約で TP_ARM する。T-2 は --t2-adc で全帯域
     sudo -E $(which python3) timetest.py --clkin 0 --ref 10 --t3 --seconds 300   # T-3: 健全性のフラグを見ながら、PPS を抜く・基準を替える
     sudo -E $(which python3) timetest.py --clkin 0 --ref 10 --t4                 # T-4: RUN の間に SHIFT・CFG_ID を書いても、ダンプは変わらない
 
-約束（src/time_core.v・src/dstamp.v・src/win_core.v の冒頭）:
+約束（src/common/time_core.v・src/common/dstamp.v・src/common/win_core.v の冒頭）:
   - コアの RUN は T = START_AT + 1 のクロック（RUN_T）。ダンプの DUMP_T = そのダンプの最初のフレームの最初のサンプルがコアに入ったビート
   - 全帯域は DUMP_T(k) − DUMP_T(0) = k·N·512 ちょうど。窓は k·N·L（L = 4096·2^(NS−1)）から z の出方の揺れ（sim で ≦ 数ビート）
   - DUMP_H: [0] PPS 来ていない / [1] 間隔の異常 / [2] グリッチ / [3] 原点なし / [4] ADC の振り切れ / [5] 入力の途切れ /

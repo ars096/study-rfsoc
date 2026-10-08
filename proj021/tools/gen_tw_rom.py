@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-3-Clause
-"""src/tw_rom.v を生成する（レーン p ごとのひねり係数 W8192^(p·k1)、k1 = 0..511）。
+"""src/common/tw_rom.v を生成する（レーン p ごとのひねり係数 W8192^(p·k1)、k1 = 0..511）。
 
-    python3 tools/gen_tw_rom.py > src/tw_rom.v
+    python3 tools/gen_tw_rom.py > src/common/tw_rom.v
 
 **生成物もコミットする。**ビルドサーバで Python を走らせずに済ませるためと、
 係数が変わったことを git の差分で見えるようにするため。

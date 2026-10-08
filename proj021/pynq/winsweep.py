@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """proj014 — 窓の掃引（判定 W-2・W-3）。SG の周波数を動かしながら、窓（win_core_0）と全帯域（spec_core_1）を同時に測る。
 
-  W-2  窓の中の利得の形: 窓の中（|ν| < 0.5W）に CW を置き、ch の利得を ν ごとに測って模型（src/win_coef.vh の係数）と比べる
+  W-2  窓の中の利得の形: 窓の中（|ν| < 0.5W）に CW を置き、ch の利得を ν ごとに測って模型（src/common/win_coef.vh の係数）と比べる
        W-2a 中央 90 %（|ν| ≦ 0.45W）の平らさ（p-p）/ W-2b 中央 90 % の模型との差 / W-2c 両端 5 % の落ち方の模型との差
   W-3  窓の外からの折り返し: 窓の外に CW を置き、窓の出力のレート W で折り返る先（中央 90 % の中）に出る量を測る（要求 −60 dB）
   W-4  粗い ch の境目（c = 128k + 64）に窓を置く（--w4）。同じ窓を粗い ch k（d = +64）と k + 1（d = −64）の両方で作り、
@@ -51,7 +51,7 @@ def log(*a):
 
 # ---------------------------------------------------------------- 模型（係数から）
 def load_coef(path):
-    """src/win_coef.vh（make coef の生成物）から PFB・light・final の係数（実数）を読む。"""
+    """src/common/win_coef.vh（make coef の生成物）から PFB・light・final の係数（実数）を読む。"""
     txt = open(path, encoding="utf-8").read()
     out = {}
     for name, key in (("PFB", "pfb"), ("HBL", "light"), ("HBF", "final")):
@@ -196,10 +196,10 @@ def main():
     dw = w / NFFT_W
     log(f"窓: IF {if_c:.6f} MHz ± {w / 2}（c = {c:.6f}）/ WK {k} / WDPHI {dphi:#010x} / WNS {ns}")
 
-    coef_path = a.coef or next((q for q in (os.path.join(HERE, "win_coef.vh"), os.path.join(HERE, "..", "src", "win_coef.vh"))
+    coef_path = a.coef or next((q for q in (os.path.join(HERE, "win_coef.vh"), os.path.join(HERE, "..", "src", "common", "win_coef.vh"))
                                 if os.path.exists(q)), None)
     if coef_path is None:
-        log("ERROR: win_coef.vh が無い（--coef で与えるか、src/win_coef.vh をこのスクリプトの隣に置く）"); sys.exit(1)
+        log("ERROR: win_coef.vh が無い（--coef で与えるか、src/common/win_coef.vh をこのスクリプトの隣に置く）"); sys.exit(1)
     coef = load_coef(coef_path)
     log(f"模型の係数: {coef_path}（PFB {len(coef['pfb'])}・light {len(coef['light'])}・final {len(coef['final'])} タップ）")
 

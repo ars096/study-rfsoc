@@ -91,7 +91,7 @@ module wspec_core #(
     output wire                 sn_wen,
     output wire [12:0]          sn_waddr,
     output wire [2*ZW-1:0]      sn_wdata,
-    // proj016: 時刻と健全性（src/dstamp.v）。t_now = time_core のビート（コアの中で time_core と同じ値）
+    // proj016: 時刻と健全性（src/common/dstamp.v）。t_now = time_core のビート（コアの中で time_core と同じ値）
     input  wire [63:0]          t_now,
     input  wire [7:0]           ev,
     output wire [63:0]          rd_t,           // 閉じたダンプの最初のフレームの最初の z が入ったビート（rd_* と同じ commit で切り替わる）

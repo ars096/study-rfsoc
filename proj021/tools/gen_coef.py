@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""proj014 — model/win_model.py の設計（18 bit に丸めた係数）から src/win_coef.vh を作る（make coef）。
+"""proj014 — model/win_model.py の設計（18 bit に丸めた係数）から src/common/win_coef.vh を作る（make coef）。
 
 生成物はリポジトリに入れる（proj013 の tw_rom.v と同じ扱い）。**手で直さない。**
 設計を変えたら make coef で作り直し、make model・make fixed・make sim-pfb を回し直す。

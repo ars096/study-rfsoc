@@ -12,12 +12,12 @@ VIVADO        := $(XILINX_VIVADO)/bin/vivado
 # Vivado のインストールツリーの中には置かない（VERSIONS.md 参照）。
 BOARD_REPO ?= $(HOME)/src/RFSoC4x2-BSP/board_files
 
-# part。proj015: **既定を -1 に**（実機の .bit を -1 で配置配線する。PS には src/ps_preset.tcl を当てる。build.tcl の冒頭）。
+# part。proj015: **既定を -1 に**（実機の .bit を -1 で配置配線する。PS には src/board/ps_preset.tcl を当てる。build.tcl の冒頭）。
 # -2（board_part ＋ プリセット、proj014 までの build/ の作り）は PART=xczu48dr-ffvg1517-2-e → build-2-e/
 PART_DEFAULT := xczu48dr-ffvg1517-1-e
 PART         ?= $(PART_DEFAULT)
 
-# FFT IP の変種（src/fft_cfg.tcl）。proj011 はこれを振って測る。
+# FFT IP の変種（src/sam45fine/fft_cfg.tcl）。proj011 はこれを振って測る。
 #   res  = realtime + 乗算器 use_mults_resources  + バタフライ use_luts            （本命・既定）
 #   perf = realtime + 乗算器 use_mults_performance + バタフライ use_xtremedsp_slices（proj010 と乗算器が同じ。realtime の効きだけを見る）
 FFT_OPT ?= res
@@ -80,7 +80,7 @@ SIM_SKEW  ?= 0
 SIM_START ?= 0
 SIM_DEFS  := $(if $(filter 1 2,$(SIM_START)),-DSTART_GAPS) $(if $(filter 2,$(SIM_START)),-DNO_GUARD)
 SIMDIR    := build-sim-s$(SIM_SHIFT)$(if $(filter-out 0,$(SIM_SKEW)),-k$(SIM_SKEW))$(if $(filter-out 0,$(SIM_START)),-g$(SIM_START))
-RTL       := src/spec_core.v src/tp_core.v src/cmul.v src/dft16.v src/tw_rom.v src/dstamp.v src/adc_ev.v
+RTL       := src/common/spec_core.v src/common/tp_core.v src/common/cmul.v src/common/dft16.v src/common/tw_rom.v src/common/dstamp.v src/common/adc_ev.v
 
 .PHONY: sim-time sim-time-p sim-wstamp sim-wstamp-p sim-tsys sim-tsys-p sim-wdelay sim-t-all sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p
 .PHONY: all sim sim-gb sim-tp sim-all sim-spec-all gb-cdc worst-paths survey twiddle prog id timing-check ps-preset clean
@@ -101,7 +101,7 @@ sim:
 # それを消すことを確かめる（sim/tb_gearbox.v の冒頭）。gb_gate.v / gb_adc.v の試験も兼ねる
 sim-gb:
 	mkdir -p build-sim-gb
-	$(IVERILOG) -g2005 -o build-sim-gb/tb sim/tb_gearbox.v src/gb_gate.v src/gb_adc.v
+	$(IVERILOG) -g2005 -o build-sim-gb/tb sim/tb_gearbox.v src/common/gb_gate.v src/common/gb_adc.v
 	$(VVP) -n build-sim-gb/tb
 
 # ---- total power（tp_core）の単体試験（proj013。20 秒ほど）----
@@ -113,7 +113,7 @@ SIMTPDIR := build-sim-tp$(if $(filter 1,$(SIM_TP_POSCTL)),-posctl)$(if $(filter 
 sim-tp:
 	mkdir -p $(SIMTPDIR)
 	$(PYTHON) sim/check_tp.py gen $(SIMTPDIR)
-	$(IVERILOG) -g2005 $(if $(filter 1,$(SIM_TP_POSCTL)),-DTP_POSCTL) $(if $(filter 2,$(SIM_TP_POSCTL)),-DTP_OVR_POSCTL) -DOUT=\"$(SIMTPDIR)\" $$(cat $(SIMTPDIR)/tp_defs) -o $(SIMTPDIR)/tb src/tp_core.v sim/tb_tp_core.v
+	$(IVERILOG) -g2005 $(if $(filter 1,$(SIM_TP_POSCTL)),-DTP_POSCTL) $(if $(filter 2,$(SIM_TP_POSCTL)),-DTP_OVR_POSCTL) -DOUT=\"$(SIMTPDIR)\" $$(cat $(SIMTPDIR)/tp_defs) -o $(SIMTPDIR)/tb src/common/tp_core.v sim/tb_tp_core.v
 	$(VVP) -n $(SIMTPDIR)/tb
 	$(PYTHON) sim/check_tp.py check $(SIMTPDIR) $(if $(filter 1,$(SIM_TP_POSCTL)),posctl)$(if $(filter 2,$(SIM_TP_POSCTL)),ovr)
 
@@ -168,8 +168,8 @@ sim-v-%:
 
 # ひねり係数の ROM を作り直す（生成物もコミットする。差分が出たら理由を README に書く）
 twiddle:
-	$(PYTHON) tools/gen_tw_rom.py > src/tw_rom.v
-	git diff --stat -- src/tw_rom.v
+	$(PYTHON) tools/gen_tw_rom.py > src/common/tw_rom.v
+	git diff --stat -- src/common/tw_rom.v
 
 prog:
 	$(VIVADO) -mode batch -nojournal -nolog -source program.tcl
@@ -184,7 +184,7 @@ id:
 timing-check:
 	$(MAKE)
 
-# ボードプリセットが PS に当てる設定を src/ps_preset.tcl に書き出す（proj015。BOARD_REPO が要る。数分）。
+# ボードプリセットが PS に当てる設定を src/board/ps_preset.tcl に書き出す（proj015。BOARD_REPO が要る。数分）。
 # 書き直したら git diff で中身を見てからコミットする
 ps-preset:
 	mkdir -p build-ps-preset
@@ -208,7 +208,7 @@ PFB_DIR       := build-sim-pfb$(if $(filter 1,$(SIM_PFB_POSCTL)),-posctl)
 # SIM_DDC_POSCTL=1: 陽性対照（RTL の NCO の番地を 1 つずらす）
 SIM_DDC_POSCTL ?= 0
 DDC_DIR       := build-sim-ddc$(if $(filter 1,$(SIM_DDC_POSCTL)),-posctl)
-DDC_RTL       := src/nco_rom.v src/hb2.v src/hb2s.v src/pair2.v src/ddc_core.v
+DDC_RTL       := src/common/nco_rom.v src/common/hb2.v src/common/hb2s.v src/common/pair2.v src/common/ddc_core.v
 WIN_DIR       := build-sim-win$(if $(SIM_WIN_POSCTL),-$(SIM_WIN_POSCTL))
 # SIM_WSPEC_POSCTL=1: 陽性対照（RTL の積分で初回のフレームでも読み値に足す）→ A が落ちること
 # SIM_WSPEC_POSCTL=2: 陽性対照（RTL が FFT IP の tready を見ない = rev1、-DWSPEC_NOREADY）→ B が落ちること
@@ -247,15 +247,15 @@ fixed-posctl:
 	mkdir -p build-model
 	$(PYTHON) model/win_fixed.py --posctl | tee build-model/fixed_posctl.log
 
-# 係数の生成物 src/win_coef.vh（リポジトリに入れる。手で直さない）。設計を変えたら作り直して sim-pfb を回し直す
+# 係数の生成物 src/common/win_coef.vh（リポジトリに入れる。手で直さない）。設計を変えたら作り直して sim-pfb を回し直す
 coef:
-	$(PYTHON) tools/gen_coef.py src/win_coef.vh
+	$(PYTHON) tools/gen_coef.py src/common/win_coef.vh
 
 # pfb_core の単体の sim（iverilog）。model/win_fixed.py の pfb_fixed と bit 単位で照合。k ごと × 入力の途切れ あり / なし
 sim-pfb:
 	mkdir -p $(PFB_DIR)
 	$(PYTHON) sim/check_pfb.py gen $(PFB_DIR)
-	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_PFB_POSCTL)),-DPFB_POSCTL) -o $(PFB_DIR)/tb src/cmul.v src/dft16f.v src/pfb_core.v sim/tb_pfb.v
+	$(IVERILOG) -g2005 -Isrc/common $(if $(filter 1,$(SIM_PFB_POSCTL)),-DPFB_POSCTL) -o $(PFB_DIR)/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v sim/tb_pfb.v
 	for k in $(PFB_KS); do for g in 0 1; do \
 	  $(VVP) -n $(PFB_DIR)/tb +K=$$k +GAP=$$g +IN=$(PFB_DIR)/x.hex +OUT=$(PFB_DIR)/y_k$${k}_g$${g}.txt +NSAMP=16384 | grep '^pfb:' ; \
 	done; done
@@ -271,7 +271,7 @@ sim-pfbm:
 	mkdir -p $(PFBM_DIR); rm -f $(PFBM_DIR)/check.log
 	$(PYTHON) sim/check_pfbm.py gen $(PFBM_DIR)
 	for v in $(PFBM_VARS); do g=$${v%%:*}; q=$${v#*:}; g=$${g#g}; mkdir -p $(PFBM_DIR)/$$v; \
-	  $(IVERILOG) -g2005 -Isrc -DPFB_QW=$$q $(if $(filter 1,$(SIM_PFBM_POSCTL)),-DPFBM_POSCTL) -o $(PFBM_DIR)/tb_$$q src/cmul.v src/dft16f.v src/pfb_core.v sim/tb_pfbm.v && \
+	  $(IVERILOG) -g2005 -Isrc/common -DPFB_QW=$$q $(if $(filter 1,$(SIM_PFBM_POSCTL)),-DPFBM_POSCTL) -o $(PFBM_DIR)/tb_$$q src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v sim/tb_pfbm.v && \
 	  $(VVP) -n $(PFBM_DIR)/tb_$$q +GAP=$$g +IN=$(PFBM_DIR)/x.hex +DIR=$(PFBM_DIR)/$$v | grep '^pfbm:' ; \
 	  echo "== $$v" >> $(PFBM_DIR)/check.log; \
 	  SIM_PFBM_POSCTL=$(SIM_PFBM_POSCTL) $(PYTHON) sim/check_pfbm.py check $(PFBM_DIR)/$$v $$q >> $(PFBM_DIR)/check.log; \
@@ -285,7 +285,7 @@ sim-pfbm-p:
 sim-ddc:
 	mkdir -p $(DDC_DIR)
 	$(PYTHON) sim/check_ddc.py gen $(DDC_DIR)
-	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_DDC_POSCTL)),-DDDC_POSCTL) -o $(DDC_DIR)/tb $(DDC_RTL) sim/tb_ddc.v
+	$(IVERILOG) -g2005 -Isrc/common $(if $(filter 1,$(SIM_DDC_POSCTL)),-DDDC_POSCTL) -o $(DDC_DIR)/tb $(DDC_RTL) sim/tb_ddc.v
 	NB=$$(wc -l < $(DDC_DIR)/y.txt); $(PYTHON) sim/check_ddc.py cases | while read ns dp; do for g in 0 1; do \
 	  $(VVP) -n $(DDC_DIR)/tb +NS=$$ns +DPHI=$$dp +GAP=$$g +NBEAT=$$NB +IN=$(DDC_DIR)/y.txt +OUT=$(DDC_DIR)/z_ns$${ns}_d$${dp}_g$${g}.txt | grep '^ddc:' ; \
 	done; done
@@ -295,7 +295,7 @@ sim-ddc:
 sim-win:
 	mkdir -p $(WIN_DIR)
 	$(PYTHON) sim/check_win.py gen $(WIN_DIR)
-	$(IVERILOG) -g2005 -Isrc $(if $(filter g,$(SIM_WIN_POSCTL)),-DDDC_POSCTL_G)$(if $(filter ts,$(SIM_WIN_POSCTL)),-DDDC_POSCTL_TS) -o $(WIN_DIR)/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) sim/tb_win.v
+	$(IVERILOG) -g2005 -Isrc/common $(if $(filter g,$(SIM_WIN_POSCTL)),-DDDC_POSCTL_G)$(if $(filter ts,$(SIM_WIN_POSCTL)),-DDDC_POSCTL_TS) -o $(WIN_DIR)/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) sim/tb_win.v
 	$(PYTHON) sim/check_win.py cases | while read k ns dp nsamp; do \
 	  $(VVP) -n $(WIN_DIR)/tb +K=$$k +NS=$$ns +DPHI=$$dp +GAP=1 +NSAMP=$$nsamp +IN=$(WIN_DIR)/x.hex +OUT=$(WIN_DIR)/z_k$${k}_ns$${ns}.txt | grep '^win:' ; \
 	done
@@ -307,7 +307,7 @@ HB2S_NEG   := 4:0:3 2:0:1
 sim-hb2s:
 	mkdir -p build-sim-hb2s; rm -f build-sim-hb2s/check.log
 	for v in $(HB2S_CASES) $(HB2S_NEG); do c=$${v%%:*}; r=$${v#*:}; f=$${r%%:*}; g=$${r#*:}; \
-	  $(IVERILOG) -g2005 -Isrc -DHB_C=$$c $$( [ $$f = 1 ] && echo -DHB_FINAL ) -o build-sim-hb2s/tb_$${c}_$${f} src/hb2.v src/hb2s.v sim/tb_hb2s.v && \
+	  $(IVERILOG) -g2005 -Isrc/common -DHB_C=$$c $$( [ $$f = 1 ] && echo -DHB_FINAL ) -o build-sim-hb2s/tb_$${c}_$${f} src/common/hb2.v src/common/hb2s.v sim/tb_hb2s.v && \
 	  $(VVP) -n build-sim-hb2s/tb_$${c}_$${f} +GAP=$$g +NPAIR=20000 | grep '^hb2s:' | tr '\n' ' ' >> build-sim-hb2s/check.log; echo " [$$v]" >> build-sim-hb2s/check.log; done
 	@cat build-sim-hb2s/check.log
 	@n_ok=$$(for v in $(HB2S_CASES); do grep "\[$$v\]" build-sim-hb2s/check.log; done | grep -c 'hb2s: 一致'); \
@@ -326,7 +326,7 @@ sim-win-ts:
 sim-wspec:
 	mkdir -p $(WSPEC_DIR)
 	SIM_WSPEC_SAT=$(SIM_WSPEC_SAT) $(PYTHON) sim/check_wspec.py gen $(WSPEC_DIR)
-	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_WSPEC_POSCTL)),-DWSPEC_POSCTL)$(if $(filter 2,$(SIM_WSPEC_POSCTL)),-DWSPEC_NOREADY)$(if $(filter 3,$(SIM_WSPEC_POSCTL)),-DWSPEC_PFB_POSCTL) -o $(WSPEC_DIR)/tb src/wspec_core.v src/dstamp.v src/pfb4_rom.v sim/win_fft_model.v sim/tb_wspec.v
+	$(IVERILOG) -g2005 -Isrc/common $(if $(filter 1,$(SIM_WSPEC_POSCTL)),-DWSPEC_POSCTL)$(if $(filter 2,$(SIM_WSPEC_POSCTL)),-DWSPEC_NOREADY)$(if $(filter 3,$(SIM_WSPEC_POSCTL)),-DWSPEC_PFB_POSCTL) -o $(WSPEC_DIR)/tb src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v sim/win_fft_model.v sim/tb_wspec.v
 	rm -f $(WSPEC_DIR)/check.log
 	for v in $(WSPEC_VARS); do \
 	  nm=$${v%%:*}; r=$${v#*:}; na=$${r%%:*}; r=$${r#*:}; nd=$${r%%:*}; r=$${r#*:}; sh=$${r%%:*}; r=$${r#*:}; gp=$${r%%:*}; r=$${r#*:}; rd=$${r%%:*}; st=$${r#*:}; \
@@ -370,7 +370,7 @@ survey:
 sim-top:
 	mkdir -p build-sim-top/ns1
 	$(PYTHON) sim/check_top.py gen build-sim-top 1
-	$(IVERILOG) -g2005 -Isrc -o build-sim-top/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) src/wspec_core.v src/dstamp.v src/pfb4_rom.v src/tp_core.v src/win_core.v src/adc_ev.v sim/win_fft_model.v sim/tb_top.v
+	$(IVERILOG) -g2005 -Isrc/common -o build-sim-top/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/adc_ev.v sim/win_fft_model.v sim/tb_top.v
 	$(VVP) -n build-sim-top/tb +K=5 +DPHI=3977774351 +NS=1 +NACC=2 +NDUMP=3 +SHIFT=4 +GAP=1 +NSAMP=917504 +IN=build-sim-top/x.hex +DIR=build-sim-top/ns1 | grep '^tb_top:'
 	$(PYTHON) sim/check_top.py check build-sim-top 1 2 3 4 | tee build-sim-top/check.log
 
@@ -379,7 +379,7 @@ sim-top:
 sim-win4:
 	mkdir -p build-sim-win4
 	$(PYTHON) sim/check_win4.py gen build-sim-win4
-	$(IVERILOG) -g2005 -Isrc -o build-sim-win4/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) src/wspec_core.v src/dstamp.v src/pfb4_rom.v src/tp_core.v src/win_core.v src/adc_ev.v sim/win_fft_model.v sim/tb_win4.v
+	$(IVERILOG) -g2005 -Isrc/common -o build-sim-win4/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/adc_ev.v sim/win_fft_model.v sim/tb_win4.v
 	$(VVP) -n build-sim-win4/tb +IN=build-sim-win4/x.hex +CFG=build-sim-win4/cfg.txt +DIR=build-sim-win4 +NSAMP=1048576 | grep '^tb_win4:'
 	$(PYTHON) sim/check_win4.py check build-sim-win4 | tee build-sim-win4/check.log
 
@@ -388,7 +388,7 @@ sim-win4:
 TIME_DIR := build-sim-time
 sim-time:
 	mkdir -p $(TIME_DIR)
-	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_TIME_POSCTL)),-DTIME_POSCTL) -o $(TIME_DIR)/tb$(SIM_TIME_POSCTL) src/time_core.v sim/tb_time.v
+	$(IVERILOG) -g2005 -Isrc/common $(if $(filter 1,$(SIM_TIME_POSCTL)),-DTIME_POSCTL) -o $(TIME_DIR)/tb$(SIM_TIME_POSCTL) src/common/time_core.v sim/tb_time.v
 	$(VVP) -n $(TIME_DIR)/tb$(SIM_TIME_POSCTL) | grep '^tb_time:' | tee $(TIME_DIR)/check$(SIM_TIME_POSCTL).log
 sim-time-p:
 	$(MAKE) --no-print-directory sim-time SIM_TIME_POSCTL=1
@@ -398,7 +398,7 @@ WSTAMP_DIR  := build-sim-wstamp$(if $(filter 1,$(SIM_WSTAMP_POSCTL)),-posctl)
 sim-wstamp:
 	mkdir -p $(WSTAMP_DIR); rm -f $(WSTAMP_DIR)/check.log
 	for v in $(WSTAMP_VARS); do nm=$${v%%:*}; r=$${v#*:}; na=$${r%%:*}; r=$${r#*:}; nd=$${r%%:*}; r=$${r#*:}; gp=$${r%%:*}; lat=$${r#*:}; \
-	  $(IVERILOG) -g2005 -Isrc -DFFT_LAT=$$lat $(if $(filter 1,$(SIM_WSTAMP_POSCTL)),-DDSTAMP_POSCTL) -o $(WSTAMP_DIR)/tb_$$nm src/wspec_core.v src/dstamp.v src/pfb4_rom.v sim/win_fft_model.v sim/tb_wstamp.v && \
+	  $(IVERILOG) -g2005 -Isrc/common -DFFT_LAT=$$lat $(if $(filter 1,$(SIM_WSTAMP_POSCTL)),-DDSTAMP_POSCTL) -o $(WSTAMP_DIR)/tb_$$nm src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v sim/win_fft_model.v sim/tb_wstamp.v && \
 	  $(VVP) -n $(WSTAMP_DIR)/tb_$$nm +NACC=$$na +NDUMP=$$nd +GAP=$$gp | grep '^wstamp:' | sed "s/^/[$$nm] /" >> $(WSTAMP_DIR)/check.log; done
 	@cat $(WSTAMP_DIR)/check.log
 	@n=$$(grep -c '結果: 全部通過' $(WSTAMP_DIR)/check.log); if [ $$n -eq $(words $(WSTAMP_VARS)) ]; then echo "結果: 全部通過（$$n 変種）" | tee -a $(WSTAMP_DIR)/check.log; \
@@ -411,8 +411,8 @@ sim-wstamp-p:
 TSYS_DIR := build-sim-tsys$(if $(filter 1,$(SIM_TSYS_POSCTL)),-posctl)
 sim-tsys:
 	mkdir -p $(TSYS_DIR)
-	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_TSYS_POSCTL)),-DWIN_POSCTL_SHIFT -DSPEC_POSCTL_SHIFT) -o $(TSYS_DIR)/tb src/time_core.v src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) \
-	  src/wspec_core.v src/dstamp.v src/pfb4_rom.v src/tp_core.v src/win_core.v src/adc_ev.v src/spec_core.v src/dft16.v src/tw_rom.v sim/win_fft_model.v sim/lane_fft_model.v sim/tb_tsys.v
+	$(IVERILOG) -g2005 -Isrc/common $(if $(filter 1,$(SIM_TSYS_POSCTL)),-DWIN_POSCTL_SHIFT -DSPEC_POSCTL_SHIFT) -o $(TSYS_DIR)/tb src/common/time_core.v src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) \
+	  src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/adc_ev.v src/common/spec_core.v src/common/dft16.v src/common/tw_rom.v sim/win_fft_model.v sim/lane_fft_model.v sim/tb_tsys.v
 	$(VVP) -n $(TSYS_DIR)/tb | grep '^tb_tsys:' | tee $(TSYS_DIR)/check.log
 sim-tsys-p:
 	$(MAKE) --no-print-directory sim-tsys SIM_TSYS_POSCTL=1
@@ -421,7 +421,7 @@ sim-tsys-p:
 WGRID_DIR := build-sim-wgrid$(if $(filter 1,$(SIM_WGRID_POSCTL)),-posctl)
 sim-wgrid:
 	mkdir -p $(WGRID_DIR)
-	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_WGRID_POSCTL)),-DWSPEC_NOGRID) -o $(WGRID_DIR)/tb src/wspec_core.v src/dstamp.v src/pfb4_rom.v sim/win_fft_model.v sim/tb_wgrid.v
+	$(IVERILOG) -g2005 -Isrc/common $(if $(filter 1,$(SIM_WGRID_POSCTL)),-DWSPEC_NOGRID) -o $(WGRID_DIR)/tb src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v sim/win_fft_model.v sim/tb_wgrid.v
 	$(VVP) -n $(WGRID_DIR)/tb | grep '^wgrid:' | tee $(WGRID_DIR)/check.log
 sim-wgrid-p:
 	$(MAKE) --no-print-directory sim-wgrid SIM_WGRID_POSCTL=1
@@ -430,15 +430,15 @@ sim-wgrid-p:
 T4_DIR := build-sim-t4adc$(if $(filter 1,$(SIM_T4_POSCTL)),-posctl)
 sim-t4adc:
 	mkdir -p $(T4_DIR)
-	$(IVERILOG) -g2005 -Isrc $(if $(filter 1,$(SIM_T4_POSCTL)),-DT4_POSCTL) -o $(T4_DIR)/tb src/time_core.v src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) \
-	  src/wspec_core.v src/dstamp.v src/pfb4_rom.v src/tp_core.v src/win_core.v src/adc_ev.v sim/win_fft_model.v sim/tb_t4adc.v
+	$(IVERILOG) -g2005 -Isrc/common $(if $(filter 1,$(SIM_T4_POSCTL)),-DT4_POSCTL) -o $(T4_DIR)/tb src/common/time_core.v src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) \
+	  src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/adc_ev.v sim/win_fft_model.v sim/tb_t4adc.v
 	$(VVP) -n $(T4_DIR)/tb | grep '^tb_t4adc:' | tee $(T4_DIR)/check.log
 sim-t4adc-p:
 	$(MAKE) --no-print-directory sim-t4adc SIM_T4_POSCTL=1
 # sim-wdelay: 窓の遅れ D(NS)（ADC のビート → z が wspec に入るまで）。pynq/timebase.py の WIN_DELAY_BEATS の出どころ
 sim-wdelay:
 	mkdir -p build-sim-wdelay
-	$(IVERILOG) -g2005 -Isrc -o build-sim-wdelay/tb src/cmul.v src/dft16f.v src/pfb_core.v $(DDC_RTL) sim/tb_wdelay.v
+	$(IVERILOG) -g2005 -Isrc/common -o build-sim-wdelay/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) sim/tb_wdelay.v
 	for n in 1 2 3 4 5 6 7 8; do $(VVP) -n build-sim-wdelay/tb +NS=$$n +LEN=$$(( n < 4 ? 8000 : 1000 << (n - 2) )) | grep -E '^(wdelay|wfirst):'; done | tee build-sim-wdelay/delay.log
 sim-t-all:
 	$(MAKE) --no-print-directory -j4 sim-time sim-time-p sim-wstamp sim-wstamp-p sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p

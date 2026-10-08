@@ -62,7 +62,7 @@
 //   0x94 CFG_ID    RW  設定番号（PS が決める 32 bit）。WRST と RUN の時点で取り込む
 //   0x98 RUN_CFG   R   今の RUN の CFG_ID        0x9C WRST_CFG  R  今の窓の設定（WRST）の CFG_ID
 //   0xA0 DUMP_T_LO R   閉じたダンプの最初のフレームの最初の z が wspec に入ったビート（time_core の T）  0xA4 DUMP_T_HI
-//   0xA8 DUMP_H    R   そのダンプの健全性（src/dstamp.v）: [0] PPS 来ていない / [1] 間隔の異常 / [2] グリッチ / [3] 原点なし /
+//   0xA8 DUMP_H    R   そのダンプの健全性（src/common/dstamp.v）: [0] PPS 来ていない / [1] 間隔の異常 / [2] グリッチ / [3] 原点なし /
 //                      [4] ADC の振り切れ / [5] 入力の途切れ / [6] WRST_CFG ≠ RUN_CFG / [14] 帳簿の上書き / [15] 帳簿が閉じていない
 //                      **ADC 側の [4]・[5] は ADC の時刻で、ダンプの区切りは z の時刻**（窓の遅れ D(NS) ぶん後ろへずれる。D は timebase.py）
 //   0xAC DUMP_CFG  R   そのダンプの RUN の CFG_ID
@@ -89,7 +89,7 @@
 //   0x3C ANCH_STAT R   [0] TANCH 待ち / [1] 残した / [2] TP_ARM 中
 //   0x40 TP_RUN_T_LO R TP_RUN を受けたビート  0x44 TP_RUN_T_HI
 //   0x48 OVR_CNT   R   入力の振り切れたビートの数（|x| ≧ 32764、飽和）  0x4C GAP_CNT  R  最初の valid の後に valid が来なかったクロックの数
-//   0x0100–0x01FF  total power のレジスタ（src/tp_core.v。spec_core の 0x0100– と同じ並び）
+//   0x0100–0x01FF  total power のレジスタ（src/common/tp_core.v。spec_core の 0x0100– と同じ並び）
 //   0x2000–0x3FFF  total power のリングバッファ（512 個 × 16 バイト）
 //   total power は ADC のビートをそのまま積む（窓の WRST とは無関係。ADC のリセットからのフレームの上に区切る）
 //

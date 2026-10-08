@@ -27,7 +27,7 @@
 //       - INJ: 途切れの注入。最初の valid から pos クロック目の入力を 1 クロックだけ落とす（口と見張りの手前。**実機の陽性対照**）
 //       - GB_STAT / ADC_STAT: gb_gate と gb_adc の見張りを読む
 // proj013 rev1: **全帯域の total power（tp_core）を足した。**レーン FFT と同じ入力ビート・フレーム番号・RUN を使い、
-//       TP_N フレーム（既定 500 = 1 ms）ごとの Σx² をリングバッファ（512 個）に残す。区切りは RUN の F0 に揃う（src/tp_core.v の冒頭）。
+//       TP_N フレーム（既定 500 = 1 ms）ごとの Σx² をリングバッファ（512 個）に残す。区切りは RUN の F0 に揃う（src/common/tp_core.v の冒頭）。
 //       spec_core の本体（FFT・積分）の経路には触らない。変えたのは ID・インスタンス・番地の振り分け（0x0100–0x01FF / 0x2000–0x3FFF）だけ
 // **全部が DSP ドメイン（256 MHz）で動く。**AXI4-Lite も 256 MHz で受け、
 // PS（pl_clk0）との乗り換えは SmartConnect に任せる。自作の CDC はここに無い。
@@ -77,14 +77,14 @@
 //
 // ---- アドレスマップ（バイト。16 bit）----
 //   0x0000–0x00FF  レジスタ（下の表）
-//   0x0100–0x01FF  total power のレジスタ（src/tp_core.v。proj013）
-//   0x2000–0x3FFF  total power のリングバッファ（512 個 × 16 バイト。src/tp_core.v。proj013）
+//   0x0100–0x01FF  total power のレジスタ（src/common/tp_core.v。proj013）
+//   0x2000–0x3FFF  total power のリングバッファ（512 個 × 16 バイト。src/common/tp_core.v。proj013）
 //   0x4000–0x7FFF  スナップショット: 32 bit 語 i = サンプル 2i（下位 16 bit）と 2i+1（上位）
 //                  サンプルは ADC の 16 bit のまま（下位 2 bit は常に 0）
 //   0x8000–0xFFFF  スペクトル: ch k の 64 bit が 0x8000 + 8k（下位語）/ +4（上位語）
 //
 //   0x00 ID        R   0x0015_01CC（proj015。RTL は proj013 rev1 と同一で ID だけ）。proj014 は 0x0014_01CC。proj013 rev1 は 0x0013_01CC。proj012 rev3 は 0x0012_03CC。0x0011_06CC（proj011 rev6。rev5 は 0x0011_05CC、rev4 は 0x0011_04CC、rev3 は 0x0011_03CC、rev2 は 0x0011_02CC、rev1 は 0x0011_01CC。CC = FFT_CFG: [0] realtime / [1] 乗算器 use_mults_resources /
-//                      [2] バタフライ use_luts / [3] 乗算器 use_luts。build.tcl が src/fft_cfg.tcl から設定する）
+//                      [2] バタフライ use_luts / [3] 乗算器 use_luts。build.tcl が src/sam45fine/fft_cfg.tcl から設定する）
 //   0x04 PARAM     R   [7:0] log2 NFFT = 13 / [15:8] log2 レーン = 4 / [23:16] QW = 18 / [31:24] IW = 14
 //   0x08 CTRL      W   [0] RUN（開始を予約）/ [1] STOP / [8] FLAGS を消す / [9] 診断（0x58–0x68）を消す / [10] SRST（起動のやり直し。rev4）/ [11] GRST（ギアボックスごとの起動のやり直し。rev6）（いずれも 1 を書いた瞬間だけ）
 //                  R   [0] 積分中 / [1] 開始待ち / [2] スナップショット予約中 / [3] 入力が流れ始めた
@@ -141,7 +141,7 @@
 //   ID 0x0016_01CC。CTRL の書き込み: [2] ARM_RUN（time_core の発火で RUN）/ [3] 取り消し（STOP でも消える）。読み: [5] ARM_RUN 中
 //   **SHIFT は RUN の時点で取り込む**（N_ACC・N_DUMP と同じ）
 //   0xC0 CFG_ID RW / 0xC4 RUN_CFG R / 0xC8 DUMP_T_LO・0xCC DUMP_T_HI R（そのダンプの最初のフレームの最初のビートを受けたクロックの T）/
-//   0xD0 DUMP_H R（src/dstamp.v。[6] は使わない）/ 0xD4 DUMP_CFG R / 0xD8 RUN_T_LO・0xDC RUN_T_HI R / 0xE0 RUN_SHIFT R
+//   0xD0 DUMP_H R（src/common/dstamp.v。[6] は使わない）/ 0xD4 DUMP_CFG R / 0xD8 RUN_T_LO・0xDC RUN_T_HI R / 0xE0 RUN_SHIFT R
 //   **DUMP_T(k) − DUMP_T(0) = k·N·512 ちょうど**（入力が途切れない限り）
 //
 // FLAGS（粘着。CTRL[8] で消す）:
@@ -843,7 +843,7 @@ module spec_core #(
         end
     end
 
-    // ---- proj016: ダンプの時刻と健全性（入力側で区切り、commit で渡す。src/dstamp.v）----
+    // ---- proj016: ダンプの時刻と健全性（入力側で区切り、commit で渡す。src/common/dstamp.v）----
     wire       s_ovr, s_gap;
     adc_ev u_aev (.clk(aclk), .rst(rst), .tdata(s_axis_tdata), .tvalid(s_axis_tvalid), .ovr(s_ovr), .gap(s_gap));
     reg  [7:0] sev;

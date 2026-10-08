@@ -13,7 +13,7 @@ set rows {}
 foreach ts {0 1} {
     create_project -in_memory -part $part
     set_property include_dirs [list [file normalize ./src]] [current_fileset]
-    read_verilog [list src/nco_rom.v src/hb2.v src/hb2s.v src/pair2.v src/ddc_core.v]
+    read_verilog [list src/common/nco_rom.v src/common/hb2.v src/common/hb2s.v src/common/pair2.v src/common/ddc_core.v]
     synth_design -top ddc_core -part $part -mode out_of_context -generic TS=$ts
     create_clock -name clk -period 3.906 [get_ports clk]
     report_utilization -file $outdir/util_ts$ts.rpt

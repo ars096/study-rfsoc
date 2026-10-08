@@ -13,13 +13,13 @@
 #   1 回目（2026-10-01）は 1 個ずつ当てていて、DDR の周波数・タイミング・MIO の割り当てのように**互いに依存する設定**が、
 #   途中の組み合わせで検証に落ちて 88 個「当てられない」になった（DDR 1200 MHz が既定の速度ビンの範囲外、SD0 と I2C0 の MIO の衝突など）
 #
-# 出力: src/ps_preset.tcl（リポジトリに入れる。生成物だが、**版を git に残す**ため）/ build-ps-preset/ps_preset.log
+# 出力: src/board/ps_preset.tcl（リポジトリに入れる。生成物だが、**版を git に残す**ため）/ build-ps-preset/ps_preset.log
 #   プロジェクトは build-ps-preset/ の下に作る（1 回目は -in_memory で、BD がカレントの .srcs/ に書かれた）
 #   書き直したら git diff で中身の変わり方を見る（BSP・Vivado の版で変わりうる）
 
 set board_part_part xczu48dr-ffvg1517-2-e
 set part_m1         xczu48dr-ffvg1517-1-e
-set out_tcl         ./src/ps_preset.tcl
+set out_tcl         ./src/board/ps_preset.tcl
 set logdir          ./build-ps-preset
 file mkdir $logdir
 if {[info exists ::env(BOARD_REPO)] && $::env(BOARD_REPO) ne ""} { set_param board.repoPaths $::env(BOARD_REPO) }

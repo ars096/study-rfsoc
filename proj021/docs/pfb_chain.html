@@ -237,7 +237,7 @@ h[n] = sinc( 1.198 · (n − 8191.5) / 4096 ) · kaiser(16384, β = 5)、Σh² =
         <li><strong>bw 1.198</strong>: 0.5 ch で −3 dB になる幅。隣の ch と −3 dB で交わるので、全 ch の電力の和がほぼ一定（波打ち 0.08 dB）</li>
         <li><strong>β 5</strong>: bw を合わせたうえで |Δ| ≧ 1 ch の最大が最も深くなる値（T = 4 で −53.7 dB）</li>
         <li><strong>Σh² = 4096</strong>: 白色の z に対し y の分散 = z の分散。雑音の電力を保つので、proj019 の abs の式と「窓の和 = TP」がそのまま使える</li>
-        <li>係数の正は <code>model/pfb4.py</code> → <code>model/pfb4_coef.txt</code>（gen で <code>src/pfb4_rom.v</code>）</li>
+        <li>係数の正は <code>model/pfb4.py</code> → <code>model/pfb4_coef.txt</code>（gen で <code>src/sam45fine/pfb4_rom.v</code>）</li>
       </ul>
     </div>
     <div class="box">

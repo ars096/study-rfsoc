@@ -98,7 +98,7 @@ def pps_is_consistent(d_count, d_stamp, tol=2):
 
 
 class TimeCore:
-    """time_core_0 のレジスタ（src/time_core.v の冒頭の表）。mmio は pynq.MMIO か、read(off) / write(off, v) を持つもの。"""
+    """time_core_0 のレジスタ（src/common/time_core.v の冒頭の表）。mmio は pynq.MMIO か、read(off) / write(off, v) を持つもの。"""
     ID = 0x0020_7101
     CTRL_ARM, CTRL_CANCEL, CTRL_ASET, CTRL_ACLR, CTRL_NCLR = 1, 2, 8, 16, 256
 

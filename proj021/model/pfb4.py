@@ -16,7 +16,7 @@
   y が FFT の入力。スナップショットは y（FFT の入力）を残す（PS の --golden はそのまま）。
 
 使い方:
-  python3 pfb4.py gen      # model/pfb4_coef.txt と src/pfb4_rom.v を作り直す（係数の唯一の正は pfb4_coef.txt）
+  python3 pfb4.py gen      # model/pfb4_coef.txt と src/sam45fine/pfb4_rom.v を作り直す（係数の唯一の正は pfb4_coef.txt）
   python3 pfb4.py resp     # 量子化した係数の ch の応答（半 ch の落ち・|Δ| ≧ 1.5 ch の最大・ENBW）
 """
 import os

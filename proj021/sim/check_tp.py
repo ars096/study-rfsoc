@@ -5,7 +5,7 @@
     python3 sim/check_tp.py gen   OUT     # OUT/tp_valid.hex・tp_beat.hex・tp_cmd.hex と OUT/tp_defs（iverilog の -P）
     python3 sim/check_tp.py check OUT
 
-**模型は RTL の写しではなく、仕様（src/tp_core.v の冒頭）から書く**:
+**模型は RTL の写しではなく、仕様（src/common/tp_core.v の冒頭）から書く**:
   区切りはフレームの頭にだけ置き、(a) 起動の後の最初のビート (b) RUN の F0 = RUN の時点の fin + 2 (c) 区切りが今の TP_N に達した
   のどれかで新しい区切りを始める（(c) は「今の TP_N 以上」）。和は x = (16 bit) >>> 2 の二乗の和。FLAGS は冒頭の表
 判定:

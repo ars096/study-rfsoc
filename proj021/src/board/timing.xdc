@@ -22,7 +22,7 @@
 # どちらも既製 IP の中に閉じており、自作の RTL は乗り換えを持たない。
 # **proj016 で 1 つ足した**: time_core の EPOCH（clk_pl_0 → clk_out2、32 bit の gray ＋ 2 段の同期器）。値は aresetn の解除の後に
 #   1 回変わるだけで、gray なので 1 bit ずつしか動かない。skew の上限は宣言していない（set_bus_skew はセルの名前を XDC に書くことになり、
-#   名前が違っても黙って効かない。ここでは群の非同期の宣言だけで受ける）。PPS の 2 本は src/pps.xdc で false path
+#   名前が違っても黙って効かない。ここでは群の非同期の宣言だけで受ける）。PPS の 2 本は src/board/pps.xdc で false path
 
 set_clock_groups -asynchronous \
     -group [get_clocks -include_generated_clocks clk_pl_0] \
