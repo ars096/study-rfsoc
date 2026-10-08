@@ -171,7 +171,8 @@ RTL に書いたので、起動の試験（sim-gb）がそのまま新しい形�
 | 遅れと余裕（tb に表示を足した一時の試験、同じ遅延の組） | 出口の遅れ（書き込みの通し番号 − 出口の通し番号）: K 0 / 2 / 4 で **3 / 6 / 8 語**（proj020 の gb_gate は 2 / 4 / 6）→ 運転の K 2 で **+2 語 = +6 ビート ≒ +23 ns**（予言 (6) どおり）。FIFO の残量の最小: **2 / 4（proj020 は 1 / 3）＝ 余裕が 1 語増えた**（予言 (6) の「同じ」は外れ、良い向き。スキッドが FIFO から先に 1 語引くぶん、FIFO の中に語が残る） |
 | sim-time・sim-time-p | 通過・陽性対照が落ちる（ID 0x0021_7101） |
 | sim-t4adc | **全部通過**（8 窓・TP 4 本が同じクロックに RUN、ID 0x0021_0100・0x0021_7101。9 分 22 秒） |
-| sim-spec-all ほか | クラウドでは長い sim が途中で止められるので、**Vivado サーバの `make sim-all` で**（ID の照合 check.py を含む） |
+| `make sim-all`（Vivado サーバ、2026-10-08） | **全部通過**。「失敗」の 3 行はどれも陽性対照で、落ちるべきところで落ちた: tb_time の失敗 6 件（sim-time-p）・`[n2] wstamp` の失敗 8 件と `build-sim-wstamp-posctl` の「失敗（通過 0 / 1）」（sim-wstamp-p。Makefile の約束で「成否は結果: 失敗」）。sim-wstamp 本体は 4 変種とも通過、sim-t4adc・sim-wgrid とその陽性対照、spec_core の変種・sim-gb・sim-tp も通過（ID の照合 check.py を含む） |
+| sim-top・sim-win4・sim-tsys | **まだ**（sim-all に入っていない。ID の照合を 0x0021 に直したので回す） |
 
 | 判定 | 何を | 合格 |
 |---|---|---|
