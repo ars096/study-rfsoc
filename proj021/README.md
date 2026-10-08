@@ -209,7 +209,14 @@ grep -E 'TIMING \(確定\)' build/vivado.log build-PE/vivado.log
 make worst-paths                                        # build/ の上位 200 本 → build/worst_paths/（群 C が残るか）
 make GB_K=0 IMPL=Performance_Explore > /dev/null 2>&1 & # → build-k0-PE/（G-4 の陽性対照。実機の測定には使わない）
 
-# ボード（build-PE の .bit・.hwh と pynq/ を送る。.bit は proj021.bit、陽性対照は proj021_k0.bit に名前を変えて）
+# Vivado サーバ → ボード（**build/（既定）** を載せる。glob で送らず名前を指定する）
+scp build/proj021.bit build/proj021.hwh xilinx@$B:~/proj021/
+scp build-k0-PE/proj021.bit xilinx@$B:~/proj021/proj021_k0.bit
+scp build-k0-PE/proj021.hwh xilinx@$B:~/proj021/proj021_k0.hwh
+scp pynq/*.py pynq/tp_cal.json xilinx@$B:~/proj021/
+
+# ボード（root。specd を止めてから）
+cd ~/proj021
 python3 gbboot.py --loads 50 --clkin 0 --ref 10 --out runs/g3
 python3 gbboot.py --loads 50 --clkin 0 --ref 10 --bitfile proj021_k0.bit --expect-k 0 --out runs/g4
 ```
