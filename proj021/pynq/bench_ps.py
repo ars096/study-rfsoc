@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """proj021 手順 0 — PL を変えずに、PS（A53・Python）の量を測る（README の M-2〜M-5）
 
-  sudo python3 bench_ps.py                      # 全部（M-2・M-3・M-4・M-5）。結果を runs/bench_ps.json に
-  sudo python3 bench_ps.py --only m3 m4         # 一部だけ
+  python3 bench_ps.py                      # 全部（M-2・M-3・M-4・M-5）。結果を runs/bench_ps.json に
+  python3 bench_ps.py --only m3 m4         # 一部だけ
   python3 bench_ps.py --no-pynq --quick         # PYNQ の無い計算機で道具の動きだけ確かめる（M-2 と cacheable=False は飛ばす）
 
 M-2  CMA: /proc/meminfo の Cma と、pynq.allocate で取れる最大（16 MiB から倍々に、取れたら直ちに解放）

@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """proj021 手順 1b — 判定 G-3・G-4: Overlay の読み込み直しを N 回繰り返し、4 ADC のギアボックスの起動を毎回見る
 
-  sudo -E $(which python3) gbboot.py --loads 50 --clkin 0 --ref 10 --out runs/g3              # G-3（proj021.bit、K = 2）
-  sudo -E $(which python3) gbboot.py --loads 50 --clkin 0 --ref 10 --bitfile proj021_k0.bit \\
+  python3 gbboot.py --loads 50 --clkin 0 --ref 10 --out runs/g3              # G-3（proj021.bit、K = 2）
+  python3 gbboot.py --loads 50 --clkin 0 --ref 10 --bitfile proj021_k0.bit \\
                                      --expect-k 0 --out runs/g4                                 # G-4（陽性対照、GB_K=0 のビルド）
 
 proj015 から GRST（PS からの起動のやり直し）は無い（win_core.v の冒頭）ので、起動は Overlay の読み込みでしか起こせない。

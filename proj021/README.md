@@ -25,6 +25,8 @@
 
 ## 手順 0 — 測る（PL は proj020.bit のまま）
 
+ボードの手順は **root のシェル**で、ボードのアドレスを `$B`、ダウンロード PC のアドレスを `$S` に入れて書く（2026-10-08 から）。
+
 **測る前に予言を書く。** 外れた予言は残す。
 
 | 判定 | 何を | 道具 | 予言（2026-10-08） | 決まること |
@@ -46,10 +48,10 @@
 
 ```bash
 # Mac
-scp proj021/pynq/bench_ps.py xilinx@<board>:~/proj021/
+scp proj021/pynq/bench_ps.py xilinx@$B:~/proj021/
 
 # 制御 PC: specd を止める（同じ A53 を取り合うと数が意味を持たない）
-python3 specctl.py --host <board> SHUTDOWN confirm=1
+python3 specctl.py --host $B SHUTDOWN confirm=1
 
 # ボード: 止まったこと・測るときの状態を残す
 pgrep -af 'specd|s45acq' || echo "止まっている"
@@ -65,7 +67,7 @@ mkdir -p ~/proj021/runs && cd ~/proj021
 # ダウンロード PC
 iperf3 -s
 
-# ボード（iperf3 が無ければ sudo apt install iperf3）
+# ボード（iperf3 が無ければ apt install iperf3）
 for i in 1 2 3 4 5; do iperf3 -c <PC> -t 30 -J > runs/m1_tx_$i.json; done       # ボード → PC（送り出しの向き。これが予算）
 for i in 1 2 3 4 5; do iperf3 -c <PC> -t 30 -R -J > runs/m1_rx_$i.json; done    # PC → ボード（参考）
 for f in runs/m1_*.json; do python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(sys.argv[1], round(d['end']['sum_received']['bits_per_second']/8e6,1), 'MB/s')" $f; done
@@ -74,13 +76,13 @@ for f in runs/m1_*.json; do python3 -c "import json,sys; d=json.load(open(sys.ar
 **2. M-2〜M-5（1 回目）**
 
 ```bash
-sudo -E $(which python3) bench_ps.py --out runs/bench_ps_1.json 2>&1 | tee runs/bench_ps_1.log
+python3 bench_ps.py --out runs/bench_ps_1.json 2>&1 | tee runs/bench_ps_1.log
 ```
 
 **3. 陽性対照（CRC の見張りが働くこと）**
 
 ```bash
-sudo -E $(which python3) bench_ps.py --only m5 --corrupt --m5-rep 3 --out runs/bench_ps_corrupt.json 2>&1 | tee runs/bench_ps_corrupt.log
+python3 bench_ps.py --only m5 --corrupt --m5-rep 3 --out runs/bench_ps_corrupt.json 2>&1 | tee runs/bench_ps_corrupt.log
 ```
 
 合格: どの構成でも「不一致 3」（壊したレコード 1 つ × 3 周）。0 なら見張りが壊れている（他の結果も読まない）
@@ -89,17 +91,17 @@ sudo -E $(which python3) bench_ps.py --only m5 --corrupt --m5-rep 3 --out runs/b
 
 ```bash
 # 2026-10-08: 256 は CMA（128 MiB）を越えて落ちた（手順の誤り）。invalidate の重さは M-3 から読む
-sudo -E $(which python3) bench_ps.py --only m3 m5 --buf-mib 256 --out runs/bench_ps_256m.json 2>&1 | tee runs/bench_ps_256m.log
+python3 bench_ps.py --only m3 m5 --buf-mib 256 --out runs/bench_ps_256m.json 2>&1 | tee runs/bench_ps_256m.log
 ```
 
 **5. 間引いたときの見当と、2 回目（揺れを見る）**
 
 ```bash
-sudo -E $(which python3) bench_ps.py --only m5 --no-crc --out runs/bench_ps_nocrc.json 2>&1 | tee runs/bench_ps_nocrc.log
-sudo -E $(which python3) bench_ps.py --out runs/bench_ps_2.json 2>&1 | tee runs/bench_ps_2.log
+python3 bench_ps.py --only m5 --no-crc --out runs/bench_ps_nocrc.json 2>&1 | tee runs/bench_ps_nocrc.log
+python3 bench_ps.py --out runs/bench_ps_2.json 2>&1 | tee runs/bench_ps_2.log
 ```
 
-**6. 後片付け**: 制御 PC から specd を起動し直す（`sudo -E $(which python3) specd.py --clkin 0 --ref 10`）。runs/ を Mac へ持ち帰り、下の決め方で結果の表を埋める
+**6. 後片付け**: 制御 PC から specd を起動し直す（`python3 specd.py --clkin 0 --ref 10`）。runs/ を Mac へ持ち帰り、下の決め方で結果の表を埋める
 
 **決め方（測る前に書く、2026-10-08）**
 
@@ -208,8 +210,8 @@ make worst-paths                                        # build/ の上位 200 �
 make GB_K=0 IMPL=Performance_Explore > /dev/null 2>&1 & # → build-k0-PE/（G-4 の陽性対照。実機の測定には使わない）
 
 # ボード（build-PE の .bit・.hwh と pynq/ を送る。.bit は proj021.bit、陽性対照は proj021_k0.bit に名前を変えて）
-sudo -E $(which python3) gbboot.py --loads 50 --clkin 0 --ref 10 --out runs/g3
-sudo -E $(which python3) gbboot.py --loads 50 --clkin 0 --ref 10 --bitfile proj021_k0.bit --expect-k 0 --out runs/g4
+python3 gbboot.py --loads 50 --clkin 0 --ref 10 --out runs/g3
+python3 gbboot.py --loads 50 --clkin 0 --ref 10 --bitfile proj021_k0.bit --expect-k 0 --out runs/g4
 ```
 
 ## 手順 2 — v2 の判定
