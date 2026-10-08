@@ -119,10 +119,16 @@ sim-tp:
 
 # ---- 配置配線後の dcp で gb_fifo の gray ポインタの乗り換えをビットごとに測る（rev6。ビルド不要、数分）----
 # DCP を指定しなければ build/ の dcp。結果は dcp と同じ場所の gb_cdc.txt
-# proj021: proj016.runs のままだった（proj の名前に依らない形に）
-DCP ?= $(firstword $(wildcard $(OUTDIR)/vivado/*.runs/impl_1/*_routed.dcp))
+# proj021: proj016.runs のままだった。**proj の名前は build.tcl の `set proj` から読む**（唯一の正）。
+#   1b の直後に `*.runs` で拾う形にしたら、同じ build/ に残っていた 1a の proj020.runs を拾い、古い dcp を読んだ（2026-10-08）。
+#   名前で指定し、その run の dcp がちょうど 1 個であることを確かめる
+PROJ := $(shell sed -n 's/^set proj  *\([A-Za-z0-9_]*\).*/\1/p' build.tcl)
+DCP ?= $(wildcard $(OUTDIR)/vivado/$(PROJ).runs/impl_1/*_routed.dcp)
+DCP_CHECK = @test -n "$(PROJ)" || { echo "build.tcl から proj の名前を読めない"; exit 1; }; \
+	test $(words $(DCP)) -eq 1 || { echo "dcp が 1 個でない（$(words $(DCP)) 個: $(DCP)）。make ... DCP=... で指定する"; exit 1; }; \
+	echo "DCP: $(DCP)"
 gb-cdc:
-	@test -n "$(DCP)" || { echo "DCP が無い（make gb-cdc DCP=...）"; exit 1; }
+	$(DCP_CHECK)
 	$(VIVADO) -mode batch -nojournal -nolog -source tools/gb_cdc.tcl -tclargs $(DCP) $(dir $(DCP))gb_cdc.txt
 
 # ---- 配置配線後の dcp で setup / hold の最悪経路の中身を読む（rev3。ビルド不要、数分）----
@@ -131,7 +137,7 @@ gb-cdc:
 WP_N   ?= 200
 WP_THR ?= 0.30
 worst-paths:
-	@test -n "$(DCP)" || { echo "DCP が無い（make worst-paths DCP=...）"; exit 1; }
+	$(DCP_CHECK)
 	$(VIVADO) -mode batch -nojournal -nolog -source tools/worst_paths.tcl -tclargs $(DCP) $(OUTDIR)/worst_paths $(WP_N) $(WP_THR)
 
 # ---- sim の変種を同時に回す（Vivado サーバ向け。iverilog は 1 本 1 コアなので、変種の数だけ並べても時間は 1 本ぶん）----
