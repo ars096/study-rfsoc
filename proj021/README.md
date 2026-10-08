@@ -107,6 +107,7 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 ## やったこと
 
 - 2026-10-08: proj020 の追跡されているファイルを複製（`runs/` と README を除く。RTL・build.tcl・Makefile・pynq は proj020 のまま、ID も 0x0020 系のまま）。README を起こした
+- 2026-10-08: `pynq/bench_ps.py`（M-2〜M-5）を書いた。PYNQ の無い計算機で `--no-pynq --quick` が通ること、陽性対照（`--corrupt` で 1 バイト壊すと M-5 の不一致が周ごとに 1 件、`--no-crc` では 0 件）を確かめた。ボードではまだ走らせていない
 
 ## 結果
 
@@ -114,7 +115,10 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 
 ## 結論・次にやること
 
-- 手順 0: `pynq/bench_ps.py` を書き、M-1〜M-5 を測る
+- 手順 0: ボードで specd を止めて測る
+  - M-1: ダウンロード PC で `iperf3 -s`、ボードで `iperf3 -c <PC> -t 30`（5 回）と `-R`（5 回）。iperf3 がボードに無ければ入れる
+  - M-2〜M-5: `cd ~/proj021 && sudo python3 bench_ps.py`（→ runs/bench_ps.json）。陽性対照 `sudo python3 bench_ps.py --only m5 --corrupt --out runs/bench_ps_corrupt.json`
+  - 間引いたときの見当: `--only m5 --no-crc`
 
 ## 公開について
 
