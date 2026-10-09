@@ -193,6 +193,7 @@ def main():
     p.add_argument("--no-load", action="store_true", help="Overlay を download=False で（載っている .bit をそのまま読む）")
     p.add_argument("--clkin", default="stock")
     p.add_argument("--ref", type=float, default=10.0)
+    p.add_argument("--settle", type=float, default=5.0, help="Overlay の後、コアを読むまで待つ [s]")
     a = p.parse_args()
     if not a.list:
         p.print_help(); return
@@ -202,6 +203,16 @@ def main():
     from pynq import Overlay
     import xrfdc  # noqa: F401  Overlay() より前に import する（VERSIONS.md）
     ol = Overlay(a.bitfile, download=not a.no_load)
+    # **コアは DSP ドメイン（RFDC のタイルのクロック → Clocking Wizard）にある。タイルが起き、MMCM がロックして rst_dsp が
+    #   明けるまで AXI4-Lite を読むと、SmartConnect が応答を待ち続けて PS ごと止まる**（2026-10-09、この道具の 1 回目で止まった）。
+    #   window.py などと同じく、タイルの確認と待ちを済ませてから読む
+    import xrfdc
+    if not isinstance(ol.rfdc, xrfdc.RFdc):
+        print("ERROR: RFDC に xrfdc のドライバが当たっていない"); sys.exit(1)
+    S.check_tiles(ol.rfdc, 2)
+    if not a.no_load and a.settle > 0:
+        import time
+        time.sleep(a.settle)
     try:
         cores, tmm = discover(ol)
     except S45Error as e:
