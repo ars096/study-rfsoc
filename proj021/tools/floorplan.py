@@ -8,6 +8,7 @@
 
 図の座標は Vivado の RPM_X・RPM_Y（SLICE・DSP・BRAM・URAM が同じ物差し。左下が原点）。点 1 つ = 使っているサイト 1 つ。
   floorplan.png        ブロックの種類で色分け（コアごとの色相: PFB は濃く、窓 0・1・コアの共通は薄く。FULL・ギアボックス・SmartConnect・RFDC）
+  floorplan_wo_arrow.png 同じ図で、経路の矢印を重ねないもの
   floorplan_detail.png 深さ D で束ねたグループごとに色（細かい）
   blocks.txt           ブロックごとのサイト数・プリミティブ数・重心・広がり（5〜95 % の幅）・使ったクロック領域
 --paths N で setup の上位 N 本の経路を始点 → 終点の線で重ねる（色は slack。負は赤）。
@@ -169,9 +170,10 @@ def main():
     Ds = [load(d) for d in a.dirs]
     titles = (a.title or []) + [None] * len(Ds)
     D = Ds[0]
-    for detail, name in ((False, "floorplan.png"), (True, "floorplan_detail.png")):
+    for detail, arrows, name in ((False, True, "floorplan.png"), (False, False, "floorplan_wo_arrow.png"),
+                                 (True, False, "floorplan_detail.png")):
         fig, ax = plt.subplots(figsize=(16, 12))
-        draw(ax, D, detail=detail, npaths=0 if detail else a.paths, title=titles[0])
+        draw(ax, D, detail=detail, npaths=a.paths if arrows else 0, title=titles[0])
         ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), fontsize=6 if detail else 7, markerscale=4, frameon=False,
                   ncol=2 if detail and len({c["group"] for c in D["cells"]}) > 40 else 1)
         fig.savefig(os.path.join(D["dir"], name), dpi=a.dpi, bbox_inches="tight")

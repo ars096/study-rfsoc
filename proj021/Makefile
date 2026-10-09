@@ -142,7 +142,7 @@ worst-paths:
 
 # ---- 配置配線後の dcp からフロアマップ（proj021、2026-10-09。ビルド不要、数分）----
 # DCP は worst-paths と同じ既定。tools/floorplan.tcl が位置を CSV に、tools/floorplan.py が図に。結果は FP_OUT（既定 $(OUTDIR)/floorplan/）
-#   floorplan.png（ブロックの種類で色分け・setup の上位 FP_PATHS 本の経路）/ floorplan_detail.png（深さ FP_DEPTH の階層ごと）/ blocks.txt
+#   floorplan.png（ブロックの種類で色分け・setup の上位 FP_PATHS 本の経路）/ floorplan_wo_arrow.png（矢印なし）/ floorplan_detail.png（深さ FP_DEPTH の階層ごと）/ blocks.txt
 #   2 つ並べて比べる: python3 tools/floorplan.py build/floorplan build-PE/floorplan --title 既定 --title PE（→ build/floorplan/compare.png、縦に並べる）
 FP_OUT   ?= $(OUTDIR)/floorplan
 FP_DEPTH ?= 5
