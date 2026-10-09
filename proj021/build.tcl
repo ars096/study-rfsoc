@@ -7,6 +7,8 @@
 #   4. 資源の数え: FULL は s45_core_0/inst/g_full.u_full、窓は s45_core_i/inst/u_win の下
 # proj021 手順 2-2a（proj021/README の手順 2-2a）
 #   1. s45_core_1〜 の FULL の入口（s_axis_full_tdata・tvalid・full_gb_stat・full_adc_stat）を xlconstant の 0 で縛る（BD 41-759）
+#   2. リング s45_ring_0（src/common/s45_ring.v、CORE_KIND 3）: 入口 = s45_core_i/m_axis_rec（rec_fr のレコード）と rec_drop、
+#      書き手 → PS の S_AXI_HP0_FPD（GP2、128 bit、saxihp0_fpd_aclk = DSP のクロック）、レジスタ = smc_ctrl の M0(2+nch)
 #
 # （以下は proj020 の記録）
 # proj020 — SAM45-Fine rev2: proj017 の wspec_core の溜めと FFT の間に PFB（T = 4）を入れる
@@ -358,7 +360,7 @@ add_files -norecurse [list ./src/common/spec_core.v ./src/common/tp_core.v ./src
 add_files -norecurse [list ./src/common/win_core.v ./src/common/pfb_core.v ./src/common/dft16f.v ./src/common/ddc_core.v ./src/common/hb2.v ./src/common/hb2s.v ./src/common/pair2.v \
                            ./src/common/nco_rom.v ./src/common/wspec_core.v ./src/sam45fine/pfb4_rom.v ./src/common/win_coef.vh ./src/common/axis_sel4.v]
 # proj016: 時刻・健全性
-add_files -norecurse [list ./src/common/time_core.v ./src/common/dstamp.v ./src/common/adc_ev.v ./src/common/s45_core.v]
+add_files -norecurse [list ./src/common/time_core.v ./src/common/dstamp.v ./src/common/adc_ev.v ./src/common/s45_core.v ./src/common/rec_fr.v ./src/common/rec_arb.v ./src/common/s45_ring.v]
 set_property file_type {Verilog Header} [get_files win_coef.vh]
 set_property include_dirs [file normalize ./src/common] [get_filesets sources_1]
 set WIN_NW 2              ;# proj017: 1 ADC の窓の数（win_core の CONFIG.NW）。SAM45-Fine は 2（proj015・016 は 4）
@@ -572,7 +574,8 @@ set_property -dict [list \
     CONFIG.PSU__USE__M_AXI_GP2 {0} \
     CONFIG.PSU__USE__S_AXI_GP0 {0} \
     CONFIG.PSU__USE__S_AXI_GP1 {0} \
-    CONFIG.PSU__USE__S_AXI_GP2 {0} \
+    CONFIG.PSU__USE__S_AXI_GP2 {1} \
+    CONFIG.PSU__SAXIGP2__DATA_WIDTH {128} \
     CONFIG.PSU__USE__S_AXI_GP3 {0} \
     CONFIG.PSU__USE__S_AXI_GP4 {0} \
     CONFIG.PSU__USE__S_AXI_GP5 {0} \
@@ -580,6 +583,10 @@ set_property -dict [list \
     CONFIG.PSU__USE__IRQ0 {0} \
     CONFIG.PSU__USE__IRQ1 {0} \
 ] $ps
+# proj021 手順 2-2a: S_AXI_HP0_FPD（GP2）をリング（s45_ring_0）の書き手に。128 bit・DSP のクロック
+foreach {k want} {CONFIG.PSU__USE__S_AXI_GP2 1 CONFIG.PSU__SAXIGP2__DATA_WIDTH 128 CONFIG.PSU__USE__S_AXI_GP0 0 CONFIG.PSU__USE__S_AXI_GP3 0} {
+    if {[get_property $k $ps] != $want} { puts "ERROR: PS の $k が [get_property $k $ps]（要求 $want）"; exit 1 }
+}
 
 # ---- RFDC ----
 # PYNQ 側から ol.rfdc で引けるよう、セル名を rfdc にする
@@ -936,6 +943,22 @@ if {abs([get_property CONFIG.BEATS_PER_SEC $tcore] - $dsp_mhz * 1e6) > 0.5} {
 set time_axi [BI time_core_0 [list "s_axi" "S_AXI"] "time_core_0 の AXI4-Lite"]
 puts [format "time_core_0: BUILD_TAG = 0x%08x / 1 秒 = %d ビート" $time_tag [get_property CONFIG.BEATS_PER_SEC $tcore]]
 
+# proj021 手順 2-2a: リング（s45_ring_0、src/common/s45_ring.v）。入口 i = s45_core_i/m_axis_rec、書き手 → PS の S_AXI_HP0_FPD
+set rcore [create_bd_cell -type module -reference s45_ring s45_ring_0]
+foreach {k want} [list CONFIG.NIN $nch CONFIG.BIT_KIND 2 CONFIG.BIT_REV 1 CONFIG.PROJ [expr {0x00210200}]] {
+    set_property $k $want $rcore
+    if {[get_property $k $rcore] != $want} { puts "ERROR: s45_ring_0 の $k が [get_property $k $rcore]（要求 $want）"; exit 1 }
+}
+if {$nch > 4} { puts "ERROR: s45_ring_0 の入口は 4 本まで（nch = $nch）"; exit 1 }
+set ring_axi [BI s45_ring_0 [list "s_axi" "S_AXI"] "s45_ring_0 の AXI4-Lite"]
+set ring_m   [BI s45_ring_0 [list "m_axi" "M_AXI"] "s45_ring_0 の AXI4 の書き手"]
+set hp0      [get_bd_intf_pins -quiet zynq_ultra_ps_e_0/S_AXI_HP0_FPD]
+if {$hp0 eq ""} { puts "ERROR: PS の S_AXI_HP0_FPD が無い"; exit 1 }
+for {set i 0} {$i < $nch} {incr i} {
+    set ring_in($i) [BI s45_ring_0 [list "s${i}_axis" "S${i}_AXIS"] "s45_ring_0 の入口 $i"]
+}
+puts "s45_ring_0: NIN = $nch / 書き手 → zynq_ultra_ps_e_0/S_AXI_HP0_FPD（128 bit）"
+
 for {set i 0} {$i < $nch} {incr i} {
     set lbl  [lindex $ch_labels $i]
     # proj015: 窓のコア（ch ごと、NW = 4）
@@ -961,6 +984,7 @@ for {set i 0} {$i < $nch} {incr i} {
     }
     set win_axi($i)  [BI s45_core_$i [list "s_axi"  "S_AXI"]  "s45_core_$i の AXI4-Lite"]
     set win_axis($i) [BI s45_core_$i [list "s_axis" "S_AXIS"] "s45_core_$i の AXI4-Stream 入力"]
+    set rec_axis($i) [BI s45_core_$i [list "m_axis_rec" "M_AXIS_REC"] "s45_core_$i のレコードの出口（proj021 2-2a）"]
     set gbc [create_bd_cell -type ip -vlnv xilinx.com:ip:axis_broadcaster gb_bc_$i]
     cfg_apply $gbc [list CONFIG.NUM_MI 2 CONFIG.S_TDATA_NUM_BYTES [expr {$spw * 2}] CONFIG.M_TDATA_NUM_BYTES [expr {$spw * 2}]]
     foreach {k want} [list CONFIG.NUM_MI 2 CONFIG.S_TDATA_NUM_BYTES [expr {$spw * 2}] CONFIG.M_TDATA_NUM_BYTES [expr {$spw * 2}]] {
@@ -1042,9 +1066,10 @@ foreach t $adc_tiles {
 # 乗り換えを内部に持つ。**spec_core を 256 MHz に置いたまま自作の CDC を書かずに済む。**
 # M00 = RFDC、M0(1+i) = s45_core_i（proj015）、M0(1+nch) = time_core_0（proj016。proj021 手順 2-1 で spec_core_0 の M が無くなった）
 set smc_ctrl [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect smc_ctrl]
-set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI [expr {1 + $nch + 1}] CONFIG.NUM_CLKS {2}] $smc_ctrl
-if {[get_property CONFIG.NUM_MI $smc_ctrl] != 1 + $nch + 1} {
-    puts "ERROR: smc_ctrl の NUM_MI が [get_property CONFIG.NUM_MI $smc_ctrl]（要求 [expr {1 + $nch + 1}]。proj021: RFDC ＋ s45_core × nch ＋ time_core_0）"
+# proj021 手順 2-2a: M0(2+nch) = s45_ring_0
+set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI [expr {1 + $nch + 2}] CONFIG.NUM_CLKS {2}] $smc_ctrl
+if {[get_property CONFIG.NUM_MI $smc_ctrl] != 1 + $nch + 2} {
+    puts "ERROR: smc_ctrl の NUM_MI が [get_property CONFIG.NUM_MI $smc_ctrl]（要求 [expr {1 + $nch + 2}]。proj021: RFDC ＋ s45_core × nch ＋ time_core_0 ＋ s45_ring_0）"
     exit 1
 }
 
@@ -1073,7 +1098,7 @@ for {set i 0} {$i < $nch} {incr i} {
     lappend adc_dom gb_up_$i/aclk gb_fifo_$i/s_axis_aclk gb_adc_$i/aclk
     lappend dsp_dom gb_fifo_$i/m_axis_aclk gb_dn_$i/aclk gb_gate_$i/aclk s45_core_$i/aclk gb_bc_$i/aclk
 }
-lappend dsp_dom full_sel/aclk time_core_0/aclk
+lappend dsp_dom full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk
 nc $ps_clk0 time_core_0/ctrl_aclk
 foreach p $adc_dom { nc $adc_fabric $p }
 foreach p $dsp_dom { nc $dsp_fabric $p }
@@ -1136,10 +1161,12 @@ proc shared_nets {} {
         full_sel/gb_stat_o             s45_core_0/full_gb_stat \
         full_sel/adc_stat_o            s45_core_0/full_adc_stat \
         rst_dsp/peripheral_aresetn     time_core_0/aresetn \
+        rst_dsp/peripheral_aresetn     s45_ring_0/aresetn \
         rst_ctrl/peripheral_aresetn    time_core_0/ctrl_aresetn \
         time_core_0/t_out              [lmap i [lseq $::nch] {list s45_core_${i}/t_in}] \
         time_core_0/go_out             [lmap i [lseq $::nch] {list s45_core_${i}/go_in}] \
         time_core_0/ev_out             [lmap i [lseq $::nch] {list s45_core_${i}/tev_in}] \
+        {*}[concat {*}[lmap i [lseq $::nch] {list s45_core_${i}/rec_drop [list s45_ring_0/rec_drop${i}]}]] \
     ]
 }
 proc lseq {n} { set r {}; for {set i 0} {$i < $n} {incr i} { lappend r $i }; return $r }
@@ -1179,9 +1206,14 @@ foreach ch $chans {
 ic [get_bd_intf_pins zynq_ultra_ps_e_0/M_AXI_HPM0_FPD] [get_bd_intf_pins smc_ctrl/S00_AXI]
 ic [get_bd_intf_pins smc_ctrl/M00_AXI] [get_bd_intf_pins rfdc/s_axi]
 set sh_intf [list $sel_m $full_axis \
-                 [get_bd_intf_pins smc_ctrl/M[format %02d [expr {1 + $nch}]]_AXI] $time_axi]
+                 [get_bd_intf_pins smc_ctrl/M[format %02d [expr {1 + $nch}]]_AXI] $time_axi \
+                 [get_bd_intf_pins smc_ctrl/M[format %02d [expr {2 + $nch}]]_AXI] $ring_axi \
+                 $ring_m $hp0]
+# proj021 手順 2-2a: レコードの道 s45_core_i/m_axis_rec → s45_ring_0/s{i}_axis
+for {set i 0} {$i < $nch} {incr i} { lappend sh_intf $rec_axis($i) $ring_in($i) }
 foreach {a b} $sh_intf { ic $a $b }
 puts [format "  full_sel（s45_core_0 の FULL の流れの SRC で選ぶ）-> s45_core_0/s_axis_full / time_core_0（smc M%02d）" [expr {1 + $nch}]]
+puts [format "  s45_core_i/m_axis_rec -> s45_ring_0/s{i}_axis（smc M%02d）-> zynq_ultra_ps_e_0/S_AXI_HP0_FPD" [expr {2 + $nch}]]
 
 # ---- 1PPS の外部ポート（proj007 と同じ。create_bd_port で作る: make_bd_pins_external は `_0` を足し XDC と食い違う）----
 foreach {pname ppin what} [list \
@@ -1268,8 +1300,8 @@ foreach {a b} $sh_intf {
     lappend nc_log [format "ch * %-3s intf %s -> %s" $tag [norm_pin $a] [norm_pin $b]]
     foreach pr $probs { lappend nc_log "        $pr"; incr nc_ng }
 }
-set probs [net_check 0 pin $dsp_fabric [list full_sel/aclk time_core_0/aclk] 1]
-lappend nc_log [format "ch * %-3s pin  %s -> full_sel/aclk time_core_0/aclk" [expr {[llength $probs] ? "NG" : "OK"}] [norm_pin $dsp_fabric]]
+set probs [net_check 0 pin $dsp_fabric [list full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk] 1]
+lappend nc_log [format "ch * %-3s pin  %s -> full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk" [expr {[llength $probs] ? "NG" : "OK"}] [norm_pin $dsp_fabric]]
 foreach pr $probs { lappend nc_log "        $pr"; incr nc_ng }
 # proj021 手順 2-1: spec_core_0 のセルは無い（FULL の流れは s45_core_0 の中。ギアボックスの gb_* は s45_core_i が握る）
 set tag [expr {[llength [get_bd_cells -quiet spec_core_*]] == 0 ? "OK" : "NG"}]
@@ -1382,12 +1414,29 @@ if {$tseg eq ""} { puts "ERROR: time_core_0 のアドレスセグメントが見
 if {[get_property RANGE $tseg] < 256} { set_property RANGE 4096 $tseg }
 puts [format "TIME ADDR  : time_core_0 %s +%s（%s）" [get_property OFFSET $tseg] [get_property RANGE $tseg] $tseg]
 lappend wins [list 99 [expr {[get_property OFFSET $tseg]}] [expr {[get_property RANGE $tseg]}]]
+# proj021 手順 2-2a: s45_ring_0 のレジスタ（4 KiB）と、書き手から PS の DDR が見えること
+set rseg ""
+set ddr_seg ""
+foreach seg [get_bd_addr_segs -quiet] {
+    if {[string match "*SEG_s45_ring_0*" $seg]} { set rseg $seg }
+    if {[string match "*s45_ring_0/m_axi*DDR_LOW*" $seg]} { set ddr_seg $seg }
+}
+if {$rseg eq ""} { puts "ERROR: s45_ring_0 のアドレスセグメントが見つからない"; exit 1 }
+if {[get_property RANGE $rseg] < 4096} { set_property RANGE 4096 $rseg }
+puts [format "RING ADDR  : s45_ring_0 %s +%s（%s）" [get_property OFFSET $rseg] [get_property RANGE $rseg] $rseg]
+lappend wins [list 98 [expr {[get_property OFFSET $rseg]}] [expr {[get_property RANGE $rseg]}]]
+if {$ddr_seg eq ""} {
+    puts "ERROR: s45_ring_0/m_axi から PS の DDR（HP0_DDR_LOW）が見えない。見えるもの:"
+    foreach seg [get_bd_addr_segs -quiet] { if {[string match "*s45_ring_0/m_axi*" $seg]} { puts "  $seg" } }
+    exit 1
+}
+puts [format "RING DMA   : %s %s +%s" $ddr_seg [get_property OFFSET $ddr_seg] [get_property RANGE $ddr_seg]]
 foreach w1 $wins {
     foreach w2 $wins {
         lassign $w1 i1 o1 r1
         lassign $w2 i2 o2 r2
         if {$i1 < $i2 && $o1 < $o2 + $r2 && $o2 < $o1 + $r1} {
-            puts "ERROR: 窓 $i1 と $i2 が重なっている（10 + i = s45_core_i、99 = time_core_0）"
+            puts "ERROR: 窓 $i1 と $i2 が重なっている（10 + i = s45_core_i、99 = time_core_0、98 = s45_ring_0）"
             exit 1
         }
     }
