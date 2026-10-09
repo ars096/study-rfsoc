@@ -484,7 +484,7 @@ s45_ring_0（新、CORE_KIND 3）: 4 本の入口 → レコード単位の順�
 - コアの共通部の CAPS の [0]（DMA のレコード）を 1 に（[1] TP・[2] SNAP は 2-2b・2-2c で）。NSTREAM などは変えない
 
 **PS（2-2a では判定の道具だけ。specd は 2-3）**:
-- `pynq/s45ring.py`（新）: .hwh から `s45_ring_0` を引き、連続した 32 MiB を取って BASE・SIZE・EN。W まで読んだら **その範囲だけキャッシュを捨てて**（HP0 は coherent でない）読み、magic・SEQ・CRC を確かめ、R を書く
+- `pynq/plring.py`（新。**名前は s45ring.py にしない**: proj018 の PS の溜まり `s45ring.py` を specd・s45acq が使っている）: .hwh から `s45_ring_0` を引き、連続した 32 MiB を取って BASE・SIZE・EN。W まで読んだら **その範囲だけキャッシュを捨てて**（HP0 は coherent でない）読み、magic・SEQ・CRC を確かめ、R を書く
 - `--compare`: 流れごとに N_ACC を長く（ダンプ ≈ 1 s）し、REC_CTRL の ONE で 1 レコード出させ、**次の切り替わりの前に**同じ流れの仮の読み窓を AXI4-Lite で読んで、SEQ が同じ・本体が bit 単位で同じことを確かめる（全部の流れ: DDC 8 本 ＋ FULL 1 本）
 - `--soak`: ALL で 10.24 ms を N 秒。DROP_CNT・CRC の不一致・流れごとの SEQ の飛び・REC_LATE・PEAK を数える
 
@@ -509,9 +509,78 @@ s45_ring_0（新、CORE_KIND 3）: 4 本の入口 → レコード単位の順�
 | S22a-1 | sim-ring が通る（予言 1）。陽性対照 (a)〜(c) が予言どおり落ちる・数が合う（予言 2） |
 | S22a-2 | sim-all・sim-tsys-p・sim-regmap が通る（予言 3。持ち越し 2 の c_ns の複製を含めて bit 単位で同じ） |
 | S22a-3 | ビルド: WNS ≥ 0（既定か PE の良い方）・WHS ≥ 0・BD 41-759 が 0・結線の照合・CDC の分類（予言 4〜7） |
-| S22a-4 | 実機: 2-1 の P-0〜P-3 の回帰（仮の読み窓のまま）＋ `s45ring.py --compare`（全部の流れ）＋ `--soak`（60 s）＋ キャッシュを捨てない陽性対照（予言 8） |
+| S22a-4 | 実機: 2-1 の P-0〜P-3 の回帰（仮の読み窓のまま）＋ `plring.py --compare`（全部の流れ）＋ `--soak`（60 s）＋ キャッシュを捨てない陽性対照（予言 8） |
 
 **commit の順**: README（これ）→ 持ち越し 1（build.tcl）→ 持ち越し 2（c_ns）→ u_rec と REC_CTRL・REC_LATE → s45_ring と sim-ring → build.tcl（リング・HP0）→ PS の道具 → ビルドと実機の結果
+
+**実装（2026-10-09）**:
+- `src/common/rec_fr.v`（新）: レコードの組み立て。win_core に 1 個（流れ NW 本）、spec_core に 1 個（FULL）。HOLD = 8 クロック・FIFO 32 語（分散 RAM）。
+  読みの口は持ち主の AXI4-Lite の読みと同じ（win_core: `ax_ch`・`ax_bank`、spec_core: `axi_k1`・`ar_bank`）。`fr_gnt` の間は arready を下げる
+- `src/common/rec_arb.v`（新）: レコード単位の順番回し（スキッド 2 語）。s45_core（DDC と FULL の 2 本）と s45_ring（コア 4 本）
+- `src/common/s45_ring.v`（新）: リング。ヘッダ 8 語を受けてから空きを判定 → [PAD] → 頭 → 本体 → 尾（CRC-32）→ 2 語を 1 拍に束ねて FIFO（512 × 128 bit）→
+  バースト（≦ 16 拍、256 バイト境）。W は BRESP を全部受けてから進める。入口の tlast と長さが合わない壊れたレコードも、書き手の拍の数を崩さずに捨てる
+- win_core・spec_core: REC_CTRL（0x84）・REC_LATE（0x88）・CAPS = 1・頭の w1..w6 を DUMP_* から組む。s45_core: 2 本を rec_arb で束ねて `m_axis_rec`・`rec_drop`
+- build.tcl: `s45_ring_0`（NIN = nch）・PS の S_AXI_HP0_FPD（GP2、128 bit、saxihp0_fpd_aclk = DSP のクロック）・smc_ctrl の M0(2+nch)・
+  レコードの道 4 本と rec_drop を shared_nets・sh_intf の表に（照合も同じ表）。アドレス: リングの 4 KiB を重なりの照合に、`s45_ring_0/m_axi` から HP0_DDR_LOW が見えることを確かめる
+- PS: `pynq/plring.py`（新）。名前は s45ring.py にしない（proj018 の PS の溜まり `s45ring.py` を specd・s45acq が使っている）
+
+**手順の誤り（2026-10-09、sim で見つけた）**:
+- rec_fr の読みの遅れ LAT を 4 と数えていた（rd_ch → 番地 → rd1 → rd2 → fr_data は 5）。sim-ring の短い試しで、レコードの本体が凍ったバンクから **1 語ずれて**いた（AXI4-Lite の 16 ch と DUMP_* の照合は通っていた: 照合の相手を「凍ったバンクを直に写したもの」にしていたので見つかった）。LAT = 5 に直した
+- sim-ring の late の変種を DDC の N_ACC 1（4096 クロック）にしていて、4096 語の読み出しが 1 本も間に合わず、**レコードが 1 個も出なかった**（REC_LATE だけが増える）。N_ACC 2（8192 クロック、3 本の読み出し 12,300 クロックが追いつかない）にした
+- PS の道具を最初 `s45ring.py` の名前で書き、proj018 の同名の溜まり（specd が使う）を上書きしかけた（commit の前に気づいて戻した）
+
+**sim の結果（2026-10-09、クラウドの iverilog 12）**:
+
+| sim | 結果 |
+|---|---|
+| 持ち越し 2（c_ns の複製）の回帰: sim-top・sim-win4・sim-t4adc・sim-wgrid・sim-wstamp・sim-regmap | 全部通過（bit 単位で 2-1 と同じ） |
+| sim-regmap（CAPS = 1・REC_CTRL の書き読み・REC_LATE を足して） | 通過（186 項目）・test_regmap 76 項目 |
+| sim-ringu（S22a-1 予言 2 (a)(b)） | base: 92 / 96 レコード（来なかった 4 = 捨てるべき tuser の 4）・PAD 3 個・CRC は zlib と一致 / noread（64 KiB で R を進めない）: DROP_CNT 48 = 来なかった 45 ＋ rec_drop 3 / berr: SLVERR で ERR・ERR_STAT・以後は書かない / flip: 92 件全部 NG（陽性対照）|
+| sim-ring all（予言 1） | 12 レコード（流れ 0: 5・流れ 1: ONE で 1・FULL: 6）の**本体が凍ったバンクと、頭が AXI4-Lite の DUMP_* と bit 単位で一致**。AXI4-Lite の仮の読み窓の 16 ch × 16 回も一致（rec_fr が口を持っている間は待たされる道）。REC_LATE 0・DROP 0・SEQ の飛び 0・ONE は 1 個出して 0 に戻る。バースト 1,554 本で 4 KiB の境・16 拍の見張りは 0 件 |
+| sim-ring late（予言 2 (c)） | DDC の N_ACC 2（8192 クロック）: REC_LATE 18 = DROP_CNT 18、出た 12 レコード（流れ 0: 1・FULL: 11）は全部正しい。flip: 12 件全部 NG |
+
+- late の偏り（FULL はほぼ全部出て、DDC はほとんど出ない）は、win_core の rec_fr の出口が s45_core の rec_arb で FULL と順番になり、
+  FULL のレコード（4,104 語）の間は読みが止まる（FIFO 32 語）ため。読み出しの時間が実質「同じコアの全部の流れの読み出しの和」になる。
+  10.24 ms のダンプ（262 万クロック）には全部の流れの和（9 本 × 4,100 ≈ 37,000 クロック）でも十分で、運転には効かない。
+  N_ACC = 1 の試験（W-G・golden）は ONE で 1 本ずつ出すので当たらない
+
+### 2-2a のビルドと実機
+
+```bash
+# Vivado サーバ（2-1 の build/・build-PE/ は比べるために名前を変えて残す）
+cd ~/git/rfsoc && git pull && cd proj021 && pwd
+mv build build-2-1; mv build-PE build-2-1-PE
+make sim-all > sim-all.log 2>&1 &                       # sim-ringu を含む（成否は各ログの「結果:」・build-sim-ringu/check.log の「総合:」）
+make sim-ring > /dev/null 2>&1 &                        # 1〜2 時間 → build-sim-ring/check.log の「総合:」
+make sim-tsys > /dev/null 2>&1 &                        # FULL を含む系の回帰（1〜2 時間）
+make IMPL=Performance_Explore > /dev/null 2>&1 &        # → build-PE/
+make > /dev/null 2>&1 &                                 # → build/（既定）
+wait
+grep -E 'TIMING \(確定\)' build/vivado.log build-PE/vivado.log
+grep -c 'CRITICAL WARNING' build/vivado.log build-PE/vivado.log
+grep -c 'BD 41-759' build/vivado.log build-PE/vivado.log              # 0 であること（持ち越し 1）
+grep -E 's45_ring_0|RING ADDR|RING DMA' build/vivado.log | head
+grep -E '照合した行|陽性対照' build/vivado.log
+tail -n 1 build-sim-ringu/check.log build-sim-ring/check.log build-sim-tsys/check.log
+make worst-paths
+
+# Vivado サーバ → ボード（WNS の良い方）
+scp build/proj021.bit build/proj021.hwh xilinx@$B:~/proj021/
+scp pynq/*.py pynq/tp_cal.json xilinx@$B:~/proj021/
+
+# ボード（root。specd を止めてから）。S22a-4
+cd ~/proj021
+grep Cma /proc/meminfo                                                  # 32 MiB のリングが取れること
+python3 s45core.py --list --clkin 0 --ref 10                            # CAPS が 0x001 に
+python3 timetest.py --clkin 0 --ref 10 --t0 --seconds 30                # P-0
+python3 window.py --clkin 0 --ref 10 --probe --adc 0 --win 0            # P-1
+python3 window.py --clkin 0 --ref 10 --golden --w 256                   # P-2
+python3 window.py --clkin 0 --ref 10 --tone 3010.5 --w6 --w 256 --shift 11 --shift-full 8   # P-3（SG −20 dBm）
+python3 plring.py --clkin 0 --ref 10 --compare                          # 9 本: レコード = AXI4-Lite（bit 単位）
+python3 plring.py --clkin 0 --ref 10 --soak 60                          # ALL・10.24 ms: DROP 0・CRC 0・SEQ の飛び 0・REC_LATE 0
+python3 plring.py --clkin 0 --ref 10 --soak 20 --no-inval               # 陽性対照: CRC の不一致が立つ
+python3 plring.py --clkin 0 --ref 10 --soak 20 --pause 3                # 陽性対照: DROP_CNT = SEQ の飛び > 0
+```
 
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
