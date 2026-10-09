@@ -5,6 +5,8 @@
 #   2. CORE_PORT（ADC・タイル・スライス）を chans から、BIT_KIND 2・BIT_REV 1・PROJ 0x0021_0200 を s45_core_i と time_core_0 に
 #   3. SmartConnect の M は 1 + nch + 1（spec_core_0 の M が無くなった）。コアの窓は 1 MiB のまま（仮の読み窓。2-2 で 64 KiB に）
 #   4. 資源の数え: FULL は s45_core_0/inst/g_full.u_full、窓は s45_core_i/inst/u_win の下
+# proj021 手順 2-2a（proj021/README の手順 2-2a）
+#   1. s45_core_1〜 の FULL の入口（s_axis_full_tdata・tvalid・full_gb_stat・full_adc_stat）を xlconstant の 0 で縛る（BD 41-759）
 #
 # （以下は proj020 の記録）
 # proj020 — SAM45-Fine rev2: proj017 の wspec_core の溜めと FFT の間に PFB（T = 4）を入れる
@@ -1115,9 +1117,20 @@ proc ch_nets {i} {
 for {set i 0} {$i < $nch} {incr i} {
     foreach {drv loads} [ch_nets $i] { foreach p $loads { nc $drv $p } }
 }
+# proj021 手順 2-2a: FULL = 0 のコア（s45_core_1〜）の FULL の入口を定数 0 で縛る（CRITICAL WARNING BD 41-759 を消す。RTL では使っていない入口）
+#   幅ごとに 1 個の xlconstant を全部のコアで共有する。照合は下の shared_nets の表で一緒に見る
+foreach {nm w} {full_tie_1b 1 full_tie_32b 32 full_tie_256b 256} {
+    set c [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant $nm]
+    set_property -dict [list CONFIG.CONST_WIDTH $w CONFIG.CONST_VAL 0] $c
+    if {[get_property CONFIG.CONST_WIDTH $c] != $w || [get_property CONFIG.CONST_VAL $c] != 0} { puts "ERROR: $nm の CONST_WIDTH・CONST_VAL が要求と違う"; exit 1 }
+}
+proc tie_list {pin} { set r {}; for {set i 1} {$i < $::nch} {incr i} { lappend r s45_core_${i}/$pin }; return $r }
 # proj015: 全帯域の分光 1 本とその選び（共有のネット。下の照合で見る）
 proc shared_nets {} {
     return [list \
+        full_tie_1b/dout               [tie_list s_axis_full_tvalid] \
+        full_tie_256b/dout             [tie_list s_axis_full_tdata] \
+        full_tie_32b/dout              [concat [tie_list full_gb_stat] [tie_list full_adc_stat]] \
         rst_dsp/peripheral_aresetn     full_sel/aresetn \
         s45_core_0/full_sel            full_sel/sel \
         full_sel/gb_stat_o             s45_core_0/full_gb_stat \
