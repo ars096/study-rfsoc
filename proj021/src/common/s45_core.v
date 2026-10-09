@@ -106,7 +106,13 @@ module s45_core #(
     output wire         m_axis_rec_tuser,
     output wire [1:0]   rec_drop             // このクロックに「読み始めなかった」ダンプの数（s45_ring の DROP_CNT へ）
 );
-    wire rst = ~aresetn;
+    // proj021 2-2a ビルド 4 回目: rst_dsp の出口からコアの奥（u_pfb の DSP の CE など）へ直に配っていて、配置しだいで最悪経路になった
+    //   （PE で −0.507 ns: rst_dsp の複製 → u_pfb の DSP の CEB1）。コアの中で 3 段受けてから配る（max_fanout で複製させる）。
+    //   リセットの解除がコアの中で 3 クロック遅れるだけ（PS がコアに触るのはその後）
+    reg rstn_q1 = 1'b0, rstn_q2 = 1'b0;
+    (* max_fanout = 50 *) reg rstn_l = 1'b0;
+    always @(posedge aclk) begin rstn_q1 <= aresetn; rstn_q2 <= rstn_q1; rstn_l <= rstn_q2; end
+    wire rst = ~rstn_l;
     initial if (FULL != 0 && NW > 2) begin $display("s45_core: FULL = 1 は NW ≦ 2 のときだけ（NW %0d）", NW); $finish; end
     localparam [19:0] FBLK = 20'h04000 + 20'h00400 * NW;     // FULL の流れのブロック
 
@@ -176,7 +182,7 @@ module s45_core #(
     win_core #(.NW(NW), .N_ACC_DEFAULT(N_ACC_DEFAULT), .SHIFT_DEFAULT(SHIFT_DEFAULT), .BUILD_TAG(BUILD_TAG), .TP(TP),
                .TPN_DEFAULT(TPN_DEFAULT), .GB_K_RST(GB_K_RST), .G_L2(G_L2), .BIT_KIND(BIT_KIND), .BIT_REV(BIT_REV),
                .PROJ(PROJ), .CORE_PORT(CORE_PORT), .NFULL(FULL != 0 ? 1 : 0), .BASE_BEATS(BASE_BEATS)) u_win (
-        .aclk(aclk), .aresetn(aresetn),
+        .aclk(aclk), .aresetn(rstn_l),
         .s_axis_tdata(s_axis_tdata), .s_axis_tvalid(s_axis_tvalid), .s_axis_tready(s_axis_tready),
         .s_axi_awaddr(q_addr), .s_axi_awprot(3'd0), .s_axi_awvalid(d_awvalid && !q_full), .s_axi_awready(w_awready),
         .s_axi_wdata(q_wdata), .s_axi_wstrb(q_wstrb), .s_axi_wvalid(d_awvalid && !q_full), .s_axi_wready(w_wready),
@@ -208,7 +214,7 @@ module s45_core #(
             spec_core #(.N_ACC_DEFAULT(FULL_N_ACC_DEFAULT), .SHIFT_DEFAULT(FULL_SHIFT_DEFAULT), .FFT_CFG(FULL_FFT_CFG),
                         .BUILD_TAG(FULL_BUILD_TAG), .STABLE_N(FULL_STABLE_N), .GB_K_RST(GB_K_RST), .SID_S(NW),
                         .TPN_DEFAULT(TPN_DEFAULT), .REC_CORE(CORE_PORT % 16)) u_full (
-                .aclk(aclk), .aresetn(aresetn),
+                .aclk(aclk), .aresetn(rstn_l),
                 .s_axis_tdata(s_axis_full_tdata), .s_axis_tvalid(s_axis_full_tvalid), .s_axis_tready(s_axis_full_tready),
                 .gb_hold(), .gb_adj(), .gb_dn_rstn(), .gb_k(), .gb_stat(full_gb_stat), .adc_stat(full_adc_stat),
                 .s_axi_awaddr(f_addr), .s_axi_awprot(3'd0), .s_axi_awvalid(d_awvalid && q_full), .s_axi_awready(f_awready),
@@ -219,7 +225,7 @@ module s45_core #(
                 .t_in(t_in), .go_in(go_in), .tev_in(tev_in), .src_sel(full_sel),
                 .m_axis_rec_tdata(fr_d), .m_axis_rec_tvalid(fr_v), .m_axis_rec_tready(fr_r), .m_axis_rec_tlast(fr_l),
                 .m_axis_rec_tuser(fr_u), .rec_drop(f_drop));
-            rec_arb #(.N(2)) u_rarb (.clk(aclk), .rst(~aresetn),
+            rec_arb #(.N(2)) u_rarb (.clk(aclk), .rst(rst),
                 .s_tdata({fr_d, wr_d}), .s_tvalid({fr_v, wr_v}), .s_tready({fr_r, wr_r}), .s_tlast({fr_l, wr_l}), .s_tuser({fr_u, wr_u}),
                 .m_tdata(m_axis_rec_tdata), .m_tvalid(m_axis_rec_tvalid), .m_tready(m_axis_rec_tready),
                 .m_tlast(m_axis_rec_tlast), .m_tuser(m_axis_rec_tuser));

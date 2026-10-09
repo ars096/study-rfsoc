@@ -107,7 +107,10 @@ module s45_ring #(
     localparam [31:0] MAGIC_R = 32'h5235_3453, MAGIC_E = 32'h4535_3453;
     localparam integer FAW = $clog2(FDEPTH);
     localparam [3:0]  INM = (1 << NIN) - 1;
-    wire rst = ~aresetn;
+    reg rstn_q1 = 1'b0, rstn_q2 = 1'b0;      // proj021 2-2a: リセットを 2 段受けてから配る（s45_core と同じ理由）
+    (* max_fanout = 50 *) reg rstn_l = 1'b0;
+    always @(posedge aclk) begin rstn_q1 <= aresetn; rstn_q2 <= rstn_q1; rstn_l <= rstn_q2; end
+    wire rst = ~rstn_l;
 
     // =====================================================================
     // レジスタ
