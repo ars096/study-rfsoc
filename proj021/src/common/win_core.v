@@ -320,7 +320,10 @@ module win_core #(
     reg  [35:0]      snap_mem [0:8191];
     reg              ax_bank;
     reg  [11:0]      ax_ch;
-    reg  [35:0]      sn1, sn2;
+    reg  [35:0]      sn1;
+    // proj021 2-2a（PETO のビルドの最悪 −0.077: snap_mem の BRAM → rq_w）: sn2 を布の FF に残す（BRAM の出口のレジスタに吸わせない）。
+    //   仮の読み窓のスナップショットの読み（2-2c で消える）。値・段数は同じ
+    (* dont_touch = "true" *) reg [35:0] sn2;
     wire [3:0]       ss = (snap_sel < NW) ? snap_sel : 4'd0;
     // rev2: 書き込みを 2 段のレジスタで受ける（窓ごとに 1 段 → SNAP_SEL で選んで 1 段 → 記憶）。rev1 は wspec の fin == sn_next の
     //   48 bit の比べ → 4 窓の選び → BRAM の書き込みの入口が 1 クロックで、`-1` の最悪経路だった。書き込みが 2 クロック遅れるだけで、
