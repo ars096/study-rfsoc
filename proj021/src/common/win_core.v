@@ -429,6 +429,12 @@ module win_core #(
             wire [7:0] wev = {1'b0, cfg_diff, ev_a};
             assign kv[5*g +: 5] = c_k;
 
+            // ---- proj021 2-2a: c_ns を ddc に配るためだけの複製（2-1 で c_ns のファンアウト 1,830 が上位の経路に）----
+            //   1 クロック遅れるが、c_ns は WRST（cmd_wrst）でしか変わらず、そのとき w_rst で ddc はリセットの中。
+            //   ddc が動き出す（w_rst が落ちる）クロックには c_ns_d も新しい値なので、出てくるスペクトルは同じ
+            (* max_fanout = 64 *) reg [3:0] c_ns_d;
+            always @(posedge aclk) c_ns_d <= rst ? 4'd1 : c_ns;
+
             // ---- ddc・wspec ----
             wire [15:0] ddc_sat, ddc_ovr;
             wire [15:0] psat = pfb_sat[16*g +: 16];
@@ -436,7 +442,7 @@ module win_core #(
             wire signed [17:0] zr, zi;
             ddc_core u_ddc (.clk(aclk), .rst(core_rst[g]), .y_valid(yv), .y0_ok(y0ok[g]), .y1_ok(y1ok[g]),
                 .y0_re(y0r[24*g +: 24]), .y0_im(y0i[24*g +: 24]), .y1_re(y1r[24*g +: 24]), .y1_im(y1i[24*g +: 24]),
-                .dphi(c_dphi), .ns(c_ns), .z_valid(zv), .z_re(zr), .z_im(zi), .sat_cnt(ddc_sat), .ovr_cnt(ddc_ovr));
+                .dphi(c_dphi), .ns(c_ns_d), .z_valid(zv), .z_re(zr), .z_im(zi), .sat_cnt(ddc_sat), .ovr_cnt(ddc_ovr));
             wire [FW-1:0] fin, fout, run_f0, rd_f0, snap_f0, snap_f1;
             wire          sched, acc_on, rd_bank;
             wire [31:0]   seq, rd_k, rd_n, rd_sat;
