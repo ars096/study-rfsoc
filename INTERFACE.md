@@ -90,6 +90,15 @@ SAM45-Wide の「1024 MHz × 2」が DDC か全帯域の切り出しかはまだ
 
 PS は KIND から「ch → IF の対応の式」と「種類に固有の設定のキー」を選ぶ。それ以外（帳簿・時刻・健全性・単位・束ね）は KIND に依らない。
 
+**KIND は 1 つの bit の間で変わらない**（2026-10-09、proj022 から）。モード（点数）を実行時に切り替える bit でも、流れの KIND・SID・NSTREAM は Overlay の間一定にする。
+PS は Overlay の直後に 1 回だけ流れの表を作れば足りる。
+- SAM45-Wide は 3 つのモード（全帯域 8192 点・1 GHz 16384 点・512 MHz 32768 点）とも **SLICE**。全帯域モードは「s0 = 0・N = 8192 の切り出し」（NCH 4096 で全部）
+- FULL は SAM45-Fine の全帯域（SRC を書き換えられる 1 本、2.2）のように、切り出しを持たない作りに使う
+- モードによって出すものの無い流れ（SAM45-Wide の全帯域モードの流れ 1）は消さずに**空の流れ**にする（2.5 の NCH = 0）
+
+SLICE の ch → IF: 流れの ch i（0 ≦ i < NCH）は全帯域の FFT の ch S0 + i（S0 = 2.5 の S0_CUR）。周波数は (S0 + i)·fs / N（N = 2^PARAM[7:0]、全帯域の FFT の ch と同じ向き）。
+**N と S0 はダンプごとにレコードの頭にも入る**（4.4 の語 4 の log2 NFFT・語 7 の上位）ので、モードを切り替えた前後のレコードもそれだけで読める。
+
 ### 2.2 コア
 
 **コア = ADC 1 本ぶんの前段（ギアボックス・TP・時刻の錨）＋ そこにぶら下がる流れ**。PL の中で 64 KiB の番地を 1 つ持つ。
@@ -115,7 +124,9 @@ PS は ip_dict を名前で引き、各コアの IF_ID・CORE_PORT を読んで�
 | 0x10 | BASE_BEATS | 基本の単位（ダンプの長さ）のビート数。10.24 ms = 2,621,440 |
 | 0x14 | BUILD | ビルドの指紋（今と同じ） |
 | 0x18 | CORE_PORT | [3:0] このコアの ADC（0..3 = ADC_A..D、**SMA のラベル**）/ [11:8] タイル / [15:12] スライス（build.tcl が VERSIONS.md の実測から与える） |
-| 0x20〜0xFF | 今の表 A の中身（CTRL の TP_RUN・TP_ARM・TANCH、TFIN、GB_K、GB_STAT、ADC_STAT、ANCH_*、TP_RUN_T、OVR_CNT、GAP_CNT） | 意味は変えない。並びは proj021 で決める |
+| 0x20〜0x7F | 今の表 A の中身（CTRL の TP_RUN・TP_ARM・TANCH、TFIN、GB_K、GB_STAT、ADC_STAT、ANCH_*、TP_RUN_T、OVR_CNT、GAP_CNT） | 意味は変えない。並びは proj021 で決めた（表 A を +0x10、0x20〜0x5F） |
+| 0x80 | FFT_N | **SLICE の流れを持つコアだけ**（2026-10-09、proj022 から）。そのコアの全帯域の FFT の点数（コアの SLICE の流れで共通）。W: [7:0] log2 N（次の WRST で効く）/ R: [7:0] 今効いている log2 N・[15:8] 書いた値。NFFT_MIN_MAX（2.5）の範囲の外は効かせない。SLICE の無いコアでは 0 |
+| 0x84〜0xFF | （予約） | |
 
 BIT_KIND（BITS.md の 9 本。proj の番号とは別の固定の番号）:
 
@@ -137,7 +148,7 @@ BIT_KIND（BITS.md の 9 本。proj の番号とは別の固定の番号）:
 | 0x14 | SHIFT | RUN で取り込む |
 | 0x18 | FLAGS | 粘着。ビットの意味は KIND ごと（PS は KIND で名前を引く） |
 | 0x1C | SEQ | 閉じたダンプの通し番号 |
-| 0x20 | NCH | 出力の ch 数（FULL の 8192 点なら 4096） |
+| 0x20 | NCH | 出力の ch 数（FULL の 8192 点なら 4096）。**0 = 空の流れ**（今の設定では出すものが無い。SEQ は進まず、REC_CTRL を書いてもレコードを出さない。2.1） |
 | 0x24 | FRAME_BEATS | 今の 1 フレームのビート数（L。束ねと格子の検算に使う） |
 | 0x28 | SRC | [3:0] 入力の ADC（今効いている値）/ [31] 書き換えられる流れ。書けば次の WRST で効く |
 | 0x2C | CFG_ID | WRST と RUN で取り込む |
@@ -159,8 +170,19 @@ BIT_KIND（BITS.md の 9 本。proj の番号とは別の固定の番号）:
 | 0x84 | REC_CTRL | [0] ALL / [1] ONE / [2] SNAP（4.6） |
 | 0x88 | REC_LATE | 出し切れずに捨てたダンプの数（4.1） |
 | 0x8C〜0xFF | （予約） | 時刻の補正の定数（見直しの 4 番目）などを足す場所 |
-| 0x100〜0x1FF | 種類に固有の設定 | DDC: WK・WDPHI・WNS・WCUR・WCUR_DPHI・WSTART・NS_MIN_MAX・WRST_T。SLICE: 点数・最初の ch。FULL: なし |
+| 0x100〜0x1FF | 種類に固有の設定 | DDC: WK・WDPHI・WNS・WCUR・WCUR_DPHI・WSTART・NS_MIN_MAX・WRST_T。SLICE: 下の表（点数はコアの FFT_N、2.4）。FULL: なし |
 | 0x200〜0x3FF | 診断（約束の外） | DDC: PFB_SAT・DDC_SAT・WS_STALL・WS_RDY0・DDC_OVR・WRST_CNT。FULL: DIAG_*・SRST・GRST・INJ・RAW_*・ST_* |
+
+SLICE の種類に固有の設定（0x100〜。2026-10-09、proj022 から。DDC の WK → WCUR と同じ「書いた値」と「今効いている値」の形）:
+
+| オフセット | 名前 | 中身 |
+|---|---|---|
+| 0x100 | S0 | W: 切り出しの最初の ch（次の WRST で効く）。0 ≦ S0 ≦ N/2 − 4096 の外は効かせない |
+| 0x104 | S0_CUR | R: 今効いている最初の ch |
+| 0x108 | S0_STEP | R: 最初の ch の刻み（1 = どの ch からでも。作りの制約があれば 2 の冪） |
+
+- **点数 N の切り替えはコアの FFT を作り直す**ので、FFT_N（2.4）はそのコアの SLICE の流れの**どれかの WRST** で効き、そのとき**コアの全部の SLICE の流れが WRST される**（PS は ARM_WRST を全部の流れに打って同じ発火に揃える。5.1 の格子が崩れないように）
+- 各 SLICE の流れの PARAM の [7:0]・NCH・FRAME_BEATS は、今効いている N を映す（書けない）
 
 - **SEQ → 中身 → SEQ の seqlock は残す**（DMA の前でも AXI4-Lite で帳簿を読めるように。試験と移行に使う）
 - 消すもの: SNAP_F・BANK（AXI4-Lite のスペクトル・スナップショットの記憶を出さないので意味がなくなる）・窓ごとの ID（SID に）・WIDX（SID の s に）・表 A の NW（NSTREAM に）・SNAP_SEL・FULL_SEL（SNAP の扱いと SRC に。SNAP は 8. の 3 で）
@@ -262,9 +284,10 @@ AXI4-Lite で 4096 語を読む今の形をやめ、**読み出しの手間を�
 | 4 | log2 NFFT（u8）/ NS（u8）/ SHIFT（u8）/ G（u8）/ fmt（u8）/ src（u8、そのダンプの入力の ADC）/ DUMP_H（u16） |
 | 5 | DUMP_N（u32、このダンプの実際のフレーム数。N_ACC は RUN_CFG から引ける）/ DUMP_SAT（u32） |
 | 6 | DUMP_CFG（u32）/ FLAGS（u32） |
-| 7 | 中身のバイト数（u32、詰めた後。PAD は端までのバイト数）/ 予約（u32） |
+| 7 | 中身のバイト数（u32、詰めた後。PAD は端までのバイト数）/ KIND に固有（u32。**SLICE = そのダンプの S0_CUR**（最初の ch）、DDC・FULL・PAD = 0。2026-10-09、proj022 から。予約だった場所に足したので rec_ver は 1 のまま） |
 
 - 中身は FFT の ch の順（PS が IF の昇順に並べ替える。今と同じ）。fmt はリングの中では常に 0（u64 の生の積分値。4.5）
+- **語 4 の log2 NFFT と語 7 の上位（SLICE の S0）は、そのダンプを作ったときの値**（モードを切り替えた直後のレコードも、レコードだけで ch → IF が決まる。2.1）
 - 頭の項目は今の DUMP_* と同じ値（seqlock の代わりに、1 つのレコードの中で揃っていることを PL が保証する）
 - レコードの欠け = SEQ の飛び（今と同じ見張り）。捨てた数は DROP_CNT・REC_LATE（4.1）
 - **基本の単位**: PL のダンプは「**10.24 ms の倍数のうち、窓のフレーム長で割り切れる最小**」（ほとんど 10.24 ms。Fine の 32768 点・8 MHz だけ 20.48 ms）。
