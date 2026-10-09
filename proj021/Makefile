@@ -140,6 +140,19 @@ worst-paths:
 	$(DCP_CHECK)
 	$(VIVADO) -mode batch -nojournal -nolog -source tools/worst_paths.tcl -tclargs $(DCP) $(OUTDIR)/worst_paths $(WP_N) $(WP_THR)
 
+# ---- 配置配線後の dcp からフロアマップ（proj021、2026-10-09。ビルド不要、数分）----
+# DCP は worst-paths と同じ既定。tools/floorplan.tcl が位置を CSV に、tools/floorplan.py が図に。結果は FP_OUT（既定 $(OUTDIR)/floorplan/）
+#   floorplan.png（ブロックの種類で色分け・setup の上位 FP_PATHS 本の経路）/ floorplan_detail.png（深さ FP_DEPTH の階層ごと）/ blocks.txt
+#   2 つ並べて比べる: python3 tools/floorplan.py build/floorplan build-PE/floorplan --title 既定 --title PE（→ build/floorplan/compare.png）
+FP_OUT   ?= $(OUTDIR)/floorplan
+FP_DEPTH ?= 5
+FP_PATHS ?= 20
+.PHONY: floorplan
+floorplan:
+	$(DCP_CHECK)
+	$(VIVADO) -mode batch -nojournal -nolog -source tools/floorplan.tcl -tclargs $(DCP) $(FP_OUT) $(FP_DEPTH) 50
+	$(PYTHON) tools/floorplan.py $(FP_OUT) --paths $(FP_PATHS)
+
 # ---- sim の変種を同時に回す（Vivado サーバ向け。iverilog は 1 本 1 コアなので、変種の数だけ並べても時間は 1 本ぶん）----
 # SHIFT 7（飽和なし）/ SHIFT 4（強い線が飽和）/ SKEW 5（TLAST の検査だけをずらす陽性対照）。
 # proj013: tp_core の単体（sim-tp）とその陽性対照（sim-tp SIM_TP_POSCTL=1）も並べる。
