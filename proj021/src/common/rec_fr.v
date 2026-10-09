@@ -61,12 +61,17 @@ module rec_fr #(
     reg  [31:0] seq_d [0:NS-1];
     reg  [NS-1:0] pend;
     reg  [3:0]  age [0:NS-1];
-    wire [NS-1:0] inc, oth, rdy;
+    // proj021 2-2a ビルド 3 回目: 32 bit の +1 と比べ → 状態 → n_iss が 8 段で上位に出た。比べを 1 段受ける（気づくのが 1 クロック遅れるだけ。
+    //   読みかけの判定は「取り込み終わる前」で見るので、遅れても上書きされた語を出すことはない: 取り込みは読みから 3 クロック遅れる）
+    reg  [NS-1:0] inc, oth;
+    wire [NS-1:0] rdy;
     genvar gs;
     generate
         for (gs = 0; gs < NS; gs = gs + 1) begin : g_s
-            assign inc[gs] = (seq[32*gs +: 32] == seq_d[gs] + 32'd1);
-            assign oth[gs] = (seq[32*gs +: 32] != seq_d[gs]) && !inc[gs];
+            always @(posedge clk) begin
+                inc[gs] <= !rst && (seq[32*gs +: 32] == seq_d[gs] + 32'd1);
+                oth[gs] <= !rst && (seq[32*gs +: 32] != seq_d[gs]) && (seq[32*gs +: 32] != seq_d[gs] + 32'd1);
+            end
             assign rdy[gs] = pend[gs] && (age[gs] >= HOLD);
         end
     endgenerate

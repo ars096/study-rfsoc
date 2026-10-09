@@ -67,7 +67,10 @@ module dft16 #(
             wire signed [VW-1:0] x1r = v_re[(1*4+b)*VW +: VW], x1i = v_im[(1*4+b)*VW +: VW];
             wire signed [VW-1:0] x2r = v_re[(2*4+b)*VW +: VW], x2i = v_im[(2*4+b)*VW +: VW];
             wire signed [VW-1:0] x3r = v_re[(3*4+b)*VW +: VW], x3i = v_im[(3*4+b)*VW +: VW];
-            reg signed [UW-1:0] r0, i0, r1, i1, r2, i2, r3, i3;
+            // proj021 2-2a: 段 1 のレジスタを DSP（次の cmul の A のレジスタ）に取り込ませない。2-2a のビルドで Vivado がこれと cmul の ar・ai を
+            //   DSP の A1・A2 に入れ、4 項の和（CARRY8）が DSP の入口（セットアップ ≒ 0.3 ns）へ直に入る経路が上位に並んだ（u_pfb・FULL の u_dft）。
+            //   布の FF に残せば和の行き先は FF になり、cmul の ar・ai が DSP の A のレジスタになる（段数・値は同じ）
+            (* dont_touch = "true" *) reg signed [UW-1:0] r0, i0, r1, i1, r2, i2, r3, i3;
             always @(posedge clk) begin
                 r0 <= x0r + x1r + x2r + x3r;
                 i0 <= x0i + x1i + x2i + x3i;
