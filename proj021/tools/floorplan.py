@@ -10,6 +10,8 @@
   floorplan.png        ブロックの種類で色分け（コアごとの色相: PFB は濃く、窓 0・1・コアの共通は薄く。FULL・ギアボックス・SmartConnect・RFDC）
   floorplan_wo_arrow.png 同じ図で、経路の矢印を重ねないもの
   floorplan_detail.png 深さ D で束ねたグループごとに色（細かい）
+  各図の左下（PS の所の空き）に、ビルドの utilization.rpt・timing.rpt から読んだ資源の使用量・使用率と WNS・WHS などの表を描く
+  （floorplan の 1 つ上のディレクトリにある報告を読む。位置は --table-xy、none で描かない）
   blocks.txt           ブロックごとのサイト数・プリミティブ数・重心・広がり（5〜95 % の幅）・使ったクロック領域
 --paths N で setup の上位 N 本の経路を始点 → 終点の線で重ねる（色は slack。負は赤）。
 図の文字は英数字だけ（Vivado サーバに日本語のフォントが無くても読めるように）。
@@ -81,7 +83,52 @@ def region_of(x, y, regions):
     return "?"
 
 
-def draw(ax, D, detail=False, npaths=0, title=None):
+def summary(d):
+    """floorplan の 1 つ上（ビルドの出力ディレクトリ）の utilization.rpt・timing.rpt から、資源と時間の要約を読む。無ければ空"""
+    up = os.path.dirname(os.path.normpath(d))
+    out = dict(util=[], timing={}, clk={})
+    try:
+        txt = open(os.path.join(up, "utilization.rpt")).read()
+        for key, lab in (("CLB LUTs", "CLB LUT"), ("CLB Registers", "CLB FF"), ("DSPs", "DSP48E2"),
+                         ("Block RAM Tile", "BRAM (36K)"), ("URAM", "URAM")):
+            m = re.search(r"^\|\s*" + re.escape(key) + r"\*?\s*\|\s*([\d.]+)\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|", txt, re.M)
+            if m:
+                out["util"].append((lab, float(m.group(1)), float(m.group(2)), float(m.group(3))))
+    except OSError:
+        pass
+    try:
+        txt = open(os.path.join(up, "timing.rpt")).read()
+        m = re.search(r"WNS\(ns\)\s+TNS\(ns\).*?\n\s*-+.*?\n\s*(.+)", txt)
+        if m:
+            v = m.group(1).split()
+            out["timing"] = dict(wns=float(v[0]), tns=float(v[1]), tns_fail=int(v[2]), ep=int(v[3]),
+                                 whs=float(v[4]), ths=float(v[5]), ths_fail=int(v[6]), wpws=float(v[8]))
+        m = re.search(r"^\s*(clk_out2\S*)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(\d+)\s+(\d+)\s+(-?[\d.]+)", txt, re.M)
+        if m:
+            out["clk"] = dict(name=m.group(1), wns=float(m.group(2)), whs=float(m.group(6)))
+    except (OSError, ValueError, IndexError):
+        pass
+    return out
+
+
+def summary_text(S):
+    L = []
+    if S["util"]:
+        L.append(f"{'resource':<11}{'used':>9}{'avail':>9}{'util':>7}")
+        for lab, u, av, pc in S["util"]:
+            L.append(f"{lab:<11}{u:>9,.0f}{av:>9,.0f}{pc:>6.1f}%")
+    t = S["timing"]
+    if t:
+        L.append("")
+        L.append(f"WNS  {t['wns']:+.3f} ns  TNS {t['tns']:.3f} ({t['tns_fail']} fail)")
+        L.append(f"WHS  {t['whs']:+.3f} ns  THS {t['ths']:.3f} ({t['ths_fail']} fail)")
+        L.append(f"WPWS {t['wpws']:+.3f} ns  endpoints {t['ep']:,}")
+    if S["clk"]:
+        L.append(f"DSP clk (clk_out2): WNS {S['clk']['wns']:+.3f} / WHS {S['clk']['whs']:+.3f}")
+    return "\n".join(L)
+
+
+def draw(ax, D, detail=False, npaths=0, title=None, table_xy=(80.0, 350.0)):
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
     BG = {"SLICE": ("#e8e8e8", 1.0), "DSP": ("#d6e4f0", 3.0), "BRAM": ("#f0e0d0", 3.0), "URAM": ("#e0f0d8", 3.0),
@@ -133,6 +180,11 @@ def draw(ax, D, detail=False, npaths=0, title=None):
     ax.set_aspect("auto")
     ax.set_xlabel("RPM_X"); ax.set_ylabel("RPM_Y")
     ax.set_title(title or os.path.normpath(D["dir"]), fontsize=9)
+    # 資源と時間の要約（左下の空き。PS のある所でサイトが無い）。ビルドの utilization.rpt・timing.rpt が無ければ描かない
+    txt = summary_text(summary(D["dir"]))
+    if txt and table_xy is not None:
+        ax.text(table_xy[0], table_xy[1], txt, family="monospace", fontsize=9, va="top", ha="left", zorder=7,
+                bbox=dict(boxstyle="round,pad=0.5", fc="white", ec="#888888", alpha=0.95))
     return ax
 
 
@@ -163,17 +215,19 @@ def main():
     ap.add_argument("--title", action="append", default=None, help="図の題（ディレクトリの順に。既定はディレクトリ名）")
     ap.add_argument("--paths", type=int, default=20, help="重ねる setup の経路の本数（0 で重ねない）")
     ap.add_argument("--dpi", type=int, default=200)
+    ap.add_argument("--table-xy", default="80,350", help="資源と時間の表の左上の位置（RPM_X,RPM_Y）。none で描かない")
     a = ap.parse_args()
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     Ds = [load(d) for d in a.dirs]
+    txy = None if a.table_xy.lower() == "none" else tuple(float(v) for v in a.table_xy.split(","))
     titles = (a.title or []) + [None] * len(Ds)
     D = Ds[0]
     for detail, arrows, name in ((False, True, "floorplan.png"), (False, False, "floorplan_wo_arrow.png"),
                                  (True, False, "floorplan_detail.png")):
         fig, ax = plt.subplots(figsize=(16, 12))
-        draw(ax, D, detail=detail, npaths=a.paths if arrows else 0, title=titles[0])
+        draw(ax, D, detail=detail, npaths=a.paths if arrows else 0, title=titles[0], table_xy=txy)
         ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), fontsize=6 if detail else 7, markerscale=4, frameon=False,
                   ncol=2 if detail and len({c["group"] for c in D["cells"]}) > 40 else 1)
         fig.savefig(os.path.join(D["dir"], name), dpi=a.dpi, bbox_inches="tight")
@@ -186,7 +240,7 @@ def main():
     if len(Ds) > 1:
         fig, axs = plt.subplots(len(Ds), 1, figsize=(16, 11 * len(Ds)), sharex=True, sharey=True)
         for ax, Dk, t in zip(axs, Ds, titles):
-            draw(ax, Dk, npaths=a.paths, title=t)
+            draw(ax, Dk, npaths=a.paths, title=t, table_xy=txy)
         axs[-1].legend(loc="upper left", bbox_to_anchor=(1.01, 1), fontsize=7, markerscale=4, frameon=False)
         p = os.path.join(D["dir"], "compare.png")
         fig.savefig(p, dpi=a.dpi, bbox_inches="tight")
