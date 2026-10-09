@@ -467,17 +467,53 @@ sim-regmap:
 	$(if $(filter 1,$(SIM_REGMAP_POSCTL)),,cd pynq && $(PYTHON) test_regmap.py ../$(REGMAP_DIR)/regs.txt | tee -a ../$(REGMAP_DIR)/check.log)
 sim-regmap-p:
 	$(MAKE) --no-print-directory sim-regmap SIM_REGMAP_POSCTL=1
+# proj021 手順 2-2a S22a-1: s45_core（NW 2 ＋ FULL）→ s45_ring → 記憶。変種 all（ALL・ONE、間に合う。AXI4-Lite の DUMP_* と
+#   仮の読み窓の 16 ch とも照らす）/ late（DDC の N_ACC 2、間に合わない → REC_LATE。出たレコードは全部正しい。陽性対照 (c)）。
+#   ＋ flip（陽性対照 (a)）。iverilog で 1〜2 時間級（2 本は並べて走る）。成否は build-sim-ring/check.log の「総合:」
+RING_DIR := build-sim-ring
+RING_RTL := src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v \
+  src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/s45_core.v src/common/rec_fr.v src/common/rec_arb.v \
+  src/common/s45_ring.v src/common/adc_ev.v src/common/spec_core.v src/common/dft16.v src/common/tw_rom.v sim/win_fft_model.v sim/lane_fft_model.v
+sim-ring:
+	mkdir -p $(RING_DIR)/all $(RING_DIR)/late
+	$(IVERILOG) -g2005 -Isrc/common -o $(RING_DIR)/tb $(RING_RTL) sim/tb_ring.v
+	( cd $(RING_DIR)/all && $(VVP) -n ../tb +MODE=all > log.txt ) & ( cd $(RING_DIR)/late && $(VVP) -n ../tb +MODE=late > log.txt ) & wait
+	( echo "[all]";  $(PYTHON) sim/check_ring.py core $(RING_DIR)/all; \
+	  echo "[late]"; $(PYTHON) sim/check_ring.py core $(RING_DIR)/late; \
+	  echo "[flip]（失敗になるべき）"; $(PYTHON) sim/check_ring.py core $(RING_DIR)/all --flip | tail -1 ) > $(RING_DIR)/check.log
+	@cat $(RING_DIR)/check.log
+	@n=$$(grep -c '^結果: 通過' $(RING_DIR)/check.log); f=$$(tail -1 $(RING_DIR)/check.log | grep -c '失敗'); \
+	 if [ $$n -eq 2 ] && [ $$f -eq 1 ]; then echo "総合: 通過（all・late ＋ 陽性対照 flip）" | tee -a $(RING_DIR)/check.log; \
+	 else echo "総合: 失敗（通過 $$n / 2、flip の失敗 $$f / 1）" | tee -a $(RING_DIR)/check.log; fi
+# proj021 手順 2-2a S22a-1: リング（s45_ring）単体。入口 4 本は作り物、HP0 は止まりの入る記憶。変種:
+#   base（読む、256 KiB）/ noread（R を進めない → 空きなしの捨て = DROP_CNT と SEQ の飛びが合う。陽性対照 (b)）/ berr（SLVERR → ERR）
+#   ＋ flip（照合で CRC を 1 bit 反転 → 失敗になるべき。陽性対照 (a)）。成否は build-sim-ringu/check.log の「総合:」。数分
+RINGU_DIR := build-sim-ringu
+sim-ringu:
+	mkdir -p $(RINGU_DIR)/base $(RINGU_DIR)/noread $(RINGU_DIR)/berr
+	$(IVERILOG) -g2005 -Isrc/common -o $(RINGU_DIR)/tb src/common/s45_ring.v src/common/rec_arb.v sim/tb_ring_u.v
+	cd $(RINGU_DIR)/base   && $(VVP) -n ../tb +NREC=24 +SEED=1 +SIZE=262144 > log.txt
+	cd $(RINGU_DIR)/noread && $(VVP) -n ../tb +NREC=16 +SEED=2 +NOREAD > log.txt
+	cd $(RINGU_DIR)/berr   && $(VVP) -n ../tb +NREC=8 +SEED=3 +BERR=600 > log.txt
+	( echo "[base]";   $(PYTHON) sim/check_ring.py u $(RINGU_DIR)/base; \
+	  echo "[noread]"; $(PYTHON) sim/check_ring.py u $(RINGU_DIR)/noread --noread; \
+	  echo "[berr]";   $(PYTHON) sim/check_ring.py u $(RINGU_DIR)/berr --berr; \
+	  echo "[flip]（失敗になるべき）"; $(PYTHON) sim/check_ring.py u $(RINGU_DIR)/base --flip | tail -1 ) > $(RINGU_DIR)/check.log
+	@cat $(RINGU_DIR)/check.log
+	@n=$$(grep -c '^結果: 通過' $(RINGU_DIR)/check.log); f=$$(tail -1 $(RINGU_DIR)/check.log | grep -c '失敗'); \
+	 if [ $$n -eq 3 ] && [ $$f -eq 1 ]; then echo "総合: 通過（3 変種 ＋ 陽性対照 flip）" | tee -a $(RINGU_DIR)/check.log; \
+	 else echo "総合: 失敗（通過 $$n / 3、flip の失敗 $$f / 1）" | tee -a $(RINGU_DIR)/check.log; fi
 # sim-wdelay: 窓の遅れ D(NS)（ADC のビート → z が wspec に入るまで）。pynq/timebase.py の WIN_DELAY_BEATS の出どころ
 sim-wdelay:
 	mkdir -p build-sim-wdelay
 	$(IVERILOG) -g2005 -Isrc/common -o build-sim-wdelay/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) sim/tb_wdelay.v
 	for n in 1 2 3 4 5 6 7 8; do $(VVP) -n build-sim-wdelay/tb +NS=$$n +LEN=$$(( n < 4 ? 8000 : 1000 << (n - 2) )) | grep -E '^(wdelay|wfirst):'; done | tee build-sim-wdelay/delay.log
 sim-t-all:
-	$(MAKE) --no-print-directory -j4 sim-time sim-time-p sim-wstamp sim-wstamp-p sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p sim-regmap sim-regmap-p
+	$(MAKE) --no-print-directory -j4 sim-time sim-time-p sim-wstamp sim-wstamp-p sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p sim-regmap sim-regmap-p sim-ringu
 	@grep -H "結果" build-sim-regmap/check.log build-sim-regmap-posctl/check.log build-sim-time/check.log build-sim-time/check1.log build-sim-wstamp/check.log build-sim-wstamp-posctl/check.log \
-	  build-sim-t4adc/check.log build-sim-t4adc-posctl/check.log build-sim-wgrid/check.log build-sim-wgrid-posctl/check.log
+	  build-sim-t4adc/check.log build-sim-t4adc-posctl/check.log build-sim-wgrid/check.log build-sim-wgrid-posctl/check.log build-sim-ringu/check.log
 
-# spec_core の sim と窓の sim を全部（proj016: ＋ 時刻の速い sim。sim-tsys・sim-win4 は別に回す）
+# spec_core の sim と窓の sim を全部（proj016: ＋ 時刻の速い sim。sim-tsys・sim-win4・sim-ring（proj021 2-2a）は別に回す）
 sim-all:
 	$(MAKE) --no-print-directory sim-spec-all
 	$(MAKE) --no-print-directory sim-win-all
