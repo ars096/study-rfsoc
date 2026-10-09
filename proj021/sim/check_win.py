@@ -58,6 +58,8 @@ def check(d):
         ne = 2 * (len(yr) // 2)
         zr, zi = F.ddc_fixed(yr[:ne], yi[:ne], dp, ns, des, cfg, cnt)
         got = np.loadtxt(os.path.join(d, f"z_k{k}_ns{ns}.txt"), dtype=np.int64, ndmin=2)
+        if got.size == 0:                  # 出力が 1 個も無い（陽性対照 ts の NS 6 など）。loadtxt は (0, 1) を返すので列を揃える
+            got = np.zeros((0, 2), np.int64)
         n = min(len(zr), len(got))
         neq = int(np.count_nonzero((got[:n, 0] != zr[:n]) | (got[:n, 1] != zi[:n])))
         ovr = CD.rtl_ovr(os.path.join(d, f"z_k{k}_ns{ns}.txt"))

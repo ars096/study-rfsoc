@@ -328,7 +328,9 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 | sim-tsys | **全部通過**（s45_core（FULL = 1）1 個に窓と全帯域、旧番地 → v2 の表で。同時開始・DUMP_T・SHIFT と CFG の取り込み・健全性・TANCH・予約の WRST） |
 | sim（spec_core、7-0-0・7-0-1） | 全部通過（spec_core の中の番地の表で。FULL の診断の SRST・GRST・INJ・起動の見張り） |
 | sim-time・sim-time-p | 通過（IF_ID 0x0202_0102・PROJ）・陽性対照が落ちた（6 件） |
-| 残り（Vivado サーバの `make sim-all` と sim-tsys-p） | sim の 4-0-0・7-5-0・7-0-2、sim-gb・sim-tp（RTL は 1b と同じ）、sim-win-all（触っていない部品）、sim-wstamp・sim-wgrid、sim-tsys の陽性対照 |
+| `make sim-all`（Vivado サーバ、2026-10-09） | **全部通過**。spec_core の 5 変種・sim-gb・sim-tp と陽性対照・sim-win-all（pfb・ddc・win・hb2s・wspec と陽性対照）・sim-t-all（sim-regmap と test_regmap・sim-t4adc・sim-time・sim-wstamp・sim-wgrid と陽性対照）。「失敗」の行は陽性対照（sim-time-p 6 件・sim-wstamp-p 8 件）だけ |
+| sim-tsys-p | 落ちるべきところで落ちた（NG 1 件 = RUN の間の SHIFT が RUN の値でない。窓 0・全帯域とも） |
+| **sim-win-ts（陽性対照）の判定の道具の誤り** | 陽性対照の RTL で NS 6 の出力が 0 個になり、`check_win.py` が空のファイルで落ちて（IndexError）「結果:」の行を出していなかった。**proj020 から持ってきた道具の誤りで、2-1 の変更とは関係ない**（pfb・ddc は触っていない）。空のときに列を揃えるよう直し、同じ出力を判定し直して **落ちた NS [3..8] = 期待どおり → 通過** |
 
 - 気にしておくこと（ビルド）: s45_core_1〜3 の FULL の入口（s_axis_full・full_gb_stat・full_adc_stat）はつながない。IP Integrator が 0 に結ぶはずだが、**CRITICAL WARNING が出たら定数のセルで結ぶ**（1b までは CRITICAL WARNING なし）
 
