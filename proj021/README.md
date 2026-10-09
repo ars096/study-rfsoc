@@ -407,6 +407,112 @@ python3 timetest.py --clkin 0 --ref 10 --t1 --seconds 120              # P-4（F
 
 
 
+### 手順 2-2a — リングと SPEC のレコード（設計と予言、2026-10-09。RTL を書く前）
+
+**変えるのは「スペクトルを PS へ運ぶ道」を足すことだけ**。窓・全帯域の中身（スペクトル・帳簿・時刻・TP）は変えない。今の AXI4-Lite の読み（仮の読み窓）は残し、**同じ SEQ のスペクトルをレコードと AXI4-Lite の両方で読んで bit 単位で比べる**のが 2-2a の判定の芯。
+
+**決めたこと（2026-10-09 の相談）**:
+- **2-2 を 3 つに分ける**: 2-2a リングの芯 ＋ 書き手 ＋ SPEC のレコード（このページ）／2-2b TP のレコード（V2-e）／2-2c SNAP のレコード ＋ 仮の読み窓を外して 64 KiB に
+- **書き手は自作**（Verilog の AXI4 の書き手。iverilog で sim できる。DataMover は使わない）
+- **持ち越しの 2 つは 2-2a と同じビルドで**（commit は分ける。sim は bit 単位で同じ）: (1) s45_core_1〜3 の FULL の入力（s_axis_full_tvalid・full_gb_stat・full_adc_stat）を定数で縛る（CRITICAL WARNING BD 41-759 を消す）／(2) c_ns（ファンアウト 1,830）を 1 段のレジスタの複製で ddc に配る（max_fanout）
+
+**全体の形**:
+
+```
+s45_core_i ─┬─ u_win（DDC の流れ 0, 1）──┐ 読みの口を借りる
+            ├─ g_full.u_full（FULL、コア 0）┤
+            └─ u_rec（レコードの組み立て）──── m_axis_rec（64 bit、tlast・tuser = 捨てる）──┐
+                                                                                              │ ×4（コア 0〜3）
+s45_ring_0（新、CORE_KIND 3）: 4 本の入口 → レコード単位の順番回し → CRC-32 → 自作 AXI4 の書き手（128 bit）→ PS の S_AXI_HP0 → DDR
+```
+
+**レコードの組み立て（u_rec。コアに 1 個、s45_core.v の中）**:
+- 流れ s ごとに **SEQ が進んだ（バンクが切り替わった）**ことを見る。REC_CTRL（流れのブロック 0x84）の [0] ALL が立っていれば毎回、[1] ONE が立っていれば 1 回だけ（出したら PL が [1] を 0 に戻す）「出す予定」にする。[2] SNAP は 2-2c まで書けるが効かない
+- 予定のある流れを順番に回し（コアの中の順番回し）、1 本ずつ **凍ったバンク**を ch の順（0〜4095）に読んで 64 bit の AXIS に流す。ヘッダ 8 語（下）→ 本体 4096 語、最後の語で tlast
+  - DDC（wspec_core）: 凍ったバンクの読みの口（rd_ch）を借りる。今の AXI4-Lite の読みと同じ口なので、**u_rec が読んでいる間は仮の読み窓の AXI4-Lite の読みを待たせる**（arready を下げる。最長 4096 + 数十クロック ≈ 16 µs）。逆に AXI4-Lite の読みの途中では u_rec は始めない
+  - FULL（spec_core）: `acc_rd[ar_bank][k2]` の番地 axi_k1 を借りる（ch k = k2·512 + k1。k2 が外、k1 が内の順に回す）。待たせ方は同じ
+  - 読みの番地はレジスタで受けてから口に入れる（u_ws の読みの口の選びを新しい壁にしない）
+- **ヘッダは SEQ が進んでから数クロック待って**、その流れの DUMP_*（DUMP_K・F0・T・N・SAT・H・CFG）・RUN_SHIFT などを取り込む（今の AXI4-Lite で読める値と同じもの）
+- **読み終わる前に同じ流れの SEQ がもう一度進んだら**（凍ったバンクが上書きされた）、最後の語に tuser = 1（捨てる）を立てて REC_LATE（0x88）を +1。予定が立ったまま次の切り替わりまでに読み始められなかったときも REC_LATE を +1（古い予定は捨て、新しい切り替わりの予定に置き換える）。**リングの DROP_CNT も +1**（読み始めなかった方は 1 クロックの知らせ rec_late で、読みかけの方は tuser = 1 で数える。1 回の捨てで 1 回だけ）（INTERFACE 4.1 の「出し切り」: REC_LATE と DROP_CNT の両方を増やす。PS から見て DROP_CNT ＝ SEQ の飛びの合計になる）。**出たレコードは必ず 1 つの SEQ の、壊れていないスペクトル**
+- 時間の見積り: 1 本の読みは 4096 クロック ＝ 16 µs（256 MHz）。コア 0 は 3 本なので最悪 48 µs、リングの入口で 4 コアを待つと最悪 ≈ 9 本 × 16 µs ≈ 150 µs。10.24 ms のダンプには十分。N_ACC が小さくダンプが ≈ 150 µs より短い設定では REC_LATE が増える（それは約束どおり。PS は SEQ の飛びで分かる）
+
+**レコード（INTERFACE 3. のとおり。u64 の little endian）**:
+
+| 語 | 中身 |
+|---|---|
+| ヘッダ w0 | magic "S45R"（0x52353453）／rec_ver 1／type（1 SPEC）／core（CORE_PORT の ADC 番号）／s |
+| w1 | SEQ（32 bit）\| DUMP_K（32 bit） |
+| w2 | DUMP_F0（64 bit） |
+| w3 | DUMP_T（64 bit） |
+| w4 | log2NFFT \| NS \| SHIFT \| G \| fmt \| src \| DUMP_H16 |
+| w5 | DUMP_N \| DUMP_SAT |
+| w6 | DUMP_CFG \| FLAGS |
+| w7 | 本体のバイト数（32,768）／予約 0 |
+| 本体 | 4096 × u64（ch の順。今の AXI4-Lite の LO・HI と同じ 64 bit） |
+| しっぽ w0 | magic "S45E"（0x45353453）\| SEQ |
+| w1 | CRC-32（zlib と同じ式。ヘッダ ＋ 本体の 32,832 バイト）|
+| w2〜w7 | 0 |
+
+1 レコード = 64 + 32,768 + 64 = **32,896 バイト**（64 の倍数）。しっぽはリングの書き手が付ける（u_rec は送らない）。
+
+**リング（s45_ring_0。新しい `src/common/s45_ring.v`）**:
+- クロックは DSP（clk_out2 = 256 MHz）。PS の S_AXI_HP0_FPD（128 bit）の saxihp0_fpd_aclk も clk_out2。**ファブリックの中の乗り換えは足さない**（HP0 の乗り換えは PS の中）
+- 入口 4 本（コア 0〜3 の m_axis_rec）を **レコード単位で順番に回す**（レコードの途中で入口を替えない）
+- レコードの頭で空きを見る: `SIZE − (W − R) ≥ 32,896 ＋（リングの端までに入らなければ、端までの PAD）`。足りなければ **そのレコードを丸ごと捨てる**（入口からは読み切る）→ DROP_CNT +1。PAD は type 0 のヘッダ 1 個（w7 = 端までのバイト数。INTERFACE 4.4）で、端までを埋めて先頭に戻る（PAD には尾を付けない。端までの残りは読み飛ばす）
+- 書き手: 128 bit の AXI4（INCR、awcache 0011、awprot 000）。バーストは最長 16 拍（256 バイト）で、**4 KiB の境を越えない**（レコードは 64 バイト境から始まるので、最初のバーストは次の 256 バイト境まで）。入口の 64 bit を 2 語ずつ束ね、FIFO（BRAM、512 × 128 bit）にためてからバーストを出す。書き終わり（しっぽまで）を **BRESP が全部 OKAY で返ってから W を進める**（W はレコードの頭の位置から 32,896 だけ一度に進む。途中の W は PS に見せない）
+- tuser = 1（捨てる）で終わったレコードは、書いたぶんを無かったことにする（W を進めない。REC_CNT は数えず DROP_CNT を +1）
+- BRESP が OKAY でなければ ERR_STAT に記録して CTRL の [2] ERR を立て、書くのを止める（EN を 0 → 1 で戻す）
+- CRC-32 は入口の 64 bit を 1 クロック 1 語で計算（反転入力・反転出力の zlib と同じ式、レジスタで 1 段受ける）
+- レジスタ（AXI4-Lite、4 KiB）:
+
+| 番地 | 名前 | 中身 |
+|---|---|---|
+| 0x00 | IF_ID | {2, BIT_KIND, BIT_REV, 3}（CORE_KIND 3 = リング） |
+| 0x04 | CTRL | W: [0] EN・[1] RST（EN = 0 のときだけ。W・R・数を 0 に）／R: [0] EN・[1] busy・[2] ERR（粘着） |
+| 0x08/0C | BASE_LO/HI | リングの物理番地（64 バイト境。PS は 4 KiB 境で取る）。EN = 0 のときだけ書ける |
+| 0x10 | SIZE | バイト数（2 の冪、64 KiB〜1 GiB）。EN = 0 のときだけ書ける |
+| 0x14 | W | PL が書き終えた位置（32 bit の単調増加のバイト数。番地は BASE + W mod SIZE） |
+| 0x18 | R | PS が読み終えた位置（PS が書く。同じ数え方） |
+| 0x1C | DROP_CNT | 捨てたレコードの数（空きなし ＋ 出し切れず（rec_late の知らせ・tuser = 1）。飽和） |
+| 0x20 | REC_CNT | 書き終えたレコードの数（PAD を除く） |
+| 0x24 | PEAK | W − R の最大（RST で 0） |
+| 0x28 | ERR_STAT | 最初の誤り: [1:0] BRESP・[31:6] そのレコードの頭の位置（W の [31:6]） |
+| 0x2C | PROJ | 0x0021_0200（INTERFACE 4.2 の予約の場所に足す。time_core の 0x5C と同じ） |
+
+- EN = 0 にしたら、今書いているレコードは書き終えてから止まる（busy が 0 になったら止まった）。EN = 0 の間に来たレコードは入口から読み捨てる（数えない）
+- **INTERFACE 4.3 の道具（約束の外）は DataMover だったが、自作の書き手に替える**（2026-10-09 の相談。iverilog で sim でき、空きの判定・PAD・W の更新と一体で書ける）。PS から見える約束（4.1・4.2）は変えない
+- コアの共通部の CAPS の [0]（DMA のレコード）を 1 に（[1] TP・[2] SNAP は 2-2b・2-2c で）。NSTREAM などは変えない
+
+**PS（2-2a では判定の道具だけ。specd は 2-3）**:
+- `pynq/s45ring.py`（新）: .hwh から `s45_ring_0` を引き、連続した 32 MiB を取って BASE・SIZE・EN。W まで読んだら **その範囲だけキャッシュを捨てて**（HP0 は coherent でない）読み、magic・SEQ・CRC を確かめ、R を書く
+- `--compare`: 流れごとに N_ACC を長く（ダンプ ≈ 1 s）し、REC_CTRL の ONE で 1 レコード出させ、**次の切り替わりの前に**同じ流れの仮の読み窓を AXI4-Lite で読んで、SEQ が同じ・本体が bit 単位で同じことを確かめる（全部の流れ: DDC 8 本 ＋ FULL 1 本）
+- `--soak`: ALL で 10.24 ms を N 秒。DROP_CNT・CRC の不一致・流れごとの SEQ の飛び・REC_LATE・PEAK を数える
+
+**持ち越しの 2 つ**:
+1. build.tcl: s45_core_1〜3 の s_axis_full_tvalid・full_gb_stat・full_adc_stat を xlconstant（0）につなぐ。RTL は変えない（FULL = 0 のコアでは使っていない入口）
+2. win_core: `c_ns` を ddc に配るためだけのレジスタ `c_ns_d`（max_fanout = 64）を足し、ddc の ns はそれを使う。**1 クロック遅れる**が、c_ns は WRST の中でしか変わらず、ddc が動き出すのはその後なので、出てくるスペクトルは同じ（sim-top・sim-win4・sim-t4adc が bit 単位で同じことで確かめる）。PARAM・FRAME_BEATS などの読みは今の c_ns のまま
+
+**予言**:
+1. sim: 新しい sim-ring（s45_core 2 個（コア 0 は FULL 入り）＋ s45_ring ＋ ランダムに止まる AXI のメモリ）で、出てきたレコードが **同じ SEQ の AXI4-Lite の読みと bit 単位で同じ**（DDC 2 本・FULL 1 本）。Python の zlib.crc32 と CRC が一致、SEQ が流れごとに連続、W − R・REC_CNT・PEAK が数え直しと合う、バーストが 4 KiB の境を越えない・16 拍以下
+2. sim の陽性対照（3 つ）: (a) 確かめる側で CRC を 1 bit 反転 → 不一致が立つ／(b) 小さいリング（64 KiB）で R を進めない → DROP_CNT ＝ SEQ の飛びの数／(c) N_ACC = 1 → REC_LATE > 0、REC_LATE の和 ≦ DROP_CNT で、それでも **出たレコードは全部 bit 単位で正しい**
+3. 回帰: sim-all（sim-top・sim-win4・sim-t4adc・sim-tsys・sim-regmap ほか）が bit 単位で 2-1 と同じ。sim-regmap は REC_CTRL・REC_LATE・CAPS とリングのレジスタを足す
+4. 資源: DSP・URAM は同じ。BRAM +2〜+4（書き手の FIFO）。LUT +3,000〜+6,000（u_rec 4 個・リング・CRC・SmartConnect の M 1 個）、FF +3,000〜+6,000
+5. 時間: 既定で WNS −0.10〜+0.05。壁は今の u_pfb・u_ws のまま。**新しく上位に出るなら u_ws の読みの番地の選び（u_rec の番地）か CRC の XOR の木**。出たらその段にレジスタを足す。c_ns の経路（ファンアウト 1,830）は上位から消える
+6. CRITICAL WARNING: BD 41-759（s45_core_1〜3 の FULL の入口が空き）が 0 になる
+7. CDC: smc_ctrl の M が 1 個増える（リングの AXI4-Lite）ので CDC-3 が 1 個の M ぶん（≈ 14）増えて ≈ 105。ほかの分類は同じ（HP0 はファブリックの乗り換えを足さない）
+8. 実機: 全部の流れでレコード ＝ AXI4-Lite（bit 単位）、10.24 ms の ALL を 60 s で DROP_CNT 0・CRC の不一致 0・SEQ の飛び 0・REC_LATE 0。PEAK はリングの数 % 以下。キャッシュを捨てずに読む変種で CRC の不一致が立つ（V2-g の半分）
+
+**判定**:
+
+| 判定 | 中身 |
+|---|---|
+| S22a-1 | sim-ring が通る（予言 1）。陽性対照 (a)〜(c) が予言どおり落ちる・数が合う（予言 2） |
+| S22a-2 | sim-all・sim-tsys-p・sim-regmap が通る（予言 3。持ち越し 2 の c_ns の複製を含めて bit 単位で同じ） |
+| S22a-3 | ビルド: WNS ≥ 0（既定か PE の良い方）・WHS ≥ 0・BD 41-759 が 0・結線の照合・CDC の分類（予言 4〜7） |
+| S22a-4 | 実機: 2-1 の P-0〜P-3 の回帰（仮の読み窓のまま）＋ `s45ring.py --compare`（全部の流れ）＋ `--soak`（60 s）＋ キャッシュを捨てない陽性対照（予言 8） |
+
+**commit の順**: README（これ）→ 持ち越し 1（build.tcl）→ 持ち越し 2（c_ns）→ u_rec と REC_CTRL・REC_LATE → s45_ring と sim-ring → build.tcl（リング・HP0）→ PS の道具 → ビルドと実機の結果
+
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
 判定 1 つにつき、次の 6 項目を書く。**環境に依る値（ホスト名・IP アドレス・パス）は書かない**（公開を前提にする）。
