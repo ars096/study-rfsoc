@@ -1,0 +1,544 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1870 1380" width="1870" height="1380"
+     font-family="'Hiragino Sans','Noto Sans CJK JP','Yu Gothic',sans-serif">
+  <!-- SPDX-License-Identifier: BSD-3-Clause -->
+  <!-- proj022 の予定のブロックデザイン（RTL 前）。docs/block_design.py で描いた -->
+  <defs>
+    <marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fb5"/></marker>
+    <marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#d9822b"/></marker>
+    <marker id="aG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#2e8b57"/></marker>
+    <marker id="aK" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
+    <marker id="aR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/></marker>
+    <marker id="aT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#0f7c8c"/></marker>
+    <marker id="aC" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8e5b1f"/></marker>
+    <style>
+      .blk  { fill:#f8f8f8; stroke:#333; stroke-width:1.5; }
+      .sub  { fill:#ffffff; stroke:#2e8b57; stroke-width:1.2; }
+      .new  { fill:#fff7ea; stroke:#d9822b; stroke-width:1.6; }
+      .core { fill:#f2f8f3; stroke:#2e8b57; stroke-width:2.2; }
+      .tim  { fill:#eef8f9; stroke:#0f7c8c; stroke-width:2.0; }
+      .tsub { fill:#ffffff; stroke:#0f7c8c; stroke-width:1.2; }
+      .shr  { fill:#fbf3e8; stroke:#8e5b1f; stroke-width:2.0; }
+      .v2   { fill:#f4f4f8; stroke:#6a6a8a; stroke-width:1.6; stroke-dasharray:6 4; }
+      .ext  { fill:#eeeeee; stroke:#777; stroke-width:1.2; stroke-dasharray:4 3; }
+      .note { fill:#fbf7ec; stroke:#b39a5a; stroke-width:1.2; }
+      .t    { font-size:14px; font-weight:bold; fill:#111; }
+      .tm   { font-size:12.5px; font-weight:bold; fill:#111; }
+      .s    { font-size:11.5px; fill:#333; }
+      .xs   { font-size:10.5px; fill:#555; }
+      .xt   { font-size:10.5px; fill:#0b5d69; }
+      .xc   { font-size:10.5px; fill:#7a4a14; }
+      .xn   { font-size:10.5px; fill:#a8571a; }
+      .wB   { stroke:#2f6fb5; stroke-width:2.0; fill:none; marker-end:url(#aB); }
+      .wO   { stroke:#d9822b; stroke-width:2.6; fill:none; marker-end:url(#aO); }
+      .wG   { stroke:#2e8b57; stroke-width:2.6; fill:none; marker-end:url(#aG); }
+      .wR   { stroke:#c0392b; stroke-width:2.6; fill:none; marker-end:url(#aR); }
+      .wK   { stroke:#555; stroke-width:1.6; fill:none; marker-end:url(#aK); }
+      .wT   { stroke:#0f7c8c; stroke-width:2.2; fill:none; marker-end:url(#aT); }
+      .wC   { stroke:#8e5b1f; stroke-width:2.4; fill:none; marker-end:url(#aC); }
+      .lC   { stroke:#8e5b1f; stroke-width:2.4; fill:none; }
+      .lb   { font-size:11px; fill:#333; }
+      .lbB  { font-size:11px; fill:#2f6fb5; }
+      .lbO  { font-size:11px; fill:#b8661a; }
+      .lbG  { font-size:11px; fill:#236b43; }
+      .lbR  { font-size:11px; fill:#a93226; }
+      .lbT  { font-size:11px; fill:#0b5d69; }
+      .lbC  { font-size:11px; fill:#7a4a14; }
+    </style>
+  </defs>
+  <rect x="0" y="0" width="1870" height="1380" fill="#ffffff"/>
+<text x="20" y="28" class="s" style="font-size:17px;font-weight:bold;fill:#111">proj022 ブロックデザイン（予定・RTL 前）: SAM45-Wide = 4 ADC × PFB（T = 4）＋ 全帯域 FFT 8192 / 16384 / 32768 点 ＋ 切り出し 4096 ch × 2</text>
+<text x="20" y="48" class="s">build.tcl はまだ無い。README の「結論」と E-1 の案 A（係数・ひねり係数を 4 ADC で 1 組・履歴 URAM・積分器は切り出しだけ）を描いた。橙の枠 = SAM45-Fine（proj021）から新しく作るもの、点線の枠 = v2 の共通部（proj021 が確定させる）</text>
+<rect class="blk" x="40" y="70" width="250" height="120" style="stroke:#2f6fb5"/>
+<text x="52" y="92" class="t">zynq_ultra_ps_e_0</text>
+<text x="52" y="110" class="s">PS（PYNQ / Linux）・-1 ＋ ps_preset.tcl</text>
+<text x="52" y="128" class="xs">specd v2: 束ね・float32・s45proto v2</text>
+<text x="52" y="143" class="xs">モード（N）・SHIFT・開始 ch は RUN の前に</text>
+<text x="282" y="165" class="xs" text-anchor="end">M_AXI_HPM0_FPD ▶</text>
+<text x="282" y="182" class="xs" text-anchor="end">◀ S_AXI_HP0（リング）</text>
+<rect class="blk" x="330" y="70" width="220" height="120" style="stroke:#2f6fb5"/>
+<text x="342" y="92" class="t">smc_ctrl</text>
+<text x="342" y="110" class="s">SmartConnect</text>
+<text x="342" y="127" class="xs">aclk = pl_clk0 / aclk1 = 256 MHz</text>
+<text x="342" y="142" class="xs">M00 rfdc・M01〜M04 s45_core_0〜3</text>
+<text x="342" y="157" class="xs">・time_core・s45_ring（v2 の番地）</text>
+<path class="wB" d="M290,150 L328,150"/>
+<rect class="tim" x="590" y="70" width="520" height="120"/>
+<text x="602" y="90" class="tm">time_core_0（proj021 のまま）DSP ドメイン 256 MHz</text>
+<text x="602" y="112" class="xt">T（64 bit、1 ビート = 3.906 ns）・1PPS のスタンプ・欠落・BAD</text>
+<text x="602" y="129" class="xt">予約発火: START_AT は時刻の格子（2.048 ms = 524,288 ビート）の倍数</text>
+<text x="602" y="146" class="xt">格子 2.048 ms = 1024 / 512 / 256 フレーム（N = 8192 / 16384 / 32768。整数）</text>
+<text x="602" y="163" class="xt">→ WRST・RUN を 4 コアに同じビートで（フレームの頭を T に揃えれば係数の遅延 0）</text>
+<rect class="v2" x="1150" y="70" width="700" height="165"/>
+<text x="1162" y="90" class="tm">v2 の共通部（proj021 が作っている。ここでは箱だけ）</text>
+<text x="1162" y="112" class="xs">rec_fr・rec_arb: ダンプごとのレコード（頭に DUMP_T・CFG・健全性）を組み、流れと TP を束ねる</text>
+<text x="1162" y="130" class="xs">s45_ring: PL が書くリング・尾の CRC-32・HP0 128 bit → DDR（PS は範囲を絞った invalidate で読む）</text>
+<text x="1162" y="148" class="xs">流れのブロック（1 KiB）: SID・KIND・NCH・SRC・CFG_ID・DUMP_* ・RUN_* …</text>
+<text x="1162" y="166" class="xn">SLICE に要るもの（proj021 へ返す）: 開始 ch s・全帯域の点数 N（ch → IF = (s + i)·fs / N）</text>
+<text x="1162" y="184" class="xs">量: 4 ADC × 2 × 4096 ch / 40.96 ms（SAM45-Fine と同じ。float32 で 6.4 MB/s）</text>
+<path class="wR" d="M1150,220 L300,220 L300,182 L292,182"/>
+<text x="1142" y="215" class="lbR" text-anchor="end">◀ DDR へ（HP0）</text>
+<rect class="blk" x="190" y="275" width="120" height="800"/>
+<text x="200" y="297" class="t">rfdc</text>
+<text x="200" y="315" class="xs">fs 4096 MSPS</text>
+<text x="200" y="330" class="xs">ゾーン 2・Real</text>
+<text x="200" y="345" class="xs">（proj021 のまま）</text>
+<line x1="190" y1="683" x2="310" y2="683" stroke="#999" stroke-dasharray="5 3"/>
+<text x="200" y="415" class="tm">Tile 226</text>
+<text x="200" y="709" class="tm">Tile 224</text>
+<path class="wB" d="M550,120 L566,120 L566,262 L1775,262 L1775,281"/>
+<text x="1300" y="275" class="lbB">M01〜M04 → s45_core_0〜3（AXI4-Lite、v2 の番地）</text>
+<path class="wT" d="M850,190 L850,252 L1840,252 L1840,281"/>
+<text x="858" y="248" class="lbT">時刻のバス t・go・ev → 各コア</text>
+<rect class="ext" x="20" y="335" width="150" height="44"/>
+<text x="30" y="353" class="s">ADC_A（SMA）</text>
+<text x="30" y="370" class="xs">IF 2048〜4096 MHz</text>
+<path class="wK" d="M170,357 L188,357"/>
+<path class="wO" d="M310,357 L333,357"/>
+<rect class="blk" x="335" y="323" width="215" height="68" style="stroke:#2e8b57"/>
+<text x="343" y="341" class="tm">ギアボックス 0（proj021 のまま）</text>
+<text x="343" y="357" class="xs">gb_adc → gb_up → gb_fifo → gb_gate</text>
+<text x="343" y="371" class="xs">→ gb_dn: 16 サンプル / ビート・256 MHz</text>
+<text x="343" y="385" class="xs">Tile 226 / slice 2</text>
+<path class="wG" d="M550,357 L608,357"/>
+<rect class="core" x="610" y="285" width="1150" height="190"/>
+<text x="622" y="303" class="tm">s45_core_0（ADC_A）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 130 ＋ 積分器 32・URAM 10</text>
+<text x="1752" y="303" class="xs" text-anchor="end">s_axi ◀</text>
+<rect class="new" x="622" y="313" width="150" height="96"/>
+<text x="629" y="329" class="tm">pfb_w（PFB T = 4）</text>
+<text x="629" y="345" class="xs">16 レーン × 4 タップ</text>
+<text x="629" y="359" class="xs">x 14 → y 16 bit（小数 1）</text>
+<text x="629" y="373" class="xs">履歴 URAM 10</text>
+<text x="629" y="387" class="xs">（672 bit × 2048 行）</text>
+<text x="629" y="401" class="xs">DSP 64</text>
+<path class="wG" d="M772,361 L782,361"/>
+<rect class="sub" x="784" y="313" width="150" height="96"/>
+<text x="791" y="329" class="tm">lane_fft × 16</text>
+<text x="791" y="345" class="xs">FFT IP・実行時の長さ</text>
+<text x="791" y="359" class="xs">512 / 1024 / 2048 点</text>
+<text x="791" y="373" class="xs">入力 16 → Y 27 bit</text>
+<text x="791" y="387" class="xs">unscaled・自然順</text>
+<text x="791" y="401" class="xs">DSP 27 × 16（S-1 待ち）</text>
+<path class="wG" d="M934,361 L944,361"/>
+<rect class="new" x="946" y="313" width="122" height="96"/>
+<text x="953" y="329" class="tm">ひねり係数 × 15</text>
+<text x="953" y="345" class="xs">cmul（&gt;&gt; 18）</text>
+<text x="953" y="359" class="xs">W_N^(p·k1)</text>
+<text x="953" y="373" class="xs">表 1 本を 1·2·4 個おき</text>
+<text x="953" y="387" class="xs">→ V 25 bit</text>
+<path class="wG" d="M1068,361 L1078,361"/>
+<rect class="sub" x="1080" y="313" width="104" height="96"/>
+<text x="1087" y="329" class="tm">dft16</text>
+<text x="1087" y="345" class="xs">今のまま</text>
+<text x="1087" y="359" class="xs">k2 = 0..7</text>
+<text x="1087" y="373" class="xs">U 27・Z 29 bit</text>
+<path class="wG" d="M1184,361 L1194,361"/>
+<rect class="sub" x="1196" y="313" width="116" height="96"/>
+<text x="1203" y="329" class="tm">SHIFT・電力</text>
+<text x="1203" y="345" class="xs">&gt;&gt; SHIFT → 18 bit</text>
+<text x="1203" y="359" class="xs">飽和を数える</text>
+<text x="1203" y="373" class="xs">re² ＋ im² × 8</text>
+<text x="1203" y="387" class="xs">（37 bit）</text>
+<path class="wG" d="M1312,361 L1322,361"/>
+<rect class="new" x="1324" y="313" width="124" height="96"/>
+<text x="1331" y="329" class="tm">振り分け</text>
+<text x="1331" y="345" class="xs">c = k1 ＋ M·k2</text>
+<text x="1331" y="359" class="xs">→ 銀行 ⌊(c − s)/M⌋</text>
+<text x="1331" y="373" class="xs">番地 (c − s) mod M</text>
+<text x="1331" y="387" class="xs">8 → 8（37 bit）</text>
+<path class="wG" d="M1448,361 L1458,361"/>
+<rect class="new" x="1460" y="313" width="168" height="96"/>
+<text x="1467" y="329" class="tm">積分器（切り出しだけ）</text>
+<text x="1467" y="345" class="xs">8 銀行 × 1024 × 64 bit</text>
+<text x="1467" y="359" class="xs">× 2 面 = BRAM 32</text>
+<text x="1467" y="373" class="xs">N_ACC 20480 / 10240 / 5120</text>
+<text x="1467" y="387" class="xs">（どれも 40.96 ms）</text>
+<text x="1467" y="401" class="xs">RMW 1 銀行 1 クロック 1 回</text>
+<path class="wG" d="M1628,361 L1638,361"/>
+<rect class="new" x="1640" y="313" width="136" height="96"/>
+<text x="1647" y="329" class="tm">流れ（KIND SLICE）</text>
+<text x="1647" y="345" class="xs">s0: 4096 ch（開始 s₀）</text>
+<text x="1647" y="359" class="xs">s1: 4096 ch（開始 s₁）</text>
+<text x="1647" y="373" class="xs">全帯域は s0 だけ・s₀ 0</text>
+<text x="1647" y="387" class="xs">dstamp・CFG_ID</text>
+<text x="1647" y="401" class="xs">→ レコード</text>
+<path class="wG" d="M612,357 L620,357"/>
+<rect class="new" x="622" y="423" width="262" height="40"/>
+<text x="628" y="438" class="xc">SRL の遅延（ADC ごとの一定のずれ k ビート）</text>
+<text x="628" y="454" class="xc">係数 64 × 18 bit・ひねり係数 15 × 36 bit</text>
+<rect class="sub" x="896" y="423" width="215" height="40"/>
+<text x="902" y="448" class="xs">tp_core: Σx²・1.024 ms・FLAGS[4]</text>
+<rect class="sub" x="1123" y="423" width="200" height="40"/>
+<text x="1129" y="448" class="xs">スナップショット（ADC の生 8192）</text>
+<rect class="tsub" x="1335" y="423" width="200" height="40"/>
+<text x="1341" y="448" class="xt">adc_ev・dstamp・健全性・帳簿</text>
+<rect class="sub" x="1547" y="423" width="201" height="40"/>
+<text x="1553" y="439" class="xs">モード N・SHIFT・s₀・s₁</text>
+<text x="1553" y="454" class="xs">RUN の時点で取り込む</text>
+<path class="wC" d="M572,435 L620,435"/>
+<path class="wC" d="M588,451 L620,451"/>
+<path class="wC" d="M682,423 L682,411"/>
+<path class="wC" d="M810,423 L810,417 L1007,417 L1007,411"/>
+<path class="wR" d="M1776,361 L1805,361 L1805,237"/>
+<path class="wB" d="M1775,295 L1775,307 L1762,307"/>
+<path class="wT" d="M1840,295 L1840,325 L1762,325"/>
+<rect class="ext" x="20" y="540" width="150" height="44"/>
+<text x="30" y="558" class="s">ADC_B（SMA）</text>
+<text x="30" y="575" class="xs">IF 2048〜4096 MHz</text>
+<path class="wK" d="M170,562 L188,562"/>
+<path class="wO" d="M310,562 L333,562"/>
+<rect class="blk" x="335" y="528" width="215" height="68" style="stroke:#2e8b57"/>
+<text x="343" y="546" class="tm">ギアボックス 1（proj021 のまま）</text>
+<text x="343" y="562" class="xs">gb_adc → gb_up → gb_fifo → gb_gate</text>
+<text x="343" y="576" class="xs">→ gb_dn: 16 サンプル / ビート・256 MHz</text>
+<text x="343" y="590" class="xs">Tile 226 / slice 0</text>
+<path class="wG" d="M550,562 L608,562"/>
+<rect class="core" x="610" y="490" width="1150" height="190"/>
+<text x="622" y="508" class="tm">s45_core_1（ADC_B）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 130 ＋ 積分器 32・URAM 10</text>
+<text x="1752" y="508" class="xs" text-anchor="end">s_axi ◀</text>
+<rect class="new" x="622" y="518" width="150" height="96"/>
+<text x="629" y="534" class="tm">pfb_w（PFB T = 4）</text>
+<text x="629" y="550" class="xs">16 レーン × 4 タップ</text>
+<text x="629" y="564" class="xs">x 14 → y 16 bit（小数 1）</text>
+<text x="629" y="578" class="xs">履歴 URAM 10</text>
+<text x="629" y="592" class="xs">（672 bit × 2048 行）</text>
+<text x="629" y="606" class="xs">DSP 64</text>
+<path class="wG" d="M772,566 L782,566"/>
+<rect class="sub" x="784" y="518" width="150" height="96"/>
+<text x="791" y="534" class="tm">lane_fft × 16</text>
+<text x="791" y="550" class="xs">FFT IP・実行時の長さ</text>
+<text x="791" y="564" class="xs">512 / 1024 / 2048 点</text>
+<text x="791" y="578" class="xs">入力 16 → Y 27 bit</text>
+<text x="791" y="592" class="xs">unscaled・自然順</text>
+<text x="791" y="606" class="xs">DSP 27 × 16（S-1 待ち）</text>
+<path class="wG" d="M934,566 L944,566"/>
+<rect class="new" x="946" y="518" width="122" height="96"/>
+<text x="953" y="534" class="tm">ひねり係数 × 15</text>
+<text x="953" y="550" class="xs">cmul（&gt;&gt; 18）</text>
+<text x="953" y="564" class="xs">W_N^(p·k1)</text>
+<text x="953" y="578" class="xs">表 1 本を 1·2·4 個おき</text>
+<text x="953" y="592" class="xs">→ V 25 bit</text>
+<path class="wG" d="M1068,566 L1078,566"/>
+<rect class="sub" x="1080" y="518" width="104" height="96"/>
+<text x="1087" y="534" class="tm">dft16</text>
+<text x="1087" y="550" class="xs">今のまま</text>
+<text x="1087" y="564" class="xs">k2 = 0..7</text>
+<text x="1087" y="578" class="xs">U 27・Z 29 bit</text>
+<path class="wG" d="M1184,566 L1194,566"/>
+<rect class="sub" x="1196" y="518" width="116" height="96"/>
+<text x="1203" y="534" class="tm">SHIFT・電力</text>
+<text x="1203" y="550" class="xs">&gt;&gt; SHIFT → 18 bit</text>
+<text x="1203" y="564" class="xs">飽和を数える</text>
+<text x="1203" y="578" class="xs">re² ＋ im² × 8</text>
+<text x="1203" y="592" class="xs">（37 bit）</text>
+<path class="wG" d="M1312,566 L1322,566"/>
+<rect class="new" x="1324" y="518" width="124" height="96"/>
+<text x="1331" y="534" class="tm">振り分け</text>
+<text x="1331" y="550" class="xs">c = k1 ＋ M·k2</text>
+<text x="1331" y="564" class="xs">→ 銀行 ⌊(c − s)/M⌋</text>
+<text x="1331" y="578" class="xs">番地 (c − s) mod M</text>
+<text x="1331" y="592" class="xs">8 → 8（37 bit）</text>
+<path class="wG" d="M1448,566 L1458,566"/>
+<rect class="new" x="1460" y="518" width="168" height="96"/>
+<text x="1467" y="534" class="tm">積分器（切り出しだけ）</text>
+<text x="1467" y="550" class="xs">8 銀行 × 1024 × 64 bit</text>
+<text x="1467" y="564" class="xs">× 2 面 = BRAM 32</text>
+<text x="1467" y="578" class="xs">N_ACC 20480 / 10240 / 5120</text>
+<text x="1467" y="592" class="xs">（どれも 40.96 ms）</text>
+<text x="1467" y="606" class="xs">RMW 1 銀行 1 クロック 1 回</text>
+<path class="wG" d="M1628,566 L1638,566"/>
+<rect class="new" x="1640" y="518" width="136" height="96"/>
+<text x="1647" y="534" class="tm">流れ（KIND SLICE）</text>
+<text x="1647" y="550" class="xs">s0: 4096 ch（開始 s₀）</text>
+<text x="1647" y="564" class="xs">s1: 4096 ch（開始 s₁）</text>
+<text x="1647" y="578" class="xs">全帯域は s0 だけ・s₀ 0</text>
+<text x="1647" y="592" class="xs">dstamp・CFG_ID</text>
+<text x="1647" y="606" class="xs">→ レコード</text>
+<path class="wG" d="M612,562 L620,562"/>
+<rect class="new" x="622" y="628" width="262" height="40"/>
+<text x="628" y="643" class="xc">SRL の遅延（ADC ごとの一定のずれ k ビート）</text>
+<text x="628" y="659" class="xc">係数 64 × 18 bit・ひねり係数 15 × 36 bit</text>
+<rect class="sub" x="896" y="628" width="215" height="40"/>
+<text x="902" y="653" class="xs">tp_core: Σx²・1.024 ms・FLAGS[4]</text>
+<rect class="sub" x="1123" y="628" width="200" height="40"/>
+<text x="1129" y="653" class="xs">スナップショット（ADC の生 8192）</text>
+<rect class="tsub" x="1335" y="628" width="200" height="40"/>
+<text x="1341" y="653" class="xt">adc_ev・dstamp・健全性・帳簿</text>
+<rect class="sub" x="1547" y="628" width="201" height="40"/>
+<text x="1553" y="644" class="xs">モード N・SHIFT・s₀・s₁</text>
+<text x="1553" y="659" class="xs">RUN の時点で取り込む</text>
+<path class="wC" d="M572,640 L620,640"/>
+<path class="wC" d="M588,656 L620,656"/>
+<path class="wC" d="M682,628 L682,616"/>
+<path class="wC" d="M810,628 L810,622 L1007,622 L1007,616"/>
+<path class="wR" d="M1776,566 L1805,566"/>
+<path class="wB" d="M1775,500 L1775,512 L1762,512"/>
+<path class="wT" d="M1840,500 L1840,530 L1762,530"/>
+<rect class="ext" x="20" y="745" width="150" height="44"/>
+<text x="30" y="763" class="s">ADC_C（SMA）</text>
+<text x="30" y="780" class="xs">IF 2048〜4096 MHz</text>
+<path class="wK" d="M170,767 L188,767"/>
+<path class="wO" d="M310,767 L333,767"/>
+<rect class="blk" x="335" y="733" width="215" height="68" style="stroke:#2e8b57"/>
+<text x="343" y="751" class="tm">ギアボックス 2（proj021 のまま）</text>
+<text x="343" y="767" class="xs">gb_adc → gb_up → gb_fifo → gb_gate</text>
+<text x="343" y="781" class="xs">→ gb_dn: 16 サンプル / ビート・256 MHz</text>
+<text x="343" y="795" class="xs">Tile 224 / slice 2</text>
+<path class="wG" d="M550,767 L608,767"/>
+<rect class="core" x="610" y="695" width="1150" height="190"/>
+<text x="622" y="713" class="tm">s45_core_2（ADC_C）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 130 ＋ 積分器 32・URAM 10</text>
+<text x="1752" y="713" class="xs" text-anchor="end">s_axi ◀</text>
+<rect class="new" x="622" y="723" width="150" height="96"/>
+<text x="629" y="739" class="tm">pfb_w（PFB T = 4）</text>
+<text x="629" y="755" class="xs">16 レーン × 4 タップ</text>
+<text x="629" y="769" class="xs">x 14 → y 16 bit（小数 1）</text>
+<text x="629" y="783" class="xs">履歴 URAM 10</text>
+<text x="629" y="797" class="xs">（672 bit × 2048 行）</text>
+<text x="629" y="811" class="xs">DSP 64</text>
+<path class="wG" d="M772,771 L782,771"/>
+<rect class="sub" x="784" y="723" width="150" height="96"/>
+<text x="791" y="739" class="tm">lane_fft × 16</text>
+<text x="791" y="755" class="xs">FFT IP・実行時の長さ</text>
+<text x="791" y="769" class="xs">512 / 1024 / 2048 点</text>
+<text x="791" y="783" class="xs">入力 16 → Y 27 bit</text>
+<text x="791" y="797" class="xs">unscaled・自然順</text>
+<text x="791" y="811" class="xs">DSP 27 × 16（S-1 待ち）</text>
+<path class="wG" d="M934,771 L944,771"/>
+<rect class="new" x="946" y="723" width="122" height="96"/>
+<text x="953" y="739" class="tm">ひねり係数 × 15</text>
+<text x="953" y="755" class="xs">cmul（&gt;&gt; 18）</text>
+<text x="953" y="769" class="xs">W_N^(p·k1)</text>
+<text x="953" y="783" class="xs">表 1 本を 1·2·4 個おき</text>
+<text x="953" y="797" class="xs">→ V 25 bit</text>
+<path class="wG" d="M1068,771 L1078,771"/>
+<rect class="sub" x="1080" y="723" width="104" height="96"/>
+<text x="1087" y="739" class="tm">dft16</text>
+<text x="1087" y="755" class="xs">今のまま</text>
+<text x="1087" y="769" class="xs">k2 = 0..7</text>
+<text x="1087" y="783" class="xs">U 27・Z 29 bit</text>
+<path class="wG" d="M1184,771 L1194,771"/>
+<rect class="sub" x="1196" y="723" width="116" height="96"/>
+<text x="1203" y="739" class="tm">SHIFT・電力</text>
+<text x="1203" y="755" class="xs">&gt;&gt; SHIFT → 18 bit</text>
+<text x="1203" y="769" class="xs">飽和を数える</text>
+<text x="1203" y="783" class="xs">re² ＋ im² × 8</text>
+<text x="1203" y="797" class="xs">（37 bit）</text>
+<path class="wG" d="M1312,771 L1322,771"/>
+<rect class="new" x="1324" y="723" width="124" height="96"/>
+<text x="1331" y="739" class="tm">振り分け</text>
+<text x="1331" y="755" class="xs">c = k1 ＋ M·k2</text>
+<text x="1331" y="769" class="xs">→ 銀行 ⌊(c − s)/M⌋</text>
+<text x="1331" y="783" class="xs">番地 (c − s) mod M</text>
+<text x="1331" y="797" class="xs">8 → 8（37 bit）</text>
+<path class="wG" d="M1448,771 L1458,771"/>
+<rect class="new" x="1460" y="723" width="168" height="96"/>
+<text x="1467" y="739" class="tm">積分器（切り出しだけ）</text>
+<text x="1467" y="755" class="xs">8 銀行 × 1024 × 64 bit</text>
+<text x="1467" y="769" class="xs">× 2 面 = BRAM 32</text>
+<text x="1467" y="783" class="xs">N_ACC 20480 / 10240 / 5120</text>
+<text x="1467" y="797" class="xs">（どれも 40.96 ms）</text>
+<text x="1467" y="811" class="xs">RMW 1 銀行 1 クロック 1 回</text>
+<path class="wG" d="M1628,771 L1638,771"/>
+<rect class="new" x="1640" y="723" width="136" height="96"/>
+<text x="1647" y="739" class="tm">流れ（KIND SLICE）</text>
+<text x="1647" y="755" class="xs">s0: 4096 ch（開始 s₀）</text>
+<text x="1647" y="769" class="xs">s1: 4096 ch（開始 s₁）</text>
+<text x="1647" y="783" class="xs">全帯域は s0 だけ・s₀ 0</text>
+<text x="1647" y="797" class="xs">dstamp・CFG_ID</text>
+<text x="1647" y="811" class="xs">→ レコード</text>
+<path class="wG" d="M612,767 L620,767"/>
+<rect class="new" x="622" y="833" width="262" height="40"/>
+<text x="628" y="848" class="xc">SRL の遅延（ADC ごとの一定のずれ k ビート）</text>
+<text x="628" y="864" class="xc">係数 64 × 18 bit・ひねり係数 15 × 36 bit</text>
+<rect class="sub" x="896" y="833" width="215" height="40"/>
+<text x="902" y="858" class="xs">tp_core: Σx²・1.024 ms・FLAGS[4]</text>
+<rect class="sub" x="1123" y="833" width="200" height="40"/>
+<text x="1129" y="858" class="xs">スナップショット（ADC の生 8192）</text>
+<rect class="tsub" x="1335" y="833" width="200" height="40"/>
+<text x="1341" y="858" class="xt">adc_ev・dstamp・健全性・帳簿</text>
+<rect class="sub" x="1547" y="833" width="201" height="40"/>
+<text x="1553" y="849" class="xs">モード N・SHIFT・s₀・s₁</text>
+<text x="1553" y="864" class="xs">RUN の時点で取り込む</text>
+<path class="wC" d="M572,845 L620,845"/>
+<path class="wC" d="M588,861 L620,861"/>
+<path class="wC" d="M682,833 L682,821"/>
+<path class="wC" d="M810,833 L810,827 L1007,827 L1007,821"/>
+<path class="wR" d="M1776,771 L1805,771"/>
+<path class="wB" d="M1775,705 L1775,717 L1762,717"/>
+<path class="wT" d="M1840,705 L1840,735 L1762,735"/>
+<rect class="ext" x="20" y="950" width="150" height="44"/>
+<text x="30" y="968" class="s">ADC_D（SMA）</text>
+<text x="30" y="985" class="xs">IF 2048〜4096 MHz</text>
+<path class="wK" d="M170,972 L188,972"/>
+<path class="wO" d="M310,972 L333,972"/>
+<rect class="blk" x="335" y="938" width="215" height="68" style="stroke:#2e8b57"/>
+<text x="343" y="956" class="tm">ギアボックス 3（proj021 のまま）</text>
+<text x="343" y="972" class="xs">gb_adc → gb_up → gb_fifo → gb_gate</text>
+<text x="343" y="986" class="xs">→ gb_dn: 16 サンプル / ビート・256 MHz</text>
+<text x="343" y="1000" class="xs">Tile 224 / slice 0</text>
+<path class="wG" d="M550,972 L608,972"/>
+<rect class="core" x="610" y="900" width="1150" height="190"/>
+<text x="622" y="918" class="tm">s45_core_3（ADC_D）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 130 ＋ 積分器 32・URAM 10</text>
+<text x="1752" y="918" class="xs" text-anchor="end">s_axi ◀</text>
+<rect class="new" x="622" y="928" width="150" height="96"/>
+<text x="629" y="944" class="tm">pfb_w（PFB T = 4）</text>
+<text x="629" y="960" class="xs">16 レーン × 4 タップ</text>
+<text x="629" y="974" class="xs">x 14 → y 16 bit（小数 1）</text>
+<text x="629" y="988" class="xs">履歴 URAM 10</text>
+<text x="629" y="1002" class="xs">（672 bit × 2048 行）</text>
+<text x="629" y="1016" class="xs">DSP 64</text>
+<path class="wG" d="M772,976 L782,976"/>
+<rect class="sub" x="784" y="928" width="150" height="96"/>
+<text x="791" y="944" class="tm">lane_fft × 16</text>
+<text x="791" y="960" class="xs">FFT IP・実行時の長さ</text>
+<text x="791" y="974" class="xs">512 / 1024 / 2048 点</text>
+<text x="791" y="988" class="xs">入力 16 → Y 27 bit</text>
+<text x="791" y="1002" class="xs">unscaled・自然順</text>
+<text x="791" y="1016" class="xs">DSP 27 × 16（S-1 待ち）</text>
+<path class="wG" d="M934,976 L944,976"/>
+<rect class="new" x="946" y="928" width="122" height="96"/>
+<text x="953" y="944" class="tm">ひねり係数 × 15</text>
+<text x="953" y="960" class="xs">cmul（&gt;&gt; 18）</text>
+<text x="953" y="974" class="xs">W_N^(p·k1)</text>
+<text x="953" y="988" class="xs">表 1 本を 1·2·4 個おき</text>
+<text x="953" y="1002" class="xs">→ V 25 bit</text>
+<path class="wG" d="M1068,976 L1078,976"/>
+<rect class="sub" x="1080" y="928" width="104" height="96"/>
+<text x="1087" y="944" class="tm">dft16</text>
+<text x="1087" y="960" class="xs">今のまま</text>
+<text x="1087" y="974" class="xs">k2 = 0..7</text>
+<text x="1087" y="988" class="xs">U 27・Z 29 bit</text>
+<path class="wG" d="M1184,976 L1194,976"/>
+<rect class="sub" x="1196" y="928" width="116" height="96"/>
+<text x="1203" y="944" class="tm">SHIFT・電力</text>
+<text x="1203" y="960" class="xs">&gt;&gt; SHIFT → 18 bit</text>
+<text x="1203" y="974" class="xs">飽和を数える</text>
+<text x="1203" y="988" class="xs">re² ＋ im² × 8</text>
+<text x="1203" y="1002" class="xs">（37 bit）</text>
+<path class="wG" d="M1312,976 L1322,976"/>
+<rect class="new" x="1324" y="928" width="124" height="96"/>
+<text x="1331" y="944" class="tm">振り分け</text>
+<text x="1331" y="960" class="xs">c = k1 ＋ M·k2</text>
+<text x="1331" y="974" class="xs">→ 銀行 ⌊(c − s)/M⌋</text>
+<text x="1331" y="988" class="xs">番地 (c − s) mod M</text>
+<text x="1331" y="1002" class="xs">8 → 8（37 bit）</text>
+<path class="wG" d="M1448,976 L1458,976"/>
+<rect class="new" x="1460" y="928" width="168" height="96"/>
+<text x="1467" y="944" class="tm">積分器（切り出しだけ）</text>
+<text x="1467" y="960" class="xs">8 銀行 × 1024 × 64 bit</text>
+<text x="1467" y="974" class="xs">× 2 面 = BRAM 32</text>
+<text x="1467" y="988" class="xs">N_ACC 20480 / 10240 / 5120</text>
+<text x="1467" y="1002" class="xs">（どれも 40.96 ms）</text>
+<text x="1467" y="1016" class="xs">RMW 1 銀行 1 クロック 1 回</text>
+<path class="wG" d="M1628,976 L1638,976"/>
+<rect class="new" x="1640" y="928" width="136" height="96"/>
+<text x="1647" y="944" class="tm">流れ（KIND SLICE）</text>
+<text x="1647" y="960" class="xs">s0: 4096 ch（開始 s₀）</text>
+<text x="1647" y="974" class="xs">s1: 4096 ch（開始 s₁）</text>
+<text x="1647" y="988" class="xs">全帯域は s0 だけ・s₀ 0</text>
+<text x="1647" y="1002" class="xs">dstamp・CFG_ID</text>
+<text x="1647" y="1016" class="xs">→ レコード</text>
+<path class="wG" d="M612,972 L620,972"/>
+<rect class="new" x="622" y="1038" width="262" height="40"/>
+<text x="628" y="1053" class="xc">SRL の遅延（ADC ごとの一定のずれ k ビート）</text>
+<text x="628" y="1069" class="xc">係数 64 × 18 bit・ひねり係数 15 × 36 bit</text>
+<rect class="sub" x="896" y="1038" width="215" height="40"/>
+<text x="902" y="1063" class="xs">tp_core: Σx²・1.024 ms・FLAGS[4]</text>
+<rect class="sub" x="1123" y="1038" width="200" height="40"/>
+<text x="1129" y="1063" class="xs">スナップショット（ADC の生 8192）</text>
+<rect class="tsub" x="1335" y="1038" width="200" height="40"/>
+<text x="1341" y="1063" class="xt">adc_ev・dstamp・健全性・帳簿</text>
+<rect class="sub" x="1547" y="1038" width="201" height="40"/>
+<text x="1553" y="1054" class="xs">モード N・SHIFT・s₀・s₁</text>
+<text x="1553" y="1069" class="xs">RUN の時点で取り込む</text>
+<path class="wC" d="M572,1050 L620,1050"/>
+<path class="wC" d="M588,1066 L620,1066"/>
+<path class="wC" d="M682,1038 L682,1026"/>
+<path class="wC" d="M810,1038 L810,1032 L1007,1032 L1007,1026"/>
+<path class="wR" d="M1776,976 L1805,976"/>
+<path class="wB" d="M1775,910 L1775,922 L1762,922"/>
+<path class="wT" d="M1840,910 L1840,940 L1762,940"/>
+<line x1="1805" y1="976" x2="1805" y2="361" stroke="#c0392b" stroke-width="2.6"/>
+<line x1="1775" y1="281" x2="1775" y2="922" stroke="#2f6fb5" stroke-width="2.0"/>
+<line x1="1840" y1="281" x2="1840" y2="940" stroke="#0f7c8c" stroke-width="2.2"/>
+<text x="1811" y="482" class="lbR">レコード</text>
+<rect class="shr" x="325" y="1115" width="255" height="112"/>
+<text x="335" y="1135" class="tm">pfb_coef_rom（4 ADC で 1 組）</text>
+<text x="335" y="1153" class="xc">URAM 16（レーンごとに 1 個）</text>
+<text x="335" y="1168" class="xc">1 語 72 bit = 4 タップ × 18 bit</text>
+<text x="335" y="1183" class="xc">行 2048 ＋ 1024 ＋ 512（長さごとの表）</text>
+<text x="335" y="1198" class="xc">番地 = フレームの中のビート m</text>
+<text x="335" y="1213" class="xc">sinc × Kaiser β 5・bw 1.198・Σh² = N</text>
+<rect class="shr" x="325" y="1239" width="255" height="82"/>
+<text x="335" y="1259" class="tm">tw_rom（4 ADC で 1 組）</text>
+<text x="335" y="1277" class="xc">BRAM 30（15 レーン × 2048 × 36 bit）</text>
+<text x="335" y="1292" class="xc">W_32768^(p·k1·32768/N)（厳密）</text>
+<text x="335" y="1307" class="xc">番地 = レーン FFT の出口の k1</text>
+<path class="lC" d="M580,1165 L572,1165 L572,435"/>
+<path class="lC" d="M580,1280 L588,1280 L588,451"/>
+<rect class="note" x="610" y="1115" width="590" height="206"/>
+<text x="622" y="1135" class="tm">モード（レジスタで切り替え。Overlay ではない）・dt 40.96 ms</text>
+<text x="624" y="1157" class="tm"></text>
+<text x="704" y="1157" class="tm">N（レーン）</text>
+<text x="824" y="1157" class="tm">ch 幅</text>
+<text x="914" y="1157" class="tm">流れ</text>
+<text x="964" y="1157" class="tm">フレーム</text>
+<text x="1044" y="1157" class="tm">40.96 ms</text>
+<text x="624" y="1174" class="tm">全帯域</text>
+<text x="704" y="1174" class="xs">8192（512）</text>
+<text x="824" y="1174" class="xs">500 kHz</text>
+<text x="914" y="1174" class="xs">1</text>
+<text x="964" y="1174" class="xs">2 µs</text>
+<text x="1044" y="1174" class="xs">20480</text>
+<text x="624" y="1191" class="tm">1 GHz</text>
+<text x="704" y="1191" class="xs">16384（1024）</text>
+<text x="824" y="1191" class="xs">250 kHz</text>
+<text x="914" y="1191" class="xs">2</text>
+<text x="964" y="1191" class="xs">4 µs</text>
+<text x="1044" y="1191" class="xs">10240</text>
+<text x="624" y="1208" class="tm">512 MHz</text>
+<text x="704" y="1208" class="xs">32768（2048）</text>
+<text x="824" y="1208" class="xs">125 kHz</text>
+<text x="914" y="1208" class="xs">2</text>
+<text x="964" y="1208" class="xs">8 µs</text>
+<text x="1044" y="1208" class="xs">5120</text>
+<text x="622" y="1239" class="xs">ch の応答は 3 つの長さとも proj020 と同じ（0.5 ch −3.00 dB・≧ 1 ch −53.7 dB・ENBW 1.010）</text>
+<text x="622" y="1257" class="xs">PFB の重心は矩形より 1.5 フレーム前（3 / 6 / 12 µs）。立ち上がり 3 フレームは r − 3 + t &lt; 0 のタップを 0</text>
+<text x="622" y="1275" class="xs">1 本の流れは 1 クロックに 4096 / M 個の bin を受ける（開始 ch に依らない）→ 切り出しだけを積める</text>
+<text x="622" y="1293" class="xs">SHIFT の目安: −17 dBFS の雑音で 2〜3、−1 dBFS の CW で 7〜9（0〜15 で足りる）</text>
+<rect class="note" x="1210" y="1115" width="550" height="206"/>
+<text x="1222" y="1135" class="tm">資源の見積もり（E-1 の案 A、レーン FFT は proj014 の survey の値）</text>
+<text x="1222" y="1157" class="xs">DSP 2,656（62 %）= (432 ＋ 64 ＋ 168) × 4</text>
+<text x="1222" y="1177" class="xs">BRAM 688（64 %）= (120 ＋ 10 ＋ 32) × 4 ＋ ひねり係数 30 ＋ 共通 10</text>
+<text x="1222" y="1197" class="xs">URAM 56（70 %）= 履歴 10 × 4 ＋ 係数 16</text>
+<text x="1222" y="1217" class="xs">LUT 290k（68 %）・FF 540k（64 %）</text>
+<text x="1222" y="1237" class="xn">何も共有しないと BRAM 938（87 %）で入らない</text>
+<text x="1222" y="1257" class="xs">未確定: S-1（レーン FFT の入力 16 bit）・v2 の共通部（proj021）</text>
+<text x="1222" y="1277" class="xn">`-1` の危うさ: LUT（Fine は 48.6 %）。長さ切り替えの代償 46k</text>
+<rect class="ext" x="20" y="1115" width="150" height="44"/>
+<text x="30" y="1133" class="s">LMX2594</text>
+<text x="30" y="1150" class="xs">491.52 MHz（両タイル）</text>
+<rect class="ext" x="20" y="1171" width="150" height="44"/>
+<text x="30" y="1189" class="s">10 MHz（CLKin0）</text>
+<text x="30" y="1206" class="xs">観測所の基準</text>
+<rect class="blk" x="20" y="1227" width="150" height="94"/>
+<text x="30" y="1247" class="tm">clk_wiz_adc</text>
+<text x="30" y="1265" class="lbO">341.333 MHz → ADC</text>
+<text x="30" y="1282" class="lbG">256.000 MHz → DSP</text>
+<text x="30" y="1301" class="xs">（proj021 のまま）</text>
+<path class="wK" d="M170,1137 L180,1137 L180,1045 L188,1045"/>
+<text x="20" y="1362" class="tm">凡例</text>
+<path class="wB" d="M70,1358 L110,1358"/>
+<text x="118" y="1362" class="lbB">PS 側・AXI</text>
+<path class="wO" d="M320,1358 L360,1358"/>
+<text x="368" y="1362" class="lbO">ADC ドメイン 341 MHz</text>
+<path class="wG" d="M570,1358 L610,1358"/>
+<text x="618" y="1362" class="lbG">DSP ドメイン 256 MHz</text>
+<path class="wR" d="M820,1358 L860,1358"/>
+<text x="868" y="1362" class="lbR">レコード（v2）</text>
+<path class="wT" d="M1070,1358 L1110,1358"/>
+<text x="1118" y="1362" class="lbT">時刻</text>
+<path class="wC" d="M1320,1358 L1360,1358"/>
+<text x="1368" y="1362" class="lbC">共有の係数・ひねり係数</text>
+<path class="wK" d="M1570,1358 L1610,1358"/>
+<text x="1618" y="1362" class="lb">アナログ・クロック</text>
+</svg>

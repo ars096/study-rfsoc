@@ -18,6 +18,13 @@ RTL は proj021 が終わった形を土台に次の proj で書く（下の「p
 
 経緯: 2026-10-09 の相談（proj021 と並行して進められる作業として起こした。1024 MHz × 2 と PFB T = 4 はこの相談で決めた）
 
+## ブロックデザイン（予定・RTL 前）
+
+![ブロックデザイン（予定）](docs/block_design.svg)
+
+（`docs/block_design.svg` は `docs/block_design.py` で描いた。**build.tcl はまだ無い**ので、下の「結論」の表と E-1 の案 A を描いた予定の図。
+橙の枠が SAM45-Fine（proj021）から新しく作るもの、点線の枠が v2 の共通部（proj021 が確定させる）。RTL の proj で build.tcl ができたら、その配線から描き直す）
+
 ## SAM45-Wide の仕様（BITS.md から）
 
 | モード | 流れ / ADC | 幅 | 全帯域の FFT | ch 幅 | 流れの ch | フレーム | 40.96 ms のフレーム数 | 格子 2.048 ms のフレーム数 | KIND |
@@ -85,6 +92,7 @@ RTL は proj021 が終わった形を土台に次の proj で書く（下の「p
 - 2026-10-09: README を起こした（目的・範囲・判定・予言）
 - 2026-10-09: `model/wide_model.py`（M-1〜M-6、陽性対照つき）と `tools/estimate.py`（E-1、64 通りの置き場の組み合わせ）を書いて走らせた。手元の numpy 2.x で全部 10 秒台
 - 2026-10-09: `tools/ip_survey.tcl`（S-1）を proj014 の型で用意した。**まだ走らせていない**（Vivado サーバ）
+- 2026-10-09: 予定のブロックデザインの図（`docs/block_design.py` → `docs/block_design.svg`）を描いた
 
 ## 結果
 
