@@ -85,7 +85,8 @@ RTL は proj021 が終わった形を土台に次の proj で書く（下の「p
 2. `model/wide_model.py`: M-1〜M-6（`make model`）
 3. `tools/estimate.py`: E-1 の表（`make estimate`）
 4. `tools/ip_survey.tcl`: S-1（`make survey`、Vivado サーバ）→ E-1 を実測で更新（2026-10-09 済み）
-4b. S-2（`make survey-s2`）: レーン FFT の中の記憶を LUT から BRAM へ移す段数を振る ← **次はここ**（S-1 で LUT が律速になったため）
+4b. S-2（`make survey-s2`）: レーン FFT の中の記憶を LUT から BRAM へ移す段数を振る（2026-10-09 済み。効きは小さく既定のまま）
+5 の前に: proj021 へ返すこと（下）を渡す ← **次はここ**
 5. 結果と結論を書く。RTL の proj（proj021 の後）への申し送りをまとめる。SLICE のフィールドで v2 に足りないものがあれば proj021 へ返す
 
 ## やったこと
@@ -94,6 +95,7 @@ RTL は proj021 が終わった形を土台に次の proj で書く（下の「p
 - 2026-10-09: `model/wide_model.py`（M-1〜M-6、陽性対照つき）と `tools/estimate.py`（E-1、64 通りの置き場の組み合わせ）を書いて走らせた。手元の numpy 2.x で全部 10 秒台
 - 2026-10-09: `tools/ip_survey.tcl`（S-1）を proj014 の型で用意した。**まだ走らせていない**（Vivado サーバ）
 - 2026-10-09: 予定のブロックデザインの図（`docs/block_design.py` → `docs/block_design.svg`）を描いた
+- 2026-10-09: S-2（`make survey-s2`）。1 回目は段数 7 で照合が止め、2 回目で 4〜6 を数えた。LUT の記憶は全部 SRL で、BRAM へ移しても LUT は −2 ポイント
 - 2026-10-09: S-1（`make survey`、Vivado サーバ）。物差しと proj014 の再現が通った。E-1 を実測で引き直すと LUT が律速になったので、S-2 の変種（`SURVEY=s2`、出力は `build-survey-s2/`）を `ip_survey.tcl` に足した。E-1 の既定値を S-1 の入力 15 bit の行に替えた
 
 ## 結果
@@ -159,9 +161,28 @@ OOC 合成後、FFT IP 1 個（2048 点・実行時の長さ切り替え・realt
 - **YF = 1（y に小数 1 bit）はやめて YF = 0（y 15 bit・整数）にする**: YF = 1 の得は y の丸めの雑音が ADC の量子化の 1.0 → 0.25 倍になること（どちらも −30 dBFS で信号の 1e-6 台で、分光に効かない）。代償は LUT 7.8k・BRAM 32・DSP 64
 - 次の手: **FFT IP の中の記憶を LUT（分散 RAM）から BRAM へ移す**（`number_of_stages_using_block_ram_for_data_and_phase_factors`、S-1 の既定は 4）。BRAM には 3 割余裕がある → S-2
 
+### S-2 survey（`make survey-s2`、2026-10-09。入力 15 bit・実行時の長さ切り替え・BRAM を使う段数を振る）
+
+| 名前 | 段数 | DSP | LUT（うち SRL） | FF | BRAM | 案 A の LUT | 案 A の BRAM |
+|---|---|---|---|---|---|---|---|
+| ruler_lane512_res_lut（物差し） | — | 21 | 2,336（752） | 4,715 | 3 | | |
+| lane2048rtc_in15_bs4（既定、S-1 と同じ） | 4 | 27 | 3,899（1,191） | 7,431 | 8 | 298k（70.1 %） | 720（67 %） |
+| lane2048rtc_in15_bs5 | 5 | 27 | 3,828（1,115） | 7,447 | 9 | 294k（69.0 %） | 784（73 %） |
+| lane2048rtc_in15_bs6（上限） | 6 | 27 | 3,759（1,081） | 7,422 | 11 | 289k（68.0 %） | **912（84 %）** |
+
+- 1 回目は段数 7 で設定の照合が止めた（上の「次にやること」の S-2 の項）。2 回目で bs4 が S-1 の行と数字まで一致した（既定 = 4 の確かめ）
+- **予言（段数 1 つで LUT −150〜−300 / 個、上限で 3,300 / 個・LUT 61 %）は外れ**: 実際は段数 1 つで −70 / 個、上限でも 3,759 / 個（LUT 68.0 %）で、BRAM は 1 段で +1〜2 / 個
+- 外れた理由: **FFT IP の中の LUT の記憶は分散 RAM ではなく、全部がシフトレジスタ（SRL）**（どの行も「LUT as Distributed RAM 0」）。BRAM へ移る「データと位相係数の記憶」は初めから小さく、LUT の大半（≒ 2,700 / 個）はバタフライと長さ切り替えの論理。**予言は LUT の記憶の中身を確かめずに、分散 RAM だと思い込んで書いた**
+- 判断: **既定の 4 段のままにする**。6 段で LUT −2.1 ポイントと引き換えに BRAM +192（84 %）で、BRAM の目安を越える。5 段は LUT −1.1 ポイント・BRAM +64 で、得が小さい
+
 ## 結論・次にやること
 
-**結論（模型・見積もり・S-1 の段）: SAM45-Wide（PFB T = 4、1 GHz × 2）のメモリは「係数とひねり係数を 4 ADC で共有する」ことで入る（BRAM 67 %・URAM 70 %・DSP 62 %）。律速は LUT（70.1 %）で、S-2 で FFT の記憶を BRAM へ移して下げられるかを見る。**
+**結論（模型・見積もり・S-1・S-2 の段）: SAM45-Wide（PFB T = 4、1 GHz × 2）のメモリは「係数とひねり係数を 4 ADC で共有する」ことで入る（BRAM 67 %・URAM 70 %・DSP 62 %）。律速は LUT（70.1 %）で、その 84 % はレーン FFT の論理（バタフライと長さ切り替え）。FFT IP の設定で LUT を大きく下げる手は見つからなかった**（バタフライを DSP に移すと DSP 105 %、記憶を BRAM に移しても −2 ポイントで BRAM 84 %）。
+
+**LUT 70 % で `-1` が閉じるかは、見積もりではこれ以上詰められない。RTL の proj の最初のビルドで確かめる**（Fine の 48.6 % より 20 ポイント高い）。閉じなかったときの手当ての候補（今は決めない）:
+- 一部のレーン FFT だけバタフライを DSP に移す（16 個で LUT −13k・DSP +448 → DSP 73 %）
+- 実装の戦略（Performance_Explore など。proj020 で既定 −0.063 → +0.047 ns）とフロアプラン
+- 鎖の残り（ひねり係数・dft16・振り分け・帳簿）の LUT を RTL で削る（見積もりは Fine の spec_core の残り 6k / ADC を流用した粗い値）
 
 決めたいこと（RTL の proj の設計の出発点。S-1 の後に確定する）:
 
@@ -183,7 +204,7 @@ proj021 へ返すこと（INTERFACE.md の編集は proj021 の会話で）:
 次にやること:
 
 - [x] **S-1**: 物差し・proj014 の再現が通過。入力 15 bit で DSP 27・LUT 3,899・FF 7,431・BRAM 8。バタフライを DSP に移すのは DSP が足りず使えない
-- [ ] **S-2**: Vivado サーバで `make survey-s2`（10〜20 分）。入力 15 bit で BRAM を使う段数 4〜6。**1 回目（2026-10-09）は段数 7 を入れて設定の照合で止まった**: IP_Flow 19-3461「Valid values are 2, 3, 4, 5, 6」。IP は範囲外の値を黙って既定の 4 に戻す（Restoring to previous valid configuration）ので、照合が無ければ bs7 は bs4 と同じものを数えていた。7 を外した。→ `make estimate EST_ARGS="--fft-dsp … --fft-lut … --fft-ff … --fft-bram …"`
+- [x] **S-2**（結果は上）: 段数を増やしても LUT は −70 / 段・個で、既定の 4 のままにする。入力 15 bit で BRAM を使う段数 4〜6。**1 回目（2026-10-09）は段数 7 を入れて設定の照合で止まった**: IP_Flow 19-3461「Valid values are 2, 3, 4, 5, 6」。IP は範囲外の値を黙って既定の 4 に戻す（Restoring to previous valid configuration）ので、照合が無ければ bs7 は bs4 と同じものを数えていた。7 を外した。→ `make estimate EST_ARGS="--fft-dsp … --fft-lut … --fft-ff … --fft-bram …"`
   予言（走らせる前に書く）: 段数を 1 つ増やすごとに LUT −150〜−300 / 個・BRAM +0.5〜1 / 個。上限の段数で LUT ≒ 3,300 / 個（64 個で −40k、LUT 61 % 前後）・BRAM ≒ 10 / 個（BRAM 77 % 前後）
 - [ ] 上の 1〜3 を proj021 の会話へ渡す
 - [ ] proj021 が終わったら、RTL の proj（proj023 の見込み）を proj021 の最後の形から起こす。模型（`model/wide_model.py` の `fixed_chain`）を sim の golden に使えるよう、FFT IP の出口の丸めを IP の C モデルに合わせるか、許容の幅で比べるかを決める
