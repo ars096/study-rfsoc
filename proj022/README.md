@@ -183,7 +183,7 @@ proj021 へ返すこと（INTERFACE.md の編集は proj021 の会話で）:
 次にやること:
 
 - [x] **S-1**: 物差し・proj014 の再現が通過。入力 15 bit で DSP 27・LUT 3,899・FF 7,431・BRAM 8。バタフライを DSP に移すのは DSP が足りず使えない
-- [ ] **S-2**: Vivado サーバで `make survey-s2`（10〜20 分）。入力 15 bit で BRAM を使う段数 4〜7。IP が受け付けない段数は設定の照合で落ちる（それも結果）。→ `make estimate EST_ARGS="--fft-dsp … --fft-lut … --fft-ff … --fft-bram …"`
+- [ ] **S-2**: Vivado サーバで `make survey-s2`（10〜20 分）。入力 15 bit で BRAM を使う段数 4〜6。**1 回目（2026-10-09）は段数 7 を入れて設定の照合で止まった**: IP_Flow 19-3461「Valid values are 2, 3, 4, 5, 6」。IP は範囲外の値を黙って既定の 4 に戻す（Restoring to previous valid configuration）ので、照合が無ければ bs7 は bs4 と同じものを数えていた。7 を外した。→ `make estimate EST_ARGS="--fft-dsp … --fft-lut … --fft-ff … --fft-bram …"`
   予言（走らせる前に書く）: 段数を 1 つ増やすごとに LUT −150〜−300 / 個・BRAM +0.5〜1 / 個。上限の段数で LUT ≒ 3,300 / 個（64 個で −40k、LUT 61 % 前後）・BRAM ≒ 10 / 個（BRAM 77 % 前後）
 - [ ] 上の 1〜3 を proj021 の会話へ渡す
 - [ ] proj021 が終わったら、RTL の proj（proj023 の見込み）を proj021 の最後の形から起こす。模型（`model/wide_model.py` の `fixed_chain`）を sim の golden に使えるよう、FFT IP の出口の丸めを IP の C モデルに合わせるか、許容の幅で比べるかを決める

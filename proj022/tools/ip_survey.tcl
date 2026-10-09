@@ -33,13 +33,13 @@ set variants_s1 {
     {lane2048rtc_in18_res_lut   2048 18 use_mults_resources use_luts             true  ""}
     {lane2048rtc_in16_res_dsp   2048 16 use_mults_resources use_xtremedsp_slices true  ""}
 }
-# S-2: 入力 15 bit（model の YF = 0）で、BRAM を使う段数を既定の 4 から増やす。IP が受け付けない値はここで落ちる（fatal）
+# S-2: 入力 15 bit（model の YF = 0）で、BRAM を使う段数を既定の 4 から増やす。IP が受け付けない値はここで落ちる（fatal）。
+# 2048 点で受け付けるのは 2〜6（2026-10-09 の 1 回目に 7 を入れて IP_Flow 19-3461 で落ちた。照合が黙った既定値への戻りを止めた）
 set variants_s2 {
     {ruler_lane512_res_lut       512 14 use_mults_resources use_luts             false ""}
     {lane2048rtc_in15_bs4       2048 15 use_mults_resources use_luts             true  4}
     {lane2048rtc_in15_bs5       2048 15 use_mults_resources use_luts             true  5}
     {lane2048rtc_in15_bs6       2048 15 use_mults_resources use_luts             true  6}
-    {lane2048rtc_in15_bs7       2048 15 use_mults_resources use_luts             true  7}
 }
 if {$which eq "s1"} { set variants $variants_s1 } elseif {$which eq "s2"} { set variants $variants_s2 } else {
     puts "ERROR: SURVEY = '$which' は知らない（s1 / s2）"; exit 1
@@ -103,7 +103,7 @@ foreach v $variants {
     create_ip_run $ip
 }
 if {$ng > 0} {
-    puts "ERROR: FFT IP の設定が $ng 件、要求どおりにならない（build-survey/params_*.rpt を見る）"
+    puts "ERROR: FFT IP の設定が $ng 件、要求どおりにならない（$outdir/params_*.rpt を見る）"
     exit 1
 }
 
