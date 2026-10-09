@@ -84,7 +84,8 @@ RTL は proj021 が終わった形を土台に次の proj で書く（下の「p
 1. README（目的・判定・予言）
 2. `model/wide_model.py`: M-1〜M-6（`make model`）
 3. `tools/estimate.py`: E-1 の表（`make estimate`）
-4. `tools/ip_survey.tcl`: S-1（`make survey`、Vivado サーバ）→ E-1 を実測で更新 ← **次はここ**（proj021 のビルドの合間に）
+4. `tools/ip_survey.tcl`: S-1（`make survey`、Vivado サーバ）→ E-1 を実測で更新（2026-10-09 済み）
+4b. S-2（`make survey-s2`）: レーン FFT の中の記憶を LUT から BRAM へ移す段数を振る ← **次はここ**（S-1 で LUT が律速になったため）
 5. 結果と結論を書く。RTL の proj（proj021 の後）への申し送りをまとめる。SLICE のフィールドで v2 に足りないものがあれば proj021 へ返す
 
 ## やったこと
@@ -93,6 +94,7 @@ RTL は proj021 が終わった形を土台に次の proj で書く（下の「p
 - 2026-10-09: `model/wide_model.py`（M-1〜M-6、陽性対照つき）と `tools/estimate.py`（E-1、64 通りの置き場の組み合わせ）を書いて走らせた。手元の numpy 2.x で全部 10 秒台
 - 2026-10-09: `tools/ip_survey.tcl`（S-1）を proj014 の型で用意した。**まだ走らせていない**（Vivado サーバ）
 - 2026-10-09: 予定のブロックデザインの図（`docs/block_design.py` → `docs/block_design.svg`）を描いた
+- 2026-10-09: S-1（`make survey`、Vivado サーバ）。物差しと proj014 の再現が通った。E-1 を実測で引き直すと LUT が律速になったので、S-2 の変種（`SURVEY=s2`、出力は `build-survey-s2/`）を `ip_survey.tcl` に足した。E-1 の既定値を S-1 の入力 15 bit の行に替えた
 
 ## 結果
 
@@ -127,15 +129,45 @@ RTL は proj021 が終わった形を土台に次の proj で書く（下の「p
 - 予言との比べ: 律速が BRAM は**当たり**。手当ては**外れ**（予言は「積分器を URAM へ」。実際は積分器を切り出しだけにして半分にし、URAM は履歴（672 bit × 2048 行 → 10 個 / ADC）と係数（4 タップを 1 語に）に回すほうが釣り合う）
 - LUT 68 % は Fine（48.6 %）より 20 ポイント高い。うち実行時の長さ切り替えの代償が 64 × 713 = 46k（proj014）。`-1` の見込みは LUT の側にも危うさがある → S-1 にバタフライを DSP に移す変種（`lane2048rtc_in16_res_dsp`）を入れた
 
+### S-1 survey（`make survey`、Vivado サーバ、2026-10-09）
+
+OOC 合成後、FFT IP 1 個（2048 点・実行時の長さ切り替え・realtime・unscaled・自然順・use_mults_resources）:
+
+| 名前 | 入力 | バタフライ | DSP | LUT | FF | BRAM |
+|---|---|---|---|---|---|---|
+| ruler_lane512_res_lut（物差し、512 点・固定長） | 14 | LUT | **21** | 2,336 | 4,715 | 3 |
+| lane2048rtc_in14_res_lut（proj014 の再現） | 14 | LUT | 27 | 3,773 | 7,186 | 7.5 |
+| lane2048rtc_in15_res_lut（YF = 0） | 15 | LUT | 27 | 3,899 | 7,431 | 8 |
+| lane2048rtc_in16_res_lut（YF = 1） | 16 | LUT | 28 | 4,021 | 7,486 | 8.5 |
+| lane2048rtc_in18_res_lut | 18 | LUT | 30 | 4,409 | 8,246 | 9.5 |
+| lane2048rtc_in16_res_dsp | 16 | DSP | 56 | 3,195 | 6,843 | 8.5 |
+
+- 物差しが本番の 21 / 個と一致し、proj014 の行も数字まで再現した → この表を予言に使える
+- 予言（入力 16 bit で DSP 27 のまま・BRAM 8〜9）: BRAM 8.5 は**当たり**、DSP は 28 で **1 個外れ**。LUT は入力 1 bit ごとに ≒ +100〜130 / 個
+- バタフライを DSP に移すと LUT −826 / 個・DSP +28 / 個。64 個で LUT −53k（−12 ポイント）と引き換えに DSP +1,792 で、DSP が 105 % になり**使えない**
+
+**E-1 を S-1 の実測で引き直した**（案 A = 係数 URAM・共有 / ひねり係数 BRAM・共有 / 履歴 URAM / 積分器 切り出しだけ・BRAM）:
+
+| レーン FFT | DSP | BRAM | URAM | LUT | FF | 目安 |
+|---|---|---|---|---|---|---|
+| proj014 の値（入力 14 bit、S-1 の前） | 2,656（62 %） | 688（64 %） | 56（70 %） | 290k（68.2 %） | 540k（64 %） | ○ |
+| S-1 入力 15 bit（YF = 0） | 2,656（62 %） | 720（67 %） | 56（70 %） | **298k（70.1 %）** | 556k（65 %） | LUT が目安の境 |
+| S-1 入力 16 bit（YF = 1） | 2,720（64 %） | 752（70 %） | 56（70 %） | **306k（71.9 %）** | 559k（66 %） | × LUT |
+
+- **メモリ（BRAM・URAM）は共有で片付いた。律速は LUT に移った**。LUT 298k のうちレーン FFT が 64 × 3,899 = 250k（全体の 84 %、デバイスの 59 %）
+- 目安の 70 % は私が置いた見当（Fine は 48.6 % で、`-1` は戦略しだいで閉じる・閉じないが分かれた）。越えたら閉じないという根拠のある線ではないが、Fine より 20 ポイント以上高いのは確か
+- **YF = 1（y に小数 1 bit）はやめて YF = 0（y 15 bit・整数）にする**: YF = 1 の得は y の丸めの雑音が ADC の量子化の 1.0 → 0.25 倍になること（どちらも −30 dBFS で信号の 1e-6 台で、分光に効かない）。代償は LUT 7.8k・BRAM 32・DSP 64
+- 次の手: **FFT IP の中の記憶を LUT（分散 RAM）から BRAM へ移す**（`number_of_stages_using_block_ram_for_data_and_phase_factors`、S-1 の既定は 4）。BRAM には 3 割余裕がある → S-2
+
 ## 結論・次にやること
 
-**結論（模型と見積もりの段、S-1 の前）: SAM45-Wide（PFB T = 4、1 GHz × 2）は数の上で入る。** ただし「係数とひねり係数を 4 ADC で共有する」ことが前提。
+**結論（模型・見積もり・S-1 の段）: SAM45-Wide（PFB T = 4、1 GHz × 2）のメモリは「係数とひねり係数を 4 ADC で共有する」ことで入る（BRAM 67 %・URAM 70 %・DSP 62 %）。律速は LUT（70.1 %）で、S-2 で FFT の記憶を BRAM へ移して下げられるかを見る。**
 
 決めたいこと（RTL の proj の設計の出発点。S-1 の後に確定する）:
 
 | | 案 | 根拠 |
 |---|---|---|
-| 鎖の語長 | x 14 → **y 16 bit（YF = 1）** → レーン FFT（入力 16 bit・unscaled）→ Y 27 bit → cmul（右シフト 18 = 16 + D 1 + YF 1）→ V 25 → dft16（今のまま U 27・Z 29）→ SHIFT → 18 bit → 電力 37 bit → 64 bit | M-4。DSP は今と同じ形。y の丸めの雑音は ADC の量子化の 0.25 倍 |
+| 鎖の語長 | x 14 → **y 15 bit（YF = 0、整数）** → レーン FFT（入力 15 bit・unscaled）→ Y 26 bit → cmul（右シフト 17 = 16 + D 1）→ V 25 → dft16（今のまま U 27・Z 29）→ SHIFT → 18 bit → 電力 37 bit → 64 bit | M-4・S-1。DSP は今と同じ形。y の丸めの雑音は ADC の量子化と同じ大きさ（−30 dBFS で信号の 2.5e-6）。**S-1 の後に YF = 1 から替えた**（LUT 7.8k・BRAM 32 の節約） |
 | 積分器 | **切り出しだけ**（8 銀行 × 1024 × 64 bit × 2 面、BRAM 32 / ADC）。全帯域モードは「s = 0 の切り出し」 | M-5。3 つのモードで同じ記憶・同じ番地の式 |
 | PFB の係数 | 長さごとの表 3 本を、**レーンごとに URAM 1 個**（1 語 = 4 タップ）に積み、**4 ADC で 1 組**（URAM 16） | M-3・E-1 |
 | ひねり係数 | 1 本の表（32768 点、15 レーン × 2048 × 36 bit）を 1・2・4 個おきに読む。4 ADC で 1 組 | W_N'^(pk1) = W_32768^(pk1·32768/N')（厳密）。レーンの割り付けは長さで変わらない |
@@ -150,7 +182,9 @@ proj021 へ返すこと（INTERFACE.md の編集は proj021 の会話で）:
 
 次にやること:
 
-- [ ] **S-1**: Vivado サーバで `make survey`（proj021 のビルドの合間に。10〜20 分）→ `make estimate EST_ARGS="--fft-dsp … --fft-lut … --fft-ff … --fft-bram …"`（入力 16 bit の行で）。バタフライを DSP に移す変種で LUT が何 % 下がるか
+- [x] **S-1**: 物差し・proj014 の再現が通過。入力 15 bit で DSP 27・LUT 3,899・FF 7,431・BRAM 8。バタフライを DSP に移すのは DSP が足りず使えない
+- [ ] **S-2**: Vivado サーバで `make survey-s2`（10〜20 分）。入力 15 bit で BRAM を使う段数 4〜7。IP が受け付けない段数は設定の照合で落ちる（それも結果）。→ `make estimate EST_ARGS="--fft-dsp … --fft-lut … --fft-ff … --fft-bram …"`
+  予言（走らせる前に書く）: 段数を 1 つ増やすごとに LUT −150〜−300 / 個・BRAM +0.5〜1 / 個。上限の段数で LUT ≒ 3,300 / 個（64 個で −40k、LUT 61 % 前後）・BRAM ≒ 10 / 個（BRAM 77 % 前後）
 - [ ] 上の 1〜3 を proj021 の会話へ渡す
 - [ ] proj021 が終わったら、RTL の proj（proj023 の見込み）を proj021 の最後の形から起こす。模型（`model/wide_model.py` の `fixed_chain`）を sim の golden に使えるよう、FFT IP の出口の丸めを IP の C モデルに合わせるか、許容の幅で比べるかを決める
 

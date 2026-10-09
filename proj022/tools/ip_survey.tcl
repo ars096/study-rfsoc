@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# proj022 — SAM45-Wide のレーン FFT を 1 個ずつ OOC 合成して資源を数える（make survey、S-1）
+# proj022 — SAM45-Wide のレーン FFT を 1 個ずつ OOC 合成して資源を数える（make survey = S-1 / make survey-s2 = S-2）
 #
 # proj014 の tools/ip_survey.tcl の型（設定の要求・照合・物差し・表）をそのまま使い、数える行だけを替えた。
 # **既製 IP の資源は、IP を 1 個だけ合成して数えてから予言する**（proj010: 自作部分の見積もりは当たり、IP の中身で外れた）。
@@ -15,23 +15,40 @@
 
 set part   xczu48dr-ffvg1517-2-e
 if {[info exists ::env(PART)] && $::env(PART) ne ""} { set part $::env(PART) }
-set outdir ./build-survey
+# SURVEY = s1（既定）/ s2。s2 は FFT IP の中の記憶を LUT から BRAM へ移す段数を振る（S-1 で LUT が律速になったため）。
+# 出力は build-survey（s1）/ build-survey-s2 に分け、S-1 の結果を上書きしない
+set which s1
+if {[info exists ::env(SURVEY)] && $::env(SURVEY) ne ""} { set which $::env(SURVEY) }
+set outdir [expr {$which eq "s1" ? "./build-survey" : "./build-survey-$which"}]
 set jobs 8
 if {[llength $argv] > 0} { set jobs [lindex $argv 0] }
 set dsp_mhz 256
 
-# {名前  点数  入力 bit  乗算器  バタフライ  実行時の長さ切り替え}
-set variants {
-    {ruler_lane512_res_lut       512 14 use_mults_resources use_luts             false}
-    {lane2048rtc_in14_res_lut   2048 14 use_mults_resources use_luts             true}
-    {lane2048rtc_in15_res_lut   2048 15 use_mults_resources use_luts             true}
-    {lane2048rtc_in16_res_lut   2048 16 use_mults_resources use_luts             true}
-    {lane2048rtc_in18_res_lut   2048 18 use_mults_resources use_luts             true}
-    {lane2048rtc_in16_res_dsp   2048 16 use_mults_resources use_xtremedsp_slices true}
+# {名前  点数  入力 bit  乗算器  バタフライ  実行時の長さ切り替え  BRAM を使う段数（"" = IP の既定。S-1 の既定は 4）}
+set variants_s1 {
+    {ruler_lane512_res_lut       512 14 use_mults_resources use_luts             false ""}
+    {lane2048rtc_in14_res_lut   2048 14 use_mults_resources use_luts             true  ""}
+    {lane2048rtc_in15_res_lut   2048 15 use_mults_resources use_luts             true  ""}
+    {lane2048rtc_in16_res_lut   2048 16 use_mults_resources use_luts             true  ""}
+    {lane2048rtc_in18_res_lut   2048 18 use_mults_resources use_luts             true  ""}
+    {lane2048rtc_in16_res_dsp   2048 16 use_mults_resources use_xtremedsp_slices true  ""}
+}
+# S-2: 入力 15 bit（model の YF = 0）で、BRAM を使う段数を既定の 4 から増やす。IP が受け付けない値はここで落ちる（fatal）
+set variants_s2 {
+    {ruler_lane512_res_lut       512 14 use_mults_resources use_luts             false ""}
+    {lane2048rtc_in15_bs4       2048 15 use_mults_resources use_luts             true  4}
+    {lane2048rtc_in15_bs5       2048 15 use_mults_resources use_luts             true  5}
+    {lane2048rtc_in15_bs6       2048 15 use_mults_resources use_luts             true  6}
+    {lane2048rtc_in15_bs7       2048 15 use_mults_resources use_luts             true  7}
+}
+if {$which eq "s1"} { set variants $variants_s1 } elseif {$which eq "s2"} { set variants $variants_s2 } else {
+    puts "ERROR: SURVEY = '$which' は知らない（s1 / s2）"; exit 1
 }
 
-proc fft_req {n in_w cmul bfly rtc clk_mhz} {
-    return [list \
+proc fft_req {n in_w cmul bfly rtc clk_mhz nbs} {
+    set extra {}
+    if {$nbs ne ""} { set extra [list CONFIG.number_of_stages_using_block_ram_for_data_and_phase_factors $nbs 1] }
+    return [concat [list \
         CONFIG.transform_length                       $n                     1 \
         CONFIG.implementation_options                 pipelined_streaming_io 1 \
         CONFIG.data_format                            fixed_point            1 \
@@ -50,19 +67,20 @@ proc fft_req {n in_w cmul bfly rtc clk_mhz} {
         CONFIG.phase_factor_width                     18                     0 \
         CONFIG.rounding_modes                         convergent_rounding    0 \
         CONFIG.ovflo                                  false                  0 \
-    ]
+    ] $extra]
 }
 
 puts "PART : $part"
+puts "SURVEY: $which → $outdir"
 puts "JOBS : $jobs"
 create_project survey $outdir/vivado -part $part -force
 
 set ng 0
 foreach v $variants {
-    lassign $v name n in_w cmul bfly rtc
+    lassign $v name n in_w cmul bfly rtc nbs
     create_ip -name xfft -vendor xilinx.com -library ip -module_name $name
     set ip [get_ips $name]
-    set req [fft_req $n $in_w $cmul $bfly $rtc $dsp_mhz]
+    set req [fft_req $n $in_w $cmul $bfly $rtc $dsp_mhz $nbs]
     set known [list_property $ip]
     foreach {k val fatal} $req {
         if {[lsearch -exact $known $k] < 0} {
@@ -108,7 +126,7 @@ proc util_field {txt label} {
 }
 set rows {}
 foreach v $variants {
-    lassign $v name n in_w cmul bfly rtc
+    lassign $v name n in_w cmul bfly rtc nbs
     open_run ${name}_synth_1 -name $name
     set rpt [report_utilization -return_string]
     set fh [open $outdir/util_$name.rpt w]; puts $fh $rpt; close $fh
@@ -141,7 +159,9 @@ foreach ch [list stdout $fh] {
         puts $ch "**物差し: ruler の DSP = $base で、proj012/013 の本番の 21 / 個と合わない。**"
         puts $ch "  OOC 単体と本番とで数えているものが違う。他の行の数字を本番の予言に使わないこと"
     }
-    if {$p14 eq [list 27 3773 7186 7.5]} {
+    if {$which ne "s1"} {
+        puts $ch "S-2: lane2048rtc_in15_bs4 は S-1 の lane2048rtc_in15_res_lut（27 3899 7431 8）と同じになるはず（既定 = 4）"
+    } elseif {$p14 eq [list 27 3773 7186 7.5]} {
         puts $ch "proj014 の再現: lane2048rtc_in14 = DSP 27・LUT 3773・FF 7186・BRAM 7.5（proj014 の survey と同じ）"
     } else {
         puts $ch "**proj014 の再現: lane2048rtc_in14 = $p14（proj014 は 27 3773 7186 7.5）。版か設定が違う**"

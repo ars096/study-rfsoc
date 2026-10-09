@@ -6,10 +6,10 @@
 `-1` で閉じる見込みの目安（DSP ≦ 75 %・BRAM ≦ 80 %・URAM ≦ 90 %・LUT ≦ 70 %）に入るものを並べる。
 
 **仮の値**（S-1 の survey と proj021 の最後で置き換える）:
-  - レーン FFT 2048 点（実行時の長さ切り替え）の 1 個: proj014 の survey（入力 14 bit）→ S-1（入力 16 bit）で置き換え
+  - レーン FFT 2048 点（実行時の長さ切り替え）の 1 個: **S-1 の実測（入力 15 bit、2026-10-09）**。S-2（BRAM を使う段数）で置き換える
   - v2 の共通部: proj021 2-1 の build-2-1-PE の実測（リングの分は 2-2 で増える）
 
-使い方: python3 estimate.py [--fft-bram 7.5] [--fft-lut 3773] [--fft-ff 7186] [--fft-dsp 27] [--all]
+使い方: python3 estimate.py [--fft-bram 8] [--fft-lut 3899] [--fft-ff 7431] [--fft-dsp 27] [--all]
 """
 import argparse
 import itertools
@@ -83,15 +83,15 @@ def total(fft, choice):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fft-dsp", type=float, default=27)
-    ap.add_argument("--fft-lut", type=float, default=3773)
-    ap.add_argument("--fft-ff", type=float, default=7186)
-    ap.add_argument("--fft-bram", type=float, default=7.5)
+    ap.add_argument("--fft-lut", type=float, default=3899)
+    ap.add_argument("--fft-ff", type=float, default=7431)
+    ap.add_argument("--fft-bram", type=float, default=8)
     ap.add_argument("--all", action="store_true", help="入らない組み合わせも出す")
     a = ap.parse_args()
     fft = dict(DSP=a.fft_dsp, LUT=a.fft_lut, FF=a.fft_ff, BRAM=a.fft_bram)
 
     f = per_adc_fixed(fft)
-    print(f"レーン FFT 1 個: DSP {a.fft_dsp:g}・LUT {a.fft_lut:g}・FF {a.fft_ff:g}・BRAM {a.fft_bram:g}（S-1 で置き換える）")
+    print(f"レーン FFT 1 個: DSP {a.fft_dsp:g}・LUT {a.fft_lut:g}・FF {a.fft_ff:g}・BRAM {a.fft_bram:g}（既定 = S-1 の入力 15 bit）")
     print(f"置き場を選ばない部品（1 ADC）: DSP {f['DSP']:.0f}・BRAM {f['BRAM']:.0f}・LUT {f['LUT']:.0f}・FF {f['FF']:.0f}"
           f"（うちレーン FFT × 16: BRAM {LANES * a.fft_bram:g}）、共通部 {COMMON}")
     print()

@@ -146,13 +146,13 @@ for i in range(4):
     # ---- s45_core_i（SAM45-Wide）----
     cy0, ch0 = top, LH - 15
     box(CX, cy0, CW, ch0, "core")
-    t(CX + 12, cy0 + 18, f"s45_core_{i}（{labels[i]}）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 130 ＋ 積分器 32・URAM 10", "tm")
+    t(CX + 12, cy0 + 18, f"s45_core_{i}（{labels[i]}）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 138 ＋ 積分器 32・URAM 10", "tm")
     t(CX + CW - 8, cy0 + 18, "s_axi ◀", "xs", "end")
     py, ph = cy0 + 28, 96
     stages = [
-        ("pfb_w（PFB T = 4）", 150, "new", ["16 レーン × 4 タップ", "x 14 → y 16 bit（小数 1）", "履歴 URAM 10", "（672 bit × 2048 行）", "DSP 64"]),
-        ("lane_fft × 16", 150, "sub", ["FFT IP・実行時の長さ", "512 / 1024 / 2048 点", "入力 16 → Y 27 bit", "unscaled・自然順", "DSP 27 × 16（S-1 待ち）"]),
-        ("ひねり係数 × 15", 122, "new", ["cmul（>> 18）", "W_N^(p·k1)", "表 1 本を 1·2·4 個おき", "→ V 25 bit"]),
+        ("pfb_w（PFB T = 4）", 150, "new", ["16 レーン × 4 タップ", "x 14 → y 15 bit（整数）", "履歴 URAM 10", "（672 bit × 2048 行）", "DSP 64"]),
+        ("lane_fft × 16", 150, "sub", ["FFT IP・実行時の長さ", "512 / 1024 / 2048 点", "入力 15 → Y 26 bit", "unscaled・自然順", "DSP 27・BRAM 8（S-1）"]),
+        ("ひねり係数 × 15", 122, "new", ["cmul（>> 17）", "W_N^(p·k1)", "表 1 本を 1·2·4 個おき", "→ V 25 bit"]),
         ("dft16", 104, "sub", ["今のまま", "k2 = 0..7", "U 27・Z 29 bit"]),
         ("SHIFT・電力", 116, "sub", [">> SHIFT → 18 bit", "飽和を数える", "re² ＋ im² × 8", "（37 bit）"]),
         ("振り分け", 124, "new", ["c = k1 ＋ M·k2", "→ 銀行 ⌊(c − s)/M⌋", "番地 (c − s) mod M", "8 → 8（37 bit）"]),
@@ -242,15 +242,15 @@ for k, ln in enumerate(["ch の応答は 3 つの長さとも proj020 と同じ�
 
 NX = MX + 600
 box(NX, MY, CX + CW - NX, 206, "note")
-t(NX + 12, MY + 20, "資源の見積もり（E-1 の案 A、レーン FFT は proj014 の survey の値）", "tm")
+t(NX + 12, MY + 20, "資源の見積もり（E-1 の案 A、レーン FFT は S-1 の実測・入力 15 bit）", "tm")
 for k, ln in enumerate(["DSP 2,656（62 %）= (432 ＋ 64 ＋ 168) × 4",
-                        "BRAM 688（64 %）= (120 ＋ 10 ＋ 32) × 4 ＋ ひねり係数 30 ＋ 共通 10",
+                        "BRAM 720（67 %）= (128 ＋ 10 ＋ 32) × 4 ＋ ひねり係数 30 ＋ 共通 10",
                         "URAM 56（70 %）= 履歴 10 × 4 ＋ 係数 16",
-                        "LUT 290k（68 %）・FF 540k（64 %）",
-                        "何も共有しないと BRAM 938（87 %）で入らない",
-                        "未確定: S-1（レーン FFT の入力 16 bit）・v2 の共通部（proj021）",
-                        "`-1` の危うさ: LUT（Fine は 48.6 %）。長さ切り替えの代償 46k"]):
-    t(NX + 12, MY + 42 + 20 * k, ln, "xs" if k not in (4, 6) else "xn")
+                        "LUT 298k（70.1 %）・FF 556k（65 %）。LUT の 59 % がレーン FFT",
+                        "何も共有しないと BRAM 970（90 %）で入らない",
+                        "律速は LUT（目安 70 %、Fine は 48.6 %）→ S-2: FFT の記憶を BRAM へ",
+                        "未確定: S-2・v2 の共通部（proj021）"]):
+    t(NX + 12, MY + 42 + 20 * k, ln, "xs" if k not in (4, 5) else "xn")
 
 # ---------------- クロック ----------------
 KY = SY

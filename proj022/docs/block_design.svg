@@ -101,12 +101,12 @@
 <text x="343" y="385" class="xs">Tile 226 / slice 2</text>
 <path class="wG" d="M550,357 L608,357"/>
 <rect class="core" x="610" y="285" width="1150" height="190"/>
-<text x="622" y="303" class="tm">s45_core_0（ADC_A）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 130 ＋ 積分器 32・URAM 10</text>
+<text x="622" y="303" class="tm">s45_core_0（ADC_A）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 138 ＋ 積分器 32・URAM 10</text>
 <text x="1752" y="303" class="xs" text-anchor="end">s_axi ◀</text>
 <rect class="new" x="622" y="313" width="150" height="96"/>
 <text x="629" y="329" class="tm">pfb_w（PFB T = 4）</text>
 <text x="629" y="345" class="xs">16 レーン × 4 タップ</text>
-<text x="629" y="359" class="xs">x 14 → y 16 bit（小数 1）</text>
+<text x="629" y="359" class="xs">x 14 → y 15 bit（整数）</text>
 <text x="629" y="373" class="xs">履歴 URAM 10</text>
 <text x="629" y="387" class="xs">（672 bit × 2048 行）</text>
 <text x="629" y="401" class="xs">DSP 64</text>
@@ -115,13 +115,13 @@
 <text x="791" y="329" class="tm">lane_fft × 16</text>
 <text x="791" y="345" class="xs">FFT IP・実行時の長さ</text>
 <text x="791" y="359" class="xs">512 / 1024 / 2048 点</text>
-<text x="791" y="373" class="xs">入力 16 → Y 27 bit</text>
+<text x="791" y="373" class="xs">入力 15 → Y 26 bit</text>
 <text x="791" y="387" class="xs">unscaled・自然順</text>
-<text x="791" y="401" class="xs">DSP 27 × 16（S-1 待ち）</text>
+<text x="791" y="401" class="xs">DSP 27・BRAM 8（S-1）</text>
 <path class="wG" d="M934,361 L944,361"/>
 <rect class="new" x="946" y="313" width="122" height="96"/>
 <text x="953" y="329" class="tm">ひねり係数 × 15</text>
-<text x="953" y="345" class="xs">cmul（&gt;&gt; 18）</text>
+<text x="953" y="345" class="xs">cmul（&gt;&gt; 17）</text>
 <text x="953" y="359" class="xs">W_N^(p·k1)</text>
 <text x="953" y="373" class="xs">表 1 本を 1·2·4 個おき</text>
 <text x="953" y="387" class="xs">→ V 25 bit</text>
@@ -193,12 +193,12 @@
 <text x="343" y="590" class="xs">Tile 226 / slice 0</text>
 <path class="wG" d="M550,562 L608,562"/>
 <rect class="core" x="610" y="490" width="1150" height="190"/>
-<text x="622" y="508" class="tm">s45_core_1（ADC_B）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 130 ＋ 積分器 32・URAM 10</text>
+<text x="622" y="508" class="tm">s45_core_1（ADC_B）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 138 ＋ 積分器 32・URAM 10</text>
 <text x="1752" y="508" class="xs" text-anchor="end">s_axi ◀</text>
 <rect class="new" x="622" y="518" width="150" height="96"/>
 <text x="629" y="534" class="tm">pfb_w（PFB T = 4）</text>
 <text x="629" y="550" class="xs">16 レーン × 4 タップ</text>
-<text x="629" y="564" class="xs">x 14 → y 16 bit（小数 1）</text>
+<text x="629" y="564" class="xs">x 14 → y 15 bit（整数）</text>
 <text x="629" y="578" class="xs">履歴 URAM 10</text>
 <text x="629" y="592" class="xs">（672 bit × 2048 行）</text>
 <text x="629" y="606" class="xs">DSP 64</text>
@@ -207,13 +207,13 @@
 <text x="791" y="534" class="tm">lane_fft × 16</text>
 <text x="791" y="550" class="xs">FFT IP・実行時の長さ</text>
 <text x="791" y="564" class="xs">512 / 1024 / 2048 点</text>
-<text x="791" y="578" class="xs">入力 16 → Y 27 bit</text>
+<text x="791" y="578" class="xs">入力 15 → Y 26 bit</text>
 <text x="791" y="592" class="xs">unscaled・自然順</text>
-<text x="791" y="606" class="xs">DSP 27 × 16（S-1 待ち）</text>
+<text x="791" y="606" class="xs">DSP 27・BRAM 8（S-1）</text>
 <path class="wG" d="M934,566 L944,566"/>
 <rect class="new" x="946" y="518" width="122" height="96"/>
 <text x="953" y="534" class="tm">ひねり係数 × 15</text>
-<text x="953" y="550" class="xs">cmul（&gt;&gt; 18）</text>
+<text x="953" y="550" class="xs">cmul（&gt;&gt; 17）</text>
 <text x="953" y="564" class="xs">W_N^(p·k1)</text>
 <text x="953" y="578" class="xs">表 1 本を 1·2·4 個おき</text>
 <text x="953" y="592" class="xs">→ V 25 bit</text>
@@ -285,12 +285,12 @@
 <text x="343" y="795" class="xs">Tile 224 / slice 2</text>
 <path class="wG" d="M550,767 L608,767"/>
 <rect class="core" x="610" y="695" width="1150" height="190"/>
-<text x="622" y="713" class="tm">s45_core_2（ADC_C）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 130 ＋ 積分器 32・URAM 10</text>
+<text x="622" y="713" class="tm">s45_core_2（ADC_C）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 138 ＋ 積分器 32・URAM 10</text>
 <text x="1752" y="713" class="xs" text-anchor="end">s_axi ◀</text>
 <rect class="new" x="622" y="723" width="150" height="96"/>
 <text x="629" y="739" class="tm">pfb_w（PFB T = 4）</text>
 <text x="629" y="755" class="xs">16 レーン × 4 タップ</text>
-<text x="629" y="769" class="xs">x 14 → y 16 bit（小数 1）</text>
+<text x="629" y="769" class="xs">x 14 → y 15 bit（整数）</text>
 <text x="629" y="783" class="xs">履歴 URAM 10</text>
 <text x="629" y="797" class="xs">（672 bit × 2048 行）</text>
 <text x="629" y="811" class="xs">DSP 64</text>
@@ -299,13 +299,13 @@
 <text x="791" y="739" class="tm">lane_fft × 16</text>
 <text x="791" y="755" class="xs">FFT IP・実行時の長さ</text>
 <text x="791" y="769" class="xs">512 / 1024 / 2048 点</text>
-<text x="791" y="783" class="xs">入力 16 → Y 27 bit</text>
+<text x="791" y="783" class="xs">入力 15 → Y 26 bit</text>
 <text x="791" y="797" class="xs">unscaled・自然順</text>
-<text x="791" y="811" class="xs">DSP 27 × 16（S-1 待ち）</text>
+<text x="791" y="811" class="xs">DSP 27・BRAM 8（S-1）</text>
 <path class="wG" d="M934,771 L944,771"/>
 <rect class="new" x="946" y="723" width="122" height="96"/>
 <text x="953" y="739" class="tm">ひねり係数 × 15</text>
-<text x="953" y="755" class="xs">cmul（&gt;&gt; 18）</text>
+<text x="953" y="755" class="xs">cmul（&gt;&gt; 17）</text>
 <text x="953" y="769" class="xs">W_N^(p·k1)</text>
 <text x="953" y="783" class="xs">表 1 本を 1·2·4 個おき</text>
 <text x="953" y="797" class="xs">→ V 25 bit</text>
@@ -377,12 +377,12 @@
 <text x="343" y="1000" class="xs">Tile 224 / slice 0</text>
 <path class="wG" d="M550,972 L608,972"/>
 <rect class="core" x="610" y="900" width="1150" height="190"/>
-<text x="622" y="918" class="tm">s45_core_3（ADC_D）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 130 ＋ 積分器 32・URAM 10</text>
+<text x="622" y="918" class="tm">s45_core_3（ADC_D）SAM45-Wide　見当: DSP 664（レーン FFT 432・PFB 64・残り 168）・BRAM 138 ＋ 積分器 32・URAM 10</text>
 <text x="1752" y="918" class="xs" text-anchor="end">s_axi ◀</text>
 <rect class="new" x="622" y="928" width="150" height="96"/>
 <text x="629" y="944" class="tm">pfb_w（PFB T = 4）</text>
 <text x="629" y="960" class="xs">16 レーン × 4 タップ</text>
-<text x="629" y="974" class="xs">x 14 → y 16 bit（小数 1）</text>
+<text x="629" y="974" class="xs">x 14 → y 15 bit（整数）</text>
 <text x="629" y="988" class="xs">履歴 URAM 10</text>
 <text x="629" y="1002" class="xs">（672 bit × 2048 行）</text>
 <text x="629" y="1016" class="xs">DSP 64</text>
@@ -391,13 +391,13 @@
 <text x="791" y="944" class="tm">lane_fft × 16</text>
 <text x="791" y="960" class="xs">FFT IP・実行時の長さ</text>
 <text x="791" y="974" class="xs">512 / 1024 / 2048 点</text>
-<text x="791" y="988" class="xs">入力 16 → Y 27 bit</text>
+<text x="791" y="988" class="xs">入力 15 → Y 26 bit</text>
 <text x="791" y="1002" class="xs">unscaled・自然順</text>
-<text x="791" y="1016" class="xs">DSP 27 × 16（S-1 待ち）</text>
+<text x="791" y="1016" class="xs">DSP 27・BRAM 8（S-1）</text>
 <path class="wG" d="M934,976 L944,976"/>
 <rect class="new" x="946" y="928" width="122" height="96"/>
 <text x="953" y="944" class="tm">ひねり係数 × 15</text>
-<text x="953" y="960" class="xs">cmul（&gt;&gt; 18）</text>
+<text x="953" y="960" class="xs">cmul（&gt;&gt; 17）</text>
 <text x="953" y="974" class="xs">W_N^(p·k1)</text>
 <text x="953" y="988" class="xs">表 1 本を 1·2·4 個おき</text>
 <text x="953" y="1002" class="xs">→ V 25 bit</text>
@@ -506,14 +506,14 @@
 <text x="622" y="1275" class="xs">1 本の流れは 1 クロックに 4096 / M 個の bin を受ける（開始 ch に依らない）→ 切り出しだけを積める</text>
 <text x="622" y="1293" class="xs">SHIFT の目安: −17 dBFS の雑音で 2〜3、−1 dBFS の CW で 7〜9（0〜15 で足りる）</text>
 <rect class="note" x="1210" y="1115" width="550" height="206"/>
-<text x="1222" y="1135" class="tm">資源の見積もり（E-1 の案 A、レーン FFT は proj014 の survey の値）</text>
+<text x="1222" y="1135" class="tm">資源の見積もり（E-1 の案 A、レーン FFT は S-1 の実測・入力 15 bit）</text>
 <text x="1222" y="1157" class="xs">DSP 2,656（62 %）= (432 ＋ 64 ＋ 168) × 4</text>
-<text x="1222" y="1177" class="xs">BRAM 688（64 %）= (120 ＋ 10 ＋ 32) × 4 ＋ ひねり係数 30 ＋ 共通 10</text>
+<text x="1222" y="1177" class="xs">BRAM 720（67 %）= (128 ＋ 10 ＋ 32) × 4 ＋ ひねり係数 30 ＋ 共通 10</text>
 <text x="1222" y="1197" class="xs">URAM 56（70 %）= 履歴 10 × 4 ＋ 係数 16</text>
-<text x="1222" y="1217" class="xs">LUT 290k（68 %）・FF 540k（64 %）</text>
-<text x="1222" y="1237" class="xn">何も共有しないと BRAM 938（87 %）で入らない</text>
-<text x="1222" y="1257" class="xs">未確定: S-1（レーン FFT の入力 16 bit）・v2 の共通部（proj021）</text>
-<text x="1222" y="1277" class="xn">`-1` の危うさ: LUT（Fine は 48.6 %）。長さ切り替えの代償 46k</text>
+<text x="1222" y="1217" class="xs">LUT 298k（70.1 %）・FF 556k（65 %）。LUT の 59 % がレーン FFT</text>
+<text x="1222" y="1237" class="xn">何も共有しないと BRAM 970（90 %）で入らない</text>
+<text x="1222" y="1257" class="xn">律速は LUT（目安 70 %、Fine は 48.6 %）→ S-2: FFT の記憶を BRAM へ</text>
+<text x="1222" y="1277" class="xs">未確定: S-2・v2 の共通部（proj021）</text>
 <rect class="ext" x="20" y="1115" width="150" height="44"/>
 <text x="30" y="1133" class="s">LMX2594</text>
 <text x="30" y="1150" class="xs">491.52 MHz（両タイル）</text>
