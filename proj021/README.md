@@ -343,6 +343,11 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 - 資源（予言 3）: DSP 2600・BRAM 305・URAM 56 は 1b と同じ（当たり）。LUT 206,787 / 206,905（1b 206,593 から +194 / +312。予言 +500〜+2,000 より少ない）、FF 328,177 / 329,780（1b 329,546 から −1,369 / +234。予言 +300〜+1,000 は既定で外れ。SmartConnect の M が 1 本減った分と配置ごとの複製の差と読む）。DSP の内訳は FULL 504・u_win 524 × 4・u_pfb 272・ddc 72・ws 42・tp 24
 - CDC（予言 5）: CDC-6 5・CDC-15 3137 は 1b と同じ。**CDC-3 は 105 → 91（−14）**。1b の SmartConnect の CDC-3 は M ごとにちょうど 14 本（m01〜m06）で、2-1 は spec_core_0 の M が無くなった分だけ減った（smc_ctrl の CDC-3 86 → 72）。新しい乗り換えは無い → 予言 5 の「同じ」は外れだが、理由は構造で説明できる
 - 結線の照合: 照合した行 101 / 問題 0 件 / 陽性対照 OK（spec_core_* のセルが無い、を含む）
+- **worst-paths（2026-10-09）**: 振り分け（s45_core の q_* と 1 → 2 の口）は既定・PE とも上位 200 本に無い → **予言 4「新しい壁にしない」は当たり**。上位は前からある壁:
+  - 既定（−0.002）: ADC_A の u_pfb の中（CARRY8 を含む 10 段、32 本）・ADC_C の u_ws の URAM の読み（−0.001）・**ADC_A 窓 1 の `c_ns` → u_ddc の DSP の CEA2（ファンアウト 1830、+0.000）**（1b の PE の −0.129 と同じ「win_core の上の階層 → ddc」）。仮の読み窓の `ax_ch` → `rq_w`（+0.005）・`snap_sel` → `swd2`（+0.010）も出る（1b からある経路。2-2 で仮の読み窓と一緒に消える）
+  - PE（+0.003）: **ADC ドメインの gb_up_1（axis_dwidth_converter）の state_reg → r0_data（ファンアウト 195、段 0・配線 96 %、16 本）**。次に FULL の fin → snap_mem（+0.017）・`c_ns` → u_ddc（+0.017）・u_pfb・u_ws（+0.019〜）
+  - 200 本とも slack < 0.3 ns（壁の厚さは WP_N を増やして数える）
+  - **2-2 の候補**: `c_ns`（WRST でしか変わらない）を ddc の側で 1 段受けて複製する（値は変わらない）。u_pfb の段は遅れが変わるので sim-wdelay の出し直し（INTERFACE 8. の 9）と一緒に
 - **CRITICAL WARNING [BD 41-759] × 3**（予言どおりの気にしておくこと）: s45_core_1〜3 の s_axis_full_tvalid・full_gb_stat・full_adc_stat がつながっておらず、Vivado が 0 に結んだ。働きは正しい（FULL = 0 のコアはこの入口を使わない）が、「CRITICAL WARNING なし」の規約から外れる → **2-2 で定数のセルで結ぶ**（今ビルドし直すと配置が組み替わり、閉じた PE を失うので直さない）。ほかの CRITICAL WARNING は既定の Timing 38-282（WNS が負）だけ
 
 **実機（2026-10-09、build-PE/ の proj021.bit）**:
