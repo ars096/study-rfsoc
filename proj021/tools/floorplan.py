@@ -4,7 +4,7 @@
 
     python3 tools/floorplan.py build/floorplan                       # → build/floorplan/floorplan.png・floorplan_detail.png・blocks.txt
     python3 tools/floorplan.py build/floorplan --title "2-1 既定" --paths 30
-    python3 tools/floorplan.py build/floorplan build-1b/floorplan    # 2 つを横に並べる（compare.png は 1 つ目のディレクトリに）
+    python3 tools/floorplan.py build/floorplan build-1b/floorplan    # 2 つを縦に並べる（compare.png は 1 つ目のディレクトリに）
 
 図の座標は Vivado の RPM_X・RPM_Y（SLICE・DSP・BRAM・URAM が同じ物差し。左下が原点）。点 1 つ = 使っているサイト 1 つ。
   floorplan.png        ブロックの種類で色分け（コアごとの色相: PFB は濃く、窓 0・1・コアの共通は薄く。FULL・ギアボックス・SmartConnect・RFDC）
@@ -34,7 +34,9 @@ def shade(hexc, f):
 
 def category(g):
     """深さ D のグループ名 → (図の凡例の名前, 色, 並べる順)"""
-    m = re.search(r"s45_core_(\d+)/inst/(.*)", g)
+    if re.search(r"/spec_core_\d+/", g):                     # proj021 1b まで: 全帯域は spec_core_0 のセル
+        return "FULL (s45_core_0)", "#9467bd", 40
+    m = re.search(r"(?:s45_core|win_core)_(\d+)/inst/(.*)", g)   # 1b までは win_core_i（u_win の段が無い）
     if m:
         i, rest = int(m.group(1)), m.group(2)
         a, h = ADC[i] if i < 4 else f"core{i}", HUE[i % 4]
@@ -113,9 +115,9 @@ def draw(ax, D, detail=False, npaths=0, title=None):
         for (k, lab, col), pts in sorted(cats.items(), key=lambda t: t[0][0]):
             p = np.array([q[:3] for q in pts])
             big = np.array([q[3].startswith(("DSP", "RAMB", "URAM")) for q in pts])
-            ax.scatter(p[~big, 0], p[~big, 1], s=2.0, c=[col], marker="s", linewidths=0, zorder=3, label=lab)
+            ax.scatter(p[~big, 0], p[~big, 1], s=4.0, c=[col], marker="s", linewidths=0, zorder=3, label=lab)
             if big.any():
-                ax.scatter(p[big, 0], p[big, 1], s=6.0, c=[col], marker="s", edgecolors="k", linewidths=0.2, zorder=4)
+                ax.scatter(p[big, 0], p[big, 1], s=10.0, c=[col], marker="s", edgecolors="k", linewidths=0.2, zorder=4)
     if npaths and D["paths"]:
         ps = D["paths"][:npaths]
         sl = np.array([float(p["slack"]) for p in ps])
@@ -126,7 +128,8 @@ def draw(ax, D, detail=False, npaths=0, title=None):
                         arrowprops=dict(arrowstyle="->", color=col, lw=0.8), zorder=6)
         ax.text(0.01, 0.005, f"arrows: setup top {len(ps)} paths, slack {sl.min():+.3f} .. {sl.max():+.3f} ns (red = worst)",
                 transform=ax.transAxes, fontsize=7)
-    ax.set_aspect("equal")
+    # RPM_X は RPM_Y より刻みが細かい（x 0〜3700・y 0〜1000 ほど）ので、等倍にすると潰れる。クロック領域の箱が縦長に見える比にする
+    ax.set_aspect("auto")
     ax.set_xlabel("RPM_X"); ax.set_ylabel("RPM_Y")
     ax.set_title(title or os.path.normpath(D["dir"]), fontsize=9)
     return ax
@@ -155,7 +158,7 @@ def blocks(D):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("dirs", nargs="+", help="tools/floorplan.tcl の出力ディレクトリ（2 つ目以降は横に並べて比べる）")
+    ap.add_argument("dirs", nargs="+", help="tools/floorplan.tcl の出力ディレクトリ（2 つ目以降は縦に並べて比べる）")
     ap.add_argument("--title", action="append", default=None, help="図の題（ディレクトリの順に。既定はディレクトリ名）")
     ap.add_argument("--paths", type=int, default=20, help="重ねる setup の経路の本数（0 で重ねない）")
     ap.add_argument("--dpi", type=int, default=200)
@@ -167,7 +170,7 @@ def main():
     titles = (a.title or []) + [None] * len(Ds)
     D = Ds[0]
     for detail, name in ((False, "floorplan.png"), (True, "floorplan_detail.png")):
-        fig, ax = plt.subplots(figsize=(11, 14))
+        fig, ax = plt.subplots(figsize=(16, 12))
         draw(ax, D, detail=detail, npaths=0 if detail else a.paths, title=titles[0])
         ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), fontsize=6 if detail else 7, markerscale=4, frameon=False,
                   ncol=2 if detail and len({c["group"] for c in D["cells"]}) > 40 else 1)
@@ -179,7 +182,7 @@ def main():
         f.write(txt + "\n")
     print(txt)
     if len(Ds) > 1:
-        fig, axs = plt.subplots(1, len(Ds), figsize=(9 * len(Ds), 13), sharex=True, sharey=True)
+        fig, axs = plt.subplots(len(Ds), 1, figsize=(16, 11 * len(Ds)), sharex=True, sharey=True)
         for ax, Dk, t in zip(axs, Ds, titles):
             draw(ax, Dk, npaths=a.paths, title=t)
         axs[-1].legend(loc="upper left", bbox_to_anchor=(1.01, 1), fontsize=7, markerscale=4, frameon=False)

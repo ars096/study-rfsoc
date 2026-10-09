@@ -105,7 +105,10 @@ if {$nbad} { fail "RPM の読めないサイトが $nbad 個" }
 set groups [lsort [array names gsum]]
 say "グループ（深さ $DEPTH）: [llength $groups] 個"
 if {[llength $groups] < 2} { fail "グループが [llength $groups] 個。深さか階層の名前を疑う" }
-if {[llength [lsearch -all -glob $groups *s45_core_*]] == 0} { fail "s45_core_* のグループが無い（proj021 2-1 より前の dcp か、階層の名前が違う）" }
+if {[llength [lsearch -all -glob $groups *s45_core_*]] == 0} {
+    # proj021 1b までの dcp は win_core_i・spec_core_0（floorplan.py はどちらも描ける）。どちらも無ければ階層の名前を疑う
+    if {[llength [lsearch -all -glob $groups *win_core_*]] == 0} { fail "s45_core_*・win_core_* のグループが無い（階層の名前が違う）" } else { say "  NOTE: s45_core_* が無く win_core_* がある（proj021 1b までの dcp）" }
+}
 
 # report_utilization の合計と比べる（多めに出るのは CARRY8・MUXF・SRL など）
 set ut [report_utilization -return_string]
