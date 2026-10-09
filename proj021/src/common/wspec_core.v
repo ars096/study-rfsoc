@@ -503,8 +503,11 @@ module wspec_core #(
             else               sat = {1'b0, t[QW-1:0]};
         end
     endfunction
-    reg signed [QW-1:0] q_re, q_im;           // S1
-    reg                 q_sat;
+    // proj021 2-2a: q_* を DSP の B のレジスタに取り込ませない（DONT_TOUCH）。2-2a のビルドで、Vivado が q_*・a_* を DSP の B1・B2 に
+    //   入れたため、y → 飽和の論理 → DSP の B の入口（セットアップ 0.3 ns）が既定の最悪経路（−0.223 ns）になった。q_* を布の FF に残せば
+    //   飽和の論理の行き先は FF になり、a_* が DSP の B のレジスタになる（段数・中身は同じ）
+    (* dont_touch = "true" *) reg signed [QW-1:0] q_re, q_im;           // S1
+    (* dont_touch = "true" *) reg                 q_sat;
     reg [QW:0] sr, si;
     // rev3: SHIFT をここで受け直す（`-1` の群 W: win_core の r_shift から 64 本へ配る配線が長かった）。SHIFT は RUN の外で
     //   書く静的な設定なので、1 クロック遅れて効くだけで中身は同じ

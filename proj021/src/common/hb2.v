@@ -95,10 +95,16 @@ module hb2 #(
         integer c, k; begin c = T; for (k = 0; k < lv; k = k + 1) c = (c + 1) / 2; cnt_at = c; end
     endfunction
     reg signed [PW-1:0] tr [0:(NLV+1)*T-1], ti [0:(NLV+1)*T-1];
+    localparam signed [PW-1:0] RND = 1 <<< (SH - 1);
     reg [NLV:0]         tv;
     integer lv, n;
     always @(posedge clk) begin
-        for (n = 0; n < T; n = n + 1) begin tr[n] <= mr[n]; ti[n] <= mi[n]; end
+        // proj021 2-2a: 丸めの +2^(SH−1) を木の入口（項 0）で足す（和は線形なので、最後に足すのと同じ値。PW bit の中で回るのも同じ）。
+        //   2-2a のビルドで、最後の和 → 48 bit の丸めの足し算 → 飽和の比べ → y が `-2` の最悪経路の 1 つだった（u_final、CARRY8 6 段）
+        for (n = 0; n < T; n = n + 1) begin
+            tr[n] <= (n == 0) ? mr[n] + RND : mr[n];
+            ti[n] <= (n == 0) ? mi[n] + RND : mi[n];
+        end
         for (lv = 0; lv < NLV; lv = lv + 1)
             for (n = 0; n < T; n = n + 1)
                 if (2 * n + 1 < cnt_at(lv)) begin
@@ -114,8 +120,8 @@ module hb2 #(
     wire signed [PW-1:0] si = ti[NLV*T];
     wire                 v4 = tv[NLV];
 
-    wire signed [PW-1:0] rr = (sr + (1 <<< (SH - 1))) >>> SH;
-    wire signed [PW-1:0] ri = (si + (1 <<< (SH - 1))) >>> SH;
+    wire signed [PW-1:0] rr = sr >>> SH;       // 丸めの +2^(SH−1) は項 0 で足してある（上）
+    wire signed [PW-1:0] ri = si >>> SH;
     localparam signed [PW-1:0] MX = (1 <<< (W - 1)) - 1;
     localparam signed [PW-1:0] MN = -(1 <<< (W - 1));
     always @(posedge clk) begin
