@@ -171,7 +171,14 @@ module win_core #(
     // proj016: time_core から（ここで 1 段受ける。受けた t_loc が time_core の T と同じ値になるよう、time_core が先に足して出す）
     input  wire [63:0]  t_in,
     input  wire         go_in,
-    input  wire [3:0]   tev_in
+    input  wire [3:0]   tev_in,
+    // proj021 手順 2-2a: SPEC のレコード（src/common/rec_fr.v）。s45_core が FULL の流れのものと束ねてリングへ
+    output wire [63:0]  m_axis_rec_tdata,
+    output wire         m_axis_rec_tvalid,
+    input  wire         m_axis_rec_tready,
+    output wire         m_axis_rec_tlast,
+    output wire         m_axis_rec_tuser,
+    output wire [NW-1:0] rec_drop
 );
     localparam integer FW = 48;
     localparam [7:0]   BK8 = BIT_KIND, BR8 = BIT_REV;
@@ -276,7 +283,8 @@ module win_core #(
     reg [19:0]   ar_addr;
     reg [2:0]    ar_wait;
     reg          ar_busy;
-    assign s_axi_arready = !ar_busy && !s_axi_rvalid;
+    reg          fr_gnt;                 // proj021 2-2a: レコードの組み立て（rec_fr）が読みの口を持っている間は AXI4-Lite の読みを待たせる
+    assign s_axi_arready = !ar_busy && !s_axi_rvalid && !fr_gnt;
     assign s_axi_rresp   = 2'b00;
     // proj021 手順 2-1: 応答の選び（ar_addr から。ar_addr はレジスタ）
     wire       ar_blk  = (ar_addr[19:16] == 4'd0) && (ar_addr[15:14] != 2'd0);
@@ -335,6 +343,10 @@ module win_core #(
     wire [31:0]    reg_rd_v [0:NW-1];
     wire [63:0]    sp_data_v [0:NW-1];
     wire [NW-1:0]  rd_bank_v;
+    // proj021 2-2a: レコードの組み立てへ（窓ごと）
+    wire [32*NW-1:0]  fr_seq;
+    wire [384*NW-1:0] fr_hdr;
+    wire [NW-1:0]     fr_all, fr_one, fr_one_clr, fr_late;
     genvar g;
     generate
         for (g = 0; g < NW; g = g + 1) begin : g_w
@@ -345,6 +357,8 @@ module win_core #(
             reg [4:0]  r_k;
             reg [3:0]  r_ns;
             reg [15:0] r_wt;
+            reg [2:0]  r_rec;                       // proj021 2-2a: REC_CTRL [0] ALL / [1] ONE / [2] SNAP（2-2c まで効かない）
+            reg [31:0] rec_late;
             reg        cmd_run, cmd_stop, cmd_clr, cmd_wrst;
             reg        arm_run, arm_wrst;           // proj016: 予約（time_core の発火で RUN / WRST）
             reg [31:0] r_cfg;                       // proj016: 設定番号（RUN と WRST の時点で取り込む）
@@ -357,6 +371,7 @@ module win_core #(
             wire       run_go    = (go_loc && arm_run && !arm_wrst) || (run_defer && wrst_idle);
             always @(posedge aclk) begin
                 cmd_run <= run_go; cmd_stop <= 1'b0; cmd_clr <= 1'b0; cmd_wrst <= go_loc && arm_wrst;
+                if (fr_one_clr[g]) r_rec[1] <= 1'b0;   // proj021 2-2a: ONE で 1 個出した（同じクロックの書き込みが後で勝つ）
                 if (run_defer && wrst_idle) run_defer <= 1'b0;
                 if (go_loc && arm_run && arm_wrst) run_defer <= 1'b1;
                 if (go_loc) begin arm_run <= 1'b0; arm_wrst <= 1'b0; end
@@ -364,6 +379,7 @@ module win_core #(
                     r_nacc <= N_ACC_DEFAULT; r_ndump <= 32'd0; r_shift <= SHIFT_DEFAULT;
                     r_k <= 5'd0; r_dphi <= 32'd0; r_ns <= 4'd1; r_wt <= 16'd64;
                     arm_run <= 1'b0; arm_wrst <= 1'b0; r_cfg <= 32'd0; run_defer <= 1'b0;
+                    r_rec <= 3'd0;
                 end else if (wr_me) begin
                     case (s_axi_awaddr[9:2])           // proj021 手順 2-1: 流れのブロックの番地
                         8'h02: begin
@@ -376,6 +392,7 @@ module win_core #(
                             if (s_axi_wdata[3] || s_axi_wdata[1]) begin arm_run <= 1'b0; arm_wrst <= 1'b0; run_defer <= 1'b0; end
                         end
                         8'h0B: r_cfg   <= s_axi_wdata;          // 0x2C CFG_ID
+                        8'h21: r_rec   <= s_axi_wdata[2:0];     // 0x84 REC_CTRL（proj021 2-2a）
                         8'h03: r_nacc  <= s_axi_wdata;
                         8'h04: r_ndump <= s_axi_wdata;
                         8'h05: r_shift <= s_axi_wdata[3:0];
@@ -519,7 +536,8 @@ module win_core #(
                     8'h1E: rr = fout_lat[31:0];
                     8'h1F: rr = {{(64-FW){1'b0}}, fout_lat[FW-1:32]};
                     8'h20: rr = {16'd0, 8'd12, 8'd12};                      // NFFT_MIN_MAX
-                    // 0x84 REC_CTRL・0x88 REC_LATE は 2-2 で（今は 0）
+                    8'h21: rr = {29'd0, r_rec};                             // 0x84 REC_CTRL（proj021 2-2a）
+                    8'h22: rr = rec_late;                                   // 0x88 REC_LATE
                     8'h40: rr = {27'd0, r_k};
                     8'h41: rr = r_dphi;
                     8'h42: rr = {28'd0, r_ns};
@@ -541,8 +559,45 @@ module win_core #(
                 endcase
             end
             assign reg_rd_v[g] = rr;
+
+            // ---- proj021 2-2a: レコードの頭（INTERFACE 4.4 の w1..w6）と REC_CTRL の ONE・REC_LATE ----
+            wire [7:0] g8 = (c_ns >= 4'd7) ? 8'd5 : 8'd4;
+            wire [31:0] flags32 = {21'd0, ddc_ovr != 16'd0, ddc_sat != 16'd0, psat != 16'd0, wflags};
+            assign fr_seq[32*g +: 32] = seq;
+            assign fr_hdr[384*g +: 384] = {
+                flags32, rd_cfg,                                            // w6 DUMP_CFG | FLAGS
+                rd_sat, rd_n,                                               // w5 DUMP_N | DUMP_SAT
+                rd_h, {4'd0, CP16[3:0]}, 8'd0, g8, {4'd0, run_shift}, {4'd0, c_ns}, 8'd12,   // w4
+                rd_t,                                                       // w3 DUMP_T
+                {{(64-FW){1'b0}}, rd_f0},                                   // w2 DUMP_F0
+                rd_k, seq};                                                 // w1 SEQ | DUMP_K
+            assign fr_all[g] = r_rec[0];
+            assign fr_one[g] = r_rec[1];
+            always @(posedge aclk) begin
+                if (rst) rec_late <= 32'd0;
+                else if (fr_late[g] && rec_late != 32'hFFFF_FFFF) rec_late <= rec_late + 32'd1;
+            end
         end
     endgenerate
+
+    // ---- proj021 2-2a: レコードの組み立て（窓の凍ったバンクを、AXI4-Lite の読みと同じ口 ax_ch・ax_bank から読む）----
+    //   fr_req → fr_gnt（AXI4-Lite の読みが無いクロックで渡す）。fr_gnt の間は ax_ch・ax_bank を rec_fr が握り、arready を下げる。
+    //   rd_ch（rec_fr のレジスタ）→ ax_ch（ここ）→ wspec の rd1 → rd2 → fr_data（ここ）= 5 クロック（rec_fr の LAT。
+    //   sim-ring の 1 回目は 4 にしていて、レコードの本体が 1 語ずれた: 2026-10-09）
+    wire        fr_req;
+    wire [1:0]  fr_s;
+    wire [11:0] fr_ch;
+    reg  [63:0] fr_data;
+    always @(posedge aclk) begin
+        if (rst) fr_gnt <= 1'b0;
+        else     fr_gnt <= fr_req && (fr_gnt || (!ar_busy && !ar_go && !s_axi_rvalid));
+        fr_data <= sp_data_v[fr_s];
+    end
+    rec_fr #(.NS(NW), .S_BASE(0), .CORE({4'd0, CP16[3:0]}), .LAT(5)) u_rec (.clk(aclk), .rst(rst),
+        .seq(fr_seq), .hdr(fr_hdr), .rec_all(fr_all), .rec_one(fr_one), .one_clr(fr_one_clr), .late(fr_late), .drop(rec_drop),
+        .req(fr_req), .gnt(fr_gnt), .rd_s(fr_s), .rd_ch(fr_ch), .rd_data(fr_data),
+        .m_tdata(m_axis_rec_tdata), .m_tvalid(m_axis_rec_tvalid), .m_tready(m_axis_rec_tready),
+        .m_tlast(m_axis_rec_tlast), .m_tuser(m_axis_rec_tuser));
 
     // ---- ADC の共通の読み出し ----
     reg [FW-1:0] afin_lat;
@@ -556,7 +611,7 @@ module win_core #(
             6'h00: reg_a = IF_ID;
             6'h01: reg_a = PROJ;
             6'h02: reg_a = NW + NFULL;                     // NSTREAM
-            6'h03: reg_a = 32'd0;                          // CAPS（レコードは 2-2 で）
+            6'h03: reg_a = 32'd1;                          // CAPS: [0] DMA のレコード（proj021 2-2a）。[1] TP・[2] SNAP は 2-2b・2-2c
             6'h04: reg_a = BASE_BEATS;
             6'h05: reg_a = BUILD_TAG;
             6'h06: reg_a = {16'd0, CP16};
@@ -613,6 +668,10 @@ module win_core #(
             ar_addr <= 20'd0; ax_bank <= 1'b0; ax_ch <= 12'd0;
         end else begin
             if (s_axi_rvalid && s_axi_rready) s_axi_rvalid <= 1'b0;
+            if (fr_gnt) begin
+                ax_bank <= rd_bank_v[fr_s];         // proj021 2-2a: rec_fr が口を持っている（AXI4-Lite の読みは来ない）
+                ax_ch   <= fr_ch;
+            end
             if (ar_go) begin
                 ar_busy <= 1'b1;
                 ar_wait <= 3'd0;

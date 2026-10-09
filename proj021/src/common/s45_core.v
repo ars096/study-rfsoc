@@ -49,7 +49,7 @@ module s45_core #(
     parameter integer FULL_STABLE_N      = 16384
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
-    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axis:s_axis_full:s_axi, ASSOCIATED_RESET aresetn:gb_dn_rstn" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axis:s_axis_full:s_axi:m_axis_rec, ASSOCIATED_RESET aresetn:gb_dn_rstn" *)
     input  wire         aclk,
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
@@ -97,7 +97,14 @@ module s45_core #(
     // 時刻（time_core から）
     input  wire [63:0]  t_in,
     input  wire         go_in,
-    input  wire [3:0]   tev_in
+    input  wire [3:0]   tev_in,
+    // proj021 手順 2-2a: SPEC のレコード（DDC の流れと FULL の流れを rec_arb でレコード単位に束ねる）→ s45_ring
+    output wire [63:0]  m_axis_rec_tdata,
+    output wire         m_axis_rec_tvalid,
+    input  wire         m_axis_rec_tready,
+    output wire         m_axis_rec_tlast,
+    output wire         m_axis_rec_tuser,
+    output wire [1:0]   rec_drop             // このクロックに「読み始めなかった」ダンプの数（s45_ring の DROP_CNT へ）
 );
     wire rst = ~aresetn;
     initial if (FULL != 0 && NW > 2) begin $display("s45_core: FULL = 1 は NW ≦ 2 のときだけ（NW %0d）", NW); $finish; end
@@ -177,14 +184,30 @@ module s45_core #(
         .s_axi_araddr(q_addr), .s_axi_arprot(3'd0), .s_axi_arvalid(d_arvalid && !q_full), .s_axi_arready(w_arready),
         .s_axi_rdata(w_rdata), .s_axi_rresp(), .s_axi_rvalid(w_rvalid), .s_axi_rready(d_rready && !q_full),
         .gb_hold(gb_hold), .gb_adj(gb_adj), .gb_dn_rstn(gb_dn_rstn), .gb_k(gb_k), .gb_stat(gb_stat), .adc_stat(adc_stat),
-        .t_in(t_in), .go_in(go_in), .tev_in(tev_in));
+        .t_in(t_in), .go_in(go_in), .tev_in(tev_in),
+        .m_axis_rec_tdata(wr_d), .m_axis_rec_tvalid(wr_v), .m_axis_rec_tready(wr_r), .m_axis_rec_tlast(wr_l), .m_axis_rec_tuser(wr_u),
+        .rec_drop(w_drop));
+
+    // ---- proj021 2-2a: レコード（win_core の DDC の流れ・spec_core の FULL の流れ）----
+    wire [63:0]   wr_d, fr_d;
+    wire          wr_v, wr_r, wr_l, wr_u, fr_v, fr_r, fr_l, fr_u, f_drop;
+    wire [NW-1:0] w_drop;
+    integer di;
+    reg   [2:0]   drop_sum;
+    always @* begin
+        drop_sum = (FULL != 0) ? {2'd0, f_drop} : 3'd0;
+        for (di = 0; di < NW; di = di + 1) drop_sum = drop_sum + {2'd0, w_drop[di]};
+    end
+    reg [1:0] drop_q;
+    always @(posedge aclk) drop_q <= (drop_sum > 3'd3) ? 2'd3 : drop_sum[1:0];   // 同じクロックに 4 本は来ない（NW ≦ 2 ＋ FULL）
+    assign rec_drop = drop_q;
 
     // ---- spec_core（FULL の流れ）----
     generate
         if (FULL != 0) begin : g_full
             spec_core #(.N_ACC_DEFAULT(FULL_N_ACC_DEFAULT), .SHIFT_DEFAULT(FULL_SHIFT_DEFAULT), .FFT_CFG(FULL_FFT_CFG),
                         .BUILD_TAG(FULL_BUILD_TAG), .STABLE_N(FULL_STABLE_N), .GB_K_RST(GB_K_RST), .SID_S(NW),
-                        .TPN_DEFAULT(TPN_DEFAULT)) u_full (
+                        .TPN_DEFAULT(TPN_DEFAULT), .REC_CORE(CORE_PORT % 16)) u_full (
                 .aclk(aclk), .aresetn(aresetn),
                 .s_axis_tdata(s_axis_full_tdata), .s_axis_tvalid(s_axis_full_tvalid), .s_axis_tready(s_axis_full_tready),
                 .gb_hold(), .gb_adj(), .gb_dn_rstn(), .gb_k(), .gb_stat(full_gb_stat), .adc_stat(full_adc_stat),
@@ -193,8 +216,17 @@ module s45_core #(
                 .s_axi_bresp(), .s_axi_bvalid(f_bvalid), .s_axi_bready(d_bready && q_full),
                 .s_axi_araddr(f_addr), .s_axi_arprot(3'd0), .s_axi_arvalid(d_arvalid && q_full), .s_axi_arready(f_arready),
                 .s_axi_rdata(f_rdata), .s_axi_rresp(), .s_axi_rvalid(f_rvalid), .s_axi_rready(d_rready && q_full),
-                .t_in(t_in), .go_in(go_in), .tev_in(tev_in), .src_sel(full_sel));
+                .t_in(t_in), .go_in(go_in), .tev_in(tev_in), .src_sel(full_sel),
+                .m_axis_rec_tdata(fr_d), .m_axis_rec_tvalid(fr_v), .m_axis_rec_tready(fr_r), .m_axis_rec_tlast(fr_l),
+                .m_axis_rec_tuser(fr_u), .rec_drop(f_drop));
+            rec_arb #(.N(2)) u_rarb (.clk(aclk), .rst(~aresetn),
+                .s_tdata({fr_d, wr_d}), .s_tvalid({fr_v, wr_v}), .s_tready({fr_r, wr_r}), .s_tlast({fr_l, wr_l}), .s_tuser({fr_u, wr_u}),
+                .m_tdata(m_axis_rec_tdata), .m_tvalid(m_axis_rec_tvalid), .m_tready(m_axis_rec_tready),
+                .m_tlast(m_axis_rec_tlast), .m_tuser(m_axis_rec_tuser));
         end else begin : g_nofull
+            assign f_drop = 1'b0;
+            assign m_axis_rec_tdata = wr_d; assign m_axis_rec_tvalid = wr_v; assign wr_r = m_axis_rec_tready;
+            assign m_axis_rec_tlast = wr_l; assign m_axis_rec_tuser = wr_u;
             assign s_axis_full_tready = 1'b1;
             assign full_sel = 2'd0;
             assign f_awready = 1'b0; assign f_wready = 1'b0; assign f_bvalid = 1'b0;

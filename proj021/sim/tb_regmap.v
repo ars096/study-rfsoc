@@ -5,6 +5,7 @@
 // 判定（「tb_regmap: NG」を数える）:
 //   1. コアの共通: IF_ID・PROJ・NSTREAM・CAPS・BASE_BEATS・BUILD・CORE_PORT・予約は 0
 //   2. 流れのブロック: SID・PARAM・NCH・FRAME_BEATS・SRC・NFFT_MIN_MAX・REC_CTRL・REC_LATE・NS_MIN_MAX。無い流れ・予約は 0
+//      （2-2a: CAPS = 1。REC_CTRL を 3 に入れて書いて読み返す）
 //   3. 書けるレジスタ（N_ACC・N_DUMP・SHIFT・CFG_ID・WK・WDPHI・WNS・WRST_T・GB_K）を流れごとに違う値で書いて読み返す（ほかの流れに漏れない）
 //   4. WRST: 窓の WCUR・FRAME_BEATS・PARAM の NS が書いた WNS に、WRST_CFG が CFG_ID に。FULL の SRC は書いただけでは効かず、
 //      WRST（CTRL[12]）で効き、full_sel に出る。ARM_WRST（CTRL[13]）は time_core の発火で効く
@@ -96,7 +97,7 @@ module tb_regmap;
             expect(c, 20'h00000, 32'h0202_0101, "IF_ID");
             expect(c, 20'h00004, 32'h0021_0200, "PROJ");
             expect(c, 20'h00008, (c == 0) ? 3 : 2, "NSTREAM");
-            expect(c, 20'h0000C, 0, "CAPS");
+            expect(c, 20'h0000C, 1, "CAPS（[0] DMA のレコード。2-2a）");
             expect(c, 20'h00010, 2621440, "BASE_BEATS");
             expect(c, 20'h00014, 32'h1234_0000 + c, "BUILD");
             expect(c, 20'h00018, (c == 0) ? 32'h2200 : 32'h0201, "CORE_PORT");
@@ -143,6 +144,7 @@ module tb_regmap;
                 k = 16 * c + st;
                 axw(c, B(st, 12'h00C), 100 + k); axw(c, B(st, 12'h010), 200 + k); axw(c, B(st, 12'h014), (5 + k) & 15);
                 axw(c, B(st, 12'h02C), 32'hC0F0_0000 + k);
+                axw(c, B(st, 12'h084), 32'hFFFF_FFF8 | ((k + 5) & 7));   // REC_CTRL（[2:0] だけ）。ダンプが無いので ONE は残る
                 if (st < 2) begin
                     axw(c, B(st, 12'h100), (k + 1) & 31); axw(c, B(st, 12'h104), 32'h1357_0000 + k);
                     axw(c, B(st, 12'h108), 3 + st); axw(c, B(st, 12'h11C), 80 + k);
@@ -157,6 +159,9 @@ module tb_regmap;
                 expect(c, B(st, 12'h010), 200 + k, "N_DUMP");
                 expect(c, B(st, 12'h014), (5 + k) & 15, "SHIFT");
                 expect(c, B(st, 12'h02C), 32'hC0F0_0000 + k, "CFG_ID");
+                expect(c, B(st, 12'h084), (k + 5) & 7, "REC_CTRL（2-2a）");
+                expect(c, B(st, 12'h088), 0, "REC_LATE（2-2a）");
+                axw(c, B(st, 12'h084), 0);
                 if (st < 2) begin
                     expect(c, B(st, 12'h100), (k + 1) & 31, "WK");
                     expect(c, B(st, 12'h104), 32'h1357_0000 + k, "WDPHI");

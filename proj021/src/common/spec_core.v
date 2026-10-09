@@ -175,6 +175,7 @@ module spec_core #(
     parameter integer STABLE_N      = 16384, // 起動の見張り: 入力がこのクロック数途切れずに続いたら口を開ける（64 µs）。0 = 見張らない。rev5（rev6 から ST_N の既定値）
     parameter integer GB_K_RST      = 0,     // gb_gate のしきい値 GB_K の既定値（ハードのリセットの起動に効く）。rev6
     parameter integer SID_S         = 2,     // proj021 手順 2-1: この流れの番号 s（SID の [15:8]）
+    parameter integer REC_CORE      = 0,     // proj021 2-2a: レコードの core（CORE_PORT の ADC の番号。s45_core が与える）
     parameter integer TPN_DEFAULT   = 512    // total power の 1 区切りのフレーム数の既定値（proj017: 512 = 1.024 ms。proj013〜016 は 500 = 1.000 ms）
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
@@ -225,7 +226,14 @@ module spec_core #(
     input  wire         go_in,
     input  wire [3:0]   tev_in,
     // proj021 手順 2-1: 入力の選び（FULL の流れの SRC。今効いている値。axis_sel4 へ）
-    output wire [1:0]   src_sel
+    output wire [1:0]   src_sel,
+    // proj021 手順 2-2a: SPEC のレコード（src/common/rec_fr.v）
+    output wire [63:0]  m_axis_rec_tdata,
+    output wire         m_axis_rec_tvalid,
+    input  wire         m_axis_rec_tready,
+    output wire         m_axis_rec_tlast,
+    output wire         m_axis_rec_tuser,
+    output wire         rec_drop
 );
     localparam integer NL = 16;        // レーン
     localparam integer NB = 8;         // 1 クロックに出る ch（k2 = 0..7）
@@ -266,6 +274,8 @@ module spec_core #(
     reg [31:0] r_cfg;
     reg        arm_wrst, cmd_wrst;     // proj021 手順 2-1: WRST（SRC・CFG_ID を取り込む）
     reg [3:0]  r_src, c_src;
+    reg [2:0]  r_rec;                  // proj021 2-2a: REC_CTRL [0] ALL / [1] ONE / [2] SNAP（2-2c まで効かない）
+    wire       fr_one_clr, fr_late;
     reg [31:0] c_cfg;
     reg [15:0] r_sd, r_se;
     reg [5:0]  r_gbk;                  // rev6
@@ -307,7 +317,9 @@ module spec_core #(
             r_cfg   <= 32'd0;
             arm_wrst <= 1'b0;
             r_src   <= 4'd0;
+            r_rec   <= 3'd0;
         end else begin
+            if (fr_one_clr) r_rec[1] <= 1'b0;      // proj021 2-2a: ONE で 1 個出した（同じクロックの書き込みが後で勝つ）
             if (s_axi_bvalid && s_axi_bready) s_axi_bvalid <= 1'b0;
             if (wr_go) begin
                 s_axi_bvalid <= 1'b1;
@@ -330,6 +342,7 @@ module spec_core #(
                     8'h05: r_shift <= s_axi_wdata[3:0];
                     8'h0A: r_src   <= s_axi_wdata[3:0];      // 0x28 SRC（次の WRST で効く）
                     8'h0B: r_cfg   <= s_axi_wdata;           // 0x2C CFG_ID（旧 0xC0）
+                    8'h21: r_rec   <= s_axi_wdata[2:0];      // 0x84 REC_CTRL（proj021 2-2a）
                     8'h86: r_sd    <= s_axi_wdata[15:0];     // 0x218（旧 0x70）。以下 診断は 旧 + 0x1A8
                     8'h87: r_se    <= s_axi_wdata[15:0];
                     8'h8B: r_gbk   <= s_axi_wdata[5:0];
@@ -977,7 +990,8 @@ module spec_core #(
     reg        ar_busy;
     reg        ar_bank;
     reg [FW-1:0] fin_lat, fout_lat;
-    assign s_axi_arready = !ar_busy && !s_axi_rvalid;
+    reg        fr_gnt;                 // proj021 2-2a: rec_fr が読みの口（axi_k1・ar_bank）を持っている間は AXI4-Lite の読みを待たせる
+    assign s_axi_arready = !ar_busy && !s_axi_rvalid && !fr_gnt;
     assign s_axi_rresp   = 2'b00;
 
     // ---- total power（proj013）----
@@ -1042,6 +1056,8 @@ module spec_core #(
             8'h1E: reg_rd = fout_lat[31:0];
             8'h1F: reg_rd = {{(64-FW){1'b0}}, fout_lat[FW-1:32]};
             8'h20: reg_rd = {16'd0, 8'd13, 8'd13};                  // NFFT_MIN_MAX
+            8'h21: reg_rd = {29'd0, r_rec};                         // 0x84 REC_CTRL（proj021 2-2a）
+            8'h22: reg_rd = rec_late;                               // 0x88 REC_LATE
             // 診断（約束の外）: 旧 0x58〜0xB4 → 0x200〜0x25C
             8'h80: reg_rd = {dg_miss, dg_unexp};
             8'h81: reg_rd = {dg_ev_seen, dg_ev_type, 20'd0, dg_ev_min};
@@ -1074,6 +1090,36 @@ module spec_core #(
         endcase
     end
 
+    // ---- proj021 2-2a: レコードの組み立て（凍ったバンクを AXI4-Lite の読みと同じ口 axi_k1・ar_bank から読む）----
+    //   ch k = 512·k2 + k1。rd_ch（rec_fr のレジスタ）→ axi_k1（下）→ rd1 → rd2 → fr_data（k2 を 3 段遅らせて選ぶ）= 5 クロック（LAT）
+    wire        fr_req;
+    wire [11:0] fr_ch;
+    reg  [63:0] fr_data;
+    reg  [2:0]  fr_k2a, fr_k2b, fr_k2c;
+    reg  [31:0] rec_late;
+    always @(posedge aclk) begin
+        if (rst) fr_gnt <= 1'b0;
+        else     fr_gnt <= fr_req && (fr_gnt || (!ar_busy && !(s_axi_arvalid && s_axi_arready) && !s_axi_rvalid));
+        fr_k2a <= fr_ch[11:9]; fr_k2b <= fr_k2a; fr_k2c <= fr_k2b;
+        fr_data <= acc_rd[ar_bank][fr_k2c];
+        if (rst) rec_late <= 32'd0;
+        else if (fr_late && rec_late != 32'hFFFF_FFFF) rec_late <= rec_late + 32'd1;
+    end
+    localparam [7:0] RC8 = REC_CORE;
+    wire [31:0] fr_seq = seq;
+    wire [383:0] fr_hdr = {
+        {24'd0, flags}, rd_cfg,                                     // w6 DUMP_CFG | FLAGS
+        rd_sat, rd_n,                                               // w5 DUMP_N | DUMP_SAT
+        rd_h, {4'd0, c_src}, 8'd0, 8'd0, {4'd0, run_shift}, 8'd0, 8'd13,   // w4（NS・G は 0）
+        rd_t,                                                       // w3 DUMP_T
+        {{(64-FW){1'b0}}, rd_f0},                                   // w2 DUMP_F0
+        rd_k, seq};                                                 // w1 SEQ | DUMP_K
+    rec_fr #(.NS(1), .S_BASE(SID_S), .CORE(RC8), .LAT(5)) u_rec (.clk(aclk), .rst(rst),
+        .seq(fr_seq), .hdr(fr_hdr), .rec_all(r_rec[0]), .rec_one(r_rec[1]), .one_clr(fr_one_clr), .late(fr_late), .drop(rec_drop),
+        .req(fr_req), .gnt(fr_gnt), .rd_s(), .rd_ch(fr_ch), .rd_data(fr_data),
+        .m_tdata(m_axis_rec_tdata), .m_tvalid(m_axis_rec_tvalid), .m_tready(m_axis_rec_tready),
+        .m_tlast(m_axis_rec_tlast), .m_tuser(m_axis_rec_tuser));
+
     always @(posedge aclk) begin
         if (rst) begin
             ar_busy <= 1'b0; ar_wait <= 3'd0; s_axi_rvalid <= 1'b0; s_axi_rdata <= 32'd0;
@@ -1081,6 +1127,10 @@ module spec_core #(
             fin_lat <= {FW{1'b0}}; fout_lat <= {FW{1'b0}};
         end else begin
             if (s_axi_rvalid && s_axi_rready) s_axi_rvalid <= 1'b0;
+            if (fr_gnt) begin                  // proj021 2-2a: rec_fr が口を持っている（AXI4-Lite の読みは来ない）
+                ar_bank <= rd_bank;
+                axi_k1  <= fr_ch[8:0];
+            end
             if (s_axi_arvalid && s_axi_arready) begin
                 ar_busy <= 1'b1;
                 ar_wait <= 3'd0;
