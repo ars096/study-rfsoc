@@ -345,6 +345,14 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 - 結線の照合: 照合した行 101 / 問題 0 件 / 陽性対照 OK（spec_core_* のセルが無い、を含む）
 - **CRITICAL WARNING [BD 41-759] × 3**（予言どおりの気にしておくこと）: s45_core_1〜3 の s_axis_full_tvalid・full_gb_stat・full_adc_stat がつながっておらず、Vivado が 0 に結んだ。働きは正しい（FULL = 0 のコアはこの入口を使わない）が、「CRITICAL WARNING なし」の規約から外れる → **2-2 で定数のセルで結ぶ**（今ビルドし直すと配置が組み替わり、閉じた PE を失うので直さない）。ほかの CRITICAL WARNING は既定の Timing 38-282（WNS が負）だけ
 
+**実機（2026-10-09、build-PE/ の proj021.bit）**:
+
+| 判定 | 結果 | 読み |
+|---|---|---|
+| S21-4 `s45core.py --list` | **表どおり**: IF_ID 0x0202_0101（4 コア）・time_core 0x0202_0102・PROJ 0x0021_0200・NSTREAM 3 / 2 / 2 / 2・CAPS 0・BASE_BEATS 2,621,440・CORE_PORT（A タイル 2 スライス 2 / B 2・0 / C 0・2 / D 0・0 = VERSIONS.md の実測）・SID 0x0203_0s00（DDC）・0x0201_0200（FULL）・FRAME_BEATS 4096（NS 1）/ 512・SRC 0〜3 と FULL 0x8000_0000・FULL の PARAM の FFT_CFG 0x07 | 通過 |
+
+- **手順の誤り（2026-10-09）**: 1 回目の `s45core.py --list` は Overlay の直後にコアを読み、PS ごと止まった（再起動）。コアは DSP ドメイン（RFDC のタイルのクロック → Clocking Wizard）にあり、MMCM のロック・rst_dsp の明けの前に AXI4-Lite を読むと SmartConnect が応答を待ち続ける。window.py などは `check_tiles` と待ち（--settle）の後に読むが、s45core.py の `--list` だけ抜けていた → 同じ手順を入れた（6061fb6）。**DSP ドメインのコアを読む道具は、必ず check_tiles と待ちの後に読む**
+
 ### 2-1 のビルドと実機
 
 ```bash
