@@ -193,15 +193,44 @@ module s45_ring #(
 
     // =====================================================================
     // CRC-32（zlib）。64 bit を 1 クロック。バイトの順 = little endian = bit 0 から
+    // 2026-10-09 ビルド 1 回目: for 文の形（1 bit ずつ 64 回）は Vivado が XOR の木に畳み切らず、13 段の LUT の鎖になって
+    //   最悪の経路（WNS −0.7 ns）だった。式を前もって展開した形（出力 1 bit = 状態 32 bit と語 64 bit の決まった bit の XOR、
+    //   多くて 52 入力 = LUT 3 段）にした。マスクは zlib.crc32 と照らして作った（proj021 README の 2-2a）
     // =====================================================================
     function [31:0] crc64(input [31:0] c, input [63:0] d);
-        integer b;
-        reg [31:0] x;
         begin
-            x = c;
-            for (b = 0; b < 64; b = b + 1)
-                x = (x[0] ^ d[b]) ? ((x >> 1) ^ 32'hEDB8_8320) : (x >> 1);
-            crc64 = x;
+            crc64[ 0] = ^(c & 32'h481B4E5A) ^ ^(d & 64'h04D101DF481B4E5A);
+            crc64[ 1] = ^(c & 32'h90369CB5) ^ ^(d & 64'h09A203BE90369CB5);
+            crc64[ 2] = ^(c & 32'h206D396B) ^ ^(d & 64'h1344077D206D396B);
+            crc64[ 3] = ^(c & 32'h40DA72D7) ^ ^(d & 64'h26880EFA40DA72D7);
+            crc64[ 4] = ^(c & 32'h81B4E5AF) ^ ^(d & 64'h4D101DF481B4E5AF);
+            crc64[ 5] = ^(c & 32'h0369CB5E) ^ ^(d & 64'h9A203BE90369CB5E);
+            crc64[ 6] = ^(c & 32'h4EC8D8E6) ^ ^(d & 64'h3091760D4EC8D8E6);
+            crc64[ 7] = ^(c & 32'h9D91B1CD) ^ ^(d & 64'h6122EC1A9D91B1CD);
+            crc64[ 8] = ^(c & 32'h3B23639A) ^ ^(d & 64'hC245D8353B23639A);
+            crc64[ 9] = ^(c & 32'h3E5D896E) ^ ^(d & 64'h805AB1B53E5D896E);
+            crc64[10] = ^(c & 32'h34A05C86) ^ ^(d & 64'h046462B534A05C86);
+            crc64[11] = ^(c & 32'h6940B90C) ^ ^(d & 64'h08C8C56A6940B90C);
+            crc64[12] = ^(c & 32'hD2817218) ^ ^(d & 64'h11918AD4D2817218);
+            crc64[13] = ^(c & 32'hA502E430) ^ ^(d & 64'h232315A9A502E430);
+            crc64[14] = ^(c & 32'h4A05C860) ^ ^(d & 64'h46462B534A05C860);
+            crc64[15] = ^(c & 32'h940B90C0) ^ ^(d & 64'h8C8C56A6940B90C0);
+            crc64[16] = ^(c & 32'h600C6FDA) ^ ^(d & 64'h1DC9AC92600C6FDA);
+            crc64[17] = ^(c & 32'hC018DFB5) ^ ^(d & 64'h3B935924C018DFB5);
+            crc64[18] = ^(c & 32'h8031BF6A) ^ ^(d & 64'h7726B2498031BF6A);
+            crc64[19] = ^(c & 32'h00637ED5) ^ ^(d & 64'hEE4D649300637ED5);
+            crc64[20] = ^(c & 32'h48DDB3F0) ^ ^(d & 64'hD84BC8F948DDB3F0);
+            crc64[21] = ^(c & 32'hD9A029BB) ^ ^(d & 64'hB446902DD9A029BB);
+            crc64[22] = ^(c & 32'hFB5B1D2C) ^ ^(d & 64'h6C5C2184FB5B1D2C);
+            crc64[23] = ^(c & 32'hF6B63A59) ^ ^(d & 64'hD8B84309F6B63A59);
+            crc64[24] = ^(c & 32'hA5773AE8) ^ ^(d & 64'hB5A187CCA5773AE8);
+            crc64[25] = ^(c & 32'h02F53B8A) ^ ^(d & 64'h6F920E4602F53B8A);
+            crc64[26] = ^(c & 32'h05EA7715) ^ ^(d & 64'hDF241C8C05EA7715);
+            crc64[27] = ^(c & 32'h43CFA071) ^ ^(d & 64'hBA9938C743CFA071);
+            crc64[28] = ^(c & 32'hCF840EB8) ^ ^(d & 64'h71E37051CF840EB8);
+            crc64[29] = ^(c & 32'h9F081D70) ^ ^(d & 64'hE3C6E0A39F081D70);
+            crc64[30] = ^(c & 32'h760B74BB) ^ ^(d & 64'hC35CC098760B74BB);
+            crc64[31] = ^(c & 32'hA40DA72D) ^ ^(d & 64'h826880EFA40DA72D);
         end
     endfunction
 
@@ -232,10 +261,13 @@ module s45_ring #(
             fav <= fav + (push ? 1 : 0) - (wgo ? 1 : 0);
         end
     end
-    wire f_room = (fav < FDEPTH - 4);
+    reg f_room;                             // 1 クロック遅れ（語の段・束ねの段のぶん、余裕を 6 拍とる）
+    always @(posedge aclk) f_room <= (fav < FDEPTH - 6);
 
     // =====================================================================
     // 語を作る側（G）
+    //   gw（このクロックの語）→ gq（レジスタ）→ 束ね（2 語 → 1 拍）・CRC。2026-10-09 ビルド 1 回目で、gw の選び（状態・hb[hi]・入口）から
+    //   束ねと CRC へ直に入る経路が CRC の次に悪かったので、1 段受けた
     // =====================================================================
     localparam [3:0] G_HDR = 4'd0, G_DEC = 4'd1, G_WAIT = 4'd2, G_PAD = 4'd3, G_REC = 4'd4, G_TAIL = 4'd5, G_FIN = 4'd6, G_DISC = 4'd7,
                      G_FILL = 4'd8;
@@ -249,51 +281,61 @@ module s45_ring #(
     reg  [31:0] crc;
     reg  [63:0] lo;
     reg         half;
-    reg  [63:0] gw;
-    reg         gv;
+    reg  [63:0] gw, gq;
+    reg         gv, gc, gqv, gqc;           // gc: CRC に入れる語
     wire        seg_done;
     reg         bad_seen;
     reg  [1:0]  bad_resp;
     reg         sg_start;                   // 書き手へ: この区間を書け（1 クロック）
 
-    wire [31:0] mask  = size - 32'd1;
-    wire [31:0] pos   = w_pos & mask;
-    wire [31:0] e_len = size - pos;
-    wire [31:0] used  = w_pos - r_pos;
+    // 位置と空き（毎クロック 2 段で作る。W が変わるのは G_FIN だけで、次に使う G_DEC・G_WAIT はヘッダ 8 語の後なので間に合う。
+    //   R は増えるだけなので、遅れた空きは控えめな側に外れる）
+    reg  [31:0] used_q, free_q, pos_q, elen_q;
+    always @(posedge aclk) begin
+        used_q <= w_pos - r_pos;
+        free_q <= size - used_q;
+        pos_q  <= w_pos & (size - 32'd1);
+        elen_q <= size - pos_q;
+    end
 
     always @* begin
-        in_r = 1'b0; gw = 64'd0; gv = 1'b0;
+        in_r = 1'b0; gw = 64'd0; gv = 1'b0; gc = 1'b0;
         case (gs)
             G_HDR:  in_r = 1'b1;
             G_DISC: in_r = 1'b1;
             G_PAD:  if (f_room) begin gv = 1'b1;
                         gw = (hi == 3'd0) ? {8'd0, 8'd0, 8'd0, 8'd1, MAGIC_R} : (hi == 3'd7) ? {32'd0, e_len_l} : 64'd0; end
             G_REC:  if (f_room) begin
+                        gc = 1'b1;
                         if (hdr_out) begin gv = 1'b1; gw = hb[hi]; end
                         else begin in_r = 1'b1; gv = in_v; gw = in_d; end
                     end
-            G_FILL: if (f_room) begin gv = 1'b1; gw = 64'd0; end
+            G_FILL: if (f_room) begin gv = 1'b1; gc = 1'b1; gw = 64'd0; end
             G_TAIL: if (f_room) begin gv = 1'b1;
+                        // w1 の CRC: 本体の最後の語（gq を経て 2 クロック後に crc に入る）は、尾の w0 の後の w1 のクロックには入っている
                         gw = (hi == 3'd0) ? {hb[1][31:0], MAGIC_E} : (hi == 3'd1) ? {32'd0, ~crc} : 64'd0; end
             default: ;
         endcase
     end
 
-    reg  [3:0]  dinc;
+    reg  [3:0]  dinc, dinc_q;
     always @(posedge aclk) begin
         push <= 1'b0;
         sg_start <= 1'b0;
         dinc = ext_drop;
+        gq <= gw; gqv <= gv; gqc <= gc;
         if (rst || cmd_rst) begin
-            gs <= G_HDR; hi <= 3'd0; pay_w <= 32'd0; pad <= 1'b0; no_last <= 1'b0; abort_r <= 1'b0; hdr_out <= 1'b0; crc <= 32'hFFFF_FFFF;
-            half <= 1'b0; lo <= 64'd0;
-            w_pos <= 32'd0; drop_cnt <= 32'd0; rec_cnt <= 32'd0; peak <= 32'd0; err_stat <= 32'd0; err <= 1'b0;
+            gs <= G_HDR; hi <= 3'd0; pay_w <= 32'd0; pad <= 1'b0; abort_r <= 1'b0; hdr_out <= 1'b0; crc <= 32'hFFFF_FFFF;
+            half <= 1'b0; lo <= 64'd0; no_last <= 1'b0; gqv <= 1'b0; gqc <= 1'b0;
+            w_pos <= 32'd0; drop_cnt <= 32'd0; rec_cnt <= 32'd0; err_stat <= 32'd0; err <= 1'b0; dinc_q <= 4'd0;
             rec_len <= 32'd0; need <= 32'd0; e_len_l <= 32'd0; w_start <= 32'd0; pos_l <= 32'd0;
         end else begin
-            if (gv) begin
-                if (!half) begin lo <= gw; half <= 1'b1; end
-                else begin pdata <= {gw, lo}; push <= 1'b1; half <= 1'b0; end
+            // 束ねと CRC（gq から）
+            if (gqv) begin
+                if (!half) begin lo <= gq; half <= 1'b1; end
+                else begin pdata <= {gq, lo}; push <= 1'b1; half <= 1'b0; end
             end
+            if (gqv && gqc) crc <= crc64(crc, gq);
             case (gs)
                 G_HDR: if (in_go) begin
                     hb[hi] <= in_d;
@@ -303,10 +345,10 @@ module s45_ring #(
                 end
                 G_DEC: begin
                     rec_len <= 32'd128 + hb[7][31:0];
-                    pad     <= (32'd128 + hb[7][31:0]) > e_len;
-                    e_len_l <= e_len;
-                    pos_l   <= pos;
-                    need    <= 32'd128 + hb[7][31:0] + (((32'd128 + hb[7][31:0]) > e_len) ? e_len : 32'd0);
+                    pad     <= (32'd128 + hb[7][31:0]) > elen_q;
+                    e_len_l <= elen_q;
+                    pos_l   <= pos_q;
+                    need    <= 32'd128 + hb[7][31:0] + (((32'd128 + hb[7][31:0]) > elen_q) ? elen_q : 32'd0);
                     w_start <= w_pos;
                     pay_w   <= {3'd0, hb[7][31:3]};
                     abort_r <= 1'b0;
@@ -315,7 +357,7 @@ module s45_ring #(
                     gs      <= G_WAIT;
                 end
                 G_WAIT: begin
-                    if (!en || err || need > size || need > size - used || pay_w == 32'd0) begin
+                    if (!en || err || need > size || need > free_q || pay_w == 32'd0) begin
                         if (en) dinc = dinc + 4'd1;
                         gs <= G_DISC;
                     end else begin
@@ -330,7 +372,6 @@ module s45_ring #(
                     if (hi == 3'd7) gs <= G_REC;
                 end
                 G_REC: if (gv) begin
-                    crc <= crc64(crc, gw);
                     if (hdr_out) begin
                         hi <= hi + 3'd1;
                         if (hi == 3'd7) hdr_out <= 1'b0;
@@ -347,7 +388,6 @@ module s45_ring #(
                     end
                 end
                 G_FILL: if (gv) begin
-                    crc <= crc64(crc, gw);
                     pay_w <= pay_w - 32'd1;
                     if (pay_w == 32'd1) gs <= G_TAIL;
                 end
@@ -365,32 +405,38 @@ module s45_ring #(
                     end else begin
                         w_pos   <= w_pos + need;
                         rec_cnt <= rec_cnt + 32'd1;
-                        if (w_pos + need - r_pos > peak) peak <= w_pos + need - r_pos;
                     end
                     gs <= no_last ? G_DISC : G_HDR; hi <= 3'd0; no_last <= 1'b0;
                 end
                 default: gs <= G_HDR;
             endcase
-            if (dinc != 4'd0) drop_cnt <= (drop_cnt > 32'hFFFF_FFF0) ? 32'hFFFF_FFFF : drop_cnt + dinc;
+            // DROP_CNT は 1 クロック遅れで足す（飽和: 上位 28 bit が全部 1 なら止める）
+            dinc_q <= dinc;
+            if (dinc_q != 4'd0 && drop_cnt[31:4] != 28'hFFF_FFFF) drop_cnt <= drop_cnt + {28'd0, dinc_q};
         end
+    end
+    // PEAK: W − R の最大（毎クロックの used_q で。W が進んだ直後が最大）
+    always @(posedge aclk) begin
+        if (rst || cmd_rst) peak <= 32'd0;
+        else if (used_q > peak) peak <= used_q;
     end
 
     // =====================================================================
     // 書き手（AW・W・B）
+    //   2026-10-09 ビルド 1 回目: 番地の足し算（BASE ＋ off、49 bit）→ 256 バイト境までの拍 → バーストの長さ → FIFO の拍との比べ、
+    //   を 1 クロックでしていて上位に出た。A_CALC（番地）→ A_LEN（長さ）→ A_NEXT（比べて出す）の 3 段に分けた（バースト 1 本に 2 クロック足すだけ）
     // =====================================================================
-    localparam [1:0] A_IDLE = 2'd0, A_BURST = 2'd1, A_NEXT = 2'd2, A_DRAIN = 2'd3;
-    reg  [1:0]  as;
+    localparam [2:0] A_IDLE = 3'd0, A_CALC = 3'd1, A_LEN = 3'd2, A_NEXT = 3'd3, A_BURST = 3'd4, A_DRAIN = 3'd5;
+    reg  [2:0]  as;
     reg         seg1;                       // 今の区間（0 = PAD、1 = レコード）
     reg  [31:0] off, left;
     reg  [4:0]  blen;                       // 今のバーストの拍
     reg  [4:0]  wcnt;                       // 今のバーストの残りの W
     reg         aw_done;
     reg  [8:0]  ob;                         // BRESP 待ちのバースト
-    wire [48:0] baddr = base[48:0] + {17'd0, off};
-    wire [4:0]  to256 = 5'd16 - {1'b0, baddr[7:4]};
-    wire [4:0]  bl_c  = (left < to256) ? left[4:0] : to256;     // ≦ 16（left は 4 の倍数）
-    assign m_axi_awaddr  = baddr_q;
     reg  [48:0] baddr_q;
+    wire [4:0]  to256 = 5'd16 - {1'b0, baddr_q[7:4]};
+    assign m_axi_awaddr  = baddr_q;
     assign m_axi_awlen   = {3'd0, blen - 5'd1};
     assign m_axi_awsize  = 3'b100;          // 16 バイト
     assign m_axi_awburst = 2'b01;           // INCR
@@ -424,21 +470,29 @@ module s45_ring #(
                     seg1 <= !pad;
                     off  <= pos_l;
                     left <= pad ? 32'd4 : (rec_len >> 4);
-                    as   <= A_NEXT;
+                    as   <= A_CALC;
                 end
-                A_NEXT: begin
+                A_CALC: begin
                     if (left == 32'd0) begin
                         if (!seg1) begin seg1 <= 1'b1; off <= 32'd0; left <= rec_len >> 4; end
                         else as <= A_DRAIN;
-                    end else if (fav >= {{(FAW-4){1'b0}}, bl_c}) begin
-                        blen <= bl_c; wcnt <= bl_c; baddr_q <= baddr;
-                        m_axi_awvalid <= 1'b1; aw_done <= 1'b0;
-                        off <= off + {23'd0, bl_c, 4'd0};
-                        left <= left - {27'd0, bl_c};
-                        as <= A_BURST;
+                    end else begin
+                        baddr_q <= base[48:0] + {17'd0, off};
+                        as <= A_LEN;
                     end
                 end
-                A_BURST: if ((aw_done || awgo) && (wcnt == 5'd0 || (wcnt == 5'd1 && wgo))) as <= A_NEXT;
+                A_LEN: begin
+                    blen <= (left < {27'd0, to256}) ? left[4:0] : to256;     // ≦ 16（left は 4 の倍数）
+                    as <= A_NEXT;
+                end
+                A_NEXT: if (fav >= {{(FAW-4){1'b0}}, blen}) begin
+                    wcnt <= blen;
+                    m_axi_awvalid <= 1'b1; aw_done <= 1'b0;
+                    off <= off + {23'd0, blen, 4'd0};
+                    left <= left - {27'd0, blen};
+                    as <= A_BURST;
+                end
+                A_BURST: if ((aw_done || awgo) && (wcnt == 5'd0 || (wcnt == 5'd1 && wgo))) as <= A_CALC;
                 A_DRAIN: if (ob == 9'd0 && gs == G_FIN) as <= A_IDLE;
                 default: as <= A_IDLE;
             endcase
