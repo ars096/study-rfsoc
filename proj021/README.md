@@ -352,6 +352,8 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 
 **実機（2026-10-09、build-PE/ の proj021.bit）**:
 
+**2-1 の実機の判定（S21-4）は全部通過**（自己記述の表・P-0〜P-5・全帯域の golden）。残り: Vivado サーバの `make sim-all`・sim-tsys-p（予言 1・2 の残りの sim）
+
 | 判定 | 結果 | 読み |
 |---|---|---|
 | S21-4 `s45core.py --list` | **表どおり**: IF_ID 0x0202_0101（4 コア）・time_core 0x0202_0102・PROJ 0x0021_0200・NSTREAM 3 / 2 / 2 / 2・CAPS 0・BASE_BEATS 2,621,440・CORE_PORT（A タイル 2 スライス 2 / B 2・0 / C 0・2 / D 0・0 = VERSIONS.md の実測）・SID 0x0203_0s00（DDC）・0x0201_0200（FULL）・FRAME_BEATS 4096（NS 1）/ 512・SRC 0〜3 と FULL 0x8000_0000・FULL の PARAM の FFT_CFG 0x07 | 通過 |
@@ -361,6 +363,7 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 | 全帯域の golden `spectrometer.py --ch A --golden` | SNAP_F = DUMP_F0・差/許容の最大 0.40・起動の見張りの途切れ 0・gb_gate K 2 空振り 0 | 通過（**FULL の流れの SRC → WRST → SRST の道を初めて実機で**） |
 | P-3 `window.py --tone 3010.5 --w6 --w 256`（−20 dBm、SHIFT 11 / 全帯域 8） | W-1 ch 3928（予言 3928）・W-1b 窓と全帯域の推定 IF の差 −0.59 kHz・**W-6 −0.054 dB（予言 −0.043、許容 ±0.1。proj020 は −0.046）**・隣の ch −59.0・−51.0・−51.0・−59.1 dB（proj020 −59.8・−51.4・−51.5・−59.8） | 通過 |
 | P-4 `timetest.py --t1 --seconds 120` | **13 コアとも RUN_T = START_AT + 1**（FULL の ARM を含む）・9 流れ × 2930 ダンプで DUMP_T の k·N·L からのずれ 0・健全性なし | 通過 |
+| P-5 `s45resp.py`（specd 経由、`--dbm -0.9 --span 0 --kch 1 --nsub 32`、`runs/resp_p21.resp.{json,npz,chan.png,band.png}`） | 8 窓とも **半 ch −2.998〜−3.001 dB・−3 dB 幅 0.9998〜0.9999 ch・ref 0.99139〜0.99146**（proj020 の resp_p20c: −2.999〜−3.001・0.9999・0.99141〜0.99150）。隣の ch −44.9〜−53.4 dB・≧ 1.5 ch −44.5〜−56.8 dB は proj020 と 0.4 dB 以内（試験音の裾が床、proj020 と同じ読み） | 通過（specd の取得 s45acq の新しい読み口で、8 窓の対応も中身も 1b と同じ） |
 
 - P-3 の 1 回目は CW が来ていなかった（ADC に 1PPS を配線したまま。窓の最大は IF 3072 MHz の k·fs/8 の線）、2 回目は −1 dBm・SHIFT 4 で窓の山が 6250 / 6250 フレーム飽和（proj020 の P-3 1 回目と同じ。隣の ch も 0.1 dB 以内で同じ）。3 回目を proj020 の 2 回目と同じ条件で通した
 - **手順の誤り（2026-10-09）**: 1 回目の `s45core.py --list` は Overlay の直後にコアを読み、PS ごと止まった（再起動）。コアは DSP ドメイン（RFDC のタイルのクロック → Clocking Wizard）にあり、MMCM のロック・rst_dsp の明けの前に AXI4-Lite を読むと SmartConnect が応答を待ち続ける。window.py などは `check_tiles` と待ち（--settle）の後に読むが、s45core.py の `--list` だけ抜けていた → 同じ手順を入れた（6061fb6）。**DSP ドメインのコアを読む道具は、必ず check_tiles と待ちの後に読む**
