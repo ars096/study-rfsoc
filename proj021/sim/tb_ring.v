@@ -271,6 +271,8 @@ module tb_ring;
         repeat (8) @(posedge clk);
         // リング
         lw(12'h008, BASE[31:0]); lw(12'h00C, {15'd0, BASE[48:32]}); lw(12'h010, SIZE); lw(12'h004, 1);
+        // proj021 2-2b: TP のレコード（TP_N 1 フレーム = 512 クロックごとに 1 個、K 16 個 = 8192 クロックごとに 1 レコード）
+        axw(20'h00100, 1); axw(20'h0011C, 32'h0000_1001); axw(20'h00020, 1);      // TP_N・TP_REC_CTRL（EN・K 16）・TP_RUN
         // 窓: 流れ 0（k 5）・流れ 1（k 9）、NS 1
         for (st = 0; st < 2; st = st + 1) begin
             axw(B(st, 12'h100), (st == 0) ? 5 : 9); axw(B(st, 12'h104), 32'h1234_5678 * (st + 1)); axw(B(st, 12'h108), 1);
@@ -306,6 +308,11 @@ module tb_ring;
         lr(12'h020); $display("tb_ring: REC_CNT = %0d", lrv);
         lr(12'h024); $display("tb_ring: PEAK = %0d", lrv);
         for (st = 0; st < 3; st = st + 1) begin axr(B(st, 12'h088)); $display("tb_ring: REC_LATE%0d = %0d", st, rv); end
+        axr(20'h00120); $display("tb_ring: TP_REC_LATE = %0d", rv);
+        axw(20'h0011C, 32'h0000_1000);                                            // TP のレコードを止める
+        // AXI4-Lite の TP のリング（最後の 512 個）を直に写す（T 行。check_ring.py が TP のレコードの個と比べる）
+        for (n = ((u_c0.u_win.g_tp.u_tp.wp > 512) ? u_c0.u_win.g_tp.u_tp.wp - 512 : 0); n < u_c0.u_win.g_tp.u_tp.wp; n = n + 1)
+            $fwrite(fq, "T 0 %0d %h\n", n, u_c0.u_win.g_tp.u_tp.ring[n % 512]);
         axr(B(1, 12'h084));
         if (!is_late) begin
             if (rv[1] !== 1'b0) begin $display("tb_ring: NG ONE が 0 に戻らない（REC_CTRL %h）", rv); ng = ng + 1; end

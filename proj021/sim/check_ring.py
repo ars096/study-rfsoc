@@ -62,8 +62,10 @@ def check_common(recs, size, flip, ng):
             if (pos % size) + e != size:
                 ng.append('PAD の長さ %d が端まで（%d）と違う @%d' % (e, size - pos % size, pos))
             continue
-        if ty != 1:
+        if ty not in (1, 2):
             ng.append('type %d @%d' % (ty, pos)); continue
+        if ty == 2 and s != 0xFF:
+            ng.append('TP のレコードの s が 0xFF でない @%d' % pos)
         p = w[7] & 0xFFFFFFFF
         nb = 8 + p // 8
         if len(w) != nb + 8:
@@ -161,12 +163,41 @@ def main_core(d, flip):
     size = int(lg['SIZE'])
     ng = []
     recs = check_common(load_recs(d + '/ring.txt'), size, flip, ng)
-    qq, hh = {}, {}
+    qq, hh, tt = {}, {}, {}
     for ln in open(d + '/peek.txt'):
         t = ln.split()
         if t and t[0] in ('Q', 'H'):
             k = (int(t[1]), int(t[2]), int(t[3]))
             (qq if t[0] == 'Q' else hh)[k] = [int(x, 16) for x in t[4:]]
+        elif t and t[0] == 'T':
+            v = int(t[3], 16)
+            tt[(int(t[1]), int(t[2]))] = (v & ((1 << 64) - 1), v >> 64)    # 個 = 2 語（和・{FLAGS|フレーム数, F0}）
+    # proj021 2-2b: TP のレコード（s = 0xFF）は AXI4-Lite の TP のリングの個（T 行）と比べる
+    tps = [r for r in recs if r[1] == 0xFF]
+    recs = [r for r in recs if r[1] != 0xFF]
+    ntp_ok, ntp_items, tp_gap, prev = 0, 0, 0, None
+    for core, s_, seq, w in tps:
+        n = w[5] & 0xFFFFFFFF
+        if prev is not None and seq != prev:
+            tp_gap += 1
+        prev = seq + n
+        good = w[7] == ((n + 3) // 4) * 64
+        for i in range(n):
+            it = tt.get((core, seq + i))
+            ntp_items += 1
+            if it is None or [w[8 + 2 * i], w[9 + 2 * i]] != [it[0], it[1]]:
+                good = False
+        if n and tt.get((core, seq)) is not None and (w[2] & 0xFFFFFFFF) != (tt[(core, seq)][1] & 0xFFFFFFFF):
+            good = False
+        if any(w[8 + 2 * n:]):
+            good = False
+        if good:
+            ntp_ok += 1
+        else:
+            ng.append('TP のレコード core %d SEQ %d（%d 個）が AXI4-Lite の TP のリングと違う' % (core, seq, n))
+    print('check_ring core: TP のレコード %d（個 %d・AXI4-Lite の TP のリングと一致 %d）、SEQ の飛び %d' % (len(tps), ntp_items, ntp_ok, tp_gap))
+    if len(tps) < 3:
+        ng.append('TP のレコードが少ない（%d）' % len(tps))
     nok = nh = 0
     for core, s, seq, w in recs:
         k = (core, s, seq)
@@ -185,22 +216,23 @@ def main_core(d, flip):
     by, ngap, bad = gaps(recs)
     ng += bad
     late = sum(int(v) for kk, v in lg.items() if kk.startswith('REC_LATE'))
+    late_all = late + int(lg.get('TP_REC_LATE', '0'))
     drop, rcnt = int(lg['DROP_CNT']), int(lg['REC_CNT'])
     print('check_ring core: レコード %d（本体が凍ったバンクと一致 %d、うち頭を AXI4-Lite と照らした %d）、流れごと %s、'
           'SEQ の飛び %d、REC_LATE 計 %d、DROP_CNT %d、REC_CNT %d、PEAK %s'
           % (len(recs), nok, nh, {k: len(v) for k, v in sorted(by.items())}, ngap, late, drop, rcnt, lg['PEAK']))
-    if rcnt != len(recs):
-        ng.append('REC_CNT %d ≠ 受けた数 %d' % (rcnt, len(recs)))
+    if rcnt != len(recs) + len(tps):
+        ng.append('REC_CNT %d ≠ 受けた数 %d（SPEC %d ＋ TP %d）' % (rcnt, len(recs) + len(tps), len(recs), len(tps)))
     if ngap > drop:
         ng.append('SEQ の飛び %d > DROP_CNT %d' % (ngap, drop))
-    if late > drop:
-        ng.append('REC_LATE の和 %d > DROP_CNT %d' % (late, drop))
+    if late_all > drop:
+        ng.append('REC_LATE（TP を含む）の和 %d > DROP_CNT %d' % (late_all, drop))
     if lg.get('AXI_CMP') != 'OK':
         ng.append('AXI4-Lite の 16 ch の照合: %s' % lg.get('AXI_CMP'))
     want = lg.get('WANT', '')
     if want == 'nolate':
-        if late != 0 or drop != 0 or ngap != 0:
-            ng.append('取りこぼしがある（REC_LATE %d・DROP %d・飛び %d）' % (late, drop, ngap))
+        if late != 0 or drop != 0 or ngap != 0 or tp_gap != 0 or int(lg.get('TP_REC_LATE', '0')) != 0:
+            ng.append('取りこぼしがある（REC_LATE %d・DROP %d・飛び %d・TP の飛び %d・TP_REC_LATE %s）' % (late, drop, ngap, tp_gap, lg.get('TP_REC_LATE')))
         if len(by.get((0, 1), [])) != 1 or lg.get('ONE') != 'OK':
             ng.append('ONE の流れ 1 のレコードが %d 個（1 個であるべき）・REC_CTRL の戻り %s' % (len(by.get((0, 1), [])), lg.get('ONE')))
         if len(by.get((0, 0), [])) < 3 or len(by.get((0, 2), [])) < 3:
