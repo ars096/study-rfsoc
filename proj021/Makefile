@@ -152,6 +152,13 @@ worst-paths:
 	$(DCP_CHECK)
 	$(VIVADO) -mode batch -nojournal -nolog -source tools/worst_paths.tcl -tclargs $(DCP) $(OUTDIR)/worst_paths $(WP_N) $(WP_THR)
 
+# ---- proj021 2-2b: 配線後の物理最適化だけを掛け直す（負けが数十 ps・数本のとき。数十分）----
+# DCP は worst-paths と同じ既定（$(OUTDIR) の dcp）。結果は $(OUTDIR)-po/（proj021.bit・元の proj021.hwh のコピー・timing.rpt）
+physopt:
+	$(DCP_CHECK)
+	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)-po.log -source tools/postroute_physopt.tcl -tclargs $(DCP) $(OUTDIR)-po
+	cp $(OUTDIR)/proj021.hwh $(OUTDIR)-po/proj021.hwh
+
 # ---- 配置配線後の dcp からフロアマップ（proj021、2026-10-09。ビルド不要、数分）----
 # DCP は worst-paths と同じ既定。tools/floorplan.tcl が位置を CSV に、tools/floorplan.py が図に。結果は FP_OUT（既定 $(OUTDIR)/floorplan/）
 #   floorplan.png（ブロックの種類で色分け・setup の上位 FP_PATHS 本の経路）/ floorplan_wo_arrow.png（矢印なし）/ floorplan_detail.png（深さ FP_DEPTH の階層ごと）/ blocks.txt
