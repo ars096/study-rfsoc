@@ -39,6 +39,10 @@ def log(*a):
     print(*a, flush=True)
 
 
+class StaleError(SC.S45Error):
+    """キャッシュの古い行を読んだ（--no-inval の陽性対照で期待するもの）"""
+
+
 class Ring:
     """s45_ring_0 と、PS の DDR のリング（pynq.allocate）"""
 
@@ -115,7 +119,10 @@ class Ring:
             self._invalidate(p, 64)
             h = self.buf[p // 8: p // 8 + 8].copy()
             if int(h[0]) & 0xFFFFFFFF != MAGIC_R:
-                raise SC.S45Error(f"magic が違う（位置 {self.r}、W {w}）: {int(h[0]):#018x}")
+                # キャッシュを捨てずに読むと、頭が古い行（初めに書いた 0）のまま見える（2026-10-10 の実機の 1 回目）。
+                #   長さが読めないのでそこで止める。--no-inval の陽性対照ではこれを「古い行を見つけた」として数える
+                cls = StaleError if not self.inval else SC.S45Error
+                raise cls(f"magic が違う（位置 {self.r}、W {w}）: {int(h[0]):#018x}")
             ty = int(h[0]) >> 40 & 0xFF
             if ty == TYPE_PAD:
                 n = int(h[7]) & 0xFFFFFFFF
@@ -139,9 +146,18 @@ class Ring:
         self.wr(R_R, self.r)
         return out
 
-    def close(self):
+    def close(self, streams=()):
+        """**PL が書き終えてからバッファを返す**（書きかけのまま返すと、CMA に PL が書き込む。2026-10-10 の実機の 1 回目は
+        例外で REC_CTRL が ALL のまま閉じ、終わりに Segmentation fault が出た）"""
+        for st in streams:
+            st.wr(SC.S_REC_CTRL, 0)
         self.enable(False)
-        time.sleep(0.01)
+        t0 = time.time()
+        while self.rd(R_CTRL) & 2:
+            if time.time() - t0 > 1.0:
+                log("WARNING: リングが 1 s たっても止まらない（busy）。バッファは返さずに残す")
+                return
+            time.sleep(0.001)
         self.buf.freebuffer()
 
 
@@ -252,11 +268,17 @@ def do_soak(cores, ring, a):
     gaps = crc_bad = tail_bad = 0
     t_rd = []
     paused = False
+    stale = 0
     while time.time() - t0 < a.soak:
         if a.pause and not paused and time.time() - t0 > a.soak / 2:
             log(f"陽性対照: {a.pause} s 読まない"); time.sleep(a.pause); paused = True
         tt = time.perf_counter()
-        recs = ring.read()
+        try:
+            recs = ring.read()
+        except StaleError as e:
+            log(f"古い行を読んだ: {e}")
+            stale += 1
+            break
         t_rd.append(time.perf_counter() - tt)
         for core, s, seq, hw, pay, crc_ok, tail_ok in recs:
             k = (core, s)
@@ -270,7 +292,13 @@ def do_soak(cores, ring, a):
     for st, *_ in ss:
         st.wr(SC.S_REC_CTRL, 0)
     time.sleep(0.05)
-    for core, s, seq, hw, pay, crc_ok, tail_ok in ring.read():
+    try:
+        tail = ring.read() if not stale else []
+    except StaleError as e:
+        log(f"古い行を読んだ: {e}")
+        stale += 1
+        tail = []
+    for core, s, seq, hw, pay, crc_ok, tail_ok in tail:
         k = (core, s)
         nrec[k] = nrec.get(k, 0) + 1
         if k in last and seq != last[k] + 1:
@@ -280,15 +308,17 @@ def do_soak(cores, ring, a):
         tail_bad += not tail_ok
     r = ring.regs()
     late = sum(st.rd(SC.S_REC_LATE) - late0[(st.core.adc, st.s)] for st, *_ in ss)
-    t_rd = np.array(t_rd) * 1e3
+    t_rd = np.array(t_rd if t_rd else [0.0]) * 1e3
     log(f"流れごとのレコード: {dict(sorted(nrec.items()))}")
     log(f"SEQ の飛び {gaps} / DROP_CNT {r['drop']} / REC_LATE（増えた分）{late} / CRC の不一致 {crc_bad} / 尾の不一致 {tail_bad}")
     log(f"PEAK {r['peak']} B（{100 * r['peak'] / ring.size:.1f} %）/ REC_CNT {r['rec']} / ERR {r['err']}")
     log(f"1 回の読み: 中央 {np.median(t_rd):.2f} ms / p99 {np.percentile(t_rd, 99):.2f} ms / 最大 {t_rd.max():.2f} ms（{len(t_rd)} 回）")
     ok = (r["drop"] == gaps and not r["err"])
     if a.no_inval:
-        ok = ok and crc_bad > 0
-        log(f"結果（陽性対照 --no-inval: CRC の不一致が立つべき）: {'通過' if ok else '失敗'}")
+        # 古い行は CRC の不一致か、頭の magic の不一致（そこで読みを止める）として見える。どちらかが立てば陽性対照は通過
+        ok = (crc_bad > 0 or tail_bad > 0 or stale > 0) and not r["err"]
+        log(f"古い行: CRC の不一致 {crc_bad} / 尾の不一致 {tail_bad} / 頭の magic の不一致 {stale}")
+        log(f"結果（陽性対照 --no-inval: 古い行が見つかるべき）: {'通過' if ok else '失敗'}")
     elif a.pause:
         ok = ok and gaps > 0 and crc_bad == 0
         log(f"結果（陽性対照 --pause: DROP_CNT = SEQ の飛び > 0）: {'通過' if ok else '失敗'}")
@@ -344,7 +374,7 @@ def main():
         if a.soak > 0:
             rc |= do_soak(cores, ring, a)
     finally:
-        ring.close()
+        ring.close(streams_all(cores))
     sys.exit(rc)
 
 
