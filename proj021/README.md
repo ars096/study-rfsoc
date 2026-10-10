@@ -554,6 +554,24 @@ s45_ring_0（新、CORE_KIND 3）: 4 本の入口 → レコード単位の順�
 
 ### 2-2a のビルドと実機
 
+**ビルドの結果（2026-10-09〜10、5 回）**: 閉じたのは **5 回目の Performance_ExtraTimingOpt（`build-PETO/`）WNS +0.022 ns・WHS +0.010 ns**。
+
+| 回 | 直したもの（前の回の最悪から） | 既定 | PE | ほか |
+|---|---|---|---|---|
+| 1 | — | 配線の途中で止めた（WNS −0.7 ns 前後） | 同左 | 上位は全部 s45_ring の CRC（for 文の CRC が 13 段の LUT の鎖） |
+| 2 | CRC を展開した XOR の式に・語を 1 段受ける・書き手の番地と長さを 2 段に・空きと PEAK を前もって | −0.223（3,316 終点） | −0.019（39） | 上位に s45_ring は無くなった。既定の最悪は wspec の y → 飽和 → DSP の B、PE は ddc の最終段の 48 bit の丸め |
+| 3 | wspec の q_* を DSP に取り込ませない（dont_touch）・hb2 の丸めを木の入口へ | −0.305（3,094） | −0.507（13,676） | PEPRPO −0.495・PETO −0.077（57）。上位 200 本は配線の型が 9 割、u_pfb の 4 項の和 → cmul の DSP が半分、rec_fr の SEQ の比べ（8 段）。PE は rst_dsp → DSP の CE、RFADC → gb_up まで負け、南向きの長い配線の混み 5 |
+| 4（5 回目のビルド） | dft16f・dft16 の段 1 を DSP に取り込ませない・rec_fr の比べを 1 段受ける・コアとリングのリセットを中で 3 段受けて配る・仮の読み窓の sn2 を布の FF に | — | −0.013 | **PETO +0.022**（混み 4） |
+
+- **読み**: 2-1 が既定・PE とも ±0.003 ns のぎりぎりで、2-2a の LUT +1 ポイント（206.8k → 209.5k）で配置の当たり外れ（PE で −0.02〜−0.5）に飲まれた。効いたのは (1) Vivado が飽和・和の後のレジスタを DSP に取り込み、論理が DSP の入口（セットアップ ≒ 0.3 ns）へ直に入る形を止めたこと（wspec・u_pfb・FULL の u_dft の 3 か所で同じ型）、(2) 混みを避ける戦略（PETO）。**既定と PE を比べるだけでは足りず、戦略を 3〜4 本並べて回すのを今後の型にする**
+- 予言 5（WNS −0.10〜+0.05、新しい壁は u_ws の番地の選びか CRC）: CRC は**当たり**（1 回目）。u_ws の番地の選び（rec_fr の口）は上位に出なかった。代わりに既存の壁（DSP の取り込み）が混みで表に出た
+- 予言 4（資源）: DSP・URAM 同じは**当たり**、BRAM +2（305 → 307）は**当たり**、LUT +2.7k（予言 +3〜6k）、FF +8.3k（予言 +3〜6k、リセットの複製と dont_touch で増えた）
+- 予言 6: BD 41-759 は 0（**当たり**）。CRITICAL WARNING 5（2-1 は 10 / 8）
+- 予言 7（CDC-3 が ≈ 14 増えて ≈ 105）: **105（当たり**、91 → 105）。CDC-6 5・CDC-15 3,137 は 2-1 と同じ
+- 結線の照合 115 行・問題 0・陽性対照 OK。RING DMA: `s45_ring_0/m_axi` → HP0_DDR_LOW（2 GiB）、リングのレジスタ 0xA0040000 + 4 KiB
+- sim（この版）: sim-ring（all・late・flip）・sim-regmap・sim-win-all・sim-top・sim-tsys・sim-ringu 通過
+
+
 ```bash
 # Vivado サーバ（2-1 の build/・build-PE/ は比べるために名前を変えて残す）
 cd ~/git/rfsoc && git pull && cd proj021 && pwd
@@ -573,7 +591,7 @@ tail -n 1 build-sim-ringu/check.log build-sim-ring/check.log build-sim-tsys/chec
 make worst-paths
 
 # Vivado サーバ → ボード（WNS の良い方）
-scp build/proj021.bit build/proj021.hwh xilinx@$B:~/proj021/
+scp build-PETO/proj021.bit build-PETO/proj021.hwh xilinx@$B:~/proj021/   # 閉じたのは PETO
 scp pynq/*.py pynq/tp_cal.json xilinx@$B:~/proj021/
 
 # ボード（root。specd を止めてから）。S22a-4
