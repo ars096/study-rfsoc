@@ -608,6 +608,24 @@ python3 plring.py --clkin 0 --ref 10 --soak 20 --no-inval               # 陽性
 python3 plring.py --clkin 0 --ref 10 --soak 20 --pause 3                # 陽性対照: DROP_CNT = SEQ の飛び > 0
 ```
 
+**実機（2026-10-10、`build-PETO` の bit。S22a-4）**: **全部通過**。入力はノイズソース ＋ SG を分配器で 4 ADC へ（PATT・分配器 3 段）、1PPS あり
+
+| 手順 | 結果 |
+|---|---|
+| CMA | CmaFree 118 MB（32 MiB のリングが取れる） |
+| `s45core.py --list` | 4 コアとも CAPS 0x001。ほかは 2-1 と同じ |
+| P-0（`timetest --t0`、30 s） | 通過（TRIG・COMP とも生きていて、間隔 ±1 ビート以内、GLITCH・MISS 0） |
+| P-1（`--probe`、ADC_A の窓 0） | 通過（ダンプ 3 個・各 6,250 フレーム、FLAGS 0、pfb・ddc の飽和 0） |
+| P-2（`--golden --w 256`） | 通過（numpy の FFT との最悪の差 1.4 / 許容 4.7、スナップショットのフレーム = ダンプの f0） |
+| P-3（`--tone 3010.5 --w6`、SG +20 dBm） | 通過: W-1 ch 3928（予言どおり、+0.10 ppm）・W-1b 窓と全帯域の差 +6.55 kHz・**W-6 −0.055 dB**（2-1 は −0.054）。1 回目の −20 dBm は CW がノイズに埋もれて NG（窓の「山」の隣との差 −0.1 dB = 山が無い）。2-1 は SG を ADC に直結、今回は分配器 3 段と PATT を通ってノイズソースと合わさるので、+20 dBm でも ADC の飽和 0 |
+| `plring.py --compare` | **通過**: 9 本（DDC 8・FULL 1）とも ONE のレコードの頭 6 語・本体 4096 語が同じ SEQ の AXI4-Lite の読みと bit 単位で一致。ONE は 1 個出して 0 に戻る。REC_CNT 9・DROP 0・ERR 0。BASE 0x78600000・SIZE 32 MiB・範囲の invalidate（pyxrt の bo.sync）が効く |
+| `plring.py --soak 60` | **通過**: 9 本とも 5,859 レコード。SEQ の飛び 0・DROP_CNT 0・REC_LATE 0・CRC の不一致 0・尾の不一致 0。PEAK 657,920 B（2.0 %）。1 回の読み（範囲の invalidate ＋ 全部の CRC ＋ 写し）中央 5.4 ms・p99 9.0 ms・最大 9.1 ms（5,500 回、10.24 ms × 9 本に追いつく） |
+| `--soak 20 --no-inval`（陽性対照） | 通過: 2 個目のレコードの頭が古い行（初めに書いた 0）のまま見えた（magic 0x0）。**1 回目は道具がこれを例外で止め、REC_CTRL を ALL のままバッファを返して Segmentation fault**（`plring.py` を直した: magic の不一致も「古い行」として数える・閉じるとき REC_CTRL を 0 にし busy が落ちてから返す） |
+| `--soak 20 --pause 3`（陽性対照） | 通過: **SEQ の飛び 2,211 = DROP_CNT 2,211**、PEAK 100 %（リングが満ちて丸ごと捨てた）、CRC の不一致 0・REC_LATE 0 |
+
+- 予言 8: 全部**当たり**（PEAK は 2 %）。INTERFACE 8. の 6 の残り（PS が全部のレコードで CRC を確かめられるか）は、SAM45-Fine の量（9 本 × 10.24 ms）で **確かめられる**（1 回の読み 5〜9 ms）
+- 判定 S22a-1〜4 は全部通過 → **2-2a 通過**。次は 2-2b（TP のレコード、V2-e）
+
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
 判定 1 つにつき、次の 6 項目を書く。**環境に依る値（ホスト名・IP アドレス・パス）は書かない**（公開を前提にする）。
