@@ -680,7 +680,7 @@ python3 plring.py --clkin 0 --ref 10 --soak 20 --pause 3                # 陽性
 | sim-tprec-p（予言 2） | 落ちた（F0 の前で区切らない変種で、レコードの頭が模型の区切りとずれる） |
 | sim-tp（REC = 0 の回帰） | 通過 |
 | sim-regmap | 通過（190 項目: CAPS 3・TP_REC_CTRL の既定 0x0A00・TP_REC_LATE 0 を足した） |
-| sim-ring（TP のレコードを混ぜた版） | Vivado サーバで（1〜2 時間） |
+| sim-ring（TP のレコードを混ぜた版） | 通過（Vivado サーバ）: TP のレコード 18 個が模型と一致・SEQ の飛び 0、SPEC のレコードも全部正しい |
 
 ### 2-2b のビルドと実機
 
@@ -717,6 +717,19 @@ python3 plring.py --clkin 0 --ref 10 --soak 60                          # SPEC 9
 scp build-PE-po/proj021.bit build-PE-po/proj021.hwh xilinx@$B:~/proj021/
 scp pynq/*.py xilinx@$B:~/proj021/
 ```
+
+**実機（2026-10-10、`build-PE-po` の bit。S22b-4 = V2-e）**: **全部通過**。入力は 2-2a と同じ（ノイズソース ＋ SG を分配器で 4 ADC へ）
+
+| 手順 | 結果 |
+|---|---|
+| `s45core.py --list` | 4 コアとも CAPS **0x003**。NSTREAM・流れの表は 2-1・2-2a と同じ |
+| `plring.py --tpcompare`（V2-e） | **通過**: 4 ADC とも TP のレコード 298 個、AXI4-Lite の TP のリング（512 個）と重なった個 509〜511 個が **bit 単位で一致**（不一致 0）。SEQ の飛び 0・**DUMP_T の式（ANCH_T + (F0 − ANCH_F)·512）の外れ 0**（GAP_CNT 0 → 0）・CRC 0。リングの REC_CNT 1,192（= 298 × 4）・DROP 0・ERR 0。「リングの外」は AXI4-Lite のリングが既に上書きした古い個（照らせないだけ） |
+| `plring.py --compare`（2-2a の回帰） | 通過: 9 本とも SPEC のレコード = AXI4-Lite（bit 単位）。REC_CNT 9・DROP 0・ERR 0 |
+| `plring.py --soak 60` | **通過**: SPEC 9 本は各 5,860、**TP 4 本は各 5,865**。SEQ の飛び 0・DROP_CNT 0・REC_LATE 0・CRC の不一致 0・尾の不一致 0。PEAK 924,928 B（2.8 %）・REC_CNT 76,208・ERR 0 |
+
+- 予言 6: **当たり**。TP のレコードは予言の 5,859 より 6 多い 5,865。SEQ の飛び 0（個は欠けていない）なので、区切りの規則 2・3（F0 で始まった個の前・短い個の後）で閉じた K 個未満のレコードが混ざった分と見る（`--soak` は DUMP_N の分布を出していないので、内訳は未確認）
+- **PS の読みの重さ**: 1 回の読み 中央 14.7 ms・p99 14.9 ms・最大 15.1 ms（3,160 回）。60 s のうち読みに使った時間は 2-2a の ≒ 30 s（5,500 × 5.4 ms）から **≒ 46 s（77 %）**に増えた（1 回あたり 2-2a ≒ 10 レコード → ≒ 24 レコード。TP のレコードは小さいが、Python のレコードごとの処理が効く）。追いついてはいるが、2-3（specd）では CRC と写しを C か numpy の一括処理にする
+- 判定 S22b-1〜4 は全部通過 → **2-2b 通過**。次は 2-2c（SNAP のレコード ＋ 仮の読み窓を外して 64 KiB に）
 
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
