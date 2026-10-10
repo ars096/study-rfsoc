@@ -256,11 +256,124 @@ def do_compare(cores, ring, a):
     return ng
 
 
+TP_N_REG, TP_WP, TP_REC_CTRL, TP_REC_LATE, TP_RING = 0x100, 0x108, 0x11C, 0x120, 0x2000
+C_TP_CTRL_TP_RUN, C_TP_CTRL_TANCH = 1 << 0, 1 << 4
+TP_K = 10
+
+
+def tp_on(cores, tpn=512, k=TP_K):
+    """proj021 2-2b: 4 ADC の TP を TP_N = tpn フレーム（512 = 1.024 ms）・K 個 / レコードで、F0 から区切り直す"""
+    for c in cores:
+        c.wr(TP_N_REG, tpn)
+        c.wr(TP_REC_CTRL, (k << 8) | 1)
+    for c in cores:
+        c.wr(SC.C_TP_CTRL, C_TP_CTRL_TP_RUN)
+
+
+def tp_off(cores):
+    for c in cores:
+        c.wr(TP_REC_CTRL, TP_K << 8)
+
+
+def acct(r_, last, nrec):
+    """1 レコードを数える。戻り: (捨てられたレコードの数の見積り, CRC の不一致, 尾の不一致)。
+    SPEC: SEQ は 1 ずつ。TP（s = 0xFF）: SEQ は個の番号で、次の SEQ = SEQ + DUMP_N（飛んだ個 / K を切り上げてレコードの数に）"""
+    core, s, seq, hw, pay, crc_ok, tail_ok = r_
+    k = (core, s)
+    nrec[k] = nrec.get(k, 0) + 1
+    g = 0
+    if s == 0xFF:
+        n = int(hw[5]) & 0xFFFFFFFF
+        if k in last and seq != last[k]:
+            g = -(-((seq - last[k]) & 0xFFFFFFFF) // TP_K)
+        last[k] = seq + n
+    else:
+        if k in last and seq != last[k] + 1:
+            g = (seq - last[k] - 1) & 0xFFFFFFFF
+        last[k] = seq
+    return g, int(not crc_ok), int(not tail_ok)
+
+
+def do_tpcompare(cores, ring, a):
+    """V2-e: TP のレコードの個 = AXI4-Lite の TP のリングの個（bit 単位）・SEQ の飛び 0・DUMP_T = ANCH_T + (DUMP_F0 − ANCH_F)·512"""
+    for st in streams_all(cores):
+        st.wr(SC.S_CTRL, 1 << 1)
+        st.wr(SC.S_REC_CTRL, 0)
+    tp_on(cores)
+    for c in cores:
+        c.wr(SC.C_TP_CTRL, C_TP_CTRL_TANCH)                   # 次の ADC のフレームの頭で (F, T) の錨
+    time.sleep(0.05)
+    anch = {}
+    for c in cores:
+        if not c.rd(SC.C_ANCH_ST) & 2:
+            log(f"NG {c.adc_name}: TANCH の錨が取れない"); return 1
+        anch[c.adc] = (c.rd64(SC.C_ANCH_F), c.rd64(SC.C_ANCH_T), c.rd(SC.C_GAP))
+    ring.enable(True)
+    t0 = time.time()
+    recs = []
+    while time.time() - t0 < a.tp_seconds:
+        recs += ring.read()
+        time.sleep(0.02)
+    # AXI4-Lite の TP のリング（最後の 512 個。TP_WP を前後で読み、その間に上書きされた個は使わない）
+    axi = {}
+    for c in cores:
+        w0 = c.rd(TP_WP)
+        i0 = c.m.array[TP_RING // 4:(TP_RING + 512 * 16) // 4].copy()
+        w1 = c.rd(TP_WP)
+        for idx in range(max(0, w1 - 512 + (w1 - w0) + 1), w0):
+            b = (idx % 512) * 4
+            v = [int(x) for x in i0[b:b + 4]]
+            axi[(c.adc, idx)] = (v[0] | v[1] << 32, v[2] | v[3] << 32)
+    tp_off(cores)
+    time.sleep(0.05)
+    recs += ring.read()
+    ng = 0
+    by = {}
+    for core, s, seq, hw, pay, crc_ok, tail_ok in recs:
+        if s != 0xFF:
+            continue
+        by.setdefault(core, []).append((seq, hw, pay, crc_ok and tail_ok))
+    for c in cores:
+        rs = by.get(c.adc, [])
+        ncmp = nbad = nskip = gaps = tbad = crc = 0
+        prev = None
+        af, at, ag = anch[c.adc]
+        gap_now = c.rd(SC.C_GAP)
+        for seq, hw, pay, ok in rs:
+            n = int(hw[5]) & 0xFFFFFFFF
+            crc += not ok
+            if prev is not None and seq != prev:
+                gaps += 1
+            prev = seq + n
+            f0, t = int(hw[2]), int(hw[3])
+            if gap_now == ag and t != at + (f0 - af) * 512:
+                tbad += 1
+            for i in range(n):
+                it = axi.get((c.adc, seq + i))
+                if it is None:
+                    nskip += 1
+                    continue
+                ncmp += 1
+                if (int(pay[2 * i]), int(pay[2 * i + 1])) != it:
+                    nbad += 1
+        res = (len(rs) >= 3 and ncmp >= 30 and nbad == 0 and gaps == 0 and tbad == 0 and crc == 0 and gap_now == ag)
+        ng += not res
+        log(f"{c.adc_name}: TP のレコード {len(rs)} 個・照らした個 {ncmp}（AXI4-Lite のリングの外 {nskip}）・不一致 {nbad}・"
+            f"SEQ の飛び {gaps}・DUMP_T の式の外れ {tbad}（GAP_CNT {ag} → {gap_now}）・CRC {crc}: {'OK' if res else 'NG'}")
+    r = ring.regs()
+    log(f"リング: REC_CNT {r['rec']} / DROP_CNT {r['drop']} / ERR {r['err']}")
+    ok = ng == 0 and r["drop"] == 0 and not r["err"]
+    log(f"結果（V2-e）: {'通過' if ok else '失敗'}")
+    return 0 if ok else 1
+
+
 def do_soak(cores, ring, a):
     ss = setup(cores, 0, a.shift, a.shift_full, a.ns)
     for st, *_ in ss:
         st.wr(SC.S_REC_CTRL, 1)                               # ALL
     late0 = {(st.core.adc, st.s): st.rd(SC.S_REC_LATE) for st, *_ in ss}
+    tp_on(cores)                                              # proj021 2-2b: TP のレコードも（4 ADC、10.24 ms ごと）
+    tplate0 = {c.adc: c.rd(TP_REC_LATE) for c in cores}
     ring.enable(True)
     t0 = time.time()
     last = {}
@@ -280,14 +393,9 @@ def do_soak(cores, ring, a):
             stale += 1
             break
         t_rd.append(time.perf_counter() - tt)
-        for core, s, seq, hw, pay, crc_ok, tail_ok in recs:
-            k = (core, s)
-            nrec[k] = nrec.get(k, 0) + 1
-            if k in last and seq != last[k] + 1:
-                gaps += (seq - last[k] - 1) & 0xFFFFFFFF
-            last[k] = seq
-            crc_bad += not crc_ok
-            tail_bad += not tail_ok
+        for r_ in recs:
+            g, cb, tb = acct(r_, last, nrec)
+            gaps += g; crc_bad += cb; tail_bad += tb
         time.sleep(a.poll)
     for st, *_ in ss:
         st.wr(SC.S_REC_CTRL, 0)
@@ -298,16 +406,13 @@ def do_soak(cores, ring, a):
         log(f"古い行を読んだ: {e}")
         stale += 1
         tail = []
-    for core, s, seq, hw, pay, crc_ok, tail_ok in tail:
-        k = (core, s)
-        nrec[k] = nrec.get(k, 0) + 1
-        if k in last and seq != last[k] + 1:
-            gaps += (seq - last[k] - 1) & 0xFFFFFFFF
-        last[k] = seq
-        crc_bad += not crc_ok
-        tail_bad += not tail_ok
+    for r_ in tail:
+        g, cb, tb = acct(r_, last, nrec)
+        gaps += g; crc_bad += cb; tail_bad += tb
     r = ring.regs()
     late = sum(st.rd(SC.S_REC_LATE) - late0[(st.core.adc, st.s)] for st, *_ in ss)
+    late += sum(c.rd(TP_REC_LATE) - tplate0[c.adc] for c in cores)
+    tp_off(cores)
     t_rd = np.array(t_rd if t_rd else [0.0]) * 1e3
     log(f"流れごとのレコード: {dict(sorted(nrec.items()))}")
     log(f"SEQ の飛び {gaps} / DROP_CNT {r['drop']} / REC_LATE（増えた分）{late} / CRC の不一致 {crc_bad} / 尾の不一致 {tail_bad}")
@@ -338,6 +443,8 @@ def main():
     p.add_argument("--list", action="store_true")
     p.add_argument("--compare", action="store_true")
     p.add_argument("--soak", type=float, default=0.0)
+    p.add_argument("--tpcompare", action="store_true", help="proj021 2-2b V2-e: TP のレコード = AXI4-Lite の TP のリング")
+    p.add_argument("--tp-seconds", type=float, default=3.0, help="--tpcompare で集める時間 [s]（AXI4-Lite のリングは 0.52 s ぶん）")
     p.add_argument("--period", type=float, default=1.0, help="--compare のダンプの長さ [s]")
     p.add_argument("--ns", type=int, default=1, help="DDC の NS（1 = 256 MHz）")
     p.add_argument("--shift", type=int, default=4)
@@ -371,6 +478,8 @@ def main():
     try:
         if a.compare:
             rc |= do_compare(cores, ring, a) != 0
+        if a.tpcompare:
+            rc |= do_tpcompare(cores, ring, a)
         if a.soak > 0:
             rc |= do_soak(cores, ring, a)
     finally:
