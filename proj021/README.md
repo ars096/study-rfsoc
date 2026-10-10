@@ -702,6 +702,22 @@ python3 plring.py --clkin 0 --ref 10 --compare                          # 2-2a �
 python3 plring.py --clkin 0 --ref 10 --soak 60                          # SPEC 9 本 ＋ TP 4 本: 取りこぼし 0
 ```
 
+ビルドの結果（2026-10-10）:
+
+| 実装 | WNS | WHS | 備考 |
+|---|---|---|---|
+| Performance_ExtraTimingOpt（build-PETO） | −0.078 ns（165 端点） | — | 閉じない |
+| Performance_Explore（build-PE） | −0.0045 ns（1 端点: gb_dn_1 → u_aev） | — | 閉じない |
+| build-PE → `make physopt OUTDIR=build-PE`（build-PE-po） | **+0.011 ns** | **+0.010 ns** | 配線後の phys_opt_design（AggressiveExplore で閉じた）|
+
+- **2-2b の bit は build-PE-po**。`make physopt` は配線の済んだ dcp を開き、`phys_opt_design` を AggressiveExplore → AggressiveFanoutOpt → AlternateReplication → Explore の順に、WNS・WHS がともに 0 以上になるまで掛けて bit を書く（`tools/postroute_physopt.tcl`）。数 ps の残りは作り直しより安い
+- RTL は 2-2b の実装のまま（ビルドのための RTL の変更は無し）
+
+```bash
+scp build-PE-po/proj021.bit build-PE-po/proj021.hwh xilinx@$B:~/proj021/
+scp pynq/*.py xilinx@$B:~/proj021/
+```
+
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
 判定 1 つにつき、次の 6 項目を書く。**環境に依る値（ホスト名・IP アドレス・パス）は書かない**（公開を前提にする）。
