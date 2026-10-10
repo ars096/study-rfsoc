@@ -668,6 +668,40 @@ python3 plring.py --clkin 0 --ref 10 --soak 20 --pause 3                # 陽性
 | S22b-4 | 実機（予言 6） = **V2-e** |
 
 
+**実装（2026-10-10）**: `tp_core` に `REC`（win_core は 1、FULL の spec_core は 0）。個の 16 バイトと番号（TP_WP）・最初のフレーム（48 bit）・区切りの最初のビートの T を受けて、
+溜め 2 面（分散 RAM、16 個 × 128 bit × 2）にレコードを組む。win_core で rec_arb（2 本）により SPEC のレコードと束ね、rec_drop は [NW] に足した。
+レジスタ 0x11C TP_REC_CTRL・0x120 TP_REC_LATE（REC = 0 では今どおり 0xDEADBEEF）。CAPS 3。PS: `plring.py --tpcompare`、`--soak` に TP のレコードを混ぜた
+
+**sim（クラウド、iverilog 12）**:
+
+| sim | 結果 |
+|---|---|
+| sim-tprec（予言 1） | 通過: TP のレコード 46 個の頭（SEQ・F0・**T**・DUMP_N・バイト数）と中身が模型と bit 単位で一致。長い止まり（60,000 クロック）で捨てた 10 = TP_REC_LATE 10 = rec_drop 10。K 個未満のレコード 2・F0 で始まったレコード 2 |
+| sim-tprec-p（予言 2） | 落ちた（F0 の前で区切らない変種で、レコードの頭が模型の区切りとずれる） |
+| sim-tp（REC = 0 の回帰） | 通過 |
+| sim-regmap | 通過（190 項目: CAPS 3・TP_REC_CTRL の既定 0x0A00・TP_REC_LATE 0 を足した） |
+| sim-ring（TP のレコードを混ぜた版） | Vivado サーバで（1〜2 時間） |
+
+### 2-2b のビルドと実機
+
+```bash
+cd ~/git/rfsoc && git pull && cd proj021
+mkdir -p old && mv build-PETO old/build-2-2a-PETO; mv build-PE old/build-2-2a-PE 2>/dev/null
+make sim-all > sim-all.log 2>&1 &                       # sim-tprec・sim-tprec-p を含む
+make sim-ring > /dev/null 2>&1 &                        # TP のレコードを混ぜた版
+make IMPL=Performance_ExtraTimingOpt JOBS=14 > /dev/null 2>&1 &
+make IMPL=Performance_Explore JOBS=14 > /dev/null 2>&1 &
+wait
+grep -E 'TIMING \(確定\)' build-PETO/vivado.log build-PE/vivado.log
+tail -n 1 build-sim-tprec/check.log build-sim-tprec-posctl/check.log build-sim-ring/check.log
+
+# ボード（閉じた方の bit。specd を止めてから）。S22b-4 = V2-e
+python3 s45core.py --list --clkin 0 --ref 10                            # CAPS が 0x003 に
+python3 plring.py --clkin 0 --ref 10 --tpcompare                        # 4 ADC: TP のレコードの個 = AXI4-Lite の TP のリング・SEQ の飛び 0・DUMP_T の式
+python3 plring.py --clkin 0 --ref 10 --compare                          # 2-2a の回帰
+python3 plring.py --clkin 0 --ref 10 --soak 60                          # SPEC 9 本 ＋ TP 4 本: 取りこぼし 0
+```
+
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
 判定 1 つにつき、次の 6 項目を書く。**環境に依る値（ホスト名・IP アドレス・パス）は書かない**（公開を前提にする）。
