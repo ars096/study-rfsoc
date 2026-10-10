@@ -26,7 +26,7 @@ DEPTH = 512
 OVR_TH = 32764     # proj017: FLAGS[4] の振り切れのしきい値（tp_core の OVR_TH）
 
 
-def gen(out):
+def gen(out, rec=False):
     rng = np.random.default_rng(13)
     valid = []                  # クロックごと
     beats = []                  # ビート（16 サンプルの int16）
@@ -88,6 +88,8 @@ def gen(out):
     frames(1)
     cmd(2, 0); f0b = st["fin"] + 2
     frames(14, f0=f0b)                          # TP_N = 4。F0 の直前の短い区切り（2 フレーム・TP_N 1）と F0 の区切りが窓に入る
+    if rec:
+        frames(48)                              # proj021 2-2b: F0 で始まった TP のレコード（K = 10 個）を閉じるまで流す
     gap(5)
     frames(1)                                   # 最後の区切りを閉じる
 
@@ -163,7 +165,7 @@ def model(valid, beats, cmds):
                         if gap_since_tlast:
                             seen["gap_before_f0"] += 1
                     cur = {"sum": 0, "f0": fin, "nf": 0, "n": neff, "run": runflag, "gap": False, "boot": boot, "ovr": False,
-                           "edge_p": False, "edge_n": False}
+                           "edge_p": False, "edge_n": False, "t": c}
                     boot = False
                     started = True
                 cur["nf"] += 1
@@ -199,7 +201,7 @@ def entry(b):
     return (b["sum"] & 0xFFFFFFFF, b["sum"] >> 32, b["f0"] & 0xFFFFFFFF, (flags << 24) | b["nf"])
 
 
-def check(out, posctl=False):
+def check(out, posctl=False, rec=None):
     nfail = 0
     fails = []
 
@@ -222,6 +224,8 @@ def check(out, posctl=False):
             slots[int(t[1])] = tuple(int(x) if x.isdigit() else -1 for x in t[2:6])
         elif t[0] == "RUNF0":
             runf0.append(int(t[2]))
+        elif t[0] == "RECDROP":
+            regs["RECDROP"] = int(t[1])
         elif t[0] == "BEATS":
             nbeat_tb = int(t[1])
     judge(nbeat_tb == len(beats), "試験台が流したビート %s = 入力 %d" % (nbeat_tb, len(beats)))
@@ -250,7 +254,10 @@ def check(out, posctl=False):
           "C. TP_N = %s / TP_NEFF = %s（期待 %d / %d）" % (regs.get("TP_N"), regs.get("TP_NEFF"), r_tpn, tp_n or 1))
     judge(regs.get("TP_PARAM") == (512 << 16) | (16 << 8) | 2, "C. TP_PARAM = %08x" % regs.get("TP_PARAM", 0))
     judge(regs.get("TP_STAT") == 2, "C. TP_STAT = %s（期待 2: 区切りの途中・F0 待ちでない）" % regs.get("TP_STAT"))
-    judge(regs.get("TP_7") == 0xDEADBEEF, "C. 番地の外（0x11C）は DEAD_BEEF（在ってはいけないものが読めない）")
+    if rec:
+        judge(regs.get("TP_7") == 0x0A01, "C. TP_REC_CTRL（0x11C）= %08x（期待 0x0A01: K 10・EN）" % regs.get("TP_7", 0))
+    else:
+        judge(regs.get("TP_7") == 0xDEADBEEF, "C. 番地の外（0x11C）は DEAD_BEEF（在ってはいけないものが読めない）")
 
     # D. 場面を本当に通ったか
     nshort = sum(1 for b in bins if b["nf"] != b["n"])
@@ -270,6 +277,15 @@ def check(out, posctl=False):
     nen = sum(1 for b in tail if b["ovr"] and b["edge_n"] and not b["edge_p"])
     judge(0 < novr < len(tail) and nep >= 1 and nen >= 1,
           "D. 振り切れの FLAG: 最後の %d 個のうち %d 個・+32764 だけで立った区切り %d・−32764 だけで立った区切り %d" % (len(tail), novr, nep, nen))
+    if rec:
+        rec_fails = check_rec(out, bins, regs, judge)
+        if rec == "posctl":
+            ok = rec_fails > 0 and not any(f in ("A.", "B.") for f in fails[:len(fails) - rec_fails])
+            print("陽性対照（F0 の前で区切らない）: E の不一致 %d" % rec_fails)
+            print("結果: %s" % ("全部通過（陽性対照が落ちるべきところで落ちた）" if ok else "陽性対照が落ちなかった（見張りが効いていない）"))
+            return 0 if ok else 1
+        print("結果: %s" % ("全部通過" if nfail == 0 else "%d 件失敗" % nfail))
+        return nfail
     if posctl == "ovr":
         # 陽性対照（TP_OVR_POSCTL）: しきい値ちょうど（+32764）を見落とすはず → B が落ち、D は通る
         ok = "B." in fails and not any(f == "D." for f in fails)
@@ -286,9 +302,68 @@ def check(out, posctl=False):
     return nfail
 
 
+
+def check_rec(out, bins, regs, judge, K=10):
+    """proj021 2-2b: TP のレコード（type 2）。区切り: K 個 / F0 で始まった個の前 / 短い個の後（README の手順 2-2b）"""
+    nf0 = [0]
+
+    def j(ok, msg):
+        if not ok:
+            nf0[0] += 1
+        judge(ok, msg)
+
+    groups, cur = [], []
+    for i, b in enumerate(bins):
+        if b["run"] and cur:
+            groups.append(cur); cur = []
+        cur.append(i)
+        if len(cur) == K or b["nf"] != b["n"]:
+            groups.append(cur); cur = []
+    want = {g[0]: g for g in groups}
+    recs = []
+    for l in open(os.path.join(out, "tp_rec.txt")):
+        t = l.split()
+        if t and t[0] == "R":
+            recs.append([int(x, 16) for x in t[1:]])
+    bad, seqs = [], []
+    for w in recs:
+        seq, n = w[1] & 0xFFFFFFFF, w[5] & 0xFFFFFFFF
+        seqs.append(seq)
+        g = want.get(seq)
+        if g is None:
+            bad.append("SEQ %d が模型のレコードの頭でない（DUMP_N %d）" % (seq, n)); continue
+        b0 = bins[g[0]]
+        hdr_ok = (w[0] == (0xFF << 56 | 3 << 48 | 2 << 40 | 1 << 32 | 0x52353453) and n == len(g) and w[2] == b0["f0"]
+                  and w[3] == b0["t"] and w[7] == ((len(g) + 3) // 4) * 64 and w[4] == 0 and w[6] == 0 and (w[1] >> 32) == 0)
+        pay = []
+        for i in g:
+            e = entry(bins[i])
+            pay += [e[0] | e[1] << 32, e[2] | e[3] << 32]
+        pay += [0] * (((len(g) + 3) // 4) * 8 - len(pay))
+        if not hdr_ok or w[8:] != pay:
+            bad.append("SEQ %d（模型 %d 個・DUMP_N %d）の頭か中身が模型と違う: 頭 %s / F0 %d・T %d（模型）" %
+                       (seq, len(g), n, [hex(x) for x in w[:8]], b0["f0"], b0["t"]))
+    exp_seqs = [g[0] for g in groups]
+    got = set(seqs)
+    missing = [q for q in exp_seqs if q not in got]
+    j(len(bad) == 0, "E. TP のレコード %d 個の頭（SEQ・F0・T・DUMP_N・バイト数）と中身が模型と bit 単位で一致（不一致 %d）" % (len(recs), len(bad)))
+    for x in bad[:5]:
+        print("       " + x)
+    j(seqs == sorted(seqs), "E. レコードが SEQ の順に出た")
+    late, drop = regs.get("TP_8"), regs.get("RECDROP")
+    j(len(missing) == late == drop and late >= 1,
+      "E. 捨てたレコード: 模型にあって出なかった %d = TP_REC_LATE %s = rec_drop %s（≧ 1: 長い止まりで捨てた）" % (len(missing), late, drop))
+    nshort = sum(1 for g in groups if len(g) < K)
+    nrun_head = sum(1 for g in groups if bins[g[0]]["run"])
+    j(nshort >= 2 and nrun_head == 2, "E. 場面: K 個未満のレコード %d・F0 で始まったレコード %d（期待 2: RUN 2 回とも）" % (nshort, nrun_head))
+    return nf0[0]
+
+
 if __name__ == "__main__":
     if sys.argv[1] == "gen":
-        gen(sys.argv[2])
+        gen(sys.argv[2], rec=(len(sys.argv) > 3 and sys.argv[3] == "rec"))
     else:
         pc = sys.argv[3] if len(sys.argv) > 3 else ""
+        if pc in ("rec", "recposctl"):
+            sys.exit(1 if check(sys.argv[2], rec=("posctl" if pc == "recposctl" else "on")) else 0)
         sys.exit(1 if check(sys.argv[2], posctl=("ovr" if pc == "ovr" else pc == "posctl")) else 0)

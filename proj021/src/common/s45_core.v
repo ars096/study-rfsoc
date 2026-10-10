@@ -197,15 +197,15 @@ module s45_core #(
     // ---- proj021 2-2a: レコード（win_core の DDC の流れ・spec_core の FULL の流れ）----
     wire [63:0]   wr_d, fr_d;
     wire          wr_v, wr_r, wr_l, wr_u, fr_v, fr_r, fr_l, fr_u, f_drop;
-    wire [NW-1:0] w_drop;
+    wire [NW:0]   w_drop;               // proj021 2-2b: [NW] = TP のレコード
     integer di;
     reg   [2:0]   drop_sum;
     always @* begin
         drop_sum = (FULL != 0) ? {2'd0, f_drop} : 3'd0;
-        for (di = 0; di < NW; di = di + 1) drop_sum = drop_sum + {2'd0, w_drop[di]};
+        for (di = 0; di <= NW; di = di + 1) drop_sum = drop_sum + {2'd0, w_drop[di]};
     end
     reg [1:0] drop_q;
-    always @(posedge aclk) drop_q <= (drop_sum > 3'd3) ? 2'd3 : drop_sum[1:0];   // 同じクロックに 4 本は来ない（NW ≦ 2 ＋ FULL）
+    always @(posedge aclk) drop_q <= (drop_sum > 3'd3) ? 2'd3 : drop_sum[1:0];   // 同じクロックに 4 本は来ない（NW ≦ 2 ＋ FULL ＋ TP。TP の捨ては個の来るクロックだけ）
     assign rec_drop = drop_q;
 
     // ---- spec_core（FULL の流れ）----

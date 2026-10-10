@@ -178,7 +178,7 @@ module win_core #(
     input  wire         m_axis_rec_tready,
     output wire         m_axis_rec_tlast,
     output wire         m_axis_rec_tuser,
-    output wire [NW-1:0] rec_drop
+    output wire [NW:0]  rec_drop          // [NW-1:0] SPEC の流れ・[NW] TP のレコード（proj021 2-2b）
 );
     localparam integer FW = 48;
     localparam [7:0]   BK8 = BIT_KIND, BR8 = BIT_REV;
@@ -266,16 +266,21 @@ module win_core #(
     end
     wire [31:0] tp_ring_rd, tp_reg_rd;
     wire [15:0] tp_rd_addr;
+    wire [63:0] tp_d;                   // proj021 2-2b: TP のレコード
+    wire        tp_v, tp_r, tp_l, tp_u, tp_drop;
     generate
         if (TP != 0) begin : g_tp
-            tp_core #(.TPN_DEFAULT(TPN_DEFAULT), .FW(FW)) u_tp (
+            // proj021 2-2b: REC = 1（TP のレコード、type 2）。T は t_loc（TANCH の ANCH_T と同じ物差し）
+            tp_core #(.TPN_DEFAULT(TPN_DEFAULT), .FW(FW), .REC(1), .REC_CORE({4'd0, CP16[3:0]})) u_tp (
                 .clk(aclk), .rst(rst), .in_acc(s_axis_tvalid), .m_in(a_cnt[8:0]), .fin(a_fin), .tdata(s_axis_tdata),
                 .cmd_run(tp_run),
                 .wr_en(wr_go && wr_tpr), .wr_addr(s_axi_awaddr[7:2]), .wr_data(s_axi_wdata),
-                .rd_addr(tp_rd_addr), .rd_ring(tp_ring_rd), .rd_reg(tp_reg_rd));
+                .rd_addr(tp_rd_addr), .rd_ring(tp_ring_rd), .rd_reg(tp_reg_rd),
+                .t_now(t_loc), .m_tdata(tp_d), .m_tvalid(tp_v), .m_tready(tp_r), .m_tlast(tp_l), .m_tuser(tp_u), .rec_drop(tp_drop));
         end else begin : g_notp
             assign tp_ring_rd = 32'd0;
             assign tp_reg_rd  = 32'd0;
+            assign tp_d = 64'd0; assign tp_v = 1'b0; assign tp_l = 1'b0; assign tp_u = 1'b0; assign tp_drop = 1'b0;
         end
     endgenerate
 
@@ -597,8 +602,15 @@ module win_core #(
         fr_data <= sp_data_v[fr_s];
     end
     rec_fr #(.NS(NW), .S_BASE(0), .CORE({4'd0, CP16[3:0]}), .LAT(5)) u_rec (.clk(aclk), .rst(rst),
-        .seq(fr_seq), .hdr(fr_hdr), .rec_all(fr_all), .rec_one(fr_one), .one_clr(fr_one_clr), .late(fr_late), .drop(rec_drop),
+        .seq(fr_seq), .hdr(fr_hdr), .rec_all(fr_all), .rec_one(fr_one), .one_clr(fr_one_clr), .late(fr_late), .drop(rec_drop[NW-1:0]),
         .req(fr_req), .gnt(fr_gnt), .rd_s(fr_s), .rd_ch(fr_ch), .rd_data(fr_data),
+        .m_tdata(sr_d), .m_tvalid(sr_v), .m_tready(sr_r), .m_tlast(sr_l), .m_tuser(sr_u));
+    // proj021 2-2b: SPEC のレコード（u_rec）と TP のレコード（u_tp）をレコード単位で束ねる
+    wire [63:0] sr_d;
+    wire        sr_v, sr_r, sr_l, sr_u;
+    assign rec_drop[NW] = tp_drop;
+    rec_arb #(.N(2)) u_warb (.clk(aclk), .rst(rst),
+        .s_tdata({tp_d, sr_d}), .s_tvalid({tp_v, sr_v}), .s_tready({tp_r, sr_r}), .s_tlast({tp_l, sr_l}), .s_tuser({tp_u, sr_u}),
         .m_tdata(m_axis_rec_tdata), .m_tvalid(m_axis_rec_tvalid), .m_tready(m_axis_rec_tready),
         .m_tlast(m_axis_rec_tlast), .m_tuser(m_axis_rec_tuser));
 
@@ -614,7 +626,7 @@ module win_core #(
             6'h00: reg_a = IF_ID;
             6'h01: reg_a = PROJ;
             6'h02: reg_a = NW + NFULL;                     // NSTREAM
-            6'h03: reg_a = 32'd1;                          // CAPS: [0] DMA のレコード（proj021 2-2a）。[1] TP・[2] SNAP は 2-2b・2-2c
+            6'h03: reg_a = (TP != 0) ? 32'd3 : 32'd1;     // CAPS: [0] DMA のレコード（2-2a）・[1] TP をレコードで（2-2b）。[2] SNAP は 2-2c
             6'h04: reg_a = BASE_BEATS;
             6'h05: reg_a = BUILD_TAG;
             6'h06: reg_a = {16'd0, CP16};

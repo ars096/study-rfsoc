@@ -57,7 +57,11 @@
 module tp_core #(
     parameter integer TPN_DEFAULT = 500,
     parameter integer FW          = 48,
-    parameter integer OVR_TH      = 32764
+    parameter integer OVR_TH      = 32764,
+    // proj021 2-2b: TP のレコード（INTERFACE 4.6、type 2）。REC = 1 は win_core の TP だけ（FULL の TP は 0 で今どおり）
+    parameter integer REC         = 0,
+    parameter [7:0]   REC_CORE    = 8'd0,
+    parameter integer REC_EN_DEFAULT = 0
 )(
     input  wire          clk,
     input  wire          rst,          // spec_core の rst_core（起動のやり直しでも張り直す）
@@ -71,7 +75,15 @@ module tp_core #(
     input  wire [31:0]   wr_data,
     input  wire [15:0]   rd_addr,      // spec_core が保持している読み出しの番地
     output wire [31:0]   rd_ring,      // リングバッファの語（rd_addr から 2 クロック後に有効）
-    output reg  [31:0]   rd_reg        // レジスタ（rd_addr から組み合わせ）
+    output reg  [31:0]   rd_reg,       // レジスタ（rd_addr から組み合わせ）
+    // proj021 2-2b: TP のレコード（REC = 1 のときだけ使う）
+    input  wire [63:0]   t_now,        // このクロックの T（win_core の t_loc。TANCH の ANCH_T と同じ物差し）
+    output wire [63:0]   m_tdata,
+    output wire          m_tvalid,
+    input  wire          m_tready,
+    output wire          m_tlast,
+    output wire          m_tuser,
+    output reg           rec_drop      // レコードを 1 個捨てた（1 クロック）
 );
     localparam integer NL = 16;
     localparam integer DEPTH_L2 = 9;
@@ -85,6 +97,7 @@ module tp_core #(
     reg  [FW-1:0] pend_f0, pend_m1;
     reg           pend_arm, started;
     reg           pre_f0hit, pre_nhit;
+    reg  [63:0]   t_s0;                // proj021 2-2b
     wire [NW-1:0] tpn_eff    = (tp_n == {NW{1'b0}}) ? {{(NW-1){1'b0}}, 1'b1} : tp_n;
     wire          first_beat = in_acc && (m_in == 9'd0);
     wire          hit_f0     = pend_arm && pre_f0hit;
@@ -114,6 +127,7 @@ module tp_core #(
             pre_f0hit <= cmd_run ? 1'b0 : ((m_in == 9'd0) ? (fin == pend_f0) : (fin == pend_m1));
 `endif
             pre_nhit  <= (fcur >= tpn_m1);                            // ≥: TP_N を小さくしても区切りが止まらない（陽性対照で見つけた）
+            if (first_beat && bnd) t_s0 <= t_now;                   // proj021 2-2b: 区切りの最初のビートの T
             if (first_beat) begin
                 started <= 1'b1;
                 fcur    <= bnd ? {NW{1'b0}} : fcur + 1'b1;
@@ -201,6 +215,8 @@ module tp_core #(
     reg               b_run, b_gap, b_boot, b_ovr, have, boot;
     reg               e_we;
     reg [127:0]       e_data;
+    reg [FW-1:0]      e_f0;            // proj021 2-2b: 個の最初のフレーム（48 bit）
+    reg [63:0]        b_t, e_t;        // proj021 2-2b: 区切りの最初のビートの T
     reg [31:0]        wp;
     wire [NW-1:0]     b_nfr   = b_beats[NW+8:9];
     wire              b_short = (b_beats[8:0] != 9'd0) || (b_nfr != b_n);
@@ -216,8 +232,11 @@ module tp_core #(
                 if (have) begin
                     e_we   <= 1'b1;
                     e_data <= {{3'd0, b_ovr, b_boot, b_gap, b_run, b_short}, b_nfr, b_f0[31:0], acc};
+                    e_f0   <= b_f0;
+                    e_t    <= b_t;
                 end
                 acc <= {33'd0, t1}; b_f0 <= c_fin[CD]; b_beats <= 1; b_n <= c_n[CD];
+                b_t <= t_s0;                   // s0 で取った T（次の区切りの頭は 1 フレーム以上先なので、まだ書き換わっていない）
                 b_run <= c_r[CD]; b_gap <= 1'b0; b_boot <= boot; boot <= 1'b0; have <= 1'b1;
                 b_ovr <= c_o[CD];
             end else begin
@@ -256,7 +275,113 @@ module tp_core #(
             6'h04: rd_reg = {{(64-FW){1'b0}}, pend_f0[FW-1:32]};
             6'h05: rd_reg = {16'd512, 8'd16, 8'd2};
             6'h06: rd_reg = {30'd0, started, pend_arm};
+            6'h07: rd_reg = (REC != 0) ? {19'd0, rc_k, 7'd0, rc_en} : 32'hDEAD_BEEF;   // proj021 2-2b: 0x11C TP_REC_CTRL
+            6'h08: rd_reg = (REC != 0) ? rc_late : 32'hDEAD_BEEF;                       // 0x120 TP_REC_LATE
             default: rd_reg = 32'hDEAD_BEEF;
         endcase
     end
+
+    // =====================================================================
+    // proj021 2-2b: TP のレコード（type 2）。個（e_we）を K 個ずつ 1 レコードに
+    //   区切り: K 個 / F0 で始まった個（FLAGS[1]）の前 / 短い個（FLAGS[0]）の後
+    //   溜め 2 面。2 面とも埋まっているときに始まったレコードは丸ごと捨てる（rc_late・rec_drop）
+    //   頭: w0 {0xFF, core, 2, 1, "S45R"} / w1 SEQ（最初の個の番号）/ w2 F0（48 bit）/ w3 T / w5 DUMP_N / w7 中身のバイト数
+    // =====================================================================
+    reg        rc_en;
+    reg [4:0]  rc_k;
+    reg [31:0] rc_late;
+    wire [4:0] kk = (rc_k == 5'd0) ? 5'd10 : (rc_k > 5'd16) ? 5'd16 : rc_k;
+    always @(posedge clk) begin
+        if (rst) begin rc_en <= (REC_EN_DEFAULT != 0); rc_k <= 5'd10; end
+        else if (wr_en && wr_addr == 6'h07) begin rc_en <= wr_data[0]; rc_k <= wr_data[12:8]; end
+    end
+    generate
+        if (REC != 0) begin : g_rec
+            reg [127:0] bm [0:31];            // {面, 個 4 bit}
+            reg [1:0]   full;                 // 面ごと: 出すのを待っている
+            reg [4:0]   bn [0:1];             // 面ごとの個の数
+            reg [31:0]  bseq [0:1];
+            reg [FW-1:0] bf0 [0:1];
+            reg [63:0]  bt [0:1];
+            reg         cb;                   // 埋めている面
+            reg [4:0]   cnt;                  // 今のレコードの個の数（捨てているレコードも数える）
+            reg         dropping;
+            // 出す側
+            reg         eb;                   // 出している面
+            reg         busy;
+            reg [5:0]   oi;                   // 出した語（頭 8 ＋ 中身）
+            reg [5:0]   olen;                 // 語の数（8 ＋ 中身の語）
+            wire [63:0] w_hdr = (oi == 6'd0) ? {8'hFF, REC_CORE, 8'd2, 8'd1, 32'h5235_3453} :
+                                (oi == 6'd1) ? {32'd0, bseq[eb]} :
+                                (oi == 6'd2) ? {{(64-FW){1'b0}}, bf0[eb]} :
+                                (oi == 6'd3) ? bt[eb] :
+                                (oi == 6'd5) ? {27'd0, bn[eb]} :
+                                (oi == 6'd7) ? {32'd0, 19'd0, (bn[eb] + 5'd3) >> 2, 6'd0} : 64'd0;
+            wire [5:0]  pi  = oi - 6'd8;      // 中身の語の番号（個 = pi >> 1）
+            wire [127:0] it = bm[{eb, pi[4:1]}];
+            wire [63:0] w_pay = (pi[5:1] < bn[eb]) ? (pi[0] ? it[127:64] : it[63:0]) : 64'd0;
+            assign m_tdata  = (oi < 6'd8) ? w_hdr : w_pay;
+            assign m_tvalid = busy;
+            assign m_tlast  = busy && (oi == olen - 6'd1);
+            assign m_tuser  = 1'b0;
+            wire go = busy && m_tready;
+
+            // 個を受ける側
+            wire        f_run   = e_data[121];          // FLAGS[1]: F0 で始まった
+            wire        f_short = e_data[120];          // FLAGS[0]: 短い
+            reg         c1;                             // 今のクロックで「先に閉じる」
+            reg         nb, nd;                         // 新しく始めるときの面・捨てるか
+            reg [4:0]   nc;
+            always @(posedge clk) begin
+                rec_drop <= 1'b0;
+                if (rst) begin
+                    full <= 2'b00; cb <= 1'b0; cnt <= 5'd0; dropping <= 1'b0; rc_late <= 32'd0;
+                    eb <= 1'b0; busy <= 1'b0; oi <= 6'd0; olen <= 6'd0;
+                end else begin
+                    // ---- 出す ----
+                    if (!busy && full[eb]) begin
+                        busy <= 1'b1; oi <= 6'd0;
+                        olen <= 6'd8 + {((bn[eb] + 5'd3) >> 2), 3'd0};
+                    end else if (go) begin
+                        if (oi == olen - 6'd1) begin
+                            busy <= 1'b0; full[eb] <= 1'b0; eb <= ~eb;
+                        end else oi <= oi + 6'd1;
+                    end
+                    // ---- 受ける ----
+                    if (!rc_en) begin
+                        cnt <= 5'd0; dropping <= 1'b0;
+                    end else if (e_we) begin
+                        nb = cb; nd = dropping; nc = cnt;
+                        // F0 で始まった個の前で閉じる
+`ifdef TP_REC_POSCTL
+                        if (1'b0) begin                     // 陽性対照: F0 で始まった個の前で区切らない（sim-tprec-p で落ちるべき）
+`else
+                        if (f_run && nc != 5'd0) begin
+`endif
+                            if (nd) begin rc_late <= rc_late + 32'd1; rec_drop <= 1'b1; end
+                            else begin full[nb] <= 1'b1; nb = ~nb; end
+                            nc = 5'd0;
+                        end
+                        // 新しいレコードの頭: 面が空いていなければ捨てる
+                        if (nc == 5'd0) begin
+                            nd = full[nb] || (nb != cb && full[nb]) ;
+                            if (!nd) begin bseq[nb] <= wp; bf0[nb] <= e_f0; bt[nb] <= e_t; end
+                        end
+                        if (!nd) begin bm[{nb, nc[3:0]}] <= e_data; bn[nb] <= nc + 5'd1; end
+                        nc = nc + 5'd1;
+                        // K 個・短い個の後で閉じる
+                        if (nc == kk || f_short) begin
+                            if (nd) begin rc_late <= rc_late + 32'd1; rec_drop <= 1'b1; end
+                            else begin full[nb] <= 1'b1; nb = ~nb; end
+                            nc = 5'd0; nd = 1'b0;
+                        end
+                        cb <= nb; cnt <= nc; dropping <= nd;
+                    end
+                end
+            end
+        end else begin : g_norec
+            assign m_tdata = 64'd0; assign m_tvalid = 1'b0; assign m_tlast = 1'b0; assign m_tuser = 1'b0;
+            always @(posedge clk) begin rec_drop <= 1'b0; rc_late <= 32'd0; end
+        end
+    endgenerate
 endmodule

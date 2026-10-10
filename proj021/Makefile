@@ -117,6 +117,18 @@ sim-tp:
 	$(VVP) -n $(SIMTPDIR)/tb
 	$(PYTHON) sim/check_tp.py check $(SIMTPDIR) $(if $(filter 1,$(SIM_TP_POSCTL)),posctl)$(if $(filter 2,$(SIM_TP_POSCTL)),ovr)
 
+# proj021 2-2b S22b-1: TP のレコード（tp_core REC = 1）。sim-tp の試験台に出口の止まり（ランダム ＋ 650,000 から 60,000 クロック止める）を足し、
+#   レコードを check_tp.py の区切りの模型と bit 単位で比べる（E）。sim-tprec-p: F0 で始まった個の前で区切らない（E が落ちるべき）。数分
+TPREC_DIR := build-sim-tprec$(if $(filter 1,$(SIM_TPREC_POSCTL)),-posctl)
+sim-tprec:
+	mkdir -p $(TPREC_DIR)
+	$(PYTHON) sim/check_tp.py gen $(TPREC_DIR) rec
+	$(IVERILOG) -g2005 -DTP_REC -DSTALL0=650000 -DSTALL_LEN=60000 $(if $(filter 1,$(SIM_TPREC_POSCTL)),-DTP_REC_POSCTL) -DOUT=\"$(TPREC_DIR)\" $$(cat $(TPREC_DIR)/tp_defs) -o $(TPREC_DIR)/tb src/common/tp_core.v sim/tb_tp_core.v
+	$(VVP) -n $(TPREC_DIR)/tb
+	$(PYTHON) sim/check_tp.py check $(TPREC_DIR) $(if $(filter 1,$(SIM_TPREC_POSCTL)),recposctl,rec) | tee $(TPREC_DIR)/check.log
+sim-tprec-p:
+	$(MAKE) --no-print-directory sim-tprec SIM_TPREC_POSCTL=1
+
 # ---- 配置配線後の dcp で gb_fifo の gray ポインタの乗り換えをビットごとに測る（rev6。ビルド不要、数分）----
 # DCP を指定しなければ build/ の dcp。結果は dcp と同じ場所の gb_cdc.txt
 # proj021: proj016.runs のままだった。**proj の名前は build.tcl の `set proj` から読む**（唯一の正）。
@@ -509,9 +521,9 @@ sim-wdelay:
 	$(IVERILOG) -g2005 -Isrc/common -o build-sim-wdelay/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) sim/tb_wdelay.v
 	for n in 1 2 3 4 5 6 7 8; do $(VVP) -n build-sim-wdelay/tb +NS=$$n +LEN=$$(( n < 4 ? 8000 : 1000 << (n - 2) )) | grep -E '^(wdelay|wfirst):'; done | tee build-sim-wdelay/delay.log
 sim-t-all:
-	$(MAKE) --no-print-directory -j4 sim-time sim-time-p sim-wstamp sim-wstamp-p sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p sim-regmap sim-regmap-p sim-ringu
+	$(MAKE) --no-print-directory -j4 sim-time sim-time-p sim-wstamp sim-wstamp-p sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p sim-regmap sim-regmap-p sim-ringu sim-tprec sim-tprec-p
 	@grep -H "結果" build-sim-regmap/check.log build-sim-regmap-posctl/check.log build-sim-time/check.log build-sim-time/check1.log build-sim-wstamp/check.log build-sim-wstamp-posctl/check.log \
-	  build-sim-t4adc/check.log build-sim-t4adc-posctl/check.log build-sim-wgrid/check.log build-sim-wgrid-posctl/check.log build-sim-ringu/check.log
+	  build-sim-t4adc/check.log build-sim-t4adc-posctl/check.log build-sim-wgrid/check.log build-sim-wgrid-posctl/check.log build-sim-ringu/check.log build-sim-tprec/check.log build-sim-tprec-posctl/check.log
 
 # spec_core の sim と窓の sim を全部（proj016: ＋ 時刻の速い sim。sim-tsys・sim-win4・sim-ring（proj021 2-2a）は別に回す）
 sim-all:

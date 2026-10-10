@@ -1010,7 +1010,9 @@ module spec_core #(
         .wr_data (s_axi_wdata),
         .rd_addr (ar_addr),
         .rd_ring (tp_ring_rd),
-        .rd_reg  (tp_reg_rd)
+        .rd_reg  (tp_reg_rd),
+        .t_now   (64'd0),                  // proj021 2-2b: FULL の TP はレコードにしない（REC = 0）
+        .m_tdata (), .m_tvalid (), .m_tready (1'b1), .m_tlast (), .m_tuser (), .rec_drop ()
     );
 
     reg [8:0] snap_ra;
