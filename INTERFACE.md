@@ -341,6 +341,11 @@ REC_CTRL（流れのブロックの 0x84。REC_EN を置き換える）:
 | [1] ONE | 次に閉じるダンプを 1 個だけレコードにする（1 を書いた瞬間だけ。出したら読みで 0 に戻る） |
 | [2] SNAP | ONE で出すダンプに、同じフレームのスナップショットを付ける（type 4 のレコードを SPEC の直後に、同じ SEQ で） |
 
+- （proj021 2-2c で細部を決めた）SNAP は**出す SPEC のレコード全部**（ALL でも ONE でも）に付く。運転・試験の使い方は ONE | SNAP。SNAP だけ（ALL・ONE なし）はレコードを出さない。
+  スナップショットの記憶を流れで共有するコア（SAM45-Fine の DDC は ADC で 1 つ）では、**SNAP の立った最も小さい s の流れが書く**。ほかの流れの SNAP は出ない（REC_LATE・DROP_CNT に数える）。
+  PS は SNAP を立ててから 1 ダンプ以上待って ONE を書くか、RUN の前に ONE | SNAP を書く（スナップショットはダンプの最初のフレームなので、書く流れはそのダンプの頭で決まっている必要がある）。
+  スナップショットはダンプ k+2 の頭で上書きされる（SEQ が動く前）ので、PL は面の番号（= DUMP_F0）を SNAP のレコードの頭と終わりで確かめ、違えば捨てる
+
 - スナップショットの中身は KIND ごと: FULL = ADC の生サンプル 8192 個（16 bit、今の spec_core の 0x4000 と同じ）、DDC = PFB の出口（FFT の入力）NFFT 個（re・im を 32 bit に符号拡張、今の win_core の 0x08000 と同じ）
 - **SPEC と SNAP は同じ SEQ・DUMP_F0 で組になる**（今の SNAP_F = DUMP_F0 の照合の代わり）
 - specd の SNAP 命令（proj019）は FULL の流れの REC_CTRL = ONE | SNAP で作り直す

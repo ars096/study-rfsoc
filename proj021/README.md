@@ -731,6 +731,91 @@ scp pynq/*.py xilinx@$B:~/proj021/
 - **PS の読みの重さ**: 1 回の読み 中央 14.7 ms・p99 14.9 ms・最大 15.1 ms（3,160 回）。60 s のうち読みに使った時間は 2-2a の ≒ 30 s（5,500 × 5.4 ms）から **≒ 46 s（77 %）**に増えた（1 回あたり 2-2a ≒ 10 レコード → ≒ 24 レコード。TP のレコードは小さいが、Python のレコードごとの処理が効く）。追いついてはいるが、2-3（specd）では CRC と写しを C か numpy の一括処理にする
 - 判定 S22b-1〜4 は全部通過 → **2-2b 通過**。次は 2-2c（SNAP のレコード ＋ 仮の読み窓を外して 64 KiB に）
 
+### 手順 2-2c — SNAP のレコード（設計と予言、2026-10-10。RTL を書く前）
+
+**足すのは「スナップショットを SPEC のレコードの直後にレコード（type 4、INTERFACE 4.6）で出す道」だけ**。スナップショットの書き方（どのフレームを残すか）・スペクトル・TP は変えない。
+判定の芯は 2-2a と同じ型: **同じダンプのスナップショットが、レコードと仮の読み窓（AXI4-Lite）で bit 単位で一致する**。その上で V2-c（W-G をレコードで）。
+
+**計画を 1 つ変える: 仮の読み窓を外して 64 KiB に縮めるのは 2-2c ではなく、specd がリングを読むようになった後（2-3 の後、「2-2d」）にする**。
+- 今、仮の読み窓を読んでいる道具: s45acq（specd のスペクトルと SNAP）・window（P-1・P-2・P-3）・spectrometer（全帯域の golden・FULL の TP）・timetest（P-0・P-5）・fine・plring の `--compare`。
+  2-2c で外すと **specd が 2-3 まで動かず**、P-* の回帰と「レコード = AXI4-Lite」の照合（2-2a〜2-2c の判定の芯）も同時に失う
+- 外すのは「番地を縮める」「SNAP_SEL を消す」「FULL の TP の置き場所を決める」（FULL の TP は今 0xC1100・0xC2000 にしか無い）を含む別の変更で、PS の道具の書き換えとまとめて 1 手順にする方が、変更を一度に一つに保てる
+
+**作り方（rec_fr に「SNAP の相」を足す。win_core・spec_core は読みの口に切り替えを足すだけ）**:
+- REC_CTRL の [2] SNAP が立った流れは、**出す SPEC のレコード（ALL でも ONE でも）の直後に、同じダンプのスナップショットを type 4 のレコードで出す**。
+  INTERFACE の「ONE で出すダンプに付ける」は使い方（PS は ONE | SNAP = 6 を書く）で、ALL | SNAP は試験に使う。SNAP だけ（ALL・ONE なし）はレコードを出さず、下の「書く流れ」を決めるだけ
+- 頭: w0 = {s, core, type 4, ver 1, "S45R"}、w1〜w6 = **組の SPEC と同じ**（SEQ・DUMP_K・DUMP_F0・DUMP_T…）、w7 = 中身のバイト数（DDC 32,768・FULL 16,384）
+- 中身（INTERFACE 4.6 の「今の 0x08000・0x4000 と同じ」）:
+  - DDC: PFB の出口（FFT の入力）4096 個。u64 の語 i = {im（32 bit に符号拡張）, re（同）}（仮の読み窓の 0x08000 + 8i の re・+4 の im と同じ並び）
+  - FULL: ADC の生サンプル 8192 個（16 bit）。u64 の語 j = サンプル 4j〜4j+3（仮の読み窓の 0x4000〜 と同じバイトの並び）
+- 読み方: rec_fr は SPEC を出し終えても口（gnt）を返さず、続けて同じ口でスナップショットの記憶を読む（`rd_snap` で切り替え）。
+  DDC は今の仮の読み窓と同じく `ax_ch`・`ax_bank` → `sn1` → `sn2`（スペクトルの `sp_data` と同じ遅れ）、FULL は `snap_ra` → `snap_rd1` → `snap_rd2` と 64 bit の選び（スペクトルの k2 と同じ遅れ）。LAT 5 のまま
+- **上書きの見張り（ここが SPEC と違う）**: スナップショットはダンプの**最初**のフレームを残すので、ダンプ k の面は、ダンプ k+2 の最初のフレームで上書きされる。
+  これは **SEQ が動くより前**（DDC はダンプ k+1 が閉じる前、FULL は FFT の遅れぶんさらに前）なので、SPEC の見張り（SEQ が動いたら捨てる）では拾えない。そこで:
+  - 流れの持ち主が `snap_ok`（その流れの読みの面のスナップショットのフレーム番号 = DUMP_F0、DDC は加えて下の「書いた流れ」の札が揃っている）を 1 段のレジスタで出す
+  - SNAP の相の**頭**で `snap_ok` を見る（違えば最初から捨てる相: tuser = 1）。**最後の語を取り込んだ 2 クロック後**にもう一度見て、違えば tuser = 1。最後の語はこの見張りが済むまで出口に出さない
+  - 上書きは「番号を替える → 書く」の順（DDC は番号から書き込みまで 10 クロック前後、FULL は同じクロック）なので、取り込み終わった後に番号が変わっていなければ、読んだ語は上書きの前
+  - 捨てたら REC_LATE +1（SPEC が出たのに SNAP が出なかったとき）。tuser = 1 なのでリングの DROP_CNT +1（INTERFACE 4.1 の「出すべきで出なかったレコードの数」）。SPEC を捨てたダンプの SNAP も同じ相を通して tuser = 1 にする（数えを合わせるため。REC_LATE は SPEC の 1 回だけ）
+- **DDC のスナップショットの記憶は ADC（コア）で 1 つ**（今のまま）。書く流れ = **SNAP の立った最も小さい s**、どれも立っていなければ今の仮の SNAP_SEL（今の道具がそのまま動く）。
+  記憶の面ごとに「書いた流れ・番地 0 から 4095 まで途切れずに書き切った」の札を持ち、`snap_ok` に入れる（書く流れを途中で替えた面は出さない）。
+  **同じコアの 2 本に SNAP を立てると、大きい s の方の SNAP は出ない**（REC_LATE・DROP_CNT。PS は 1 本ずつ立てる）
+- CAPS = 0x007（[2] SNAP をレコードで）。番地・レジスタは足さない
+- **PS の手順**: SNAP を立ててから 1 ダンプ以上待って ONE を書く（`--snapcompare`）か、RUN の前に ONE | SNAP を書く（`--golden`）。スナップショットはダンプの最初のフレームなので、
+  書く流れがそのダンプの頭で決まっていないと札が揃わず出ない（INTERFACE 4.6 に足した）
+- PS: `plring.py --snapcompare`（流れごとに ダンプ ≈ 1 s・ONE | SNAP で SPEC と SNAP を 1 組出させ、次の上書きの前に仮の読み窓のスナップショットを AXI4-Lite で読んで bit 単位で比べる。
+  頭 w1..w6 = 組の SPEC、SNAP_F（診断）= DUMP_F0）・`--golden`（V2-c: 9 本とも N_ACC 1・N_DUMP 1・ONE | SNAP で 1 組出し、window・spectrometer の W-G・全帯域の golden と同じ判定を**レコードだけで**）
+
+**予言**:
+1. sim-ring（新しい MODE = snap。流れ 0 と FULL を ALL | SNAP、流れ 1 に途中で ONE | SNAP を 1 回。ダンプは DDC N_ACC 8・FULL N_ACC 64 で SPEC ＋ SNAP の読みが間に合う長さ）:
+   SNAP のレコードが、SEQ が進んだときに記憶から直に写したスナップショット（S 行）と bit 単位で一致、頭 w1..w6 = 同じ SEQ の SPEC、流れ 0・FULL は SPEC の数 = SNAP の数。
+   **流れ 1 の ONE | SNAP は SPEC だけ出て SNAP は出ない**（書く流れは 0）→ REC_LATE1 = 1・DROP_CNT = 1。ほかの REC_LATE 0
+2. 陽性対照: snap を `-DREC_SNAP_NOCHK`（`snap_ok` を見ない変種）で → 流れ 1 の SNAP（書いていない窓）が出て、写したスナップショットの無い SNAP として照合が落ちる。
+   late（DDC N_ACC 2・FULL N_ACC 16）にも流れ 0 と FULL に SNAP を足す: 「出たレコードは全部正しい」のまま（DDC の SNAP は SPEC を読み終える前に上書きが始まるので頭の見張りで捨てる。
+   どちらの見張りで捨てたかの数を出す）。**終わりの見張り（読んでいる途中の上書き）が sim で起きるかは筋書き次第**で、起きなければそう書く
+3. 回帰: sim-ring all（SNAP を立てない流れのレコードは 2-2b と同じ）・sim-regmap（CAPS 7）・sim-top・sim-win4（SNAP_SEL の道は同じ）・sim-tprec・sim-ringu
+4. 資源: LUT +300〜+1,000、FF +300〜+800、BRAM・DSP・URAM 同じ
+5. 時間: 新しい経路は rec_fr の相の切り替えと `snap_ok` の 48 bit の比べ（1 段で受ける）。2-2b と同じ戦略の組 ＋ `make physopt`
+6. 実機: `--snapcompare` で 9 本とも一致（SNAP_F = DUMP_F0・頭 = SPEC）、`--golden` で 8 窓と全帯域が P-2・全帯域の golden と同じ許容で通る。`--compare`・`--tpcompare`・`--soak 60` と P-2（仮の読み窓の W-G）は 2-2b と同じ
+
+**判定**:
+
+| 判定 | 中身 |
+|---|---|
+| S22c-1 | sim-ring の snap・late が通る（予言 1・2）。陽性対照 snap-nochk が落ちる |
+| S22c-2 | 回帰（予言 3） |
+| S22c-3 | ビルド: どれかの戦略（＋ physopt）で WNS ≥ 0・WHS ≥ 0・結線の照合・CDC の分類は 2-2a と同じ |
+| S22c-4 | 実機（予言 6）: `--snapcompare`・`--golden`（= **V2-c の W-G**）・回帰 |
+
+**実装（2026-10-10）**: `rec_fr` に SNAP の相（`SNAP`・`NSN`、入力 `rec_snap`・`snap_ok`、出力 `rd_snap`）。win_core はスナップショットの書く窓の選び（SNAP の最も小さい s、無ければ SNAP_SEL）・
+面ごとの札（`t_own`・`t_nx`・`t_run`・`t_ok`）・窓ごとの `snok`・`fr_data` の切り替え（`sn2` を {im, re} の 32 bit に符号拡張）。spec_core は `snap_ra` を rec_fr の口にも・64 bit の選び（`fr_sb*`）・`snok`。
+CAPS 7。PS: `plring.py --snapcompare`・`--golden`（`window.wg_cmp`・`spectrometer.golden_cmp`・`shift_of_snap` を切り出して共用。window・spectrometer の振る舞いは同じ）
+
+**sim**: sim-regmap 通過（クラウド、190 項目、CAPS 7）。sim-ring（all・late・snap・snap-nochk・flip）は Vivado サーバで
+
+### 2-2c のビルドと実機
+
+```bash
+cd ~/git/rfsoc && git pull && cd proj021
+mkdir -p old && mv build-PE-po old/build-2-2b-PE-po; mv build-PE old/build-2-2b-PE; mv build-PETO old/build-2-2b-PETO 2>/dev/null
+make sim-all > sim-all.log 2>&1 &                       # 回帰（sim-regmap の CAPS 7 を含む）
+make sim-ring > /dev/null 2>&1 &                        # all・late・snap・snap-nochk（1〜2 時間）
+make IMPL=Performance_ExtraTimingOpt JOBS=14 > /dev/null 2>&1 &
+make IMPL=Performance_Explore JOBS=14 > /dev/null 2>&1 &
+wait
+grep -E 'TIMING \(確定\)' build-PETO/vivado.log build-PE/vivado.log
+tail -n 1 sim-all.log; cat build-sim-ring/check.log
+# 閉じなかった方が数 ps なら: make physopt OUTDIR=build-PE（→ build-PE-po）
+
+# ボード（閉じた bit。specd を止めてから）。S22c-4
+python3 s45core.py --list --clkin 0 --ref 10                            # CAPS が 0x007 に
+python3 plring.py --clkin 0 --ref 10 --snapcompare                      # 9 本: SNAP のレコード = 仮の読み窓のスナップショット
+python3 plring.py --clkin 0 --ref 10 --golden                           # V2-c: W-G（8 窓）と全帯域の golden をレコードだけで
+python3 plring.py --clkin 0 --ref 10 --compare                          # 回帰
+python3 plring.py --clkin 0 --ref 10 --tpcompare
+python3 plring.py --clkin 0 --ref 10 --soak 60
+python3 window.py --clkin 0 --ref 10 --golden --w 256                   # P-2（仮の読み窓の W-G。SNAP_SEL の道）
+```
+
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
 判定 1 つにつき、次の 6 項目を書く。**環境に依る値（ホスト名・IP アドレス・パス）は書かない**（公開を前提にする）。
