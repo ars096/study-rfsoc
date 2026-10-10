@@ -481,7 +481,20 @@ def golden(sp, shift, tone):
         f"FLAGS {m['flags']:02x}")
     ok = m["snap_f"] == m["f0"]
     log(f"SNAP_F == DUMP_F0: {'OK' if ok else '**違う**（スナップショットが別のフレーム）'}")
-    ok &= bool(np.all(snap & 3 == 0))
+    return golden_cmp(spec, snap, shift, tone) and ok
+
+
+def shift_of_snap(snap):
+    """auto_shift の式（スナップショット → SHIFT）。proj021 2-2c: plring の --golden（レコード）でも使う"""
+    sx = (snap.astype(np.int64) >> 2).std()
+    sz = sx * np.sqrt(NFFT / 2)
+    return int(max(0, min(15, np.ceil(np.log2(max(sz, 1) / 512)))))
+
+
+def golden_cmp(spec, snap, shift, tone=None):
+    """判定 2 の比べ（N_ACC = 1 のスペクトル spec（u64 × 4096）と、同じフレームの生サンプル snap（int16 × 8192））。
+    proj021 2-2c: golden から切り出した（plring の --golden がレコードだけで同じ判定をする）"""
+    ok = bool(np.all(snap & 3 == 0))
     x = (snap.astype(np.int64) >> 2).astype(float)
     X = np.fft.fft(x)[:NCH_OUT]
     ref = np.abs(X) ** 2 / 4.0 ** shift

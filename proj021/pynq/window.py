@@ -194,6 +194,22 @@ class Win:
         raise RuntimeError("読み出しのあいだに毎回ダンプが閉じた。積分時間に対して読み出しが遅すぎる")
 
 
+def wg_cmp(spec, snap, shift):
+    """W-G の比べ: N_ACC = 1 のスペクトル spec（u64 × 4096）と、同じフレームの PFB の出口 snap（複素 × 4096）の numpy FFT。
+    (ok, 文)。proj021 2-2c: main から切り出した（plring の --golden がレコードだけで同じ判定をする）"""
+    Y = np.fft.fft(snap.astype(complex))                     # IP と同じ順変換・unscaled（倍精度）
+    qr = np.floor(Y.real / 2 ** shift); qi = np.floor(Y.imag / 2 ** shift)
+    ok_ch = (np.abs(qr) < 2 ** 17 - 4) & (np.abs(qi) < 2 ** 17 - 4)      # 18 bit に飽和しない ch だけ比べる
+    a_np = np.hypot(qr, qi)
+    a_hw = np.sqrt(spec.astype(float))
+    d = np.abs(a_hw - a_np)
+    tol = 2.0 + 1e-4 * a_np[ok_ch].max()
+    nbad = int(np.count_nonzero(d[ok_ch] > tol))
+    worst = int(np.argmax(np.where(ok_ch, d / tol, 0)))
+    return nbad == 0, (f"W-G: ダンプ = スナップショットの numpy FFT（{int(ok_ch.sum())} ch、許容 {tol:.1f}、超えた ch {nbad}、"
+                       f"最悪 ch {worst}: 差 {d[worst]:.1f} / 振幅 {a_np[worst]:.0f}）")
+
+
 def flag_text(f):
     s = [n for i, n in enumerate(FLAG_NAMES) if f >> i & 1]
     if f >> 8 & 1: s.append("pfb の飽和")
@@ -366,17 +382,7 @@ def main():
         m, spec = dumps[0]
         _, _, snap = wn.read_dump(with_snap=True)
         judge(m["snap_f"] == m["f0"], f"W-G: スナップショットのフレーム {m['snap_f']} = ダンプの f0 {m['f0']}")
-        Y = np.fft.fft(snap.astype(complex))                     # IP と同じ順変換・unscaled（倍精度）
-        qr = np.floor(Y.real / 2 ** args.shift); qi = np.floor(Y.imag / 2 ** args.shift)
-        ok_ch = (np.abs(qr) < 2 ** 17 - 4) & (np.abs(qi) < 2 ** 17 - 4)      # 18 bit に飽和しない ch だけ比べる
-        a_np = np.hypot(qr, qi)
-        a_hw = np.sqrt(spec.astype(float))
-        d = np.abs(a_hw - a_np)
-        tol = 2.0 + 1e-4 * a_np[ok_ch].max()
-        nbad = int(np.count_nonzero(d[ok_ch] > tol))
-        worst = int(np.argmax(np.where(ok_ch, d / tol, 0)))
-        judge(nbad == 0, f"W-G: ダンプ = スナップショットの numpy FFT（{int(ok_ch.sum())} ch、許容 {tol:.1f}、超えた ch {nbad}、"
-                         f"最悪 ch {worst}: 差 {d[worst]:.1f} / 振幅 {a_np[worst]:.0f}）")
+        judge(*wg_cmp(spec, snap, args.shift))
     if dumps and args.tone is not None:
         m, spec = dumps[-1]
         p = spec.astype(float) / m["n"]

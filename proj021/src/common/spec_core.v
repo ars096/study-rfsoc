@@ -274,7 +274,7 @@ module spec_core #(
     reg [31:0] r_cfg;
     reg        arm_wrst, cmd_wrst;     // proj021 手順 2-1: WRST（SRC・CFG_ID を取り込む）
     reg [3:0]  r_src, c_src;
-    reg [2:0]  r_rec;                  // proj021 2-2a: REC_CTRL [0] ALL / [1] ONE / [2] SNAP（2-2c まで効かない）
+    reg [2:0]  r_rec;                  // proj021 2-2a: REC_CTRL [0] ALL / [1] ONE / [2] SNAP（2-2c: SPEC の直後に SNAP のレコード）
     wire       fr_one_clr, fr_late;
     reg [31:0] c_cfg;
     reg [15:0] r_sd, r_se;
@@ -1098,12 +1098,19 @@ module spec_core #(
     wire [11:0] fr_ch;
     reg  [63:0] fr_data;
     reg  [2:0]  fr_k2a, fr_k2b, fr_k2c;
+    reg  [1:0]  fr_sba, fr_sbb, fr_sbc;      // proj021 2-2c: SNAP の相の 256 bit の中の 64 bit（語 j の j[1:0]）
+    wire        fr_rsnap;
+    reg         snok;
     reg  [31:0] rec_late;
     always @(posedge aclk) begin
         if (rst) fr_gnt <= 1'b0;
         else     fr_gnt <= fr_req && (fr_gnt || (!ar_busy && !(s_axi_arvalid && s_axi_arready) && !s_axi_rvalid));
         fr_k2a <= fr_ch[11:9]; fr_k2b <= fr_k2a; fr_k2c <= fr_k2b;
-        fr_data <= acc_rd[ar_bank][fr_k2c];
+        fr_sba <= fr_ch[1:0];  fr_sbb <= fr_sba; fr_sbc <= fr_sbb;
+        // proj021 2-2c: SNAP の相は snap_ra → snap_rd1 → snap_rd2（スペクトルと同じ遅れ）。語 j = サンプル 4j〜4j+3
+        fr_data <= fr_rsnap ? snap_rd2[64*fr_sbc +: 64] : acc_rd[ar_bank][fr_k2c];
+        // 読みの面のスナップショット（入力の側で書く。番号を替えたクロックから書く）が今のダンプのもの
+        snok <= !rst && ((rd_bank ? snap_f1 : snap_f0) == rd_f0);
         if (rst) rec_late <= 32'd0;
         else if (fr_late && rec_late != 32'hFFFF_FFFF) rec_late <= rec_late + 32'd1;
     end
@@ -1116,8 +1123,9 @@ module spec_core #(
         rd_t,                                                       // w3 DUMP_T
         {{(64-FW){1'b0}}, rd_f0},                                   // w2 DUMP_F0
         rd_k, seq};                                                 // w1 SEQ | DUMP_K
-    rec_fr #(.NS(1), .S_BASE(SID_S), .CORE(RC8), .LAT(5)) u_rec (.clk(aclk), .rst(rst),
-        .seq(fr_seq), .hdr(fr_hdr), .rec_all(r_rec[0]), .rec_one(r_rec[1]), .one_clr(fr_one_clr), .late(fr_late), .drop(rec_drop),
+    rec_fr #(.NS(1), .S_BASE(SID_S), .CORE(RC8), .LAT(5), .SNAP(1), .NSN(2048)) u_rec (.clk(aclk), .rst(rst),
+        .seq(fr_seq), .hdr(fr_hdr), .rec_all(r_rec[0]), .rec_one(r_rec[1]), .rec_snap(r_rec[2]), .snap_ok(snok), .rd_snap(fr_rsnap),
+        .one_clr(fr_one_clr), .late(fr_late), .drop(rec_drop),
         .req(fr_req), .gnt(fr_gnt), .rd_s(), .rd_ch(fr_ch), .rd_data(fr_data),
         .m_tdata(m_axis_rec_tdata), .m_tvalid(m_axis_rec_tvalid), .m_tready(m_axis_rec_tready),
         .m_tlast(m_axis_rec_tlast), .m_tuser(m_axis_rec_tuser));
@@ -1132,6 +1140,7 @@ module spec_core #(
             if (fr_gnt) begin                  // proj021 2-2a: rec_fr が口を持っている（AXI4-Lite の読みは来ない）
                 ar_bank <= rd_bank;
                 axi_k1  <= fr_ch[8:0];
+                snap_ra <= fr_ch[10:2];          // proj021 2-2c: SNAP の相（スナップショットの拍 m = 語 j の j[10:2]）
             end
             if (s_axi_arvalid && s_axi_arready) begin
                 ar_busy <= 1'b1;

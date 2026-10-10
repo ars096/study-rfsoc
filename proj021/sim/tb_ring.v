@@ -9,9 +9,15 @@
 //            ダンプごとに AXI4-Lite で DUMP_*（seqlock）と仮の読み窓のスペクトル 16 ch を読む（**rec_fr が口を持っている間に読みが待たされる**道）
 //     late : 全部 ALL、DDC の N_ACC 2（8192 クロック）・FULL の N_ACC 16 → 3 本の読み出し（12,300 クロック）が追いつかない（WANT = late）。
 //            AXI4-Lite は読まない。**N_ACC 1（4096 クロック）では 4096 語の読み出しが 1 本も間に合わず、レコードが 1 個も出ない**（1 回目で見た）
+//     snap : proj021 2-2c。流れ 0 と FULL を ALL | SNAP、流れ 1 に途中で ONE | SNAP を 1 回（書く窓は流れ 0 なので流れ 1 の SNAP は出ない）。
+//            ダンプは DDC N_ACC 8・FULL N_ACC 64（SPEC ＋ SNAP の読みが間に合う）（WANT = snap）。
+//            late も流れ 0 と FULL に SNAP を足す（ALL | SNAP。SNAP は頭か終わりの見張りで捨てられる）
+//     -DREC_SNAP_NOCHK（陽性対照）: rec_fr が snap_ok を見ない → snap の流れ 1 の SNAP（書いていない窓）が出て照合が落ちる
 //   照合の材料（check_ring.py core）:
 //     Q 行: SEQ が進んだ 2 クロック後に、凍ったバンクを記憶から直に写したもの（本体 4096 語）
 //     H 行: その SEQ の DUMP_* を AXI4-Lite で読んで組んだ頭 w1..w6（seqlock が崩れたら書かない）
+//     S 行（2-2c、snap・late）: SEQ が進んだときの読みの面のスナップショットを記憶から直に写したもの（流れ 0: {im, re} を 32 bit に
+//            符号拡張した 4096 語、FULL: 生サンプルの 2048 語）。面の番号 ≠ DUMP_F0・札が揃わないなら書かない
 //     ring.txt: 読み手（PS の代わり）がリングから写したレコード
 //   tb の中の照合: AXI4-Lite の 16 ch = Q の同じ ch（AXI_CMP）、ONE で 1 個出た後 REC_CTRL の [1] が 0（ONE）
 `timescale 1ns / 1ps
@@ -22,11 +28,12 @@ module tb_ring;
     localparam [48:0] BASE = 49'h0_8000_0040;
     localparam integer SIZE = 262144;
     reg [8*8-1:0] mode;
-    integer is_late;
+    integer is_late, is_snap;
     integer NDUMP;
     initial begin
         if (!$value$plusargs("MODE=%s", mode)) mode = "all";
         is_late = (mode == "late");
+        is_snap = (mode == "snap");
         if (!$value$plusargs("NDUMP=%d", NDUMP)) NDUMP = is_late ? 10 : 5;
     end
 
@@ -174,6 +181,38 @@ module tb_ring;
         cht = (n == 0) ? 0 : (n == 1) ? 1 : (n == 15) ? 4095 : (n * 271 + 3) % 4096;
     endfunction
     reg [31:0] sq_d [0:2];
+    // ---- proj021 2-2c: スナップショットを直に写す（S 行）----
+    reg  [35:0]  sv;
+    reg  [255:0] fv;
+    integer      kk, nsab_w = 0, neab_w = 0, nsab_f = 0, neab_f = 0;
+    task put_snap(input integer st_, input [31:0] sq); begin
+        if (st_ == 0) begin
+            if (u_c0.u_win.t_ok[bk0] && u_c0.u_win.t_own[bk0] == 0 &&
+                (bk0 ? u_c0.u_win.g_w[0].snap_f1 : u_c0.u_win.g_w[0].snap_f0) == u_c0.u_win.g_w[0].rd_f0) begin
+                $fwrite(fq, "S 0 0 %0d", sq);
+                for (kk = 0; kk < 4096; kk = kk + 1) begin
+                    sv = u_c0.u_win.snap_mem[{bk0, kk[11:0]}];
+                    $fwrite(fq, " %h", {{14{sv[35]}}, sv[35:18], {14{sv[17]}}, sv[17:0]});
+                end
+                $fwrite(fq, "\n");
+            end else $fwrite(fq, "S- 0 0 %0d\n", sq);
+        end else begin
+            if ((bk2 ? u_c0.g_full.u_full.snap_f1 : u_c0.g_full.u_full.snap_f0) == u_c0.g_full.u_full.rd_f0) begin
+                $fwrite(fq, "S 0 2 %0d", sq);
+                for (kk = 0; kk < 512; kk = kk + 1) begin
+                    fv = u_c0.g_full.u_full.snap_mem[{bk2, kk[8:0]}];
+                    $fwrite(fq, " %h %h %h %h", fv[63:0], fv[127:64], fv[191:128], fv[255:192]);
+                end
+                $fwrite(fq, "\n");
+            end else $fwrite(fq, "S- 0 2 %0d\n", sq);
+        end
+    end endtask
+    always @(posedge clk) begin
+        if (u_c0.u_win.u_rec.dbg_sab) nsab_w = nsab_w + 1;
+        if (u_c0.u_win.u_rec.dbg_eab) neab_w = neab_w + 1;
+        if (u_c0.g_full.u_full.u_rec.dbg_sab) nsab_f = nsab_f + 1;
+        if (u_c0.g_full.u_full.u_rec.dbg_eab) neab_f = neab_f + 1;
+    end
     integer s_, n_, kq;
     initial begin nq[0] = 0; nq[1] = 0; nq[2] = 0; sq_d[0] = 0; sq_d[1] = 0; sq_d[2] = 0; end
     always @(posedge clk) if (rstn) begin
@@ -187,6 +226,7 @@ module tb_ring;
                 for (kq = 0; kq < 4096; kq = kq + 1) $fwrite(fq, " %h", pk[s_ * 4096 + kq]);
                 $fwrite(fq, "\n");
                 for (n_ = 0; n_ < 16; n_ = n_ + 1) p16[s_ * 16 + n_] = pk[s_ * 4096 + cht(n_)];
+                if ((is_snap || is_late) && s_ != 1) put_snap(s_, sq_d[s_]);
                 pseq[s_] = sq_d[s_];
                 nq[s_] = nq[s_] + 1;
                 todo[s_] = 1'b1;
@@ -276,14 +316,14 @@ module tb_ring;
         // 窓: 流れ 0（k 5）・流れ 1（k 9）、NS 1
         for (st = 0; st < 2; st = st + 1) begin
             axw(B(st, 12'h100), (st == 0) ? 5 : 9); axw(B(st, 12'h104), 32'h1234_5678 * (st + 1)); axw(B(st, 12'h108), 1);
-            axw(B(st, 12'h00C), is_late ? 2 : 4); axw(B(st, 12'h010), 0); axw(B(st, 12'h014), 4);
+            axw(B(st, 12'h00C), is_late ? 2 : is_snap ? 8 : 4); axw(B(st, 12'h010), 0); axw(B(st, 12'h014), 4);
             axw(B(st, 12'h02C), 32'hC0F0_0000 + st);
             axw(B(st, 12'h008), 32'h1000);         // WRST
         end
-        axw(B(2, 12'h00C), is_late ? 16 : 32); axw(B(2, 12'h010), 0); axw(B(2, 12'h014), 6); axw(B(2, 12'h02C), 32'hC0F0_0002);
-        axw(B(0, 12'h084), 1);                                  // ALL
+        axw(B(2, 12'h00C), is_late ? 16 : is_snap ? 64 : 32); axw(B(2, 12'h010), 0); axw(B(2, 12'h014), 6); axw(B(2, 12'h02C), 32'hC0F0_0002);
+        axw(B(0, 12'h084), (is_late || is_snap) ? 5 : 1);       // ALL（2-2c: snap・late は ALL | SNAP）
         axw(B(1, 12'h084), is_late ? 1 : 0);
-        axw(B(2, 12'h084), 1);
+        axw(B(2, 12'h084), (is_late || is_snap) ? 5 : 1);
         rv = 0;
         while (rv < 3) begin repeat (2000) @(posedge clk); axr(B(0, 12'h070)); end
         axw(B(0, 12'h008), 1); axw(B(1, 12'h008), 1); axw(B(2, 12'h008), 1);    // RUN
@@ -291,7 +331,7 @@ module tb_ring;
             @(posedge clk);
             if (!is_late) begin
                 for (st = 0; st < 3; st = st + 1) if (todo[st]) begin todo[st] = 1'b0; serve(st); end
-                if (nq[0] == 2 && !one_done) begin one_done = 1; axw(B(1, 12'h084), 2); end   // 流れ 1 に ONE
+                if (nq[0] == 2 && !one_done) begin one_done = 1; axw(B(1, 12'h084), is_snap ? 6 : 2); end   // 流れ 1 に ONE（snap: ONE | SNAP）
             end
         end
         // 止めて出し切る
@@ -301,7 +341,8 @@ module tb_ring;
         repeat (2000) @(posedge clk);
         read_ring;
         $display("tb_ring: MODE = %0s", mode);
-        $display("tb_ring: WANT = %0s", is_late ? "late" : "nolate");
+        $display("tb_ring: WANT = %0s", is_late ? "late" : is_snap ? "snap" : "nolate");
+        $display("tb_ring: SNAP_AB = %0d %0d %0d %0d", nsab_w, neab_w, nsab_f, neab_f);   // 2-2c: 頭・終わりの見張りで捨てた SNAP（窓・FULL）
         $display("tb_ring: SIZE = %0d", SIZE);
         lr(12'h014); $display("tb_ring: W = %0d", lrv);
         lr(12'h01C); $display("tb_ring: DROP_CNT = %0d", lrv);

@@ -329,7 +329,16 @@ module win_core #(
     // proj021 2-2a（PETO のビルドの最悪 −0.077: snap_mem の BRAM → rq_w）: sn2 を布の FF に残す（BRAM の出口のレジスタに吸わせない）。
     //   仮の読み窓のスナップショットの読み（2-2c で消える）。値・段数は同じ
     (* dont_touch = "true" *) reg [35:0] sn2;
-    wire [3:0]       ss = (snap_sel < NW) ? snap_sel : 4'd0;
+    // proj021 2-2c: 書く窓 = REC_CTRL の [2] SNAP が立った最も小さい s。どれも立っていなければ仮の SNAP_SEL（今の道具のため）
+    wire [NW-1:0]    fr_snapb;
+    reg  [3:0]       ss_rec;
+    reg              ss_has;
+    integer          si;
+    always @* begin
+        ss_rec = 4'd0; ss_has = 1'b0;
+        for (si = NW - 1; si >= 0; si = si - 1) if (fr_snapb[si]) begin ss_rec = si; ss_has = 1'b1; end
+    end
+    wire [3:0]       ss = ss_has ? ss_rec : (snap_sel < NW) ? snap_sel : 4'd0;
     // rev2: 書き込みを 2 段のレジスタで受ける（窓ごとに 1 段 → SNAP_SEL で選んで 1 段 → 記憶）。rev1 は wspec の fin == sn_next の
     //   48 bit の比べ → 4 窓の選び → BRAM の書き込みの入口が 1 クロックで、`-1` の最悪経路だった。書き込みが 2 クロック遅れるだけで、
     //   読むのはダンプが閉じた後（少なくとも 1 フレーム後）なので中身は同じ
@@ -339,12 +348,33 @@ module win_core #(
     reg              swe2;
     reg  [12:0]      swa2;
     reg  [35:0]      swd2;
+    reg  [3:0]       ssq;               // proj021 2-2c: swe2 の書き込みをした窓
     always @(posedge aclk) begin
         swe1 <= sn_wen_v;  swa1 <= sn_waddr_v;  swd1 <= sn_wdata_v;
-        swe2 <= swe1[ss];  swa2 <= swa1[13*ss +: 13];  swd2 <= swd1[36*ss +: 36];
+        swe2 <= swe1[ss];  swa2 <= swa1[13*ss +: 13];  swd2 <= swd1[36*ss +: 36];  ssq <= ss;
         if (swe2) snap_mem[swa2] <= swd2;
         sn1 <= snap_mem[{ax_bank, ax_ch}];
         sn2 <= sn1;
+    end
+    // proj021 2-2c: 面ごとの札（書いた窓・番地 0 から 4095 まで同じ窓が途切れずに書き切った）。SNAP のレコードの snap_ok に入れる。
+    //   書く窓を途中で替えた面・書きかけの面は出さない（番地 0 の書き込みで札を落とす = 上書きの始まり）
+    reg  [3:0]       t_own [0:1];
+    reg  [11:0]      t_nx  [0:1];
+    reg  [1:0]       t_run, t_ok;
+    always @(posedge aclk) begin
+        if (rst) begin
+            t_run <= 2'b00; t_ok <= 2'b00;
+            t_own[0] <= 4'd0; t_own[1] <= 4'd0; t_nx[0] <= 12'd0; t_nx[1] <= 12'd0;
+        end else if (swe2) begin
+            if (swa2[11:0] == 12'd0) begin
+                t_own[swa2[12]] <= ssq; t_nx[swa2[12]] <= 12'd1; t_run[swa2[12]] <= 1'b1; t_ok[swa2[12]] <= 1'b0;
+            end else if (t_run[swa2[12]] && t_own[swa2[12]] == ssq && swa2[11:0] == t_nx[swa2[12]]) begin
+                t_nx[swa2[12]] <= t_nx[swa2[12]] + 12'd1;
+                if (swa2[11:0] == 12'd4095) begin t_ok[swa2[12]] <= 1'b1; t_run[swa2[12]] <= 1'b0; end
+            end else begin
+                t_run[swa2[12]] <= 1'b0; t_ok[swa2[12]] <= 1'b0;
+            end
+        end
     end
 
     // ---- 窓ごと ----
@@ -355,6 +385,7 @@ module win_core #(
     wire [32*NW-1:0]  fr_seq;
     wire [384*NW-1:0] fr_hdr;
     wire [NW-1:0]     fr_all, fr_one, fr_one_clr, fr_late;
+    wire [NW-1:0]     fr_snok;              // proj021 2-2c
     genvar g;
     generate
         for (g = 0; g < NW; g = g + 1) begin : g_w
@@ -365,7 +396,7 @@ module win_core #(
             reg [4:0]  r_k;
             reg [3:0]  r_ns;
             reg [15:0] r_wt;
-            reg [2:0]  r_rec;                       // proj021 2-2a: REC_CTRL [0] ALL / [1] ONE / [2] SNAP（2-2c まで効かない）
+            reg [2:0]  r_rec;                       // proj021 2-2a: REC_CTRL [0] ALL / [1] ONE / [2] SNAP（2-2c: SPEC の直後に SNAP のレコード・書く窓を決める）
             reg [31:0] rec_late;
             reg        cmd_run, cmd_stop, cmd_clr, cmd_wrst;
             reg        arm_run, arm_wrst;           // proj016: 予約（time_core の発火で RUN / WRST）
@@ -581,6 +612,11 @@ module win_core #(
                 rd_k, seq};                                                 // w1 SEQ | DUMP_K
             assign fr_all[g] = r_rec[0];
             assign fr_one[g] = r_rec[1];
+            assign fr_snapb[g] = r_rec[2];
+            // proj021 2-2c: 読みの面（rd_bank）のスナップショットが今のダンプのもの（番号 = DUMP_F0・札がこの窓で書き切り）
+            reg snok;
+            always @(posedge aclk) snok <= !rst && t_ok[rd_bank] && (t_own[rd_bank] == g) && ((rd_bank ? snap_f1 : snap_f0) == rd_f0);
+            assign fr_snok[g] = snok;
             always @(posedge aclk) begin
                 if (rst) rec_late <= 32'd0;
                 else if (fr_late[g] && rec_late != 32'hFFFF_FFFF) rec_late <= rec_late + 32'd1;
@@ -592,17 +628,20 @@ module win_core #(
     //   fr_req → fr_gnt（AXI4-Lite の読みが無いクロックで渡す）。fr_gnt の間は ax_ch・ax_bank を rec_fr が握り、arready を下げる。
     //   rd_ch（rec_fr のレジスタ）→ ax_ch（ここ）→ wspec の rd1 → rd2 → fr_data（ここ）= 5 クロック（rec_fr の LAT。
     //   sim-ring の 1 回目は 4 にしていて、レコードの本体が 1 語ずれた: 2026-10-09）
+    //   proj021 2-2c: SNAP の相（fr_rsnap）は同じ口でスナップショットの記憶を読む: ax_ch → sn1 → sn2（スペクトルの sp_data と同じ遅れ）
     wire        fr_req;
     wire [1:0]  fr_s;
     wire [11:0] fr_ch;
+    wire        fr_rsnap;
     reg  [63:0] fr_data;
     always @(posedge aclk) begin
         if (rst) fr_gnt <= 1'b0;
         else     fr_gnt <= fr_req && (fr_gnt || (!ar_busy && !ar_go && !s_axi_rvalid));
-        fr_data <= sp_data_v[fr_s];
+        fr_data <= fr_rsnap ? {{14{sn2[35]}}, sn2[35:18], {14{sn2[17]}}, sn2[17:0]} : sp_data_v[fr_s];   // SNAP: {im, re}（32 bit に符号拡張）
     end
-    rec_fr #(.NS(NW), .S_BASE(0), .CORE({4'd0, CP16[3:0]}), .LAT(5)) u_rec (.clk(aclk), .rst(rst),
-        .seq(fr_seq), .hdr(fr_hdr), .rec_all(fr_all), .rec_one(fr_one), .one_clr(fr_one_clr), .late(fr_late), .drop(rec_drop[NW-1:0]),
+    rec_fr #(.NS(NW), .S_BASE(0), .CORE({4'd0, CP16[3:0]}), .LAT(5), .SNAP(1), .NSN(4096)) u_rec (.clk(aclk), .rst(rst),
+        .seq(fr_seq), .hdr(fr_hdr), .rec_all(fr_all), .rec_one(fr_one), .rec_snap(fr_snapb), .snap_ok(fr_snok), .rd_snap(fr_rsnap),
+        .one_clr(fr_one_clr), .late(fr_late), .drop(rec_drop[NW-1:0]),
         .req(fr_req), .gnt(fr_gnt), .rd_s(fr_s), .rd_ch(fr_ch), .rd_data(fr_data),
         .m_tdata(sr_d), .m_tvalid(sr_v), .m_tready(sr_r), .m_tlast(sr_l), .m_tuser(sr_u));
     // proj021 2-2b: SPEC のレコード（u_rec）と TP のレコード（u_tp）をレコード単位で束ねる
@@ -626,7 +665,7 @@ module win_core #(
             6'h00: reg_a = IF_ID;
             6'h01: reg_a = PROJ;
             6'h02: reg_a = NW + NFULL;                     // NSTREAM
-            6'h03: reg_a = (TP != 0) ? 32'd3 : 32'd1;     // CAPS: [0] DMA のレコード（2-2a）・[1] TP をレコードで（2-2b）。[2] SNAP は 2-2c
+            6'h03: reg_a = (TP != 0) ? 32'd7 : 32'd5;     // CAPS: [0] DMA のレコード（2-2a）・[1] TP をレコードで（2-2b）・[2] SNAP をレコードで（2-2c）
             6'h04: reg_a = BASE_BEATS;
             6'h05: reg_a = BUILD_TAG;
             6'h06: reg_a = {16'd0, CP16};

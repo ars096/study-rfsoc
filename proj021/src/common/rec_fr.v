@@ -16,6 +16,14 @@
 //   - tuser = 0 で出し終えたら one_clr[s]（持ち主が REC_CTRL の ONE を 0 に）
 //   出たレコード（tuser = 0）は必ず 1 つの SEQ の、上書きされていないスペクトル。尾（CRC）はリング（s45_ring）が付ける
 //
+// ---- proj021 手順 2-2c: SNAP の相（SNAP = 1）----
+//   REC_CTRL の [2] SNAP（rec_snap）が gnt のときに立っていた流れは、SPEC を出し終えても口を返さず、続けて同じ口で
+//   スナップショットの記憶を読み（rd_snap = 1、rd_ch = 語 0..NSN−1）、type 4 のレコード（頭 w1..w6 は SPEC と同じ、w7 = NSN·8）を出す。
+//   スナップショットは SEQ が動く前に上書きされる（ダンプ k の面はダンプ k+2 の最初のフレームで）ので、持ち主の snap_ok
+//   （その面のスナップショットがこのダンプのもの）を相の頭と、最後の語を取り込んだ 2 クロック後に見る。違えば tuser = 1。
+//   **最後の語はこの見張りが済むまで出口に出さない**。SPEC を捨てたダンプでも SNAP の相は通し、tuser = 1 にする（リングの DROP_CNT の数えを合わせる）。
+//   late は「SPEC は出たのに SNAP が出なかった」ときだけ（SPEC を捨てたときは SPEC の 1 回）
+//
 // ---- 口の時間 ----
 //   rd_ch はここのレジスタ。持ち主は rd_ch をもう 1 段受けて記憶の番地にし、記憶の 2 段（rd1・rd2）の後にもう 1 段受けて rd_data にする
 //   （LAT = 5: rd_ch → 番地 → rd1 → rd2 → rd_data。数えるのは「rd_ch に載ったクロック」から）。
@@ -29,7 +37,9 @@ module rec_fr #(
     parameter [7:0]   CORE   = 8'd0,       // レコードの core（CORE_PORT の ADC の番号）
     parameter integer LAT    = 5,          // rd_ch → rd_data（このモジュールから見て）
     parameter integer HOLD   = 8,          // seq が進んでからヘッダを取り込むまでの最小のクロック
-    parameter integer DEPTH  = 32          // 出口の FIFO（2 の冪）
+    parameter integer DEPTH  = 32,         // 出口の FIFO（2 の冪）
+    parameter integer SNAP   = 0,          // proj021 2-2c: 1 = SNAP の相を持つ
+    parameter integer NSN    = 4096        // スナップショットの語（u64）の数（DDC 4096・FULL 2048）
 ) (
     input  wire              clk,
     input  wire              rst,
@@ -37,6 +47,9 @@ module rec_fr #(
     input  wire [384*NS-1:0] hdr,          // 流れごとに w1..w6（64 bit × 6、w1 が下位）。持ち主の DUMP_* を並べたもの
     input  wire [NS-1:0]     rec_all,
     input  wire [NS-1:0]     rec_one,
+    input  wire [NS-1:0]     rec_snap,     // proj021 2-2c: REC_CTRL の [2]
+    input  wire [NS-1:0]     snap_ok,      // 流れ s の読みの面のスナップショットが今のダンプ（DUMP_F0）のもの（持ち主が 1 段で受けた値）
+    output reg               rd_snap,      // 1 = スナップショットの記憶を読む（相の間は一定。切り替えるのは読みが全部済んだ後）
     output reg  [NS-1:0]     one_clr,
     output reg  [NS-1:0]     late,         // REC_LATE を +1
     output reg  [NS-1:0]     drop,         // リングの DROP_CNT を +1（読み始めなかった方。読みかけは tuser で）
@@ -54,7 +67,8 @@ module rec_fr #(
     localparam integer NCH = 4096;
     localparam integer AW  = $clog2(DEPTH);
     localparam [31:0]  MAGIC = 32'h5235_3453;          // "S45R"（u32 の little endian）
-    localparam [7:0]   REC_VER = 8'd1, TYPE_SPEC = 8'd1;
+    localparam [7:0]   REC_VER = 8'd1, TYPE_SPEC = 8'd1, TYPE_SNAP = 8'd4;
+    localparam [31:0]  SN_BYTES = NSN * 8;
     localparam [7:0]   SB = S_BASE;
 
     // ---- 流れごとの見張り ----
@@ -87,6 +101,18 @@ module rec_fr #(
     reg  [13:0] n_out;                      // 出口に出した語の数（0..8+4096）
     reg  [LAT-1:0] vsr;
     reg  [AW:0] occ;                        // 出したが出口に出していない本体の語（FIFO ＋ 道中）
+    // proj021 2-2c: 相（0 = SPEC・1 = SNAP）
+    reg         ph, want_sn, spec_bad, chk_p, chk;
+    reg  [12:0] np;                         // この相の本体の語の数
+    reg  [13:0] out_last;                   // この相の最後の語の n_out（8 + np − 1）
+`ifdef REC_SNAP_NOCHK
+    wire        sok = 1'b1;                 // 陽性対照: 上書きの見張りを外す（sim-ring の late で照合が落ちること）
+`else
+    wire        sok = snap_ok[rd_s];
+`endif
+    wire        mv = inc[rd_s] || oth[rd_s];
+    // 見張りの数え（sim で読む。合成では使われない）
+    reg         dbg_sab, dbg_eab;
 
     // 次の流れ（rr から順に、rdy のもの）
     reg  [1:0]  nx;
@@ -105,13 +131,13 @@ module rec_fr #(
     always @(posedge clk) if (cap) fm[fw] <= rd_data;
     reg  [AW:0] fcnt;                       // FIFO の中の語
     wire        in_hdr  = (n_out < 14'd8);
-    assign m_tvalid = (st == S_RUN) && (in_hdr || fcnt != 0);
+    assign m_tlast  = (n_out == out_last);
+    assign m_tvalid = (st == S_RUN) && (in_hdr || (fcnt != 0 && (!m_tlast || chk)));   // 2-2c: 最後の語は見張りが済んでから
     assign m_tdata  = in_hdr ? hl[64*n_out[2:0] +: 64] : fm[fr];
-    assign m_tlast  = (n_out == 14'd8 + NCH - 1);
     assign m_tuser  = m_tlast && abort;
     wire        pop  = m_tvalid && m_tready;
     wire        popb = pop && !in_hdr;
-    wire        iss  = (st == S_RUN) && (n_iss < NCH) && (occ < DEPTH);
+    wire        iss  = (st == S_RUN) && (n_iss < np) && (occ < DEPTH);
 
     integer k;
     always @(posedge clk) begin
@@ -122,8 +148,11 @@ module rec_fr #(
             st <= S_IDLE; rr <= 2'd0; req <= 1'b0; rd_s <= 2'd0; rd_ch <= 12'd0; abort <= 1'b0;
             n_iss <= 13'd0; n_cap <= 13'd0; n_out <= 14'd0; vsr <= {LAT{1'b0}}; occ <= 0; fcnt <= 0; fw <= 0; fr <= 0;
             pend <= {NS{1'b0}};
+            ph <= 1'b0; want_sn <= 1'b0; spec_bad <= 1'b0; chk_p <= 1'b0; chk <= 1'b1; rd_snap <= 1'b0;
+            np <= NCH; out_last <= 14'd8 + NCH - 1; dbg_sab <= 1'b0; dbg_eab <= 1'b0;
             for (k = 0; k < NS; k = k + 1) begin seq_d[k] <= seq[32*k +: 32]; age[k] <= 4'd0; end
         end else begin
+            dbg_sab <= 1'b0; dbg_eab <= 1'b0;
             // ---- 流れごとの seq ----
             for (k = 0; k < NS; k = k + 1) begin
                 seq_d[k] <= seq[32*k +: 32];
@@ -137,9 +166,16 @@ module rec_fr #(
                 end
             end
             // ---- 読みかけの流れが動いた（取り込み終わる前）----
-            if (st == S_RUN && (inc[rd_s] || oth[rd_s]) && n_cap < NCH && !abort) begin
+            if (st == S_RUN && mv && n_cap < np && !abort) begin
                 abort <= 1'b1;
-                late[rd_s] <= 1'b1;
+                late[rd_s] <= 1'b1;               // SNAP の相では spec_bad なら abort は既に 1（ここに来ない）
+            end
+            // ---- proj021 2-2c: SNAP の相の終わりの見張り（最後の語を取り込んだ 2 クロック後の snap_ok）----
+            chk_p <= 1'b0;
+            if (st == S_RUN && ph && cap && n_cap == np - 13'd1) chk_p <= 1'b1;
+            if (chk_p) begin
+                chk <= 1'b1;
+                if (!sok && !abort) begin abort <= 1'b1; late[rd_s] <= 1'b1; dbg_eab <= 1'b1; end
             end
 
             // ---- 番地と取り込み ----
@@ -163,17 +199,30 @@ module rec_fr #(
                         pend[rd_s] <= 1'b0;
                         abort <= 1'b0;
                         n_iss <= 13'd0; n_cap <= 13'd0; n_out <= 14'd0;
+                        ph <= 1'b0; rd_snap <= 1'b0; chk <= 1'b1; np <= NCH; out_last <= 14'd8 + NCH - 1;
+                        want_sn <= (SNAP != 0) && rec_snap[rd_s];
                         hl <= {64'd32768,
                                hdr[384*rd_s +: 384],
                                {SB + {6'd0, rd_s}, CORE, TYPE_SPEC, REC_VER, MAGIC}};
                     end
                 end
                 S_RUN: begin
-                    if (n_cap == NCH - 1 && cap) req <= 1'b0;        // 口を返す（出口はまだ流れている）
+                    if (n_cap == np - 13'd1 && cap && !(!ph && want_sn)) req <= 1'b0;   // 口を返す（出口はまだ流れている）。SNAP が続くなら持ったまま
                     if (pop && m_tlast) begin
-                        st <= S_IDLE;
-                        rr <= (rd_s + 2'd1 == NS) ? 2'd0 : rd_s + 2'd1;
-                        if (!abort && !((inc[rd_s] || oth[rd_s]) && n_cap < NCH)) one_clr[rd_s] <= 1'b1;
+                        if (!ph && !abort) one_clr[rd_s] <= 1'b1;       // 最後の語を出すときには全部取り込んである（n_cap = NCH）
+                        if (!ph && want_sn) begin
+                            // ---- SNAP の相へ（読みは全部済み・FIFO は空）----
+                            ph <= 1'b1; rd_snap <= 1'b1; chk <= 1'b0; spec_bad <= abort;
+                            np <= NSN; out_last <= 14'd8 + NSN - 1;
+                            n_iss <= 13'd0; n_cap <= 13'd0; n_out <= 14'd0;
+                            hl[47:40] <= TYPE_SNAP;
+                            hl[511:448] <= {32'd0, SN_BYTES};
+                            abort <= abort || !sok || mv;
+                            if (!abort && (!sok || mv)) begin late[rd_s] <= 1'b1; dbg_sab <= 1'b1; end
+                        end else begin
+                            st <= S_IDLE; ph <= 1'b0; rd_snap <= 1'b0; chk <= 1'b1;
+                            rr <= (rd_s + 2'd1 == NS) ? 2'd0 : rd_s + 2'd1;
+                        end
                     end
                 end
                 default: st <= S_IDLE;

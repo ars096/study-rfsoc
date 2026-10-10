@@ -97,7 +97,7 @@ module tb_regmap;
             expect(c, 20'h00000, 32'h0202_0101, "IF_ID");
             expect(c, 20'h00004, 32'h0021_0200, "PROJ");
             expect(c, 20'h00008, (c == 0) ? 3 : 2, "NSTREAM");
-            expect(c, 20'h0000C, 3, "CAPS（[0] DMA のレコード 2-2a・[1] TP をレコードで 2-2b）");
+            expect(c, 20'h0000C, 7, "CAPS（[0] DMA のレコード 2-2a・[1] TP をレコードで 2-2b・[2] SNAP をレコードで 2-2c）");
             expect(c, 20'h0011C, 32'h0000_0A00, "TP_REC_CTRL（既定: K 10・EN 0。2-2b）");
             expect(c, 20'h00120, 0, "TP_REC_LATE（2-2b）");
             expect(c, 20'h00010, 2621440, "BASE_BEATS");

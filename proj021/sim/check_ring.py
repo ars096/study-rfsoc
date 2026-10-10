@@ -13,6 +13,7 @@
 u: 本体・頭を tb の式で作り直して比べる。DROP_CNT = Σ(NREC − 受けた数) ＋ rec_drop の数（入口 2 の seq % 5 == 4）、
    REC_CNT = 受けた数、捨てるべき（入口 1 の seq % 7 == 3）が来ていない
 core: 本体を peek.txt（tb が凍ったバンクを直に写したもの）と、頭を peek の DUMP_* と比べる
+      proj021 2-2c: SNAP のレコード（type 4）は本体を S 行（スナップショットを直に写したもの）と、頭 w1..w6 を同じ SEQ の SPEC と比べる
 """
 import sys, zlib, re
 
@@ -62,7 +63,7 @@ def check_common(recs, size, flip, ng):
             if (pos % size) + e != size:
                 ng.append('PAD の長さ %d が端まで（%d）と違う @%d' % (e, size - pos % size, pos))
             continue
-        if ty not in (1, 2):
+        if ty not in (1, 2, 4):
             ng.append('type %d @%d' % (ty, pos)); continue
         if ty == 2 and s != 0xFF:
             ng.append('TP のレコードの s が 0xFF でない @%d' % pos)
@@ -163,18 +164,25 @@ def main_core(d, flip):
     size = int(lg['SIZE'])
     ng = []
     recs = check_common(load_recs(d + '/ring.txt'), size, flip, ng)
-    qq, hh, tt = {}, {}, {}
+    qq, hh, tt, sn = {}, {}, {}, {}
+    nsinv = 0
     for ln in open(d + '/peek.txt'):
         t = ln.split()
-        if t and t[0] in ('Q', 'H'):
+        if t and t[0] in ('Q', 'H', 'S'):
             k = (int(t[1]), int(t[2]), int(t[3]))
-            (qq if t[0] == 'Q' else hh)[k] = [int(x, 16) for x in t[4:]]
+            {'Q': qq, 'H': hh, 'S': sn}[t[0]][k] = [int(x, 16) for x in t[4:]]
+        elif t and t[0] == 'S-':
+            nsinv += 1
         elif t and t[0] == 'T':
             v = int(t[3], 16)
             tt[(int(t[1]), int(t[2]))] = (v & ((1 << 64) - 1), v >> 64)    # 個 = 2 語（和・{FLAGS|フレーム数, F0}）
     # proj021 2-2b: TP のレコード（s = 0xFF）は AXI4-Lite の TP のリングの個（T 行）と比べる
     tps = [r for r in recs if r[1] == 0xFF]
-    recs = [r for r in recs if r[1] != 0xFF]
+    snaps = [r for r in recs if r[1] != 0xFF and (r[3][0] >> 40) & 0xFF == 4]
+    order = {}
+    for i, r in enumerate(recs):
+        order.setdefault((r[0], r[1], r[2], (r[3][0] >> 40) & 0xFF), i)
+    recs = [r for r in recs if r[1] != 0xFF and (r[3][0] >> 40) & 0xFF == 1]
     ntp_ok, ntp_items, tp_gap, prev = 0, 0, 0, None
     for core, s_, seq, w in tps:
         n = w[5] & 0xFFFFFFFF
@@ -213,6 +221,33 @@ def main_core(d, flip):
                 if w[n] != hh[k][n - 1]:
                     ng.append('頭の w%d が AXI4-Lite の DUMP_* と違う（%s）: %016x / %016x' % (n, k, w[n], hh[k][n - 1]))
         nok += 1
+    # ---- proj021 2-2c: SNAP のレコード ----
+    spec_w = {(c, s_, q): w for c, s_, q, w in recs}
+    nsn_ok = 0
+    sn_by = {}
+    for core, s_, seq, w in snaps:
+        k = (core, s_, seq)
+        sn_by.setdefault((core, s_), []).append(seq)
+        exp_b = 16384 if s_ == 2 else 32768
+        good = True
+        if (w[7] & 0xFFFFFFFF) != exp_b:
+            ng.append('SNAP の w7 %d（%d であるべき）%s' % (w[7] & 0xFFFFFFFF, exp_b, k)); good = False
+        if k not in spec_w:
+            ng.append('SNAP の組の SPEC が無い %s' % (k,)); good = False
+        elif w[1:7] != spec_w[k][1:7]:
+            ng.append('SNAP の頭 w1..w6 が組の SPEC と違う %s' % (k,)); good = False
+        elif order[(core, s_, seq, 4)] < order[(core, s_, seq, 1)]:
+            ng.append('SNAP が組の SPEC より前 %s' % (k,)); good = False
+        if k not in sn:
+            ng.append('写していない（または書いていない窓の）スナップショットの SNAP %s' % (k,)); good = False
+        elif w[8:] != sn[k]:
+            bad = [i for i, (a, b) in enumerate(zip(w[8:], sn[k])) if a != b]
+            ng.append('SNAP の本体が記憶と違う %s: %d 語、最初の語 %d' % (k, len(bad), bad[0] if bad else -1)); good = False
+        nsn_ok += good
+    m_ = re.search(r'^tb_ring: SNAP_AB = (\d+) (\d+) (\d+) (\d+)', open(d + '/log.txt').read(), re.M)
+    sab = [int(x) for x in m_.groups()] if m_ else [0, 0, 0, 0]
+    print('check_ring core: SNAP のレコード %d（記憶と一致 %d）、流れごと %s、写せなかった面 %d'
+          % (len(snaps), nsn_ok, {k: len(v) for k, v in sorted(sn_by.items())}, nsinv))
     by, ngap, bad = gaps(recs)
     ng += bad
     late = sum(int(v) for kk, v in lg.items() if kk.startswith('REC_LATE'))
@@ -221,8 +256,8 @@ def main_core(d, flip):
     print('check_ring core: レコード %d（本体が凍ったバンクと一致 %d、うち頭を AXI4-Lite と照らした %d）、流れごと %s、'
           'SEQ の飛び %d、REC_LATE 計 %d、DROP_CNT %d、REC_CNT %d、PEAK %s'
           % (len(recs), nok, nh, {k: len(v) for k, v in sorted(by.items())}, ngap, late, drop, rcnt, lg['PEAK']))
-    if rcnt != len(recs) + len(tps):
-        ng.append('REC_CNT %d ≠ 受けた数 %d（SPEC %d ＋ TP %d）' % (rcnt, len(recs) + len(tps), len(recs), len(tps)))
+    if rcnt != len(recs) + len(tps) + len(snaps):
+        ng.append('REC_CNT %d ≠ 受けた数 %d（SPEC %d ＋ TP %d ＋ SNAP %d）' % (rcnt, len(recs) + len(tps) + len(snaps), len(recs), len(tps), len(snaps)))
     if ngap > drop:
         ng.append('SEQ の飛び %d > DROP_CNT %d' % (ngap, drop))
     if late_all > drop:
@@ -239,11 +274,24 @@ def main_core(d, flip):
             ng.append('ALL の流れのレコードが少ない')
         if nh < len(recs) - 3:
             ng.append('頭を AXI4-Lite と照らせたレコードが少ない（%d / %d）' % (nh, len(recs)))
+    elif want == 'snap':
+        lates = {kk: int(v) for kk, v in lg.items() if kk.startswith('REC_LATE')}
+        if lates.get('REC_LATE0') != 0 or lates.get('REC_LATE2') != 0 or lates.get('REC_LATE1') != 1:
+            ng.append('REC_LATE %s（流れ 1 の SNAP だけ 1 であるべき）' % lates)
+        if drop != 1 or ngap != 0 or tp_gap != 0 or int(lg.get('TP_REC_LATE', '0')) != 0:
+            ng.append('取りこぼし（DROP %d は 1 であるべき・飛び %d・TP の飛び %d）' % (drop, ngap, tp_gap))
+        for st_ in (0, 2):
+            if len(by.get((0, st_), [])) < 3 or sorted(by.get((0, st_), [])) != sorted(sn_by.get((0, st_), [])):
+                ng.append('流れ %d の SPEC %d 個と SNAP %d 個が組にならない' % (st_, len(by.get((0, st_), [])), len(sn_by.get((0, st_), []))))
+        if len(by.get((0, 1), [])) != 1 or sn_by.get((0, 1)) or lg.get('ONE') != 'OK':
+            ng.append('流れ 1 は SPEC 1 個・SNAP 0 個であるべき（SPEC %d・SNAP %d・ONE %s）'
+                      % (len(by.get((0, 1), [])), len(sn_by.get((0, 1), [])), lg.get('ONE')))
     elif want == 'late':
         if late == 0:
             ng.append('N_ACC = 1 なのに REC_LATE が 0')
         if len(recs) < 5:
             ng.append('レコードが少なすぎる（%d）' % len(recs))
+        print('check_ring core: 見張りで捨てた SNAP: 窓 頭 %d・終わり %d / FULL 頭 %d・終わり %d' % tuple(sab))
     if int(lg.get('NG', '0')) != 0:
         ng.append('tb の見張りに NG %s' % lg['NG'])
     return ng

@@ -9,6 +9,8 @@
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --soak 60              # ALL・10.24 ms を 60 s
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --soak 20 --no-inval   # 陽性対照: キャッシュを捨てずに読む → CRC の不一致
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --soak 20 --pause 3    # 陽性対照: 3 s 読まない → DROP_CNT = SEQ の飛び
+    sudo -E $(which python3) plring.py --clkin 0 --ref 10 --snapcompare          # 2-2c: SNAP のレコード = 仮の読み窓のスナップショット
+    sudo -E $(which python3) plring.py --clkin 0 --ref 10 --golden               # 2-2c V2-c: W-G・全帯域の golden をレコードだけで
 
 --compare: 流れごとに N_ACC を長く（ダンプ ≈ --period s）し、REC_CTRL の ONE で 1 個出させ、リングに来たら**次のダンプが閉じる前に**
   同じ流れの仮の読み窓を AXI4-Lite（seqlock）で読み、SEQ が同じ・頭（DUMP_*）・本体 4096 語が bit 単位で同じことを確かめる。
@@ -31,7 +33,8 @@ MiB = 1 << 20
 R_IF_ID, R_CTRL, R_BASE_LO, R_BASE_HI, R_SIZE, R_W, R_R = 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18
 R_DROP, R_RECCNT, R_PEAK, R_ERRST, R_PROJ = 0x1C, 0x20, 0x24, 0x28, 0x2C
 MAGIC_R, MAGIC_E = 0x52353453, 0x45353453
-TYPE_PAD, TYPE_SPEC = 0, 1
+TYPE_PAD, TYPE_SPEC, TYPE_TP, TYPE_SNAP = 0, 1, 2, 4
+REC_ALL, REC_ONE, REC_SNAP = 1, 2, 4
 NCH = 4096
 
 
@@ -256,6 +259,155 @@ def do_compare(cores, ring, a):
     return ng
 
 
+def rtype(r_):
+    return int(r_[3][0]) >> 40 & 0xFF
+
+
+def wait_pair(ring, st, timeout):
+    """流れ st の SPEC と、同じ SEQ の SNAP を待つ。戻り: (SPEC, SNAP, 来た流れ st のレコード全部)。来なければ None"""
+    t0 = time.time()
+    got = []
+    while time.time() - t0 < timeout:
+        got += [r for r in ring.read() if (r[0], r[1]) == (st.core.adc, st.s)]
+        sp = [r for r in got if rtype(r) == TYPE_SPEC]
+        if sp:
+            sn = [r for r in got if rtype(r) == TYPE_SNAP and r[2] == sp[0][2]]
+            if sn:
+                return sp[0], sn[0], got
+        time.sleep(0.002)
+    sp = [r for r in got if rtype(r) == TYPE_SPEC]
+    return (sp[0] if sp else None), None, got
+
+
+def snap_of(st, pay):
+    """SNAP のレコードの中身 → DDC: 複素 × 4096（{im, re} の int32）/ FULL: int16 × 8192"""
+    if st.kind == SC.KIND_DDC:
+        v = pay.view(np.int32)
+        return v[0::2] + 1j * v[1::2]
+    return pay.view(np.int16)
+
+
+def check_pair(st, spec_r, snap_r, got):
+    """組の SPEC・SNAP の形の照合。NG の文のリスト"""
+    res = []
+    if spec_r is None:
+        return ["SPEC が来ない"]
+    if snap_r is None:
+        return ["SNAP が来ない（REC_LATE %d）" % st.rd(SC.S_REC_LATE)]
+    for r_ in (spec_r, snap_r):
+        if not (r_[5] and r_[6]):
+            res.append(f"CRC・尾（type {rtype(r_)}）")
+    if [int(x) for x in snap_r[3][1:7]] != [int(x) for x in spec_r[3][1:7]]:
+        res.append("SNAP の頭 w1..w6 が組の SPEC と違う")
+    eb = 32768 if st.kind == SC.KIND_DDC else 16384
+    if int(snap_r[3][7]) & 0xFFFFFFFF != eb or snap_r[4].size * 8 != eb:
+        res.append(f"SNAP の w7 {int(snap_r[3][7]) & 0xFFFFFFFF}（{eb} であるべき）")
+    ix = {id(r_): i for i, r_ in enumerate(got)}             # （tuple に np.array が入るので list.index は使えない）
+    if ix[id(snap_r)] < ix[id(spec_r)]:
+        res.append("SNAP が組の SPEC より前")
+    if len([r for r in got if rtype(r) == TYPE_SPEC]) != 1 or len([r for r in got if rtype(r) == TYPE_SNAP]) != 1:
+        res.append(f"ONE | SNAP で {len(got)} 個")
+    return res
+
+
+def do_snapcompare(cores, ring, a):
+    """2-2c: 流れごとに SNAP を立てて（書く流れにして）1 ダンプ以上待ち、ONE | SNAP で SPEC と SNAP を 1 組出させ、
+    **次の上書きの前に**仮の読み窓のスナップショットを AXI4-Lite で読んで、SNAP の本体と bit 単位で比べる"""
+    import window as WN
+    import spectrometer as S
+    ss = setup(cores, a.period, a.shift, a.shift_full, a.ns)
+    ring.enable(True)
+    time.sleep(2 * a.period + 0.5)
+    ring.read()
+    ng = 0
+    for st, o, nacc, _ in ss:
+        st.wr(SC.S_REC_CTRL, REC_SNAP)                        # 書く流れに（DDC はコアで 1 本。このダンプの頭はまだ前の持ち主）
+        time.sleep(2 * a.period + 0.2)
+        ring.read()
+        st.wr(SC.S_REC_CTRL, REC_ONE | REC_SNAP)
+        spec_r, snap_r, got = wait_pair(ring, st, 3 * a.period + 2)
+        res = check_pair(st, spec_r, snap_r, got)
+        if snap_r is not None:
+            seq = snap_r[2]
+            m = o.meta()
+            base, nw = (WN.SNAP_BASE, 2 * NCH) if st.kind == SC.KIND_DDC else (S.SNAP_BASE, NCH)
+            raw = o.block(base, nw).view(np.uint64)
+            seq2 = st.rd(SC.S_SEQ)
+            if not (m["seq"] == seq == seq2):
+                res.append(f"仮の読み窓の SEQ {m['seq']}→{seq2}（レコード {seq}。--period を長く）")
+            elif m["snap_f"] != m["f0"]:
+                res.append(f"SNAP_F {m['snap_f']} ≠ DUMP_F0 {m['f0']}")
+            elif not np.array_equal(raw, snap_r[4]):
+                res.append(f"本体が {int(np.sum(raw != snap_r[4]))} 語違う")
+            elif (int(snap_r[3][2]) & 0xFFFFFFFFFFFF) != m["f0"]:
+                res.append("SNAP の DUMP_F0 が AXI4-Lite と違う")
+        rc = st.rd(SC.S_REC_CTRL)
+        if rc & REC_ONE:
+            res.append(f"ONE が 0 に戻らない（REC_CTRL {rc:#x}）")
+        tag = "OK" if not res else "NG " + "・".join(res)
+        ng += bool(res)
+        sq = snap_r[2] if snap_r is not None else -1
+        log(f"{st.name:<22} SEQ {sq:>6} N_ACC {nacc:>7}: {tag}" + (f"（SNAP Σ {int(snap_r[4].sum(dtype=np.uint64)):#x}）" if snap_r is not None else ""))
+        st.wr(SC.S_REC_CTRL, 0)
+    r = ring.regs()
+    late = sum(st.rd(SC.S_REC_LATE) for st, _, _, _ in ss)
+    log(f"リング: REC_CNT {r['rec']} / DROP_CNT {r['drop']} / ERR {r['err']} / REC_LATE 計 {late}")
+    ok = ng == 0 and r["drop"] == 0 and not r["err"]
+    log(f"結果（S22c-4 のスナップショットの照合）: {'通過' if ok else f'失敗（{ng} 本）'}")
+    return 0 if ok else 1
+
+
+def do_golden(cores, ring, a):
+    """2-2c V2-c: 9 本とも N_ACC 1・N_DUMP 1・ONE | SNAP で SPEC と SNAP を 1 組出させ、window の W-G・spectrometer の
+    全帯域の golden と同じ判定を**レコードだけで**行う（仮の読み窓は読まない）"""
+    import window as WN
+    import spectrometer as S
+    ss = setup(cores, 0.1, a.shift, a.shift_full, a.ns)
+    for st, o, _, _ in ss:
+        st.wr(SC.S_CTRL, 1 << 1)
+    ring.enable(True)
+    time.sleep(0.3)
+    ring.read()
+    ng = 0
+    for st, o, _, _ in ss:
+        ddc = st.kind == SC.KIND_DDC
+        st.wr(SC.S_CTRL, 1 << 1)
+        if not ddc and a.golden_shift_full is None:
+            st.wr(SC.S_REC_CTRL, REC_ONE | REC_SNAP)          # SHIFT を決めるための 1 組（auto_shift と同じ式）
+            o.run(1, 1, 0)
+            _, sn0, _ = wait_pair(ring, st, 2.0)
+            sh = S.shift_of_snap(snap_of(st, sn0[4])) if sn0 is not None else a.shift_full
+            st.wr(SC.S_CTRL, 1 << 1)
+        else:
+            sh = (a.golden_shift if ddc else a.golden_shift_full)
+        st.wr(SC.S_REC_CTRL, REC_ONE | REC_SNAP)              # RUN の前に SNAP（このダンプの頭のスナップショットをこの流れが書く）
+        o.run(1, 1, sh)
+        spec_r, snap_r, got = wait_pair(ring, st, 2.0)
+        res = check_pair(st, spec_r, snap_r, got)
+        msg = ""
+        if not res:
+            if (int(spec_r[3][5]) & 0xFFFFFFFF) != 1:
+                res.append(f"DUMP_N {int(spec_r[3][5]) & 0xFFFFFFFF}（1 であるべき）")
+            sn = snap_of(st, snap_r[4])
+            if ddc:
+                ok_, msg = WN.wg_cmp(spec_r[4], sn, sh)
+            else:
+                log(f"--- {st.name}（SHIFT {sh}）---")
+                ok_ = S.golden_cmp(spec_r[4], sn, sh)
+                msg = "全帯域の golden（上の行）"
+            if not ok_:
+                res.append("golden")
+        tag = "OK" if not res else "NG " + "・".join(res)
+        ng += bool(res)
+        log(f"{st.name:<22} SHIFT {sh:>2}: {tag} — {msg}")
+        st.wr(SC.S_REC_CTRL, 0)
+    r = ring.regs()
+    log(f"リング: REC_CNT {r['rec']} / DROP_CNT {r['drop']} / ERR {r['err']}")
+    ok = ng == 0 and r["drop"] == 0 and not r["err"]
+    log(f"結果（V2-c の W-G、レコードで）: {'通過' if ok else f'失敗（{ng} 本）'}")
+    return 0 if ok else 1
+
+
 TP_N_REG, TP_WP, TP_REC_CTRL, TP_REC_LATE, TP_RING = 0x100, 0x108, 0x11C, 0x120, 0x2000
 C_TP_CTRL_TP_RUN, C_TP_CTRL_TANCH = 1 << 0, 1 << 4
 TP_K = 10
@@ -452,6 +604,10 @@ def main():
     p.add_argument("--poll", type=float, default=0.005, help="--soak の読みの間 [s]")
     p.add_argument("--no-inval", action="store_true", help="陽性対照: キャッシュを捨てずに読む")
     p.add_argument("--pause", type=float, default=0.0, help="陽性対照: --soak の途中でこれだけ読まない [s]")
+    p.add_argument("--snapcompare", action="store_true", help="proj021 2-2c: SNAP のレコード = 仮の読み窓のスナップショット")
+    p.add_argument("--golden", action="store_true", help="proj021 2-2c V2-c: W-G・全帯域の golden をレコードだけで")
+    p.add_argument("--golden-shift", type=int, default=7, help="--golden の DDC の SHIFT（window.py の W-G と同じ 7）")
+    p.add_argument("--golden-shift-full", type=int, default=None, help="--golden の FULL の SHIFT（既定: スナップショットから auto と同じ式）")
     a = p.parse_args()
     import spectrometer as S
     S.setup_clocks(a.clkin, a.ref)
@@ -482,6 +638,10 @@ def main():
             rc |= do_tpcompare(cores, ring, a)
         if a.soak > 0:
             rc |= do_soak(cores, ring, a)
+        if a.snapcompare:
+            rc |= do_snapcompare(cores, ring, a)
+        if a.golden:
+            rc |= do_golden(cores, ring, a)
     finally:
         ring.close(streams_all(cores))
     sys.exit(rc)
