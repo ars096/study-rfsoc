@@ -808,6 +808,16 @@ CAPS 7。PS: `plring.py --snapcompare`・`--golden`（`window.wg_cmp`・`spectro
 DSP 2,600（2-2b と同じ）、BRAM タイル 307、URAM 56、LUT 212,795（50.0 %）・FF 339,272（39.9 %）。
 Performance_ExtraTimingOpt は IP の OOC 合成（system_gb_adc_3_0）のログで止まったまま進まなかった（2 本を並べて走らせたときの止まり。PE が閉じたので使わない）
 
+**実機（2026-10-11、`build-PE` の bit。S22c-4）**: 入力は 2-2b と同じ（ノイズソース ＋ SG を分配器で 4 ADC へ）
+
+| 手順 | 結果 |
+|---|---|
+| `s45core.py --list` | 4 コアとも CAPS **0x007**。流れの表は 2-2b と同じ |
+| `plring.py --snapcompare` | **通過**: 9 本（DDC 8・FULL 1）とも、ONE \| SNAP の SNAP のレコードの本体 = 同じ SEQ の仮の読み窓のスナップショット（bit 単位）、SNAP_F = DUMP_F0、頭 w1..w6 = 組の SPEC、ONE は 0 に戻る。REC_CNT 18（= 9 組）・DROP 0・ERR 0・REC_LATE 0 |
+| `plring.py --golden`（**V2-c の W-G**） | **通過**: 8 窓とも SHIFT 7 で超えた ch 0・最悪の差 1.4 / 許容 4.5〜5.2（2-1 の P-2 は 1.3〜1.4）。全帯域（SHIFT 10、auto と同じ式）は差の平均 0.49・最大 1.38・差/許容の最大 0.64（2-1 は 0.40）。REC_CNT 20・DROP 0。**仮の読み窓を読まずにレコードだけで** |
+
+- 全帯域のスナップショットは max\|x\| 8191（14 bit の振り切れ）・std 4340: SG が P-3 の +20 dBm のままで、ADC_A が振り切れている。golden はそれでも通る（同じフレームの比べなので）が、W-6 以外の判定には SG を下げてから
+
 ### 2-2c のビルドと実機
 
 ```bash
