@@ -155,6 +155,13 @@ class Server:
                 d["sent_mb"] = round(self.sent_bytes / 2**20, 1)
                 d["skip"] = self.skip
                 d["data_drop"] = self.last_drop or "-"
+                d["loops"] = r.get("loops")
+                d["loop_max_at"] = r.get("loop_max_at")
+                d["loop_slow"] = r.get("loop_slow")
+                rg = r.get("ring")
+                if rg:                                 # proj021 2-3a: PL が書くリング
+                    d["pl_drop"], d["pl_crc"], d["pl_peak"], d["pl_err"] = rg["drop"], rg["crc"], rg["peak"], rg["err"]
+                    d["tp_rec_lost"] = rg["tp_rec_lost"]
                 if r.get("err"):
                     d["err"] = r["err"]
                 if r.get("time_err"):

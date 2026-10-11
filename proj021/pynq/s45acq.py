@@ -275,12 +275,13 @@ class HwBackend:
     def pump(self):
         """1 周の頭に 1 回: リングを [R, W) まで読み、SPEC は窓ごとの列へ、TP は TpStream へ"""
         if not self.use_ring:
-            return
+            return 0
         self.n_pump += 1
         if self.stall_at and self.n_pump == 100:
             self.log(f"陽性対照: リングを {self.stall_at} 秒読まない")
             time.sleep(self.stall_at)
-        for core, s, seq, hw, pay, crc_ok, tail_ok in self.ring.read():
+        recs = self.ring.read()
+        for core, s, seq, hw, pay, crc_ok, tail_ok in recs:
             if not (crc_ok and tail_ok):
                 self.ring_crc += 1
                 continue
@@ -291,6 +292,7 @@ class HwBackend:
                     self.q[j].append((seq, hw, pay))
             elif ty == TYPE_TP and core in self.amap and self.running:
                 self.tps[self.amap[core]].feed(seq, int(hw[5]) & 0xFFFFFFFF, pay, TP_REC_K)
+        return len(recs)
 
     def ring_stat(self):
         if self.ring is None:
@@ -673,7 +675,7 @@ class FakeBackend:
         return self.sa + 1 + f * 512
 
     def pump(self):
-        pass
+        return 0
 
     def snap(self, adc, n, nacc, timeout=5.0):
         """偽物: 3000.25 MHz（第 2 ナイキストで 1095.75 MHz に見える）の正弦波 ＋ ガウス雑音、16 bit の上位 14 bit"""
@@ -728,6 +730,8 @@ class Acq:
         self.fl_or = 0
         self.sat = 0
         self.loop_max = 0.0
+        self.loop_max_at = 0                       # proj021 2-3a: 最大だった周の番号（RUN から）
+        self.loop_slow = 0                         # 1 周が tint を越えた回数
         self.hist[:] = 0
         self.n_loop = 0
         self.ndump_target = 0
@@ -943,6 +947,7 @@ class Acq:
                     tp=[t.total for t in tps], tp_lost=sum(t.lost + t.overflow for t in tps), tp_bad=sum(t.bad_seq + t.bad_flag + t.bad_nfr for t in tps),
                     tp_ovr=sum(t.n_ovr for t in tps), health=self.h_or, flags=self.fl_or, sat=self.sat,
                     loop_max_ms=round(self.loop_max * 1e3, 2), loop_p99_ms=p99, loops=self.n_loop,
+                    loop_max_at=self.loop_max_at, loop_slow=self.loop_slow,
                     seq=self.seq, drop=self.drop["n"], ring_used=w - r, ring_cap=self.ring.cap, err=self.err, forced=self.forced,
                     tp_dbfs=[None if v is None else round(float(s45cal.dbfs(v)), 2) for v in self.tp_last],
                     tp_dbm=[None if v is None or self.cal is None else round(float(s45cal.dbm(v, self.cal, "ABCD"[i])), 2)
@@ -988,7 +993,7 @@ class Acq:
     def _loop_once(self):
         ts = time.perf_counter()
         be = self.be
-        be.pump()                                  # proj021 2-3a: リングを 1 回読んで振り分ける（axi・偽物では何もしない）
+        nrec = be.pump()                           # proj021 2-3a: リングを 1 回読んで振り分ける（axi・偽物では何もしない）
         for j in range(4 * NW):
             for _ in range(64):                    # 溜まったぶんを全部（リングでは止まりの後に何個も来る）
                 r = be.poll_win(j)
@@ -1007,7 +1012,12 @@ class Acq:
         be.clock.poll()
         dt = time.perf_counter() - ts
         self.hist[min(1000, int(dt * 1e4))] += 1
-        self.loop_max = max(self.loop_max, dt)
+        if dt > self.loop_max:
+            self.loop_max, self.loop_max_at = dt, self.n_loop
+        if dt > self.st["tint"]:
+            self.loop_slow += 1
+            if self.loop_slow <= 20:               # どの周が遅いかを残す（2-3a の 1 回目: 最大 115 ms・p99 14.5 ms）
+                self.log(f"1 周が {dt * 1e3:.1f} ms（周 {self.n_loop}・リングのレコード {nrec}）")
         self.n_loop += 1
         if self.ndump_target and min(self.n_dump) >= self.ndump_target:
             self._stop("n に達した")

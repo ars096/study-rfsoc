@@ -903,6 +903,14 @@ STATUS に `ring`（w・r・drop・rec・peak・err・crc・tp_rec_lost）
 **PL なしの確かめ（クラウド、2026-10-11）**: `test_fake.sh all` 全部通過（S23a-1。7 試験）。HwBackend のリングの道は作り物のレコードで: SPEC の頭 → meta・SEQ の飛び = miss・前の RUN の SEQ は捨てる・
 TP の個 → TpStream（F0 で始まる・個の番号の飛び 16 個 → lost 16・rec_lost 2）・CRC の不一致は使わず数える
 
+**実機 1 回目（2026-10-11、2-2c の build-PE の bit、`--read ring`、SET A0.bw=256 A1.bw=8 all.shift=9、10 分）**:
+- 受け側（`specrecv`）: SPEC 118,377・TP 59,176 記録、CRC の不一致 0・欠け 0・説明のない欠け 0・DUMP_K の飛び 0・TP の飛び 0（health 0x10 = ADC の振り切れ: SG が P-3 の +20 dBm のまま）
+- specd: 窓ごとに 15,389 ダンプ・miss 0・kgap 0、TP 4 × 615,580 個・tp_lost 0・tp_bad 0、STOP の錨の照合 4 ADC ともずれ 0・GAP 0
+- **1 周: p99 14.5 ms・最大 115.15 ms**（予言 2「proj020 の最大 35.9 ms より下がる」は**外れ**。tint 40.96 ms を越えた周があるが、リングが吸うので取りこぼしは 0）。
+  STATUS の行にリングの数（drop・crc・peak）を出していなかった（`ring` は acq の status にあったが specd の STATUS の行に入れ忘れた）
+- 直したこと: STATUS に `pl_drop`・`pl_crc`・`pl_peak`・`pl_err`・`tp_rec_lost`・`loops`・`loop_max_at`（最大だった周）・`loop_slow`（tint を越えた周の数）を足し、
+  tint を越えた周は最初の 20 回を specd のログに残す（周の番号・その周に読んだレコードの数）。**次の短い実行で、遅い周がいつ・何をしているときかを見る**
+
 ### 2-3a の実機
 
 ```bash
