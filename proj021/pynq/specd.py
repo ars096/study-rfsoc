@@ -478,6 +478,10 @@ def main():
     p.add_argument("--fake-stall", type=int, default=0, help="偽物の陽性対照: 窓 A0 の k がこの倍数のとき読み出しを 50 ms 止める")
     p.add_argument("--posctl-corrupt", type=int, default=0, help="陽性対照: seq がこの倍数の記録の中身を CRC の後に 1 bit 反転")
     p.add_argument("--posctl-gap", type=int, default=0, help="陽性対照: seq がこの倍数の記録を黙って捨てる（DROP を出さない）")
+    p.add_argument("--read", default="ring", choices=("ring", "axi"),
+                   help="proj021 2-3a: PL からの読み口（ring = PL が書くリングのレコード / axi = 仮の読み窓、2-2d まで）")
+    p.add_argument("--ring-mib", type=int, default=32, help="PL が書くリングの大きさ [MiB]（--read ring）")
+    p.add_argument("--posctl-ring-stall", type=float, default=0.0, help="陽性対照: RUN の 100 周目にこの秒数リングを読まない")
     a = p.parse_args()
     a.cpu = None if a.cpu < 0 else a.cpu
     if a.cpu is not None and a.cpu >= os.cpu_count():

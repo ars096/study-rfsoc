@@ -847,6 +847,87 @@ python3 plring.py --clkin 0 --ref 10 --soak 60
 python3 window.py --clkin 0 --ref 10 --golden --w 256                   # P-2（仮の読み窓の W-G。SNAP_SEL の道）
 ```
 
+## 手順 2-3 — specd がリングを読む（2026-10-11）
+
+INTERFACE 5. の specd の仕事（束ね・時刻の補正・s45proto v2・LOAD）を、**変更を一度に一つ**に分ける:
+
+| 手順 | 中身 | PL | 判定の芯 |
+|---|---|---|---|
+| **2-3a** | 取得（s45acq）の読み口を仮の読み窓からリングのレコードに替える。PL のダンプ = tint（40.96 ms）・s45proto v1 のまま | 2-2c のまま | specd の記録が今と同じ形で、取りこぼし・説明のない欠け 0。P-5（s45resp）が 2-1 と同じ |
+| 2-3b | PL のダンプを BASE（10.24 ms）にし、specd が n_sum 個を束ねる（5.1）。START_AT を tint の倍数に | 同じ | **V2-a**（束ねた 4 個 = PL の 40.96 ms の 1 個、整数で）・**V2-b**（10.24 ms で 30 分） |
+| 2-3c | s45proto v2（float32・utc_ns = 実効の区間の始まり 5.2・頭に nch・n_sum・core・s・src） | 同じ | 受け側が v1・v2 の両方を読む。u64 の試験の形 = PL の値 |
+| 2-3d | LOAD と bits.json（5.） | 同じ | V2-d |
+| 2-2d | 仮の読み窓を外して 64 KiB に（SNAP_SEL・FULL の TP の置き場所も） | 変える | 2-3a〜c の回帰 |
+
+### 手順 2-3a — 取得の読み口をリングに（設計と予言、2026-10-11。コードを書く前）
+
+**変えるのは HwBackend の読み口だけ**。記録の形（s45proto v1）・溜まり（s45ring）・送り・命令・FakeBackend は変えない。
+今の道（仮の読み窓を seqlock で読む）は `specd.py --read axi` で残す（2-2d まで。比べと逃げ道）。既定は `--read ring`。
+
+- **起こすとき**: `plring.Ring`（32 MiB、`--ring-mib`）を取り、EN。終わり（quit）で REC_CTRL・TP_REC_CTRL を 0 にし、busy が落ちてからバッファを返す（2-2a の Segmentation fault の型）
+- **START**: 窓 8 本の REC_CTRL = ALL、4 ADC の TP_REC_CTRL = EN・K 10。ARM の前にリングに残ったレコードを読み捨てる。**STOP** で REC_CTRL・TP_REC_CTRL を 0
+- **1 周**: 頭で 1 回だけリングを読み（`pump`）、レコードを振り分ける:
+  - SPEC（type 1、(core, s) → 窓 j）: 頭 w1..w6 から meta（seq・k・f0・t・h・cfg・n・sat・flags）、本体 4096 語（FFT の順）は今の `poll_win` の戻りと同じ形。
+    **読み落とし = SEQ の飛び**（今と同じ数え方。リングの DROP_CNT とも合うはず）
+  - TP（type 2、s = 0xFF）: 個を今の TpStream（`_take`）にそのまま渡す（個の 16 バイトは AXI4-Lite の TP のリングと同じ: 2-2b の V2-e）。
+    **TP の読み落とし = TP のレコードの SEQ（個の番号）の飛び**（今は TP_WP の一巡越え）。区切りの時刻は今と同じく TANCH から
+  - CRC・尾の不一致はその記録を使わず、数える（STATUS の `ring_crc`）。magic の不一致（古い行）は ERROR
+  - `_loop_once` は窓ごとに **溜まった分を全部**取り出す（今は 1 周に 1 個。リングでは止まりの後に何個も来る）
+- **SNAP**（IDLE のとき）: FULL の流れを ADC adc につなぎ、REC_CTRL = ALL | SNAP・N_DUMP = n で RUN し、SNAP のレコード n 個（DUMP_K 0..n−1・SEQ の飛びなし）を集める。
+  中身 int16 × 8192 は今の T_SNAP と同じ。今の「SNAP_F = DUMP_F0」の照合は PL の見張り（2-2c の snap_ok）に替わる
+- STATUS に足す: `ring`（W・R・DROP_CNT・PEAK・ERR）・`ring_crc`・`tp_rec_lost`（TP のレコードの飛びから数えたレコードの数）
+- 陽性対照 `--posctl-ring-stall S`: RUN の 100 周目に 1 回だけ S 秒読まない → リングが満ちて PL が捨てる
+
+**予言**:
+1. `test_fake.sh all`（PL なし）は今のまま全部通過（FakeBackend と `_loop_once` の取り出し方の変更の回帰）
+2. 実機（`--read ring`、SET A0.bw=256 A1.bw=8 all.shift=9・START n=0・SEND ON・specrecv 10 分）: 欠け 0・説明のない欠け 0・CRC の不一致 0・miss 0・tp_lost 0・ring の DROP 0・ring_crc 0。
+   1 周の最大は今（proj020 の 35.9 ms / 40.96 ms）より**下がる**（AXI4-Lite で 8 × 32 KiB を読む代わりに、DDR を範囲の invalidate で読む。2-2a の 1 回の読み 5〜9 ms / 9 本 × 10.24 ms）
+3. P-5（`s45resp.py`、2-1 と同じ引数）: 8 窓とも半 ch −2.998〜−3.001 dB・−3 dB 幅 0.9998〜0.9999 ch（2-1 と同じ。中身が bit 単位で同じなので同じ値になるはず）
+4. SNAP（`s45snap.py --adc ABCD --n 16 --every 20`）: S-1〜S-4 が proj019 と同じに通る
+5. 陽性対照（`--posctl-ring-stall 8`。32 MiB は SPEC 8 本 ＋ TP で ≒ 5 s ぶん）: miss > 0・tp_rec_lost > 0、**ring の DROP_CNT = miss ＋ tp_rec_lost**（± 4: TP のレコードの数は個の飛びを K = 10 で割って切り上げた見積りで、
+   区切りの規則で K 個未満のレコードがあるとずれる）、specrecv の説明のない欠け 0（specd の記録の番号は飛ばない。欠けは STATUS の miss で見える）
+
+**判定**:
+
+| 判定 | 中身 |
+|---|---|
+| S23a-1 | `test_fake.sh all` 全部通過（予言 1） |
+| S23a-2 | 実機 10 分（予言 2）。1 周の最大と p99 を `--read axi` の同じ 10 分と並べる |
+| S23a-3 | P-5（予言 3）・SNAP（予言 4） |
+| S23a-4 | 陽性対照（予言 5） |
+
+**実装（2026-10-11）**: `s45acq.py`（HwBackend に `_open_ring`・`pump`・`ring_stat`・`close`・`_snap_ring`、`poll_win` のリングの道、TpStream に `feed`。
+`_loop_once` は頭で `pump`、窓ごとに溜まったぶんを全部取り出す。FakeBackend に何もしない `pump`）、`specd.py`（`--read`・`--ring-mib`・`--posctl-ring-stall`）。
+STATUS に `ring`（w・r・drop・rec・peak・err・crc・tp_rec_lost）
+
+**PL なしの確かめ（クラウド、2026-10-11）**: `test_fake.sh all` 全部通過（S23a-1。7 試験）。HwBackend のリングの道は作り物のレコードで: SPEC の頭 → meta・SEQ の飛び = miss・前の RUN の SEQ は捨てる・
+TP の個 → TpStream（F0 で始まる・個の番号の飛び 16 個 → lost 16・rec_lost 2）・CRC の不一致は使わず数える
+
+### 2-3a の実機
+
+```bash
+# Vivado サーバ → ボード（bit は 2-2c の build-PE のまま）
+scp pynq/*.py xilinx@$B:~/proj021/
+
+# ボード（root）: 今の specd を止めてから、リングの読み口で起こす（ログは別の端末で見る）
+cd ~/proj021
+python3 specd.py --clkin 0 --ref 10 > runs/specd_23a.log 2>&1 &          # 既定 --read ring
+
+# 制御 PC: S23a-2（10 分）
+python3 specctl.py --host $B STATUS "SET A0.bw=256 A1.bw=8 all.shift=9" "START n=0" "SEND ON"
+python3 specrecv.py --host $B --out r23a.s45 --seconds 600 --json r23a.json
+python3 specctl.py --host $B STATUS STOP
+#   比べ: specd を --read axi で起こし直して同じ 10 分（1 周の最大・p99 を並べる）
+
+# S23a-3: P-5（2-1 と同じ引数）と SNAP
+python3 s45resp.py --host $B --sg $SG --dbm -0.9 --span 0 --kch 1 --nsub 32 --out resp_p23a
+python3 s45snap.py --host $B --adc ABCD --n 16 --every 20 --out snap23a
+
+# S23a-4: 陽性対照（specd を --posctl-ring-stall 8 で起こし直す）
+python3 specctl.py --host $B "START n=0" "SEND ON"; python3 specrecv.py --host $B --out r23ap.s45 --seconds 40 --json r23ap.json
+python3 specctl.py --host $B STATUS STOP
+```
+
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
 判定 1 つにつき、次の 6 項目を書く。**環境に依る値（ホスト名・IP アドレス・パス）は書かない**（公開を前提にする）。

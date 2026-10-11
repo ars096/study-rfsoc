@@ -9,7 +9,11 @@
 遅れの対策（README の方針）: GC を止める（gc.freeze の後 gc.disable）・CPU 1 つに固定・可能なら SCHED_FIFO。
 
 裏（backend）は 2 つ: HwBackend（PYNQ・proj017 の bit）と FakeBackend（PL なしで同じ間隔・同じ形の記録を作る。通信の試験用）。
+
+proj021 手順 2-3a: HwBackend の読み口を **PL が書くリング**（s45_ring_0。plring.Ring）に替えた（`--read ring`、既定）。
+  SPEC・TP・SNAP をレコードで受け、記録の形（s45proto v1）は今のまま。今の道（仮の読み窓を seqlock で）は `--read axi`（2-2d まで）
 """
+import collections
 import gc
 import os
 import time
@@ -121,6 +125,22 @@ def make_tp_reader(S):
             self.n_ovr = 0
             self.total = 0
             self.overflow = 0         # 手元の箱（4 × 512 個）が溢れて捨てた区切り（flush が 2 秒来ない。0 のはず）
+            self.rec_lost = 0         # proj021 2-3a: 落ちた TP のレコードの数（個の番号の飛びを K で割って切り上げた見積り）
+
+        def feed(self, seq, n, pay, k):
+            """proj021 2-3a: TP のレコード（type 2）の個を受ける。seq = 最初の個の番号（TP_WP の数え）、pay = u64 × 2·n…
+            個 = {和 u64, [31:0] F0 の下位・[55:32] フレーム数・[63:56] FLAGS}（AXI4-Lite の TP のリングと同じ 16 バイト）"""
+            if self.wp is not None:
+                g = (seq - self.wp) & 0xFFFFFFFF
+                if g >= 1 << 31:
+                    return                    # 古い（前の RUN の残り）
+                if g and self.started:
+                    self.lost += g
+                    self.rec_lost += -(-g // k)
+            self.wp = (seq + n) & 0xFFFFFFFF
+            for i in range(n):
+                x = int(pay[2 * i + 1])
+                self._take(int(pay[2 * i]), x & 0xFFFFFFFF, x >> 56, (x >> 32) & 0xFFFFFF)
 
         def _take(self, tsum, f0lo, fl, nfr):
             if not self.started:
@@ -154,10 +174,27 @@ def make_tp_reader(S):
 
 
 # ================================================================ 実機
+REC_ALL, REC_SNAP = 1, 4
+TP_REC_CTRL, TP_REC_K = 0x11C, 10           # proj021 2-2b: TP のレコード（[0] EN・[12:8] K）。TP_FLUSH（40 個）は手元で束ねる
+TYPE_SPEC, TYPE_TP, TYPE_SNAP = 1, 2, 4
+
+
+def rec_meta(hw):
+    """レコードの頭 w1..w6（INTERFACE 4.4）→ 今の meta と同じ鍵"""
+    w = [int(x) for x in hw]
+    return dict(seq=w[1] & 0xFFFFFFFF, k=w[1] >> 32, f0=w[2] & ((1 << 48) - 1), t=w[3], h=(w[4] >> 48) & 0xFFFF,
+                n=w[5] & 0xFFFFFFFF, sat=w[5] >> 32, cfg=w[6] & 0xFFFFFFFF, flags=w[6] >> 32)
+
+
 class HwBackend:
     def __init__(self, opts, log):
         self.o, self.log = opts, log
         self.running = False
+        self.use_ring = getattr(opts, "read", "ring") == "ring"
+        self.ring = None
+        self.ring_crc = 0
+        self.stall_at = getattr(opts, "posctl_ring_stall", 0.0)
+        self.n_pump = 0
 
     def open(self):
         import spectrometer as S
@@ -196,7 +233,80 @@ class HwBackend:
                         lmx_vco=f"{self.lmx['vco_mhz']:.2f}" if self.lmx else "7864.32",
                         lmx_pwr=str(self.lmx.get("outa_pwr", 31)) if self.lmx else "31")
         self.clock = Clock(None, TB.WIN_DELAY_BEATS)
+        if self.use_ring:
+            self._open_ring()
+        self.ids["read"] = "ring" if self.use_ring else "axi"
         self.anchor()
+
+    # ---- proj021 2-3a: リング ----
+    def _open_ring(self):
+        import plring as PR
+        import s45core as SC
+        self.SC = SC
+        bad = [c.name for c in self.cores if (c.caps & 7) != 7]
+        if bad:
+            raise RuntimeError(f"CAPS の [0]〜[2]（SPEC・TP・SNAP のレコード）が無いコア {bad}。2-2c 以降の .bit か、--read axi")
+        rip = getattr(self.ol, "s45_ring_0", None)
+        if rip is None:
+            raise RuntimeError("ol.s45_ring_0 が無い（2-2a 以降の .bit ではない）。--read axi")
+        self.ring = PR.Ring(rip.mmio, getattr(self.o, "ring_mib", 32) << 20)
+        self.ring.enable(True)
+        self.jmap = {(self.cores[c.adc].adc, c.widx): j for j, c in enumerate(self.wins)}   # レコードの core = CORE_PORT の ADC
+        self.amap = {c.adc: i for i, c in enumerate(self.cores)}
+        self.q = [collections.deque() for _ in self.wins]
+        fs = SC.full_stream(self.cores)
+        self.fkey = (fs.core.adc, fs.s)
+        self.log(f"リング: BASE {self.ring.base:#x} / SIZE {self.ring.size}（範囲の invalidate {'あり' if self.ring.bo_sync else 'なし'}）")
+
+    def _rec_off(self):
+        """REC_CTRL・TP_REC_CTRL を 0（窓・FULL・4 ADC）"""
+        SC = self.SC
+        for c in self.wins:
+            c.wr(SC.S_REC_CTRL, 0)
+        self.full.wr(SC.S_REC_CTRL, 0)
+        for wm in self.wms:
+            wm.write(TP_REC_CTRL, TP_REC_K << 8)
+
+    def _drain(self):
+        self.ring.read()
+        for d in self.q:
+            d.clear()
+
+    def pump(self):
+        """1 周の頭に 1 回: リングを [R, W) まで読み、SPEC は窓ごとの列へ、TP は TpStream へ"""
+        if not self.use_ring:
+            return
+        self.n_pump += 1
+        if self.stall_at and self.n_pump == 100:
+            self.log(f"陽性対照: リングを {self.stall_at} 秒読まない")
+            time.sleep(self.stall_at)
+        for core, s, seq, hw, pay, crc_ok, tail_ok in self.ring.read():
+            if not (crc_ok and tail_ok):
+                self.ring_crc += 1
+                continue
+            ty = int(hw[0]) >> 40 & 0xFF
+            if ty == TYPE_SPEC:
+                j = self.jmap.get((core, s))
+                if j is not None:
+                    self.q[j].append((seq, hw, pay))
+            elif ty == TYPE_TP and core in self.amap and self.running:
+                self.tps[self.amap[core]].feed(seq, int(hw[5]) & 0xFFFFFFFF, pay, TP_REC_K)
+
+    def ring_stat(self):
+        if self.ring is None:
+            return None
+        r = self.ring.regs()
+        return dict(w=r["w"], r=r["r"], drop=r["drop"], rec=r["rec"], peak=r["peak"], err=r["err"], crc=self.ring_crc,
+                    tp_rec_lost=sum(t.rec_lost for t in getattr(self, "tps", [])))
+
+    def close(self):
+        if self.ring is None:
+            return
+        try:
+            self._rec_off()
+        finally:
+            self.ring.close(())
+            self.ring = None
 
     def anchor(self):
         try:
@@ -258,6 +368,12 @@ class HwBackend:
             c.wr(W.R_NACC, cf["nacc"]); c.wr(W.R_NDUMP, 0); c.wr(W.R_SHIFT, cf["shift"])
         for wm in self.wms:
             wm.write(W.A_BASE + T.RA_TP_N, TP_N)
+        if self.use_ring:                          # proj021 2-3a: 窓は ALL・TP は K 個 / レコード。前の残りは読み捨てる
+            for c in self.wins:
+                c.wr(self.SC.S_REC_CTRL, REC_ALL)
+            for wm in self.wms:
+                wm.write(TP_REC_CTRL, (TP_REC_K << 8) | 1)
+            self._drain()
         sa = self.grid_after(max(at_beat or 0, self.now_beat() + BEATS_PER_SEC // 2))
         T.arm_all(self.tc, self.wins, self.full, self.wms, sa, tp=True, with_full=False)
         self.sa = sa
@@ -310,6 +426,16 @@ class HwBackend:
     def poll_win(self, j):
         """窓 j に閉じたダンプがあれば (メタ, uint64 の 4096 個の FFT の順, 読み落とした数) を返す。無ければ None"""
         W = self.W
+        if self.use_ring:
+            q = self.q[j]
+            while q:
+                seq, hw, pay = q.popleft()
+                d = (seq - self.seq[j]) & 0xFFFFFFFF
+                if d == 0 or d >= 1 << 31:
+                    continue                       # 前の RUN の残り・同じ SEQ
+                self.seq[j] = seq
+                return rec_meta(hw), pay, d - 1
+            return None
         c = self.wins[j]
         s = c.rd(W.R_SEQ)
         if s == self.seq[j]:
@@ -327,7 +453,8 @@ class HwBackend:
         raise RuntimeError(f"{c.name}: 読む間に毎回ダンプが閉じた（読み出しが積分に間に合わない）")
 
     def poll_tp(self, i):
-        self.tps[i].poll()
+        if not self.use_ring:
+            self.tps[i].poll()                     # ring: pump が個を渡している
         return self.tps[i]
 
     def tp_time(self, i, f):
@@ -338,6 +465,8 @@ class HwBackend:
         """全帯域コア（spec_core_0）を ADC adc につないで N_ACC = nacc・N_DUMP = n で走らせ、ダンプごとの最初のフレームの
         生サンプル 8192 個を読む（IDLE のときだけ。窓・TP の RUN には触らない: specd は全帯域コアを RUN に入れていない）。
         戻り値 [(meta, int16 の 8192 個)]。SNAP_F ≠ DUMP_F0（別のフレームを読んだ）・読む間に閉じたものは読み直す"""
+        if self.use_ring:
+            return self._snap_ring(adc, n, nacc, timeout)
         S, T, W = self.S, self.T, self.W
         full = self.full
         T.select_full(self.wms, full, adc)
@@ -375,6 +504,43 @@ class HwBackend:
         full.wr(S.R_CTRL, S.CTRL_STOP)
         return out
 
+    def _snap_ring(self, adc, n, nacc, timeout):
+        """proj021 2-3a: FULL の流れを REC_CTRL = ALL | SNAP・N_DUMP = n で走らせ、SNAP のレコード（type 4）を n 個集める。
+        上書きの見張りは PL（2-2c の snap_ok）。ここは SEQ の飛び・DUMP_K・CRC を見る"""
+        S, T, SC = self.S, self.T, self.SC
+        full = self.full
+        T.select_full(self.wms, full, adc)
+        full.wr(SC.S_REC_CTRL, 0)
+        self._drain()
+        full.wr(S.R_NACC, nacc)
+        full.wr(S.R_NDUMP, n)
+        full.wr(SC.S_REC_CTRL, REC_ALL | REC_SNAP)
+        full.wr(S.R_CTRL, S.CTRL_CLR | S.CTRL_RUN)
+        out = []
+        last = None
+        t_end = time.time() + timeout + n * nacc * 2e-6
+        try:
+            while len(out) < n:
+                if time.time() > t_end:
+                    raise RuntimeError(f"SNAP: {len(out)}/{n} 個で時間切れ（REC_LATE {full.rd(SC.S_REC_LATE)}・リングの DROP {self.ring.regs()['drop']}）")
+                for core, s, seq, hw, pay, crc_ok, tail_ok in self.ring.read():
+                    if (core, s) != self.fkey or (int(hw[0]) >> 40 & 0xFF) != TYPE_SNAP:
+                        continue
+                    if not (crc_ok and tail_ok):
+                        raise RuntimeError(f"SNAP: CRC・尾の不一致（SEQ {seq}）")
+                    m = rec_meta(hw)
+                    if last is not None and seq != (last + 1) & 0xFFFFFFFF:
+                        raise RuntimeError(f"SNAP: ダンプを読み落とした（SEQ {last} → {seq}。every を長く）")
+                    if m["k"] != len(out):
+                        raise RuntimeError(f"SNAP: DUMP_K {m['k']}（{len(out)} であるべき）")
+                    last = seq
+                    out.append((m, pay.view(np.int16).copy()))
+                time.sleep(0.0005)
+        finally:
+            full.wr(S.R_CTRL, S.CTRL_STOP)
+            full.wr(SC.S_REC_CTRL, 0)
+        return out
+
     def disarm(self):
         T = self.T
         T.disarm_all(self.wins, self.full, self.wms)
@@ -385,9 +551,14 @@ class HwBackend:
             # ARMED のまま止める: コアの予約は time_core の取り消しでは消えない（timetest.disarm_all の注意）。両方消し、TANCH は比べない
             self.disarm()
             self.tc.wr(0x08, self.TB.TimeCore.CTRL_CANCEL)
+            if self.use_ring:
+                self._rec_off()
             return []
         for c in self.wins:
             c.wr(W.R_CTRL, W.CTRL_STOP)
+        if self.use_ring:
+            self.pump()                            # 止める前に閉じたぶんを TP に渡す（SPEC の残りは次の START で捨てる）
+            self._rec_off()
         self.running = False
         out = []
         for i, wm in enumerate(self.wms):
@@ -500,6 +671,9 @@ class FakeBackend:
 
     def tp_time(self, i, f):
         return self.sa + 1 + f * 512
+
+    def pump(self):
+        pass
 
     def snap(self, adc, n, nacc, timeout=5.0):
         """偽物: 3000.25 MHz（第 2 ナイキストで 1095.75 MHz に見える）の正弦波 ＋ ガウス雑音、16 bit の上位 14 bit"""
@@ -772,7 +946,8 @@ class Acq:
                     seq=self.seq, drop=self.drop["n"], ring_used=w - r, ring_cap=self.ring.cap, err=self.err, forced=self.forced,
                     tp_dbfs=[None if v is None else round(float(s45cal.dbfs(v)), 2) for v in self.tp_last],
                     tp_dbm=[None if v is None or self.cal is None else round(float(s45cal.dbm(v, self.cal, "ABCD"[i])), 2)
-                            for i, v in enumerate(self.tp_last)])
+                            for i, v in enumerate(self.tp_last)],
+                    ring=self.be.ring_stat() if hasattr(self.be, "ring_stat") else None)
 
     # ---- 読み出しの 1 周
     def _cal_pub(self):
@@ -813,17 +988,19 @@ class Acq:
     def _loop_once(self):
         ts = time.perf_counter()
         be = self.be
+        be.pump()                                  # proj021 2-3a: リングを 1 回読んで振り分ける（axi・偽物では何もしない）
         for j in range(4 * NW):
-            r = be.poll_win(j)
-            if r is None:
-                continue
-            m, spec, miss = r
-            self.n_miss[j] += miss
-            if self.last_k[j] is not None and m["k"] != self.last_k[j] + 1:
-                self.kgap[j] += 1
-            self.last_k[j] = m["k"]
-            self.n_dump[j] += 1
-            self._spec_record(j, m, spec)
+            for _ in range(64):                    # 溜まったぶんを全部（リングでは止まりの後に何個も来る）
+                r = be.poll_win(j)
+                if r is None:
+                    break
+                m, spec, miss = r
+                self.n_miss[j] += miss
+                if self.last_k[j] is not None and m["k"] != self.last_k[j] + 1:
+                    self.kgap[j] += 1
+                self.last_k[j] = m["k"]
+                self.n_dump[j] += 1
+                self._spec_record(j, m, spec)
         for i in range(4):
             be.poll_tp(i)
             self._flush_tp(i)
@@ -892,6 +1069,8 @@ class Acq:
             if self.state == self.RUN:
                 time.sleep(self.o.loop_sleep)
         gc.enable()
+        if hasattr(self.be, "close"):
+            self.be.close()                        # proj021 2-3a: PL が書き終えてからリングのバッファを返す
 
     def _rt(self):
         if self.o.cpu is not None:
