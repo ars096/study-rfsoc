@@ -289,8 +289,10 @@ def main_core(d, flip):
     elif want == 'late':
         if late == 0:
             ng.append('N_ACC = 1 なのに REC_LATE が 0')
-        if len(recs) < 5:
-            ng.append('レコードが少なすぎる（%d）' % len(recs))
+        # proj021 2-2c: late にも SNAP を足したので、SNAP の相が口を持つ間は SPEC がさらに出にくい（1 回目: SPEC 4・SNAP 2）。
+        #   この変種の芯は「出たレコードは全部正しい」なので、数の下限は SPEC ＋ SNAP で見る
+        if len(recs) + len(snaps) < 5:
+            ng.append('レコードが少なすぎる（SPEC %d ＋ SNAP %d）' % (len(recs), len(snaps)))
         print('check_ring core: 見張りで捨てた SNAP: 窓 頭 %d・終わり %d / FULL 頭 %d・終わり %d' % tuple(sab))
     if int(lg.get('NG', '0')) != 0:
         ng.append('tb の見張りに NG %s' % lg['NG'])

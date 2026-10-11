@@ -790,7 +790,23 @@ scp pynq/*.py xilinx@$B:~/proj021/
 面ごとの札（`t_own`・`t_nx`・`t_run`・`t_ok`）・窓ごとの `snok`・`fr_data` の切り替え（`sn2` を {im, re} の 32 bit に符号拡張）。spec_core は `snap_ra` を rec_fr の口にも・64 bit の選び（`fr_sb*`）・`snok`。
 CAPS 7。PS: `plring.py --snapcompare`・`--golden`（`window.wg_cmp`・`spectrometer.golden_cmp`・`shift_of_snap` を切り出して共用。window・spectrometer の振る舞いは同じ）
 
-**sim**: sim-regmap 通過（クラウド、190 項目、CAPS 7）。sim-ring（all・late・snap・snap-nochk・flip）は Vivado サーバで
+**sim（2026-10-10〜11）**:
+
+| sim | 結果 |
+|---|---|
+| sim-ring snap（予言 1） | **通過**: SNAP のレコード 10（流れ 0: 5・FULL: 5）が記憶から直に写したスナップショットと bit 単位で一致、頭 w1..w6 = 組の SPEC、SPEC の数 = SNAP の数。流れ 1 の ONE \| SNAP は SPEC 1・SNAP 0、REC_LATE1 = 1・DROP_CNT = 1（予言どおり）。SPEC 11・TP 28 も一致・飛び 0 |
+| sim-ring snap-nochk（陽性対照） | **落ちた**（予言どおり）: 流れ 1 の SNAP（書いていない窓）が出て「写していないスナップショットの SNAP (0, 1, 3)」、REC_LATE 0・DROP 0 |
+| sim-ring late（予言 2） | 出たレコードは全部正しい（SPEC 4・SNAP 2（FULL）・TP 15）、REC_LATE 計 28 ≦ DROP_CNT 38。見張りで捨てた SNAP: 窓の頭 1・終わり 0、FULL 0・0。**終わりの見張り（読んでいる途中の上書き）はこの筋書きでは起きなかった**（DDC の SNAP は SPEC を読み終える前に上書きが始まるので頭で捨てる） |
+| sim-ring all | 通過（2-2b と同じ: SPEC 12・TP 18） |
+| flip | 落ちた（陽性対照） |
+| sim-all（回帰） | 通過（sim-regmap 190 項目・CAPS 7、sim-tprec・sim-tprec-p ほか） |
+
+- **1 回目の sim-ring の「総合」は失敗**: late の「レコードが少なすぎる（4）」。late に SNAP を足したので、SNAP の相が口を持つ間 SPEC がさらに出にくくなった（2-2b の late より SPEC が少ない）。
+  late の芯は「出たレコードは全部正しい」なので、**数の下限を SPEC ＋ SNAP で見るように check_ring.py を直し**、sim は走らせ直さずに照合だけやり直して通過（`build-sim-ring/check2.log`）。予言 2 でこの影響を書いていなかった
+
+**ビルド（2026-10-10〜11）**: **Performance_Explore で 1 回で閉じた: WNS +0.032 ns / WHS +0.010 ns**（build-PE）。CRITICAL WARNING なし、CDC-3 105（2-2a と同じ）。
+DSP 2,600（2-2b と同じ）、BRAM タイル 307、URAM 56、LUT 212,795（50.0 %）・FF 339,272（39.9 %）。
+Performance_ExtraTimingOpt は IP の OOC 合成（system_gb_adc_3_0）のログで止まったまま進まなかった（2 本を並べて走らせたときの止まり。PE が閉じたので使わない）
 
 ### 2-2c のビルドと実機
 
