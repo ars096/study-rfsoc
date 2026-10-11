@@ -280,7 +280,9 @@ class HwBackend:
         if self.stall_at and self.n_pump == 100:
             self.log(f"陽性対照: リングを {self.stall_at} 秒読まない")
             time.sleep(self.stall_at)
+        t0 = time.perf_counter()
         recs = self.ring.read()
+        t1 = time.perf_counter()
         for core, s, seq, hw, pay, crc_ok, tail_ok in recs:
             if not (crc_ok and tail_ok):
                 self.ring_crc += 1
@@ -292,6 +294,7 @@ class HwBackend:
                     self.q[j].append((seq, hw, pay))
             elif ty == TYPE_TP and core in self.amap and self.running:
                 self.tps[self.amap[core]].feed(seq, int(hw[5]) & 0xFFFFFFFF, pay, TP_REC_K)
+        self.last_pump = (t1 - t0, time.perf_counter() - t1)      # 遅い周の内訳（リングの読み・振り分け）
         return len(recs)
 
     def ring_stat(self):
@@ -994,6 +997,7 @@ class Acq:
         ts = time.perf_counter()
         be = self.be
         nrec = be.pump()                           # proj021 2-3a: リングを 1 回読んで振り分ける（axi・偽物では何もしない）
+        t_p = time.perf_counter()
         for j in range(4 * NW):
             for _ in range(64):                    # 溜まったぶんを全部（リングでは止まりの後に何個も来る）
                 r = be.poll_win(j)
@@ -1006,18 +1010,23 @@ class Acq:
                 self.last_k[j] = m["k"]
                 self.n_dump[j] += 1
                 self._spec_record(j, m, spec)
+        t_w = time.perf_counter()
         for i in range(4):
             be.poll_tp(i)
             self._flush_tp(i)
+        t_t = time.perf_counter()
         be.clock.poll()
-        dt = time.perf_counter() - ts
+        t_c = time.perf_counter()
+        dt = t_c - ts
         self.hist[min(1000, int(dt * 1e4))] += 1
         if dt > self.loop_max:
             self.loop_max, self.loop_max_at = dt, self.n_loop
         if dt > self.st["tint"]:
             self.loop_slow += 1
             if self.loop_slow <= 20:               # どの周が遅いかを残す（2-3a の 1 回目: 最大 115 ms・p99 14.5 ms）
-                self.log(f"1 周が {dt * 1e3:.1f} ms（周 {self.n_loop}・リングのレコード {nrec}）")
+                lp = getattr(be, "last_pump", (0.0, 0.0))
+                self.log(f"1 周が {dt * 1e3:.1f} ms（周 {self.n_loop}・リングのレコード {nrec}）: リングの読み {lp[0] * 1e3:.1f}・振り分け {lp[1] * 1e3:.1f}・"
+                         f"窓の記録 {(t_w - t_p) * 1e3:.1f}・TP {(t_t - t_w) * 1e3:.1f}・時刻の確かめ {(t_c - t_t) * 1e3:.1f} ms")
         self.n_loop += 1
         if self.ndump_target and min(self.n_dump) >= self.ndump_target:
             self._stop("n に達した")
