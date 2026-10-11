@@ -116,10 +116,17 @@ class Ring:
         """[R, W) のレコードを返す: [(core, s, seq, hdr(8 語), payload(np.uint64 の写し), crc_ok, tail_ok)]。R を進める"""
         w = self.rd(R_W)
         out = []
+        # proj021 2-3a: [R, W) のキャッシュを**まとめて**捨てる（端で 2 回まで）。2-2a〜2-2c はレコードごとに 2 回（頭と全体）捨てていて、
+        #   specd の最初の周（溜まった TP のレコード 200 個）が 115.9 ms かかった（bo.sync の呼び出しが 400 回）
+        n_all = (w - self.r) & 0xFFFFFFFF
+        if n_all:
+            p0 = self.r % self.size
+            k = min(n_all, self.size - p0)
+            self._invalidate(p0, k)
+            if n_all > k:
+                self._invalidate(0, n_all - k)
         while self.r != w:
             p = self.r % self.size
-            # 端までの残り（PAD を含む）と、レコードの範囲だけ捨てる。まず頭だけ
-            self._invalidate(p, 64)
             h = self.buf[p // 8: p // 8 + 8].copy()
             if int(h[0]) & 0xFFFFFFFF != MAGIC_R:
                 # キャッシュを捨てずに読むと、頭が古い行（初めに書いた 0）のまま見える（2026-10-10 の実機の 1 回目）。
@@ -135,7 +142,6 @@ class Ring:
                 continue
             pb = int(h[7]) & 0xFFFFFFFF
             L = 64 + pb + 64
-            self._invalidate(p, L)
             nb = 64 + pb
             crc = zlib.crc32(self.u8[p:p + nb])
             tl = self.buf[(p + nb) // 8:(p + nb) // 8 + 8]
