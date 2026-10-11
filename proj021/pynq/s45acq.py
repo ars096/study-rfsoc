@@ -26,6 +26,7 @@ import s45proto as P
 
 BEATS_PER_SEC = 256_000_000
 G_BEATS = 1 << 19                          # 時刻の格子 2.048 ms（BITS.md）
+BASE_BEATS = 5 * G_BEATS                   # proj021 2-3b: 基本の単位 10.24 ms（INTERFACE 4.4・5.1。コアの BASE_BEATS と照らす）
 TP_N = 512                                 # 1.024 ms
 TP_BEATS = TP_N * 512
 TP_FLUSH = 40                              # TP をまとめて 1 記録にする区切りの数（40 × 1.024 ms = 40.96 ms）
@@ -40,8 +41,8 @@ VERSION = "proj019-0.2"                 # proj019: SNAP（ADC の生サンプル
 def default_settings():
     wins = []
     for i in range(4):
-        wins.append(dict(if_mhz=3000.0, ns=1, shift=9))     # 窓 0: 256 MHz
-        wins.append(dict(if_mhz=3000.0, ns=6, shift=9))     # 窓 1: 8 MHz
+        wins.append(dict(if_mhz=3000.0, ns=1, shift=9, bundle=1))     # 窓 0: 256 MHz
+        wins.append(dict(if_mhz=3000.0, ns=6, shift=9, bundle=1))     # 窓 1: 8 MHz
     return dict(tint=0.04096, cfg=0, wins=wins)
 
 
@@ -60,6 +61,88 @@ def nacc_of(tint, ns):
     if n < 1 or (n * L) % G_BEATS or abs(n * L - tint * BEATS_PER_SEC) > 0.5:
         raise ValueError(f"tint {tint} s は 2.048 ms の倍数でない（NS {ns} の L = {L} ビート）")
     return n
+
+
+def check_tint(tint):
+    """proj021 2-3b: tint は BASE（10.24 ms）の倍数（INTERFACE 5.1）。戻り値 n_sum"""
+    b = tint * BEATS_PER_SEC
+    n = int(round(b / BASE_BEATS))
+    if n < 1 or abs(n * BASE_BEATS - b) > 0.5:
+        raise ValueError(f"tint {tint} s は 10.24 ms の倍数でない（INTERFACE 5.1）")
+    return n
+
+
+class Bundler:
+    """proj021 2-3b: 1 窓の束ね（INTERFACE 5.1）。PL のダンプ（BASE ごと）を n_sum 個ずつ u64 で足す。
+    m = round(DUMP_T / BASE)・r = DUMP_T − m·BASE（1 回の RUN で一定 ±1 のはず）・束 jb = m // n_sum。
+    束が揃う条件: n_sum 個の m が jb·n_sum から続いている・DUMP_N がどれも pl_nacc・DUMP_CFG が同じ。欠けた束は丸ごと捨てる"""
+
+    def __init__(self, n_sum, pl_nacc):
+        self.n_sum, self.pl_nacc = n_sum, pl_nacc
+        self.r0 = None
+        self.r_bad = 0
+        self.dead = False             # r が動いた（以後この RUN では束ねない）
+        self.jb0 = None
+        self.drop = 0                 # 捨てた束
+        self.drop_why = {}
+        self.cur = None
+
+    def _close(self, why):
+        if self.cur is not None:
+            self.drop += 1
+            self.drop_why[why] = self.drop_why.get(why, 0) + 1
+            out = (self.cur["jb"], why, len(self.cur["ms"]))
+            self.cur = None
+            return out
+        return None
+
+    def add(self, m, spec):
+        """戻り値 (できた束 (meta, u64 の和) または None, 捨てた束 (jb, 理由, 持っていた数) または None)"""
+        t = int(m["t"])
+        mi = (t + BASE_BEATS // 2) // BASE_BEATS
+        r = t - mi * BASE_BEATS
+        if self.dead:
+            return None, None
+        if self.r0 is None:
+            self.r0 = r
+        elif abs(r - self.r0) > 1:
+            self.r_bad += 1
+            self.dead = True
+            return None, self._close("r") or (mi // self.n_sum, "r", 0)     # 束の途中でなくても ERROR の EVENT を出す
+        jb = mi // self.n_sum
+        if self.jb0 is None:
+            self.jb0 = jb
+        dropped = None
+        if self.cur is not None and self.cur["jb"] != jb:
+            dropped = self._close("欠け")
+        bad = int(m["n"]) != self.pl_nacc
+        if self.cur is None:
+            self.cur = dict(jb=jb, ms=[mi], acc=np.array(spec, dtype=np.uint64), m=dict(m), sat=int(m["sat"]),
+                            flags=int(m["flags"]), h=int(m["h"]), n=int(m["n"]), bad="N" if bad else None)
+        else:
+            c = self.cur
+            if mi != c["ms"][-1] + 1:
+                c["bad"] = c["bad"] or "順"
+            if int(m["cfg"]) != int(c["m"]["cfg"]):
+                c["bad"] = c["bad"] or "CFG"
+            if bad:
+                c["bad"] = c["bad"] or "N"
+            c["ms"].append(mi)
+            c["acc"] += spec
+            c["sat"] += int(m["sat"]); c["flags"] |= int(m["flags"]); c["h"] |= int(m["h"]); c["n"] += int(m["n"])
+        c = self.cur
+        if len(c["ms"]) < self.n_sum:
+            return None, dropped
+        if c["bad"] or c["ms"][0] != jb * self.n_sum:
+            d2 = self._close(c["bad"] or "頭")
+            return None, dropped or d2
+        mm = dict(c["m"])
+        mm.update(k=jb - self.jb0, n=c["n"], sat=c["sat"], flags=c["flags"], h=c["h"])
+        self.cur = None
+        return (mm, c["acc"]), dropped
+
+    def stop(self):
+        return self._close("STOP")
 
 
 def g_of(ns):
@@ -329,7 +412,9 @@ class HwBackend:
         return self.tc.t()
 
     def grid_after(self, beat):
-        return -(-int(beat) // G_BEATS) * G_BEATS
+        """proj021 2-3b: START_AT（WRST・RUN・TP_ARM）は T の tint の倍数（INTERFACE 5.1。tint は BASE = 5G の倍数なので G の格子にも乗る）"""
+        q = getattr(self, "tint_beats", G_BEATS)
+        return -(-int(beat) // q) * q
 
     def start(self, st, at_beat, force):
         """WRST（格子の点で一斉）→ N_ACC・SHIFT・TP_N → 窓と TP 4 本を格子の START_AT で同時に ARM。戻り値 START_AT"""
@@ -342,6 +427,10 @@ class HwBackend:
         if not self.clock.ok and not force:
             raise RuntimeError("時刻を答えられない（錨が無い・PPS が来ていない）。ANCHOR か force=1")
         self.disarm()
+        self.tint_beats = check_tint(st["tint"]) * BASE_BEATS
+        bb = {c.base_beats for c in self.cores}
+        if bb != {BASE_BEATS}:
+            raise RuntimeError(f"コアの BASE_BEATS {bb}（{BASE_BEATS} を期待）")
         self.cfgs = []
         for j, c in enumerate(self.wins):
             ws = st["wins"][j]
@@ -352,7 +441,10 @@ class HwBackend:
             c.wr(T.R_CFG, st["cfg"])
             c.wr(W.R_CTRL, T.CTRL_ARM_WRST)
             c.want = (k, dphi, ns_)
-            self.cfgs.append(dict(if_mhz=if_act, ns=ns, shift=ws["shift"], nacc=nacc_of(st["tint"], ns), g=g_of(ns)))
+            bund = int(ws.get("bundle", 1))
+            self.cfgs.append(dict(if_mhz=if_act, ns=ns, shift=ws["shift"], nacc=nacc_of(st["tint"], ns), g=g_of(ns),
+                                  bundle=bund, n_sum=check_tint(st["tint"]) if bund else 1,
+                                  pl_nacc=BASE_BEATS // c.L if bund else nacc_of(st["tint"], ns)))
         sa_w = self.grid_after(self.now_beat() + BEATS_PER_SEC // 2)
         T.arm_tc(self.tc, self.wins, self.full, self.wms, sa_w)
         self._wait_fired(5.0)
@@ -371,7 +463,7 @@ class HwBackend:
             if len(set(wi)) != 1:
                 raise RuntimeError(f"{ADC_NAMES[i]}: 窓の WSTART が揃っていない {wi}")
         for c, cf in zip(self.wins, self.cfgs):
-            c.wr(W.R_NACC, cf["nacc"]); c.wr(W.R_NDUMP, 0); c.wr(W.R_SHIFT, cf["shift"])
+            c.wr(W.R_NACC, cf["pl_nacc"]); c.wr(W.R_NDUMP, 0); c.wr(W.R_SHIFT, cf["shift"])   # proj021 2-3b: 束ねる窓は BASE
         for wm in self.wms:
             wm.write(W.A_BASE + T.RA_TP_N, TP_N)
         if self.use_ring:                          # proj021 2-3a: 窓は ALL・TP は K 個 / レコード。前の残りは読み捨てる
@@ -623,7 +715,8 @@ class FakeBackend:
     def start(self, st, at_beat, force):
         if not self.clock.ok and not force:
             raise RuntimeError("時刻を答えられない（錨が無い・PPS が来ていない）。ANCHOR か force=1")
-        self.cfgs = [dict(if_mhz=ws["if_mhz"], ns=ws["ns"], shift=ws["shift"], nacc=nacc_of(st["tint"], ws["ns"]), g=g_of(ws["ns"]))
+        self.cfgs = [dict(if_mhz=ws["if_mhz"], ns=ws["ns"], shift=ws["shift"], nacc=nacc_of(st["tint"], ws["ns"]), g=g_of(ws["ns"]),
+                          bundle=0, n_sum=1, pl_nacc=nacc_of(st["tint"], ws["ns"]))      # 偽物は束ねない（ダンプ = tint）
                      for ws in st["wins"]]
         self.cfg = st["cfg"]
         self.tint_beats = int(round(st["tint"] * BEATS_PER_SEC))
@@ -735,6 +828,8 @@ class Acq:
         self.sat = 0
         self.loop_max = 0.0
         self.loop_max_at = 0                       # proj021 2-3a: 最大だった周の番号（RUN から）
+        self.bund = [None] * (4 * NW)              # proj021 2-3b: 窓ごとの Bundler（START で作る）
+        self.pl_dumps = [0] * (4 * NW)
         self.loop_slow = 0                         # 1 周が tint を越えた回数
         self.hist[:] = 0
         self.n_loop = 0
@@ -802,6 +897,7 @@ class Acq:
                 new = dict(tint=st["tint"], cfg=st["cfg"], wins=[dict(w) for w in st["wins"]])
                 for k, v in cmd["kv"].items():
                     self._set1(new, k, v)
+                check_tint(new["tint"])
                 for ws in new["wins"]:
                     nacc_of(new["tint"], ws["ns"])
                     import window as W
@@ -865,8 +961,13 @@ class Acq:
                     if s not in range(16):
                         raise ValueError(f"{k}: SHIFT は 0..15")
                     ws["shift"] = s
+                elif field == "bundle":
+                    b = int(v)
+                    if b not in (0, 1):
+                        raise ValueError(f"{k}: bundle は 1（PL は 10.24 ms・specd が束ねる。既定）/ 0（PL が tint を 1 個で。V2-a の比べ用）")
+                    ws["bundle"] = b
                 else:
-                    raise ValueError(f"知らない窓の設定 {k}（if・ns・bw・shift）")
+                    raise ValueError(f"知らない窓の設定 {k}（if・ns・bw・shift・bundle）")
 
     def _start(self, cmd):
         if self.state in (self.ARMED, self.RUN):
@@ -888,6 +989,7 @@ class Acq:
             raise
         self.forced = force and not self.be.clock.ok
         self.start_at = sa
+        self.bund = [Bundler(cf["n_sum"], cf["pl_nacc"]) if cf.get("bundle") else None for cf in self.be.cfgs]
         self.ndump_target = int(cmd.get("n") or 0)
         utc = self.be.clock.utc_ns(sa)
         self.event(dict(ev="START", start_at=sa, utc_ns=utc, n=self.ndump_target, forced=self.forced, version=VERSION,
@@ -929,6 +1031,9 @@ class Acq:
         except Exception as e:
             info = [dict(err=str(e))]
         if self.state == self.RUN:
+            for b in self.bund:
+                if b is not None:
+                    b.stop()                       # 半端な束は捨てる（INTERFACE 5.1 の 4）
             for i in range(4):
                 try:
                     self._flush_tp(i, final=True)
@@ -952,6 +1057,9 @@ class Acq:
                     tp_ovr=sum(t.n_ovr for t in tps), health=self.h_or, flags=self.fl_or, sat=self.sat,
                     loop_max_ms=round(self.loop_max * 1e3, 2), loop_p99_ms=p99, loops=self.n_loop,
                     loop_max_at=self.loop_max_at, loop_slow=self.loop_slow,
+                    pl_dumps=sum(self.pl_dumps), bdrop=sum(b.drop for b in self.bund if b is not None),
+                    r_bad=sum(b.r_bad for b in self.bund if b is not None),
+                    bund_r=[None if b is None else b.r0 for b in self.bund],
                     seq=self.seq, drop=self.drop["n"], ring_used=w - r, ring_cap=self.ring.cap, err=self.err, forced=self.forced,
                     tp_dbfs=[None if v is None else round(float(s45cal.dbfs(v)), 2) for v in self.tp_last],
                     tp_dbm=[None if v is None or self.cal is None else round(float(s45cal.dbm(v, self.cal, "ABCD"[i])), 2)
@@ -974,6 +1082,15 @@ class Acq:
         data = np.ascontiguousarray(spec[P.IF_ORDER])
         self._put(P.T_SPEC, [hd, data], P.crc32(hd, data))
         self.h_or |= int(m["h"]); self.fl_or |= int(m["flags"]) & FLAGS_OK_MASK; self.sat += int(m["sat"])
+
+    def _bdrop(self, j, d):
+        """束を捨てた（INTERFACE 5.1 の 4）。EVENT は最初の 20 回まで（止まりの後に窓ごとに続くので）"""
+        jb, why, have = d
+        tot = sum(b.drop for b in self.bund if b is not None)
+        if tot <= 20 and why != "STOP":
+            self.event(dict(ev="BDROP", key=win_key(j), bundle=int(jb), why=why, have=int(have), n_sum=self.bund[j].n_sum))
+        if why == "r":
+            self.event(dict(ev="ERROR", msg=f"{win_key(j)}: DUMP_T − m·BASE が RUN の中で動いた（r0 {self.bund[j].r0}）。この窓は束ねない"))
 
     def _flush_tp(self, i, final=False):
         t = self.be.tps[i]
@@ -1006,6 +1123,15 @@ class Acq:
                     break
                 m, spec, miss = r
                 self.n_miss[j] += miss
+                self.pl_dumps[j] += 1
+                bu = self.bund[j]
+                if bu is not None:                 # proj021 2-3b: 束ねる（INTERFACE 5.1）
+                    got, dropped = bu.add(m, spec)
+                    if dropped is not None:
+                        self._bdrop(j, dropped)
+                    if got is None:
+                        continue
+                    m, spec = got
                 if self.last_k[j] is not None and m["k"] != self.last_k[j] + 1:
                     self.kgap[j] += 1
                 self.last_k[j] = m["k"]

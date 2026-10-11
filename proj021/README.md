@@ -854,8 +854,8 @@ INTERFACE 5. の specd の仕事（束ね・時刻の補正・s45proto v2・LOAD
 | 手順 | 中身 | PL | 判定の芯 |
 |---|---|---|---|
 | **2-3a** | 取得（s45acq）の読み口を仮の読み窓からリングのレコードに替える。PL のダンプ = tint（40.96 ms）・s45proto v1 のまま | 2-2c のまま | specd の記録が今と同じ形で、取りこぼし・説明のない欠け 0。P-5（s45resp）が 2-1 と同じ |
-| 2-3b | PL のダンプを BASE（10.24 ms）にし、specd が n_sum 個を束ねる（5.1）。START_AT を tint の倍数に | 同じ | **V2-a**（束ねた 4 個 = PL の 40.96 ms の 1 個、整数で）・**V2-b**（10.24 ms で 30 分） |
-| 2-3c | s45proto v2（float32・utc_ns = 実効の区間の始まり 5.2・頭に nch・n_sum・core・s・src） | 同じ | 受け側が v1・v2 の両方を読む。u64 の試験の形 = PL の値 |
+| 2-3b | PL のダンプを BASE（10.24 ms）にし、specd が n_sum 個を束ねる（5.1）。START_AT を tint の倍数に | 同じ | **V2-a**（束ねた 4 個 = PL の 40.96 ms の 1 個、整数で） |
+| 2-3c | s45proto v2（float32・utc_ns = 実効の区間の始まり 5.2・頭に nch・n_sum・core・s・src） | 同じ | 受け側が v1・v2 の両方を読む。u64 の試験の形 = PL の値。**V2-b**（10.24 ms で 30 分。u64 のままでは 8 窓 × 32 KiB / 10.24 ms = 25.6 MB/s で、今の経路の予算 17.7 MB/s を越えるので float32 の後） |
 | 2-3d | LOAD と bits.json（5.） | 同じ | V2-d |
 | 2-2d | 仮の読み窓を外して 64 KiB に（SNAP_SEL・FULL の TP の置き場所も） | 変える | 2-3a〜c の回帰 |
 
@@ -984,6 +984,71 @@ python3 s45snap.py --host $B --adc ABCD --n 16 --every 20 --out snap23a
 
 # S23a-4: 陽性対照（specd を --posctl-ring-stall 8 で起こし直す）
 python3 specctl.py --host $B "START n=0" "SEND ON"; python3 specrecv.py --host $B --out r23ap.s45 --seconds 40 --json r23ap.json
+python3 specctl.py --host $B STATUS STOP
+```
+
+### 手順 2-3b — PL のダンプを 10.24 ms にし、specd が束ねる（設計と予言、2026-10-11。コードを書く前）
+
+**変えるのは「PL の N_ACC」と「specd の束ね」と「START_AT の格子」だけ**。記録の形（s45proto v1）・受け側・TP は変えない。受け側から見ると、今と同じ tint の SPEC が来る。
+
+- **PL**: 束ねる窓（`A0.bundle=1`、既定）の N_ACC = BASE / L（NS 1 で 640・NS 6 で 20）。`A0.bundle=0` は今までどおり N_ACC = tint / L（V2-a の比べ用）
+- **tint は BASE（10.24 ms）の倍数だけ**（INTERFACE 5.1。2.048 ms の倍数だった）。n_sum = tint / BASE
+- **START_AT**（WRST・RUN・TP_ARM）は **T の tint の倍数**（5.1。今は G の倍数）
+- **束ね**（`s45acq.Bundler`、INTERFACE 5.1 の規則 1〜5 のまま）: m = round(DUMP_T / BASE)・r = DUMP_T − m·BASE・束 j = ⌊m / n_sum⌋。
+  n_sum 個がそろう（m が j·n_sum から続く・DUMP_N がどれも BASE / L・DUMP_CFG が同じ）と、u64 の和を 1 つの SPEC の記録に（k = j − 最初の j、nacc = ΣDUMP_N、
+  dump_t = 最初のダンプの DUMP_T、SAT は和、FLAGS・health は OR）。**欠けた束は丸ごと捨てる**（EVENT `BDROP`、最初の 20 回まで）。STOP の前の半端な束も捨てる
+- **r の見張り**: r は 1 回の RUN で一定（±1）のはず。動いたら EVENT `ERROR` を出し、その窓はその RUN では束ねない（記録を出さない）。
+  5.2 の F(KIND, NS) の表はまだ無いので「一定」だけを見る（未較正）
+- STATUS に足す: `pl_dumps`（PL のダンプの数）・`bdrop`（捨てた束）・`r_bad`・`bund_r`（窓ごとの r）
+- 道具: `s45v2a.py`（V2-a。ADC ごとに窓 0 = bundle 1・窓 1 = bundle 0 の同じ設定で n 束を取り、dump_t が同じ記録の 4096 ch を整数で比べる。
+  陽性対照: 1 区間ずらすと一致しないこと）
+
+**r の見当**: WRST と RUN の START_AT がどちらも tint の倍数なので、F0 = (⌊fin / M⌋ + 2)·M は「RUN の START_AT ＋ G」のフレームになり（proj017 の格子の式）、
+DUMP_T = RUN の START_AT ＋ G ＋ δ（δ = WSTART の遅れ ＋ z が wspec に入るまでの遅れ。NS で違う、数千ビート以下）。**r ≒ 524,288 ＋ δ**（BASE の半分 1,310,720 より十分小さい）で、
+最初のダンプの m は n_sum の倍数 → 最初の束から揃う
+
+**予言**:
+1. `test_fake.sh all`（PL なし。偽物は束ねない）は全部通過。作り物のダンプで Bundler: 4 個の和・欠けた束を捨てる・頭の欠けた束を捨てる・r が動いたら止める（クラウド）
+2. **V2-a**（`s45v2a.py --n 100`）: 4 ADC とも 100 組で中身の不一致 0（整数で一致）・nacc の不一致 0・束の k の飛び 0、1 区間ずらすと一致 0。bdrop 0・r_bad 0
+3. `bund_r` は 8 窓とも 524,288 ＋ δ（δ は NS 1 で数十〜数百、NS 6 で数千ビート。同じ NS の窓は同じ値）
+4. 30 分（SET A0.bw=256 A1.bw=8 all.shift=9、tint 40.96 ms、全部 bundle 1）: 受け側の欠け・説明のない欠け・CRC・kgap・tdev 0、miss 0・bdrop 0・pl_drop 0、
+   pl_dumps = 4 × 記録の数。1 周 p99 < 20 ms（2-3a の 9.2 ms ＋ 束ねる窓の PL のダンプが 4 倍）
+5. 陽性対照（`--posctl-ring-stall 8`）: PL が捨てたダンプを含む束は捨てる → bdrop > 0、受け側の tdev 0（出た束は全部 nacc = tint / L ぶん）・kgap = 8（窓ごとに 1 回）
+
+**判定**:
+
+| 判定 | 中身 |
+|---|---|
+| S23b-1 | 予言 1 |
+| S23b-2 | **V2-a**（予言 2・3） |
+| S23b-3 | 30 分（予言 4） |
+| S23b-4 | 陽性対照（予言 5） |
+
+**実装（2026-10-11）**: `s45acq.py`（`BASE_BEATS`・`check_tint`・`Bundler`、HwBackend の `grid_after` を tint の倍数に・N_ACC = `pl_nacc`、Acq の `_loop_once` で束ね・`_bdrop`・STOP で半端を捨てる、
+SET の `A0.bundle`、STATUS）、`specd.py`（STATUS の行）、`s45v2a.py`（新）
+
+**PL なしの確かめ（クラウド、2026-10-11）**: `test_fake.sh all` 全部通過（S23b-1）。Bundler: 4 個の和（100＋101＋102＋103 = 406 …）・m 112 の欠けた束 28 を捨てて k が 2 → 4 に飛ぶ・
+頭が 102 から始まった束 25 を捨てて次の束が k 1・r が 5 動いたら ERROR を出して以後束ねない
+
+### 2-3b の実機
+
+```bash
+scp pynq/*.py xilinx@$B:~/proj021/
+
+# ボード: specd を起こし直す
+python3 specd.py --clkin 0 --ref 10 > runs/specd_23b.log 2>&1 &
+
+# 制御 PC: S23b-2（V2-a、≒ 10 s）
+python3 s45v2a.py --host $B --n 100
+
+# S23b-3（30 分）
+python3 specctl.py --host $B "SET A0.bw=256 A1.bw=8 all.shift=9" "START n=0" "SEND ON"
+python3 specrecv.py --host $B --out /tmp/r23b.s45 --seconds 1800 --json r23b.json
+python3 specctl.py --host $B STATUS STOP
+grep -E "1 周が|BDROP|ERROR" runs/specd_23b.log | head
+
+# S23b-4（specd を --posctl-ring-stall 8 で起こし直して、40 s）
+python3 specctl.py --host $B "START n=0" "SEND ON"; python3 specrecv.py --host $B --out /tmp/r23bp.s45 --seconds 40 --json r23bp.json
 python3 specctl.py --host $B STATUS STOP
 ```
 

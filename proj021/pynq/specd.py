@@ -33,7 +33,7 @@ import time
 import s45proto as P
 import s45ring as R
 
-HELP = ("ID | STATUS | GET | GET CAL | SET key=val ...（tint cfg A0.if A0.ns A0.bw A0.shift all.shift …） | ANCHOR | "
+HELP = ("ID | STATUS | GET | GET CAL | SET key=val ...（tint cfg A0.if A0.ns A0.bw A0.shift A0.bundle all.shift …） | ANCHOR | "
         "START [at=<UTC ISO8601 か unix 秒>] [n=<ダンプ数>] [force=1] | STOP | SEND ON [from=oldest|now] | SEND OFF | CLEAR | BYE | "
         "SHUTDOWN confirm=1 | SNAP adc=A|B|C|D [n=1] [every=20]")
 
@@ -155,6 +155,7 @@ class Server:
                 d["sent_mb"] = round(self.sent_bytes / 2**20, 1)
                 d["skip"] = self.skip
                 d["data_drop"] = self.last_drop or "-"
+                d["pl_dumps"], d["bdrop"], d["r_bad"], d["bund_r"] = r.get("pl_dumps"), r.get("bdrop"), r.get("r_bad"), r.get("bund_r")   # proj021 2-3b
                 d["loops"] = r.get("loops")
                 d["loop_max_at"] = r.get("loop_max_at")
                 d["loop_slow"] = r.get("loop_slow")
