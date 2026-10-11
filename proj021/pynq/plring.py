@@ -62,6 +62,10 @@ class Ring:
         self.size = size
         self.buf = allocate(shape=(size // 8,), dtype=np.uint64, cacheable=True)
         self.u8 = self.buf.view(np.uint8)
+        # proj021 2-3a: 読みは素の ndarray の見え方で（PynqBuffer の切り出し・要素の取り出しは 1 回ごとに重い見当。
+        #   specd の最初の周で、RUN の前に溜まった TP のレコード 200 個の Ring.read が 74 ms = 1 個 0.37 ms だった）
+        self.a64 = self.buf.view(np.ndarray)
+        self.a8 = self.a64.view(np.uint8)
         self.inval = inval
         # proj021 2-3a: 陽性対照を確かにするための「先読み」。読み終えた W から touch バイト先までの各キャッシュ行を 1 バイトずつ読み、
         #   **PL がまだ書いていない行をわざとキャッシュに載せる**。次の読みでそこに来たレコードは、捨てなければ古い行のまま見える。
@@ -131,38 +135,38 @@ class Ring:
             self._invalidate(p0, k)
             if n_all > k:
                 self._invalidate(0, n_all - k)
+        a64, a8 = self.a64, self.a8
         while self.r != w:
             p = self.r % self.size
-            h = self.buf[p // 8: p // 8 + 8].copy()
-            if int(h[0]) & 0xFFFFFFFF != MAGIC_R:
+            i = p >> 3
+            h0, h7 = a64[i: i + 8: 7].tolist()
+            if h0 & 0xFFFFFFFF != MAGIC_R:
                 # キャッシュを捨てずに読むと、頭が古い行（初めに書いた 0）のまま見える（2026-10-10 の実機の 1 回目）。
                 #   長さが読めないのでそこで止める。--no-inval の陽性対照ではこれを「古い行を見つけた」として数える
                 cls = StaleError if not self.inval else SC.S45Error
-                raise cls(f"magic が違う（位置 {self.r}、W {w}）: {int(h[0]):#018x}")
-            ty = int(h[0]) >> 40 & 0xFF
-            if ty == TYPE_PAD:
-                n = int(h[7]) & 0xFFFFFFFF
+                raise cls(f"magic が違う（位置 {self.r}、W {w}）: {h0:#018x}")
+            if (h0 >> 40) & 0xFF == TYPE_PAD:
+                n = h7 & 0xFFFFFFFF
                 if p + n != self.size:
                     raise SC.S45Error(f"PAD の長さ {n} が端まで（{self.size - p}）と違う")
                 self.r = (self.r + n) & 0xFFFFFFFF
                 continue
-            pb = int(h[7]) & 0xFFFFFFFF
+            pb = h7 & 0xFFFFFFFF
             L = 64 + pb + 64
             nb = 64 + pb
-            crc = zlib.crc32(self.u8[p:p + nb])
-            tl = self.buf[(p + nb) // 8:(p + nb) // 8 + 8]
-            seq = int(h[1]) & 0xFFFFFFFF
-            tail_ok = (int(tl[0]) & 0xFFFFFFFF) == MAGIC_E and (int(tl[0]) >> 32) == seq
-            crc_ok = crc == (int(tl[1]) & 0xFFFFFFFF)
-            hw = self.buf[p // 8: p // 8 + 8].copy()
-            out.append((int(hw[0]) >> 48 & 0xFF, int(hw[0]) >> 56 & 0xFF, seq, hw,
-                        self.buf[p // 8 + 8: p // 8 + 8 + pb // 8].copy(), crc_ok, tail_ok))
+            crc = zlib.crc32(a8[p:p + nb])
+            t0, t1 = a64[(p + nb) >> 3:((p + nb) >> 3) + 2].tolist()
+            hw = a64[i: i + 8].copy()
+            seq = int(hw[1]) & 0xFFFFFFFF
+            tail_ok = (t0 & 0xFFFFFFFF) == MAGIC_E and (t0 >> 32) == seq
+            crc_ok = crc == (t1 & 0xFFFFFFFF)
+            out.append((h0 >> 48 & 0xFF, h0 >> 56 & 0xFF, seq, hw, a64[i + 8: i + 8 + (pb >> 3)].copy(), crc_ok, tail_ok))
             self.r = (self.r + L) & 0xFFFFFFFF
         self.wr(R_R, self.r)
         if self.touch:
             p = self.r % self.size
             n = min(self.touch, self.size - p)
-            self.sink ^= int(self.u8[p:p + n:64].sum())
+            self.sink ^= int(self.a8[p:p + n:64].sum())
         return out
 
     def close(self, streams=()):

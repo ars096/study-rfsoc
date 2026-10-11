@@ -138,9 +138,10 @@ def make_tp_reader(S):
                     self.lost += g
                     self.rec_lost += -(-g // k)
             self.wp = (seq + n) & 0xFFFFFFFF
+            v = pay[:2 * n].tolist()                  # numpy の要素を 1 個ずつ int にするより速い
             for i in range(n):
-                x = int(pay[2 * i + 1])
-                self._take(int(pay[2 * i]), x & 0xFFFFFFFF, x >> 56, (x >> 32) & 0xFFFFFF)
+                x = v[2 * i + 1]
+                self._take(v[2 * i], x & 0xFFFFFFFF, x >> 56, (x >> 32) & 0xFFFFFF)
 
         def _take(self, tsum, f0lo, fl, nfr):
             if not self.started:
