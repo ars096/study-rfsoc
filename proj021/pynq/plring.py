@@ -7,7 +7,8 @@
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --list
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --compare              # 全部の流れ: レコード = AXI4-Lite（bit 単位）
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --soak 60              # ALL・10.24 ms を 60 s
-    sudo -E $(which python3) plring.py --clkin 0 --ref 10 --soak 20 --no-inval   # 陽性対照: キャッシュを捨てずに読む → CRC の不一致
+    sudo -E $(which python3) plring.py --clkin 0 --ref 10 --soak 20 --no-inval --touch-ahead 256   # 陽性対照: 先の行をキャッシュに載せ、捨てずに読む → 古い行
+    sudo -E $(which python3) plring.py --clkin 0 --ref 10 --soak 20 --touch-ahead 256              # 同じ先読みでも、捨てる道なら全部正しい
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --soak 20 --pause 3    # 陽性対照: 3 s 読まない → DROP_CNT = SEQ の飛び
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --snapcompare          # 2-2c: SNAP のレコード = 仮の読み窓のスナップショット
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --golden               # 2-2c V2-c: W-G・全帯域の golden をレコードだけで
@@ -49,7 +50,7 @@ class StaleError(SC.S45Error):
 class Ring:
     """s45_ring_0 と、PS の DDR のリング（pynq.allocate）"""
 
-    def __init__(self, mmio, size, inval=True):
+    def __init__(self, mmio, size, inval=True, touch=0):
         from pynq import allocate
         self.m = mmio
         v = self.rd(R_IF_ID)
@@ -62,6 +63,11 @@ class Ring:
         self.buf = allocate(shape=(size // 8,), dtype=np.uint64, cacheable=True)
         self.u8 = self.buf.view(np.uint8)
         self.inval = inval
+        # proj021 2-3a: 陽性対照を確かにするための「先読み」。読み終えた W から touch バイト先までの各キャッシュ行を 1 バイトずつ読み、
+        #   **PL がまだ書いていない行をわざとキャッシュに載せる**。次の読みでそこに来たレコードは、捨てなければ古い行のまま見える。
+        #   2-2a では偶然載っていた（初めに書いた 0 の行）が、2-3a の 3 回では 1 度も見えず、陽性対照として当てにならなかった
+        self.touch = touch
+        self.sink = 0
         self.bo_sync = None
         try:
             import pyxrt
@@ -153,6 +159,10 @@ class Ring:
                         self.buf[p // 8 + 8: p // 8 + 8 + pb // 8].copy(), crc_ok, tail_ok))
             self.r = (self.r + L) & 0xFFFFFFFF
         self.wr(R_R, self.r)
+        if self.touch:
+            p = self.r % self.size
+            n = min(self.touch, self.size - p)
+            self.sink ^= int(self.u8[p:p + n:64].sum())
         return out
 
     def close(self, streams=()):
@@ -609,6 +619,8 @@ def main():
     p.add_argument("--shift-full", type=int, default=6)
     p.add_argument("--poll", type=float, default=0.005, help="--soak の読みの間 [s]")
     p.add_argument("--no-inval", action="store_true", help="陽性対照: キャッシュを捨てずに読む")
+    p.add_argument("--touch-ahead", type=int, default=0,
+                   help="読み終えた W から この KiB 先までをわざと読んでキャッシュに載せる（--no-inval の陽性対照を確かにする。捨てる道でも通るべき）")
     p.add_argument("--pause", type=float, default=0.0, help="陽性対照: --soak の途中でこれだけ読まない [s]")
     p.add_argument("--snapcompare", action="store_true", help="proj021 2-2c: SNAP のレコード = 仮の読み窓のスナップショット")
     p.add_argument("--golden", action="store_true", help="proj021 2-2c V2-c: W-G・全帯域の golden をレコードだけで")
@@ -629,7 +641,7 @@ def main():
         rip = getattr(ol, "s45_ring_0", None)
         if rip is None:
             raise SC.S45Error("ol.s45_ring_0 が無い（手順 2-2a 以降の .bit ではない）")
-        ring = Ring(rip.mmio, a.size_mib * MiB, inval=not a.no_inval)
+        ring = Ring(rip.mmio, a.size_mib * MiB, inval=not a.no_inval, touch=a.touch_ahead * 1024)
     except SC.S45Error as e:
         log(f"ERROR: {e}"); sys.exit(1)
     log(SC.table(cores, tmm))
