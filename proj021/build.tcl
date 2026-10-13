@@ -1575,7 +1575,8 @@ proc ooc_wait {names} { foreach n $names { catch {wait_on_run [get_runs $n]} } }
 generate_target all [get_files $bd_file]
 create_ip_run [get_files $bd_file]
 # FFT の IP（xfft・win_fft）も OOC で合成されるので、同じく先に回す
-foreach ip [list $xfft $wfft] {
+# proj021 2-5: lane_fft（$xfft）は full_kind = fft のときだけ作る
+foreach ip [expr {$full_kind eq "fft" ? [list $xfft $wfft] : [list $wfft]}] {
     if {[catch {
         set xf [get_files -quiet [get_property IP_FILE $ip]]
         if {$xf ne "" && [llength [get_runs -quiet ${ip}_synth_1]] == 0} { create_ip_run $xf }
