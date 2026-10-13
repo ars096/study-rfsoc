@@ -234,6 +234,27 @@ python3 gbboot.py --loads 50 --clkin 0 --ref 10 --bitfile proj021_k0.bit --expec
 
 ## 手順 2 — v2 の判定
 
+### 手順 2 の見取り図（行った順。2026-10-13 現在）
+
+各手順の中は「設計と予言 → 実装 → sim（PL なしの確かめ）→ ビルド → 実機の結果 → 判定 → コマンド」の見出しで並べる。
+
+| 手順 | 中身 | PL | 判定 | 状態 |
+|---|---|---|---|---|
+| 2-1 | 流れのブロックと自己記述（INTERFACE 2.4・2.5。番地だけ） | 変える | S21-1〜4 | 通過（2026-10-09） |
+| 2-2a | PL が書くリングと SPEC のレコード・尾の CRC | 変える | S22a-1〜4（V2-g） | 通過（2026-10-10） |
+| 2-2b | TP のレコード | 変える | S22b（**V2-e**） | 通過（2026-10-10） |
+| 2-2c | SNAP のレコード | 変える | S22c（**V2-c** の W-G） | 通過（2026-10-11） |
+| 2-3 | （2-3a〜d の分け方） | — | — | — |
+| 2-3a | specd の取得の読み口をリングに | 2-2c のまま | S23a | 通過（P-5 は配線の条件で保留） |
+| 2-3b | PL のダンプ 10.24 ms・specd の束ね | 同じ | S23b（**V2-a**） | 通過（2026-10-13） |
+| 2-3c | s45proto v2（float32・utc_ns の補正） | 同じ | S23c（**V2-b**） | 通過（2026-10-13） |
+| 2-3d | LOAD と bits.json | 同じ | S23d（**V2-d**） | 通過（2026-10-13） |
+| 2-2d | 仮の読み窓を外して 64 KiB に・FULL の TP をレコードで・道具の読みを全部レコードに | 変える | S22d-1〜3 | sim 済み・ビルド中 |
+
+残り: V2-f（5.1 の見張りを FULL・DDC の全部の流れで）・P-5（配線）・INTERFACE 8. の 8（F0 を格子に）と 9（sim-wdelay を PFB 入りで）・F-2
+
+### V2 の判定の表
+
 INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptance/` にそのまま移せる形で書く（下の「判定の書き方」）。中身は手順 2 に着手するときに埋める。
 
 | 判定 | 中身（INTERFACE 9.） |
@@ -256,7 +277,9 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
    フレームの頭の T mod FRAME_BEATS を読めるレジスタで sim・実機とも 0 を確かめる。揃えられない構成のために、ADC ごとのずれ（ビート）を読める道も残す
 4. 量は SAM45-Fine と同じ（4 ADC × 2 × 4096 ch / 40.96 ms）。リングと rec_fr はそのまま使える
 
-### 手順 2-1 — 流れのブロックと自己記述（設計と予言、2026-10-09。RTL を書く前）
+### 手順 2-1 — 流れのブロックと自己記述
+
+#### 設計と予言（2026-10-09。RTL を書く前）
 
 **変えるのは番地と自己記述だけ**。窓・全帯域の中身（スペクトル・帳簿・時刻・TP）は変えない。読み出しは AXI4-Lite のまま。
 
@@ -317,6 +340,8 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 | S21-3 | ビルド（既定・PE）・`make worst-paths`・CDC | 予言 3〜5 |
 | S21-4 | 実機: `s45core.py --list`（自己記述の表）・P-1・P-2・全帯域の golden・P-5（specd 経由） | 表が上と同じ・P-* が 1b と同じ |
 
+#### 実装
+
 **実装（2026-10-09）**:
 
 - RTL: `src/common/s45_core.v`（新。振り分け・win_core・FULL = 1 で spec_core）、`win_core.v`（番地・自己記述。full_sel の出口は s45_core へ）、`spec_core.v`（番地・SRC・WRST・ARM_WRST、src_sel の出口）、`time_core.v`（IF_ID・PROJ）。窓・全帯域・TP の中身の論理には触っていない
@@ -324,6 +349,8 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 - build.tcl: セル s45_core_i・CORE_PORT・BIT_KIND・PROJ、spec_core_0 のセルと SmartConnect の M を 1 本減らす、結線と番地の照合・資源の数え（`s45_core_0/inst/g_full.u_full`・`s45_core_i/inst/u_win`）。`tools/worst_paths.tcl` の束ねの深さ 4 → 5（u_win の 1 段）
 - sim: **sim-regmap（新、S21-1）**と陽性対照 sim-regmap-p、tb_regmap の読みを `pynq/test_regmap.py` に通して PS の定数を確かめる。tb_t4adc・tb_top・tb_win4 は s45_core 越しに v2 の番地で、tb_tsys は s45_core（FULL = 1）1 個に旧番地 → v2 の表（xa）で、tb_spec_core は spec_core の中の番地の表（xs）で。check.py・check_top.py・check_win4.py の ID の照合を SID・IF_ID に。sim-t-all に sim-regmap を足した
 - PS: `pynq/s45core.py`（新。discover・表・`--list`）。window・spectrometer（Spec に base・lbase、open_full_stream）・timetest（open_all・select_full）・timebase（IF_ID・CAL の鍵 = PROJ）・s45acq・s45cal（PROJ で照らす）・fine・gbboot（.hwh の名前で旧と v2 を見分ける）・winwrst を v2 の番地に。**直していないもの**: win16.py（proj015 の 4 ADC × 4 窓専用。SAM45-Fine では使わない）
+
+#### sim
 
 **sim（クラウドの iverilog 12、2026-10-09）**:
 
@@ -341,6 +368,8 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 | **sim-win-ts（陽性対照）の判定の道具の誤り** | 陽性対照の RTL で NS 6 の出力が 0 個になり、`check_win.py` が空のファイルで落ちて（IndexError）「結果:」の行を出していなかった。**proj020 から持ってきた道具の誤りで、2-1 の変更とは関係ない**（pfb・ddc は触っていない）。空のときに列を揃えるよう直し、同じ出力を判定し直して **落ちた NS [3..8] = 期待どおり → 通過** |
 
 - 気にしておくこと（ビルド）: s45_core_1〜3 の FULL の入口（s_axis_full・full_gb_stat・full_adc_stat）はつながない。IP Integrator が 0 に結ぶはずだが、**CRITICAL WARNING が出たら定数のセルで結ぶ**（1b までは CRITICAL WARNING なし）
+
+#### ビルド
 
 **ビルド（Vivado サーバ、2026-10-09、5bce26e）**:
 
@@ -360,6 +389,8 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
   - **2-2 の候補**: `c_ns`（WRST でしか変わらない）を ddc の側で 1 段受けて複製する（値は変わらない）。u_pfb の段は遅れが変わるので sim-wdelay の出し直し（INTERFACE 8. の 9）と一緒に
 - **CRITICAL WARNING [BD 41-759] × 3**（予言どおりの気にしておくこと）: s45_core_1〜3 の s_axis_full_tvalid・full_gb_stat・full_adc_stat がつながっておらず、Vivado が 0 に結んだ。働きは正しい（FULL = 0 のコアはこの入口を使わない）が、「CRITICAL WARNING なし」の規約から外れる → **2-2 で定数のセルで結ぶ**（今ビルドし直すと配置が組み替わり、閉じた PE を失うので直さない）。ほかの CRITICAL WARNING は既定の Timing 38-282（WNS が負）だけ
 
+#### 実機の結果と判定
+
 **実機（2026-10-09、build-PE/ の proj021.bit）**:
 
 **2-1 の実機の判定（S21-4）は全部通過**（自己記述の表・P-0〜P-5・全帯域の golden）。残り: Vivado サーバの `make sim-all`・sim-tsys-p（予言 1・2 の残りの sim）
@@ -378,7 +409,7 @@ INTERFACE.md の 9. の (a)〜(g) を、製品リポジトリの `test/acceptanc
 - P-3 の 1 回目は CW が来ていなかった（ADC に 1PPS を配線したまま。窓の最大は IF 3072 MHz の k·fs/8 の線）、2 回目は −1 dBm・SHIFT 4 で窓の山が 6250 / 6250 フレーム飽和（proj020 の P-3 1 回目と同じ。隣の ch も 0.1 dB 以内で同じ）。3 回目を proj020 の 2 回目と同じ条件で通した
 - **手順の誤り（2026-10-09）**: 1 回目の `s45core.py --list` は Overlay の直後にコアを読み、PS ごと止まった（再起動）。コアは DSP ドメイン（RFDC のタイルのクロック → Clocking Wizard）にあり、MMCM のロック・rst_dsp の明けの前に AXI4-Lite を読むと SmartConnect が応答を待ち続ける。window.py などは `check_tiles` と待ち（--settle）の後に読むが、s45core.py の `--list` だけ抜けていた → 同じ手順を入れた（6061fb6）。**DSP ドメインのコアを読む道具は、必ず check_tiles と待ちの後に読む**
 
-### 2-1 のビルドと実機
+#### ビルドと実機のコマンド
 
 ```bash
 # Vivado サーバ（1b の build/・build-PE/ は比べるために名前を変えて残す。同じ proj021 の名前なので、残すと worst-paths が混ざる）
@@ -415,7 +446,9 @@ python3 timetest.py --clkin 0 --ref 10 --t1 --seconds 120              # P-4（F
 
 
 
-### 手順 2-2a — リングと SPEC のレコード（設計と予言、2026-10-09。RTL を書く前）
+### 手順 2-2a — リングと SPEC のレコード
+
+#### 設計と予言（2026-10-09。RTL を書く前）
 
 **変えるのは「スペクトルを PS へ運ぶ道」を足すことだけ**。窓・全帯域の中身（スペクトル・帳簿・時刻・TP）は変えない。今の AXI4-Lite の読み（仮の読み窓）は残し、**同じ SEQ のスペクトルをレコードと AXI4-Lite の両方で読んで bit 単位で比べる**のが 2-2a の判定の芯。
 
@@ -521,6 +554,8 @@ s45_ring_0（新、CORE_KIND 3）: 4 本の入口 → レコード単位の順�
 
 **commit の順**: README（これ）→ 持ち越し 1（build.tcl）→ 持ち越し 2（c_ns）→ u_rec と REC_CTRL・REC_LATE → s45_ring と sim-ring → build.tcl（リング・HP0）→ PS の道具 → ビルドと実機の結果
 
+#### 実装
+
 **実装（2026-10-09）**:
 - `src/common/rec_fr.v`（新）: レコードの組み立て。win_core に 1 個（流れ NW 本）、spec_core に 1 個（FULL）。HOLD = 8 クロック・FIFO 32 語（分散 RAM）。
   読みの口は持ち主の AXI4-Lite の読みと同じ（win_core: `ax_ch`・`ax_bank`、spec_core: `axi_k1`・`ar_bank`）。`fr_gnt` の間は arready を下げる
@@ -531,6 +566,8 @@ s45_ring_0（新、CORE_KIND 3）: 4 本の入口 → レコード単位の順�
 - build.tcl: `s45_ring_0`（NIN = nch）・PS の S_AXI_HP0_FPD（GP2、128 bit、saxihp0_fpd_aclk = DSP のクロック）・smc_ctrl の M0(2+nch)・
   レコードの道 4 本と rec_drop を shared_nets・sh_intf の表に（照合も同じ表）。アドレス: リングの 4 KiB を重なりの照合に、`s45_ring_0/m_axi` から HP0_DDR_LOW が見えることを確かめる
 - PS: `pynq/plring.py`（新）。名前は s45ring.py にしない（proj018 の PS の溜まり `s45ring.py` を specd・s45acq が使っている）
+
+#### sim
 
 **手順の誤り（2026-10-09、sim で見つけた）**:
 - rec_fr の読みの遅れ LAT を 4 と数えていた（rd_ch → 番地 → rd1 → rd2 → fr_data は 5）。sim-ring の短い試しで、レコードの本体が凍ったバンクから **1 語ずれて**いた（AXI4-Lite の 16 ch と DUMP_* の照合は通っていた: 照合の相手を「凍ったバンクを直に写したもの」にしていたので見つかった）。LAT = 5 に直した
@@ -552,7 +589,7 @@ s45_ring_0（新、CORE_KIND 3）: 4 本の入口 → レコード単位の順�
   10.24 ms のダンプ（262 万クロック）には全部の流れの和（9 本 × 4,100 ≈ 37,000 クロック）でも十分で、運転には効かない。
   N_ACC = 1 の試験（W-G・golden）は ONE で 1 本ずつ出すので当たらない
 
-### 2-2a のビルドと実機
+#### ビルドの結果と実機のコマンド
 
 **ビルドの結果（2026-10-09〜10、5 回）**: 閉じたのは **5 回目の Performance_ExtraTimingOpt（`build-PETO/`）WNS +0.022 ns・WHS +0.010 ns**。
 
@@ -608,6 +645,8 @@ python3 plring.py --clkin 0 --ref 10 --soak 20 --no-inval               # 陽性
 python3 plring.py --clkin 0 --ref 10 --soak 20 --pause 3                # 陽性対照: DROP_CNT = SEQ の飛び > 0
 ```
 
+#### 実機の結果と判定
+
 **実機（2026-10-10、`build-PETO` の bit。S22a-4）**: **全部通過**。入力はノイズソース ＋ SG を分配器で 4 ADC へ（PATT・分配器 3 段）、1PPS あり
 
 | 手順 | 結果 |
@@ -626,7 +665,9 @@ python3 plring.py --clkin 0 --ref 10 --soak 20 --pause 3                # 陽性
 - 予言 8: 全部**当たり**（PEAK は 2 %）。INTERFACE 8. の 6 の残り（PS が全部のレコードで CRC を確かめられるか）は、SAM45-Fine の量（9 本 × 10.24 ms）で **確かめられる**（1 回の読み 5〜9 ms）
 - 判定 S22a-1〜4 は全部通過 → **2-2a 通過**。次は 2-2b（TP のレコード、V2-e）
 
-### 手順 2-2b — TP のレコード（設計と予言、2026-10-10。RTL を書く前）
+### 手順 2-2b — TP のレコード
+
+#### 設計と予言（2026-10-10。RTL を書く前）
 
 **足すのは「TP の個をレコード（type 2、INTERFACE 4.6）にしてリングへ出す道」だけ**。TP の区切り・和・FLAGS・AXI4-Lite の TP のリング（0x2000〜）は変えない。
 判定の芯は V2-e: **同じ個が、レコードと AXI4-Lite の TP のリングで bit 単位で一致する**。
@@ -668,9 +709,13 @@ python3 plring.py --clkin 0 --ref 10 --soak 20 --pause 3                # 陽性
 | S22b-4 | 実機（予言 6） = **V2-e** |
 
 
+#### 実装
+
 **実装（2026-10-10）**: `tp_core` に `REC`（win_core は 1、FULL の spec_core は 0）。個の 16 バイトと番号（TP_WP）・最初のフレーム（48 bit）・区切りの最初のビートの T を受けて、
 溜め 2 面（分散 RAM、16 個 × 128 bit × 2）にレコードを組む。win_core で rec_arb（2 本）により SPEC のレコードと束ね、rec_drop は [NW] に足した。
 レジスタ 0x11C TP_REC_CTRL・0x120 TP_REC_LATE（REC = 0 では今どおり 0xDEADBEEF）。CAPS 3。PS: `plring.py --tpcompare`、`--soak` に TP のレコードを混ぜた
+
+#### sim
 
 **sim（クラウド、iverilog 12）**:
 
@@ -682,7 +727,7 @@ python3 plring.py --clkin 0 --ref 10 --soak 20 --pause 3                # 陽性
 | sim-regmap | 通過（190 項目: CAPS 3・TP_REC_CTRL の既定 0x0A00・TP_REC_LATE 0 を足した） |
 | sim-ring（TP のレコードを混ぜた版） | 通過（Vivado サーバ）: TP のレコード 18 個が模型と一致・SEQ の飛び 0、SPEC のレコードも全部正しい |
 
-### 2-2b のビルドと実機
+#### ビルドの結果と実機のコマンド
 
 ```bash
 cd ~/git/rfsoc && git pull && cd proj021
@@ -718,6 +763,8 @@ scp build-PE-po/proj021.bit build-PE-po/proj021.hwh xilinx@$B:~/proj021/
 scp pynq/*.py xilinx@$B:~/proj021/
 ```
 
+#### 実機の結果と判定
+
 **実機（2026-10-10、`build-PE-po` の bit。S22b-4 = V2-e）**: **全部通過**。入力は 2-2a と同じ（ノイズソース ＋ SG を分配器で 4 ADC へ）
 
 | 手順 | 結果 |
@@ -731,7 +778,9 @@ scp pynq/*.py xilinx@$B:~/proj021/
 - **PS の読みの重さ**: 1 回の読み 中央 14.7 ms・p99 14.9 ms・最大 15.1 ms（3,160 回）。60 s のうち読みに使った時間は 2-2a の ≒ 30 s（5,500 × 5.4 ms）から **≒ 46 s（77 %）**に増えた（1 回あたり 2-2a ≒ 10 レコード → ≒ 24 レコード。TP のレコードは小さいが、Python のレコードごとの処理が効く）。追いついてはいるが、2-3（specd）では CRC と写しを C か numpy の一括処理にする
 - 判定 S22b-1〜4 は全部通過 → **2-2b 通過**。次は 2-2c（SNAP のレコード ＋ 仮の読み窓を外して 64 KiB に）
 
-### 手順 2-2c — SNAP のレコード（設計と予言、2026-10-10。RTL を書く前）
+### 手順 2-2c — SNAP のレコード
+
+#### 設計と予言（2026-10-10。RTL を書く前）
 
 **足すのは「スナップショットを SPEC のレコードの直後にレコード（type 4、INTERFACE 4.6）で出す道」だけ**。スナップショットの書き方（どのフレームを残すか）・スペクトル・TP は変えない。
 判定の芯は 2-2a と同じ型: **同じダンプのスナップショットが、レコードと仮の読み窓（AXI4-Lite）で bit 単位で一致する**。その上で V2-c（W-G をレコードで）。
@@ -786,9 +835,13 @@ scp pynq/*.py xilinx@$B:~/proj021/
 | S22c-3 | ビルド: どれかの戦略（＋ physopt）で WNS ≥ 0・WHS ≥ 0・結線の照合・CDC の分類は 2-2a と同じ |
 | S22c-4 | 実機（予言 6）: `--snapcompare`・`--golden`（= **V2-c の W-G**）・回帰 |
 
+#### 実装
+
 **実装（2026-10-10）**: `rec_fr` に SNAP の相（`SNAP`・`NSN`、入力 `rec_snap`・`snap_ok`、出力 `rd_snap`）。win_core はスナップショットの書く窓の選び（SNAP の最も小さい s、無ければ SNAP_SEL）・
 面ごとの札（`t_own`・`t_nx`・`t_run`・`t_ok`）・窓ごとの `snok`・`fr_data` の切り替え（`sn2` を {im, re} の 32 bit に符号拡張）。spec_core は `snap_ra` を rec_fr の口にも・64 bit の選び（`fr_sb*`）・`snok`。
 CAPS 7。PS: `plring.py --snapcompare`・`--golden`（`window.wg_cmp`・`spectrometer.golden_cmp`・`shift_of_snap` を切り出して共用。window・spectrometer の振る舞いは同じ）
+
+#### sim
 
 **sim（2026-10-10〜11）**:
 
@@ -804,9 +857,13 @@ CAPS 7。PS: `plring.py --snapcompare`・`--golden`（`window.wg_cmp`・`spectro
 - **1 回目の sim-ring の「総合」は失敗**: late の「レコードが少なすぎる（4）」。late に SNAP を足したので、SNAP の相が口を持つ間 SPEC がさらに出にくくなった（2-2b の late より SPEC が少ない）。
   late の芯は「出たレコードは全部正しい」なので、**数の下限を SPEC ＋ SNAP で見るように check_ring.py を直し**、sim は走らせ直さずに照合だけやり直して通過（`build-sim-ring/check2.log`）。予言 2 でこの影響を書いていなかった
 
+#### ビルド
+
 **ビルド（2026-10-10〜11）**: **Performance_Explore で 1 回で閉じた: WNS +0.032 ns / WHS +0.010 ns**（build-PE）。CRITICAL WARNING なし、CDC-3 105（2-2a と同じ）。
 DSP 2,600（2-2b と同じ）、BRAM タイル 307、URAM 56、LUT 212,795（50.0 %）・FF 339,272（39.9 %）。
 Performance_ExtraTimingOpt は IP の OOC 合成（system_gb_adc_3_0）のログで止まったまま進まなかった（2 本を並べて走らせたときの止まり。PE が閉じたので使わない）
+
+#### 実機の結果と判定
 
 **実機（2026-10-11、`build-PE` の bit。S22c-4）**: 入力は 2-2b と同じ（ノイズソース ＋ SG を分配器で 4 ADC へ）
 
@@ -823,7 +880,7 @@ Performance_ExtraTimingOpt は IP の OOC 合成（system_gb_adc_3_0）のログ
 - 判定 S22c-1〜4 は全部通過 → **2-2c 通過**。予言 6 は当たり。予言 2 は late の数の下限の書き方を外した（上の sim の注）。次は 2-3（specd がリングを読む）。仮の読み窓を外して 64 KiB にするのは 2-3 の後（2-2d）
 - 全帯域のスナップショットは max\|x\| 8191（14 bit の振り切れ）・std 4340: SG が P-3 の +20 dBm のままで、ADC_A が振り切れている。golden はそれでも通る（同じフレームの比べなので）が、W-6 以外の判定には SG を下げてから
 
-### 2-2c のビルドと実機
+#### ビルドと実機のコマンド
 
 ```bash
 cd ~/git/rfsoc && git pull && cd proj021
@@ -847,7 +904,7 @@ python3 plring.py --clkin 0 --ref 10 --soak 60
 python3 window.py --clkin 0 --ref 10 --golden --w 256                   # P-2（仮の読み窓の W-G。SNAP_SEL の道）
 ```
 
-## 手順 2-3 — specd がリングを読む（2026-10-11）
+### 手順 2-3 の分け方 — specd がリングを読む（2026-10-11）
 
 INTERFACE 5. の specd の仕事（束ね・時刻の補正・s45proto v2・LOAD）を、**変更を一度に一つ**に分ける:
 
@@ -859,7 +916,9 @@ INTERFACE 5. の specd の仕事（束ね・時刻の補正・s45proto v2・LOAD
 | 2-3d | LOAD と bits.json（5.） | 同じ | V2-d |
 | 2-2d | 仮の読み窓を外して 64 KiB に（SNAP_SEL・FULL の TP の置き場所も）。設計は下の「手順 2-2d」 | 変える | P-0〜P-4・2-3a〜c の回帰 |
 
-### 手順 2-3a — 取得の読み口をリングに（設計と予言、2026-10-11。コードを書く前）
+### 手順 2-3a — 取得の読み口をリングに
+
+#### 設計と予言（2026-10-11。コードを書く前）
 
 **変えるのは HwBackend の読み口だけ**。記録の形（s45proto v1）・溜まり（s45ring）・送り・命令・FakeBackend は変えない。
 今の道（仮の読み窓を seqlock で読む）は `specd.py --read axi` で残す（2-2d まで。比べと逃げ道）。既定は `--read ring`。
@@ -896,12 +955,18 @@ INTERFACE 5. の specd の仕事（束ね・時刻の補正・s45proto v2・LOAD
 | S23a-3 | P-5（予言 3）・SNAP（予言 4） |
 | S23a-4 | 陽性対照（予言 5） |
 
+#### 実装
+
 **実装（2026-10-11）**: `s45acq.py`（HwBackend に `_open_ring`・`pump`・`ring_stat`・`close`・`_snap_ring`、`poll_win` のリングの道、TpStream に `feed`。
 `_loop_once` は頭で `pump`、窓ごとに溜まったぶんを全部取り出す。FakeBackend に何もしない `pump`）、`specd.py`（`--read`・`--ring-mib`・`--posctl-ring-stall`）。
 STATUS に `ring`（w・r・drop・rec・peak・err・crc・tp_rec_lost）
 
+#### PL なしの確かめ
+
 **PL なしの確かめ（クラウド、2026-10-11）**: `test_fake.sh all` 全部通過（S23a-1。7 試験）。HwBackend のリングの道は作り物のレコードで: SPEC の頭 → meta・SEQ の飛び = miss・前の RUN の SEQ は捨てる・
 TP の個 → TpStream（F0 で始まる・個の番号の飛び 16 個 → lost 16・rec_lost 2）・CRC の不一致は使わず数える
+
+#### 実機の結果
 
 **実機 1 回目（2026-10-11、2-2c の build-PE の bit、`--read ring`、SET A0.bw=256 A1.bw=8 all.shift=9、10 分）**:
 - 受け側（`specrecv`）: SPEC 118,377・TP 59,176 記録、CRC の不一致 0・欠け 0・説明のない欠け 0・DUMP_K の飛び 0・TP の飛び 0（health 0x10 = ADC の振り切れ: SG が P-3 の +20 dBm のまま）
@@ -959,10 +1024,12 @@ TP の個 → TpStream（F0 で始まる・個の番号の飛び 16 個 → lost
 - **Ring.read の直しの効き**: RUN の頭の周 0 は tint を越えなくなった（「1 周が」に出ない。前は 92〜116 ms）。2,992 レコードの読みが 265 ms = 1 個 0.09 ms（前は TP のレコード 1 個 0.37 ms）。
   PynqBuffer の切り出しが重い、という見当は当たり。ふだんの 1 周 p99 9.2 ms
 
+#### 判定
+
 **2-3a の判定**: S23a-1・S23a-2・S23a-4 通過、S23a-3 は SNAP 通過・**P-5 は配線の条件で保留**（実験室で SG を直結に戻したとき、P-4 と一緒に）→ **2-3a 通過**（P-5 の保留つき）。
 次は 2-3b（PL のダンプ 10.24 ms・specd の束ね）
 
-### 2-3a の実機
+#### 実機のコマンド
 
 ```bash
 # Vivado サーバ → ボード（bit は 2-2c の build-PE のまま）
@@ -987,7 +1054,9 @@ python3 specctl.py --host $B "START n=0" "SEND ON"; python3 specrecv.py --host $
 python3 specctl.py --host $B STATUS STOP
 ```
 
-### 手順 2-3b — PL のダンプを 10.24 ms にし、specd が束ねる（設計と予言、2026-10-11。コードを書く前）
+### 手順 2-3b — PL のダンプを 10.24 ms にし、specd が束ねる
+
+#### 設計と予言（2026-10-11。コードを書く前）
 
 **変えるのは「PL の N_ACC」と「specd の束ね」と「START_AT の格子」だけ**。記録の形（s45proto v1）・受け側・TP は変えない。受け側から見ると、今と同じ tint の SPEC が来る。
 
@@ -1024,11 +1093,17 @@ DUMP_T = RUN の START_AT ＋ G ＋ δ（δ = WSTART の遅れ ＋ z が wspec �
 | S23b-3 | 30 分（予言 4） |
 | S23b-4 | 陽性対照（予言 5） |
 
+#### 実装
+
 **実装（2026-10-11）**: `s45acq.py`（`BASE_BEATS`・`check_tint`・`Bundler`、HwBackend の `grid_after` を tint の倍数に・N_ACC = `pl_nacc`、Acq の `_loop_once` で束ね・`_bdrop`・STOP で半端を捨てる、
 SET の `A0.bundle`、STATUS）、`specd.py`（STATUS の行）、`s45v2a.py`（新）
 
+#### PL なしの確かめ
+
 **PL なしの確かめ（クラウド、2026-10-11）**: `test_fake.sh all` 全部通過（S23b-1）。Bundler: 4 個の和（100＋101＋102＋103 = 406 …）・m 112 の欠けた束 28 を捨てて k が 2 → 4 に飛ぶ・
 頭が 102 から始まった束 25 を捨てて次の束が k 1・r が 5 動いたら ERROR を出して以後束ねない
+
+#### 実機の結果
 
 **S23b-2 = V2-a（2026-10-11、`s45v2a.py --n 100`、4 ADC とも窓 0 = bundle 1・窓 1 = bundle 0、IF 3000 MHz・256 MHz・SHIFT 9）**: **通過**
 - 4 ADC とも 100 組（束 100・PL の 40.96 ms 100）で**中身の不一致 0（4096 ch が整数で一致）**・nacc の不一致 0（2,560 = 4 × 640）・束の k の飛び 0、
@@ -1050,9 +1125,11 @@ EVENT `BDROP` 6 個（A0・B0・B1・C0・C1・D0 の束 266、どれも「欠�
 - STATUS の行（miss・bdrop・pl_drop・1 周 p99）は残っていなかった。**取りこぼしは受け側の照合（欠け・kgap・tdev 0）と、ログに遅い周が無いことで判定する**。
   STATUS の数えは 2-3c の V2-b（10.24 ms で 30 分）でまとめて取る
 
+#### 判定
+
 **2-3b の判定**: S23b-1（PL なし）・S23b-2（**V2-a**）・S23b-3（30 分、受け側 0・遅い周 0）・S23b-4（陽性対照: tdev 0・kgap 8・BDROP）通過 → **2-3b 通過**。次は 2-3c（s45proto v2・float32、V2-b）
 
-### 2-3b の実機
+#### 実機のコマンド
 
 ```bash
 scp pynq/*.py xilinx@$B:~/proj021/
@@ -1074,7 +1151,9 @@ python3 specctl.py --host $B "START n=0" "SEND ON"; python3 specrecv.py --host $
 python3 specctl.py --host $B STATUS STOP
 ```
 
-### 手順 2-3c — s45proto v2（float32）と V2-b（設計と予言、2026-10-13。コードを書く前）
+### 手順 2-3c — s45proto v2（float32）と V2-b
+
+#### 設計と予言（2026-10-13。コードを書く前）
 
 **変えるのは「specd が送る SPEC の形」と受け側の読み口**（INTERFACE 6.）。PL・リング・束ねは変えない。TP・SNAP・EVENT の中身は v1 と同じ（共通の頭の ver だけ 2）。
 
@@ -1105,13 +1184,19 @@ python3 specctl.py --host $B STATUS STOP
 | S23c-2 | 予言 2・3 |
 | S23c-3 | **V2-b**（予言 4） |
 
+#### 実装
+
 **実装（2026-10-13）**: `s45proto.py`（VERSION 2・VERSIONS・SPEC2_H・FMT_F32・`header(ver)`・`header_ver`・`f32_round`・`decode(ver)`）、`s45acq.py`（`_spec_record2`・SET `fmt`・START の EVENT に proto・fmt）、
 `specd.py`（`--proto`・`--posctl-f32-trunc`）、`specrecv.py`・`s45client.py`・`s45allan.py`・`s45spur.py`（ver を渡す）、`s45v2c.py`（新）、`s45v2a.py`（fmt=u64 で取る）、`test_fake.sh`（f32・f32p・v1）
+
+#### PL なしの確かめ
 
 **PL なしの確かめ（クラウド、2026-10-13）**: `test_fake.sh all` 10 試験とも通過（S23c-1）。
 - 1 回目の f32 は受け側が落ちた: 組の片方を**受けの箱（次の記録で上書きされる）を指したまま**持っていて、u64 が float32 の中身に化けた → 写しを持つように直した
 - `s45v2c.py` を偽物で: 照合 OK、e(窓 0) − e(窓 1) = −2,698 ns（偽物は D を引かないので (D(1) − D(6))·125/32 になるのが正しい）。
   1 回目は −2,560 ns と出た: utc_ns（≒ 1.8e18）を float64 にしてから引いていて 256 ns 刻みに丸まった → 整数で引いてから float に直した
+
+#### 実機の結果
 
 **S23c-2（2026-10-13、specd `--proto 2`）**: **通過**
 - `s45v2c.py --n 50`（fmt=both）: **組 400・不一致 0・最大 0.5 ulp**（float32 = u64 の最も近い丸め）・版 2 だけ・CRC・説明のない欠け・kgap・tdev 0。
@@ -1128,9 +1213,11 @@ python3 specctl.py --host $B STATUS STOP
   SAM45-Fine の運転（tint 40.96 ms 以上）では問題にならないが、10.24 ms で長く回すなら、ここを軽くする（候補: 並べ替えと丸めを 1 回の numpy に・CRC を zlib から crc32c 系へ・取得を C に）
 - STATUS の行は今回も残っていない（miss・bdrop・pl_drop は受け側の kgap 0・tdev 0 から 0 と読む）
 
+#### 判定
+
 **2-3c の判定**: S23c-1（PL なし 10 試験）・S23c-2（v2 の丸め・utc_ns の補正・V2-a の回帰）・S23c-3（**V2-b**）通過 → **2-3c 通過**
 
-### 2-3c の実機
+#### 実機のコマンド
 
 ```bash
 scp pynq/*.py xilinx@$B:~/proj021/
@@ -1149,7 +1236,9 @@ python3 specctl.py --host $B STATUS STOP
 grep -E "1 周が|BDROP|ERROR" runs/specd_23c.log | head
 ```
 
-### 手順 2-3d — LOAD と bits.json（設計と予言、2026-10-13。コードを書く前）
+### 手順 2-3d — LOAD と bits.json
+
+#### 設計と予言（2026-10-13。コードを書く前）
 
 **INTERFACE 5. の「bit の切り替え」**: `LOAD bit=<名前>`（IDLE のときだけ）で、取得のプロセスを新しい bit で起こし直す。制御・データの口と溜まり（s45ring）・受け側の接続は保つ。
 許す bit はボードの `bits.json` にあるものだけ（**ネットワークから任意のパスを受けない**。名前だけ）。
@@ -1180,15 +1269,19 @@ grep -E "1 周が|BDROP|ERROR" runs/specd_23c.log | head
 | S23d-2 | **V2-d**（予言 2） |
 | S23d-3 | 予言 3 |
 
+#### 実装
+
 **実装（2026-10-13）**: `specd.py`（`load_bits`・`sha256_of`・Server の `_start_acq`（spawn・起動の途中で子が落ちたら待たない）・`_stop_acq`・`load`、BITS・LOAD、`--bits`・`--bit`、
 LOAD の間は run の見張りで止まらない）、`acqboot.py`（新）、`bits.example.json`（新）、`test_fake.sh`（load）
+
+#### PL なしの確かめ
 
 **PL なしの確かめ（クラウド、2026-10-13）**: `test_fake.sh all` 11 試験とも通過（S23d-1）。load: SPEC 320（160 ＋ 80 ＋ 80）・版 {2: 366, 1: 122}・EVENT LOAD 2・説明のない欠け 0・送り直し 0、
 bad は「起動の途中で終わった」で proj020 に戻った。acqboot のログで、proj020 の取得が proj020 の s45proto（版 1）を使い、番号を 242 から続けたことを確かめた
 - 1 回目は LOAD の後に番号が 1 から始まり、受け側が 122 個を送り直しとみなして捨てた → 番号を続けるようにした
 - 1 回目は pydir の無い bad で、子が落ちたのに specd が 120 s 起動の結果を待ち、制御の口がふさがった → 子が終わったらすぐ失敗にした
 
-### 2-3d の実機
+#### 実機のコマンド
 
 ```bash
 # ボード: proj020 の道具と bit が ~/proj020 にあること（無ければ Vivado サーバから proj020.bit・.hwh・pynq/*.py を送る）
@@ -1210,6 +1303,8 @@ wait                                                                            
 grep -E "LOAD|acqboot|錨" runs/specd_23d.log
 ```
 
+#### 実機の結果
+
 **S23d-3（2026-10-13、specd `--bits bits.json`・取得は spawn）**: **通過** — `s45v2c.py --n 50`: 組 400・不一致 0・e(窓 0) − e(窓 1) = −1.1 ns（2-3c と同じ）。
 acqboot のログで、取得が proj021 の道具（s45proto 版 2）を使い、番号を 0 から始めたことを確かめた
 
@@ -1223,10 +1318,14 @@ acqboot のログで、取得が proj021 の道具（s45proto 版 2）を使い�
 - LOAD 1 回 17.4〜20.8 s（予言 10〜20 s、少し越えた。Overlay の読み込みと錨の待ちが主で、運転の合間の切り替えには困らない）
 - 予言 2 の「錨・CAL が切り替わる」のうち CAL（tp_cal）は bits.json の項目に書いていないので今回は空のまま。切り替えの道は試験の bad と同じ道（項目を渡すだけ）
 
+#### 判定
+
 **2-3d の判定**: S23d-1（PL なし 11 試験）・S23d-2（**V2-d**）・S23d-3（回帰）通過 → **2-3d 通過**。
 これで手順 2-3（a〜d）が全部通過。V2 の判定は V2-a〜e 通過、V2-g は 2-2a・2-3a の陽性対照で中身を確かめ済み、V2-f は FULL・DDC の全部の流れを 2-2d の後にまとめて回す
 
-## 手順 2-2d — 仮の読み窓を外して 64 KiB に（設計と予言、2026-10-13。コードを書く前）
+### 手順 2-2d — 仮の読み窓を外して 64 KiB に
+
+#### 設計と予言（2026-10-13。コードを書く前）
 
 2-3 で specd がリングだけで動くようになったので、2-1 から残していた**約束の外の 3 つ**を外し、コアの番地を INTERFACE 3. の 64 KiB にする。
 2-2c で決めたとおり、PS の道具の書き換えとまとめて 1 手順（1 ビルド）にする。**窓・全帯域の中身（スペクトル・スナップショット・帳簿・時刻・TP の値）は変えない**。
@@ -1281,6 +1380,8 @@ acqboot のログで、取得が proj021 の道具（s45proto 版 2）を使い�
 | S22d-2 | 予言 3・4（ビルド・`make worst-paths`・CDC は 2-2c と同じ件数） |
 | S22d-3 | 予言 5（実機） |
 
+#### 実装
+
 **実装（2026-10-13）**:
 - RTL: `s45_core.v`（番地 16 bit・FULL の振り分けは流れのブロックだけ・「FULL = 1 は NW ≦ 2」を外す・rec_drop を溜めて 1 クロック 3 までずつ出す。
   FULL の TP のレコードで 1 クロックに 5 本来うるので、2-2c までの「3 で切る」は数え落としうる）、
@@ -1302,6 +1403,8 @@ acqboot のログで、取得が proj021 の道具（s45proto 版 2）を使い�
   s45acq（`--read axi` と仮の SNAP の道を外す・TP は s = 0xFF だけ）、specd（`--read` は ring だけ）、plring（`--compare`・`--snapcompare` を外す・自分のリングを rectap に渡す）、
   timebase（time_core の IF_ID は BIT_REV 1・2 の両方を受ける）、gbboot・test_regmap・winlin・winwrst
 
+#### sim
+
 **sim（クラウドの iverilog 12、2026-10-13）**:
 
 | sim | 結果 |
@@ -1318,7 +1421,7 @@ acqboot のログで、取得が proj021 の道具（s45proto 版 2）を使い�
 
 残り（Vivado サーバ）: sim-all（sim-spec-all の 5 変種・sim-win-all・sim-t-all）・sim-ring（all・late・snap・snap-nochk・flip）・sim-tsys・sim-tsys-p。クラウドでは sim-ring を回している
 
-### 2-2d のビルドと実機
+#### ビルドと実機のコマンド
 
 ```bash
 cd ~/git/rfsoc && git pull && cd proj021
