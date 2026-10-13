@@ -3,7 +3,7 @@
 #   1. コアのセルを s45_core_i（src/common/s45_core.v = win_core ＋ i = 0 だけ FULL の流れの spec_core）に。**spec_core_0 のセルは無い**。
 #      axis_sel4（full_sel）の出口 → s45_core_0/s_axis_full、選ぶのは s45_core_0 の full_sel（FULL の流れの SRC）
 #   2. CORE_PORT（ADC・タイル・スライス）を chans から、BIT_KIND 2・BIT_REV 2（2-2d。2-1〜2-2c は 1）・PROJ 0x0021_0200 を s45_core_i と time_core_0 に
-#   3. SmartConnect の M は 1 + nch + 1（spec_core_0 の M が無くなった）。コアの窓は 1 MiB のまま（仮の読み窓。2-2 で 64 KiB に）
+#   3. SmartConnect の M は 1 + nch + 1（spec_core_0 の M が無くなった）。コアの窓は 1 MiB のまま（仮の読み窓）。**2-2d で 64 KiB に**
 #   4. 資源の数え: FULL は s45_core_0/inst/g_full.u_full、窓は s45_core_i/inst/u_win の下
 # proj021 手順 2-2a（proj021/README の手順 2-2a）
 #   1. s45_core_1〜 の FULL の入口（s_axis_full_tdata・tvalid・full_gb_stat・full_adc_stat）を xlconstant の 0 で縛る（BD 41-759）
@@ -364,7 +364,7 @@ add_files -norecurse [list ./src/common/time_core.v ./src/common/dstamp.v ./src/
 set_property file_type {Verilog Header} [get_files win_coef.vh]
 set_property include_dirs [file normalize ./src/common] [get_filesets sources_1]
 set WIN_NW 2              ;# proj017: 1 ADC の窓の数（win_core の CONFIG.NW）。SAM45-Fine は 2（proj015・016 は 4）
-set win_range 1048576     ;# proj015: win_core の AXI4-Lite の窓（20 bit 番地 = 1 MiB）
+set win_range 65536       ;# proj021 2-2d: s45_core_i の AXI4-Lite の窓（16 bit 番地 = 64 KiB。INTERFACE 3.）。proj015〜2-2c は 1 MiB（20 bit、仮の読み窓）
 
 # ------------------------------------------------------------------ FFT IP（lane_fft）
 # spec_core.v がレーンごとに 1 個（計 16 個）使う。**名前 lane_fft は RTL と対**。
@@ -1386,7 +1386,7 @@ assign_bd_address
 
 # proj021 手順 2-1: spec_core_0 のセルは無い（全帯域は s45_core_0 の中の FULL の流れ）。**重なっていないことは下で見る**
 set wins {}
-# proj015: s45_core_i の窓（1 MiB、1 MiB 境界に揃える。proj021 手順 2-1 の仮の読み窓まで。2-2 で 64 KiB に）
+# proj015: s45_core_i の窓（win_range の境界に揃える）。proj021 2-2d から 64 KiB（2-2c までは仮の読み窓のため 1 MiB）
 for {set i 0} {$i < $nch} {incr i} {
     set win_seg ""
     foreach seg [get_bd_addr_segs -quiet] {
@@ -1397,7 +1397,7 @@ for {set i 0} {$i < $nch} {incr i} {
     set woff [get_property OFFSET $win_seg]
     set wrng [get_property RANGE $win_seg]
     if {($woff % $win_range) != 0} {
-        # 揃っていなければ、1 MiB 境界の空きへ動かす（重なりは下で見る）
+        # 揃っていなければ、win_range 境界の空きへ動かす（重なりは下で見る）
         set_property OFFSET [expr {0xA0000000 + $win_range * (16 + $i)}] $win_seg
         set woff [get_property OFFSET $win_seg]
     }
