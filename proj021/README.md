@@ -1287,6 +1287,7 @@ acqboot のログで、取得が proj021 の道具（s45proto 版 2）を使い�
   `win_core.v`（番地 16 bit・仮の読み窓・SNAP_SEL・fr_gnt の待たせを外す・スナップショットを書く窓は SNAP の最も小さい窓、無ければ 0）、
   `spec_core.v`（AXI4-Lite の読みは流れのブロックの 10 bit だけ・TP のレジスタを 0x100 に・tp_core を REC = 1（s = SID_S）にして rec_fr と rec_arb で束ねる・rec_drop 2 bit）、
   `tp_core.v`（REC_S・rst_rec）、IF_ID の BIT_REV 2（s45_core・win_core・time_core・s45_ring の既定と build.tcl の照合）
+  - ビルドの 1 回目は build.tcl の `win_range`（コアの窓の大きさ）を 1 MiB のままにしていて、番地の割り付けで落ちた（BD は 16 bit の口から 64 KiB と読み、1 MiB への広げを拒んだ）→ 64 KiB に直した
 - **設計に無かった変更 1 つ（実装で気づいた）**: FULL の tp_core のリセットは rst_core（SRST・GRST で張る）なので、そのままレコードを出すと、
   **SRST がレコードの途中（tlast の前）に来たとき rec_arb が tlast を待ち続け、FULL の SPEC のレコードも止まる**。tp_core に `rst_rec`
   （レコードの出口と TP_REC_CTRL のリセット）を分け、spec_core ではコアのリセット（rst）をつなぐ。rst_core（起動のやり直し）では埋めかけのレコードだけ捨てる。win_core は rst_rec = rst（今と同じ）
