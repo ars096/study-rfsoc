@@ -1421,6 +1421,34 @@ acqboot のログで、取得が proj021 の道具（s45proto 版 2）を使い�
 
 残り（Vivado サーバ）: sim-all（sim-spec-all の 5 変種・sim-win-all・sim-t-all）・sim-ring（all・late・snap・snap-nochk・flip）・sim-tsys・sim-tsys-p。クラウドでは sim-ring を回している
 
+#### sim（Vivado サーバ、2026-10-13）
+
+| sim | 結果 |
+|---|---|
+| sim-all の sim-spec-all | 4-0-0・7-0-0・7-0-1・7-5-0・gb・tp・tp-posctl・tp-ovrpc は通過。**7-0-2（START_GAPS）だけ check.py が落ちた**: t1 の TP の個 0〜4 が x |
+| sim-ring | **総合: 通過**（all・late・snap ＋ 陽性対照 snap-nochk・flip が落ちるべきところで落ちた） |
+| sim-tsys（2 回目） | **全部通過** |
+| sim-tsys-p（陽性対照） | 落ちた（RUN の間の SHIFT が RUN の値でない。落ちるべきところ） |
+
+- 7-0-2 の原因は tb の手順の誤り: tb_spec_core が TP_REC_CTRL（FULL の TP のレコード）を書くのがリセットの解除から 3000 クロック後で、
+  START_GAPS の変種では見張りが早く開き、**その前に閉じた最初の 5 個がレコードにならなかった**（AXI4-Lite のリングなら残っていた個）。
+  RTL ではなく tb の順番の問題 → TP_REC_CTRL をリセットの解除の直後に書くように直し、クラウドで sim-v-7-0-2・sim-v-7-0-0 とも**全部通過**
+- sim-all の残り（sim-win-all・sim-t-all）は sim-spec-all の失敗で make が止まって回っていない → 実機の前に `make sim-win-all sim-t-all` を回す
+
+#### ビルド（Vivado サーバ、2026-10-13、ae3a1d5）
+
+| 戦略 | WNS | WHS |
+|---|---|---|
+| 既定（`build/`） | **+0.029 ns** | +0.010 ns |
+| Performance_Explore（`build-PE/`） | +0.007 ns | +0.007 ns |
+
+- **両方とも閉じた**。予言 4（PE +0.02〜+0.06・既定 −0.02〜+0.02）は**向きが逆に外れた**（既定の方が良い）。実機には既定の `build/` を使う
+- 資源（`utilization.rpt`、2-2c の build-PE → 2-2d の build-PE）: LUT 212,795 → 212,104（**−691**）・FF 339,272 → 338,729（**−543**）・BRAM 307 → 305（**−2**）・URAM 56・DSP 2,600 は同じ。
+  予言 3 は FF が範囲内、BRAM は実装の時に書き直した −2 のとおり、**LUT は −1,000〜−3,000 に届かなかった**（仮の読み窓の読みの選びは思ったより小さかった。FULL の TP のレコードの道で増えたぶんもある）
+- CDC: CDC-3 105・CDC-6 5・CDC-15 3,137 で 2-2c と同じ件数
+- 番地: s45_core_0〜3 が 0xA004_0000 から 64 KiB ずつ（`WIN ADDR`）
+- 判定 **S22d-1（sim）・S22d-2（ビルド）は通過**（sim-win-all・sim-t-all の回し直しが残り）
+
 #### ビルドと実機のコマンド
 
 ```bash
@@ -1439,7 +1467,7 @@ make worst-paths OUTDIR=build-PE                         # 仮の読み窓の経
 # 資源（予言 3: DSP・URAM 同じ、BRAM −2、LUT −1,000〜−3,000）は build-PE/vivado.log の資源の表を 2-2c と並べる
 
 # ボード: 新しい bit を ~/proj021 に（bits.json の proj021 はこの bit。2-2c の bit は 2-2d の道具では動かない: s45core が BIT_REV 2 を求める）
-scp build-PE/proj021.bit build-PE/proj021.hwh xilinx@$B:~/proj021/
+scp build/proj021.bit build/proj021.hwh xilinx@$B:~/proj021/
 scp pynq/*.py xilinx@$B:~/proj021/
 
 # ボード（root。specd を止めてから）。S22d-3

@@ -272,6 +272,9 @@ module tb_spec_core;
         awaddr = 0; araddr = 0; wdata = 0;
         repeat (10) @(posedge clk);
         aresetn = 1'b1;
+        // proj021 2-2d: TP_REC_CTRL = K 16・EN（FULL の TP のレコード）を最初の個より前に（1 回目は 3000 クロック後に書き、
+        //   START_GAPS の変種（sim-7-0-2）で最初の 5 個がレコードにならず、t1 の照合が x で落ちた）
+        axi_wr(16'h011C, 32'h1001);
 
         // 流れ始めるまで待ち、立ち上がりの隙間で立ったフラグを消す
         repeat (3000) @(posedge clk);
@@ -280,7 +283,6 @@ module tb_spec_core;
         axi_wr(16'h0008, 32'h100);
         axi_wr(16'h0014, `SHIFT);
         axi_wr(16'hF084, 32'h5);          // proj021 2-2d: REC_CTRL = ALL | SNAP（ダンプごとに SPEC と SNAP のレコード）
-        axi_wr(16'h011C, 32'h1001);       // proj021 2-2d: TP_REC_CTRL = K 16・EN（FULL の TP のレコード）
 
         // ---- t1 ----
         $display("t1: N_ACC = 1 / N_DUMP = 1");
