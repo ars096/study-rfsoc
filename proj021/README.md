@@ -1546,7 +1546,7 @@ PL・specd の作りは変えない。判定の道具を 1 本足すだけ。
    Bundler が r_bad を立てて A0 の束ねを止める。ほかの 8 流れは r_bad 0 のまま
 6. 結果: 流れごとの r・r − G（DDC）・r mod 512（FULL のフレームの位相）・ダンプの数・束の数・r_bad・bdrop
 
-specd の側（同じ見張りが運転の道で通ること）: SET で 8 窓を NS 1〜8（`A0.bw=256 A1.bw=128 B0.bw=64 B1.bw=32 C0.bw=16 C1.bw=8 D0.bw=4 D1.bw=2`）、5 分。
+specd の側（同じ見張りが運転の道で通ること）: SET で 8 窓を specd の 6 幅（NS 1〜6。specd の SET は 256〜8 MHz だけ。NS 7・8 は道具の側だけで見る）に `A0.bw=256 A1.bw=128 B0.bw=64 B1.bw=32 C0.bw=16 C1.bw=8 D0.bw=256 D1.bw=8`、5 分。
 STATUS の `r_bad 0`・`bund_r`、受け側の欠け 0
 
 **r の見当**: DDC は WRST が G の格子、RUN が tint の格子なので F0 のフレームは「RUN の START_AT ＋ G」から始まり、DUMP_T はそこから F(NS)（窓の最初の z が wspec に入るまで、
@@ -1561,7 +1561,7 @@ FULL は F0 = RUN の fin ＋ 2（格子に寄せない。INTERFACE 8. の 8 は
    Overlay（と SRST）をやり直すと位相が変わって r も変わる見込み（道具を 2 回起こして見る）
 4. DDC の r は 2 回目の RUN・道具の起こし直しでも同じ値（WRST の格子と F(NS) で決まる）
 5. 陽性対照: A0 の r が +524,288 動き、Bundler の r_bad 1（A0 だけ）、A0 の束はそこで止まる。ほかの 8 流れは r_bad 0
-6. specd（NS 1〜8 の 8 窓、5 分）: r_bad 0・bund_r = 予言 2 の 8 つ（道具と同じ値）・bdrop 0・受け側の欠け・kgap・tdev 0
+6. specd（NS 1〜6 の 8 窓、5 分）: r_bad 0・bund_r = G ＋ 予言 2 の NS ごとの値（道具と同じ値）・bdrop 0・受け側の欠け・kgap・tdev 0（実装の時に気づいて直した: specd の SET は NS 7・8 を受けない）
 
 **判定**:
 
@@ -1588,7 +1588,7 @@ python3 s45v2f.py --clkin 0 --ref 10 --posctl              # S24-3（陽性対�
 
 # S24-4: specd を起こし直して（--bits bits.json）、制御 PC から
 python3 specrecv.py --host $B --out /tmp/r24.s45 --seconds 300 --json r24.json &
-python3 specctl.py --host $B "SET A0.bw=256 A1.bw=128 B0.bw=64 B1.bw=32 C0.bw=16 C1.bw=8 D0.bw=4 D1.bw=2 all.shift=9" "SEND ON" "START n=0"
+python3 specctl.py --host $B "SET A0.bw=256 A1.bw=128 B0.bw=64 B1.bw=32 C0.bw=16 C1.bw=8 D0.bw=256 D1.bw=8 all.shift=9" "SEND ON" "START n=0"
 sleep 280; python3 specctl.py --host $B STATUS STOP; wait
 ```
 
