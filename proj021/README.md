@@ -1036,6 +1036,14 @@ SET の `A0.bundle`、STATUS）、`specd.py`（STATUS の行）、`s45v2a.py`（
 - 受けた記録の照合: SPEC 800・TP 404、CRC・欠け・説明のない欠け・kgap・**tdev 0**（束の dump_t の間隔 = nacc·L）
 - **r = 524,426 ビート**（4 ADC の窓 0 とも）= G（524,288）＋ 138。予言 3「524,288 ＋ δ、同じ NS は同じ値」の**当たり**（δ = 138 ビート ≒ 0.54 µs: WSTART の遅れ ＋ NS 1 の z が wspec に入るまで）
 
+**S23b-3（2026-10-13、30 分、SET A0.bw=256 A1.bw=8 all.shift=9、tint 40.96 ms、全部 bundle 1）** — 受け側（`r23b2.json`）:
+SPEC 352,440（8 窓 × 44,055 = 1,804.5 s）・TP 176,221、**CRC・欠け・説明のない欠け・kgap・tdev・tp_gap 0**。specd の STATUS（miss・bdrop・pl_drop・pl_dumps・1 周 p99）は未（貼ってもらう）
+- 1 回目（10/11）は 30 分の受けは最後まで走ったが、STOP を打たずに RUN のまま ≒ 41 時間回り、specd の溜まり（256 MiB）が溢れて古い記録から捨てた。その後の空振りの受けで `r23b.json` を上書きしたので、1 回目の結果は残っていない。
+  **参考**: その 41 時間で、取得はダンプ 28,625,864（8 窓 × 40.96 ms ≒ 40.7 h）・**読み落とし 0**・STOP の錨の照合 4 ADC ともずれ 0・GAP 0（specd のログ。受け側の照合・STATUS は無い）
+
+**S23b-4（陽性対照 `--posctl-ring-stall 8`、40 s）** — 受け側（`r23cp.json`）: SPEC 9,145・TP 4,380、CRC・欠け・説明のない欠け 0、**tdev 0**（出た束は全部 4 個ぶん）・**kgap 8**（8 窓 × 1 回）・tp_gap 4。
+EVENT `BDROP` 6 個（A0・B0・B1・C0・C1・D0 の束 266、どれも「欠け」・持っていたのは 1 個）。A1・D1 は止まりが束の境に重なり、捨てる半端な束が無かった（kgap には出ている）。specd の STATUS は未
+
 ### 2-3b の実機
 
 ```bash
