@@ -14,13 +14,18 @@
   ID | STATUS | GET | SET key=val ... | ANCHOR | START [at=<UTC>] [n=<ダンプ数>] [force=1] | STOP |
   SEND ON [from=oldest|now] | SEND OFF | CLEAR | BYE | HELP | SHUTDOWN confirm=1（サーバーを止める） |
   SNAP adc=A|B|C|D [n=1] [every=20]（proj019: ADC の生サンプル 8192 個 = 2 µs を n 個、every ms おき。IDLE のときだけ。記録は T_SNAP）
+proj021 2-3d: BITS（bits.json の許す bit の一覧）| LOAD bit=<名前>（IDLE のときだけ。取得のプロセスを新しい bit で起こし直す。
+  制御・データの口と溜まりは保つ。データの口に EVENT LOAD を出す）
 データの口（既定 51001、同時に 1 接続）: s45proto の記録を続けて送る。SEND ON の間だけ。
   **受け側は ACK（<Q の 8 バイト、受け取って書き終えた最後の seq）を返す**（0.2 秒おき程度）。ACK のあった記録だけを溜まりから消し、
   切れたら ACK の無い記録を次の接続で送り直す（受け側は seq で重複を除く）。ACK を返さない受け側では溜まりが溢れ、DROP になる
 """
 import argparse
 import collections
+import copy
 import datetime as dt
+import hashlib
+import json
 import multiprocessing as mp
 import os
 import re
@@ -35,7 +40,7 @@ import s45ring as R
 
 HELP = ("ID | STATUS | GET | GET CAL | SET key=val ...（tint cfg A0.if A0.ns A0.bw A0.shift A0.bundle all.shift …） | ANCHOR | "
         "START [at=<UTC ISO8601 か unix 秒>] [n=<ダンプ数>] [force=1] | STOP | SEND ON [from=oldest|now] | SEND OFF | CLEAR | BYE | "
-        "SHUTDOWN confirm=1 | SNAP adc=A|B|C|D [n=1] [every=20]")
+        "SHUTDOWN confirm=1 | SNAP adc=A|B|C|D [n=1] [every=20] | BITS | LOAD bit=<名前>")
 
 
 def log(*a):
@@ -75,23 +80,51 @@ def parse_utc(s):
     return (d.days * 86400 + d.seconds) * 10**9 + d.microseconds * 1000
 
 
+def load_bits(path):
+    """proj021 2-3d: bits.json（INTERFACE 5.）。{"default": 名前, "bits": {名前: {bit, pydir, sha256?, tp_cal?, note?}}}。
+    パスは bits.json の置き場所から。**ネットワークから任意のパスは受けない**（LOAD は名前だけ）"""
+    with open(path) as f:
+        j = json.load(f)
+    base = os.path.dirname(os.path.abspath(path))
+    out = {}
+    for name, e in j["bits"].items():
+        out[name] = dict(name=name, bit=os.path.normpath(os.path.join(base, e["bit"])), pydir=os.path.normpath(os.path.join(base, e.get("pydir", "."))),
+                         sha256=e.get("sha256"), tp_cal=os.path.normpath(os.path.join(base, e["tp_cal"])) if e.get("tp_cal") else None,
+                         note=e.get("note", ""))
+    d = j.get("default")
+    if d not in out:
+        raise ValueError(f"bits.json の default {d!r} が bits に無い")
+    return out, d
+
+
+def sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
 class Server:
     def __init__(self, a):
         self.a = a
-        self.ring = R.Ring(a.buf_mb << 20)
-        self.pipe, child = mp.Pipe()
-        ctx = mp.get_context("fork")
-        import s45acq
-        self.acq = ctx.Process(target=s45acq.main, args=(child, self.ring, a), daemon=True, name="s45acq")
-        self.acq.start()
+        self.ctx = mp.get_context("spawn")          # proj021 2-3d: 取得は spawn で（acqboot の冒頭）
+        self.ring = R.Ring(a.buf_mb << 20, lock=self.ctx.Lock())
+        self.loading = False
+        if a.bits:
+            self.bits, self.cur = load_bits(a.bits)
+            if a.bit:
+                if a.bit not in self.bits:
+                    self.ring.close()
+                    raise SystemExit(f"--bit {a.bit} は bits.json に無い（{', '.join(self.bits)}）")
+                self.cur = a.bit
+        else:
+            self.bits = {"default": dict(name="default", bit=os.path.abspath(a.bitfile), pydir=os.path.dirname(os.path.abspath(__file__)),
+                                         sha256=None, tp_cal=None, note="--bitfile")}
+            self.cur = "default"
         try:
-            if not self.pipe.poll(a.boot_timeout):
-                raise SystemExit("取得のプロセスが起動の結果を返さない")
-            r = self.pipe.recv()
-            if not r.get("ok"):
-                raise SystemExit(r.get("msg"))
+            r = self._start_acq(self.bits[self.cur])
         except BaseException:
-            self.acq.join(5)
             self.ring.close()                      # 起動に失敗しても共有メモリを残さない
             raise
         self.ids = r
@@ -110,6 +143,96 @@ class Server:
         self.inflight = collections.deque()     # 送ったが ACK の無い記録 (seq, 溜まりの終わりの位置)
         self.acked = 0
         self.last_drop = None                    # 最後にデータの口を切った時刻・相手・理由
+
+    # ---- proj021 2-3d: 取得のプロセスを bit ごとに起こす
+    def _start_acq(self, e, seq0=0):
+        """bits の項目 e で取得を起こし、起動の結果（ids・version）を返す。失敗は SystemExit。
+        seq0: 記録の通し番号をここから続ける（LOAD の前後で番号が戻ると、受け側が送り直しとみなして捨てる。2-3d の偽物の試験で見た）"""
+        o = copy.copy(self.a)
+        o.bitfile = e["bit"]
+        o.seq0 = seq0
+        if e.get("tp_cal"):
+            o.tp_cal = None
+            if os.path.exists(e["tp_cal"]):
+                import s45cal
+                try:
+                    o.tp_cal = s45cal.load(e["tp_cal"])
+                except (ValueError, OSError) as ex:
+                    log(f"TP の較正ファイルを読めない（使わない）: {ex}")
+        self.pipe, child = self.ctx.Pipe()
+        import acqboot
+        self.acq = self.ctx.Process(target=acqboot.boot, args=(child, self.ring.shm.name, self.ring.cap, self.ring.lock, o, e["pydir"]),
+                                    daemon=True, name="s45acq")
+        self.acq.start()
+        try:
+            t_e = time.time() + self.a.boot_timeout
+            while not self.pipe.poll(0.2):           # 子が起動の途中で落ちたら待たない（2-3d の偽物の試験: pydir が無い）
+                if not self.acq.is_alive():
+                    raise SystemExit(f"取得のプロセスが起動の途中で終わった（終了の符号 {self.acq.exitcode}）")
+                if time.time() > t_e:
+                    raise SystemExit("取得のプロセスが起動の結果を返さない")
+            r = self.pipe.recv()
+            if not r.get("ok"):
+                raise SystemExit(r.get("msg"))
+        except BaseException:
+            self.acq.join(5)
+            if self.acq.is_alive():
+                self.acq.terminate(); self.acq.join(3)
+            raise
+        log(f"取得: bit {e['name']}（{e['bit']}、道具 {e['pydir']}）・ID {r.get('ids')}・版 {r.get('version')}")
+        return r
+
+    def _stop_acq(self):
+        with self.plock:
+            try:
+                self.pipe.send(dict(op="quit"))
+                if self.pipe.poll(20.0):
+                    self.pipe.recv()
+            except (OSError, EOFError):
+                pass
+        self.acq.join(20)
+        if self.acq.is_alive():
+            log("取得のプロセスが quit で抜けない → terminate")
+            self.acq.terminate(); self.acq.join(3)
+
+    def load(self, name):
+        """LOAD bit=<名前>（IDLE のときだけ）。sha256 を照らし、取得を止めて新しい bit で起こす。失敗したら元の bit に戻す"""
+        if name not in self.bits:
+            return f"ERR ARG bit={name} は許す bit に無い（BITS: {', '.join(self.bits)}）"
+        e = self.bits[name]
+        if not os.path.exists(e["bit"]):
+            return f"ERR LOAD {name} の .bit が無い"
+        st = self.acq_cmd(dict(op="status"))
+        if st.get("state") not in ("IDLE", "ERROR"):
+            return f"ERR STATE {st.get('state')} の間は LOAD できない（STOP の後に）"
+        sha = sha256_of(e["bit"])
+        if e.get("sha256") and sha != e["sha256"].lower():
+            return f"ERR LOAD {name} の sha256 が bits.json と違う（{sha[:12]}…）"
+        prev = self.cur
+        seq0 = int(st.get("seq") or 0)
+        t0 = time.time()
+        self.loading = True
+        try:
+            self._stop_acq()
+            try:
+                r = self._start_acq(e, seq0)
+            except BaseException as ex:  # noqa: BLE001
+                log(f"LOAD {name} に失敗（{ex}）。{prev} に戻す")
+                try:
+                    self.ids = self._start_acq(self.bits[prev], seq0)
+                except BaseException as ex2:  # noqa: BLE001
+                    log(f"{prev} にも戻せない（{ex2}）")
+                    self.quit_ev.set()
+                    return f"ERR LOAD {name} に失敗し、{prev} にも戻せない（specd を止める）: {ex2}"
+                return f"ERR LOAD {name} に失敗（{ex}）。{prev} に戻した"
+        finally:
+            self.loading = False
+        self.ids, self.cur = r, name
+        ev = dict(ev="LOAD", bit=name, sha256=sha, ids=r.get("ids"), version=r.get("version"), secs=round(time.time() - t0, 1))
+        with self.dlock:
+            self._pending_ev = ev
+        log(f"LOAD {name}: {ev['secs']} s")
+        return "OK " + kv_line(dict(bit=name, sha256=sha[:16], secs=ev["secs"], version=r.get("version")))
 
     # ---- 取得への命令
     def acq_cmd(self, d, timeout=30.0):
@@ -132,6 +255,12 @@ class Server:
                 kv[k] = v
         if cmd == "HELP":
             return "OK " + HELP
+        if cmd == "BITS":
+            return "OK " + kv_line(dict(cur=self.cur, bits=",".join(self.bits)))
+        if cmd == "LOAD":
+            if "bit" not in kv:
+                return "ERR ARG LOAD bit=<名前>（BITS で一覧）"
+            return self.load(kv["bit"])
         if cmd == "ID":
             r = self.acq_cmd(dict(op="id"))
             return self._rep(r, lambda r: kv_line(dict(version=r["version"], win_id=r["ids"]["win"], adc_id=r["ids"]["adc"],
@@ -406,7 +535,7 @@ class Server:
         threading.Thread(target=self.serve_data, daemon=True).start()
         threading.Thread(target=self.sender, daemon=True).start()
         try:
-            while self.acq.is_alive() and not self.quit_ev.is_set():
+            while (self.acq.is_alive() or self.loading) and not self.quit_ev.is_set():
                 time.sleep(0.5)
             if self.quit_ev.is_set():
                 log("止める（制御の口の SHUTDOWN）")
@@ -486,6 +615,8 @@ def main():
     p.add_argument("--fake-stall", type=int, default=0, help="偽物の陽性対照: 窓 A0 の k がこの倍数のとき読み出しを 50 ms 止める")
     p.add_argument("--posctl-corrupt", type=int, default=0, help="陽性対照: seq がこの倍数の記録の中身を CRC の後に 1 bit 反転")
     p.add_argument("--posctl-gap", type=int, default=0, help="陽性対照: seq がこの倍数の記録を黙って捨てる（DROP を出さない）")
+    p.add_argument("--bits", default=None, help="proj021 2-3d: bits.json（LOAD で許す bit の一覧）。無ければ --bitfile の 1 本だけ")
+    p.add_argument("--bit", default=None, help="起こすときの bit の名前（bits.json の。既定はその default）")
     p.add_argument("--proto", type=int, default=2, choices=(1, 2), help="proj021 2-3c: 送る記録の版（2 = s45proto v2・float32 / 1 = 今までの v1）")
     p.add_argument("--posctl-f32-trunc", action="store_true", help="陽性対照: v2 の float32 を最も近い値でなく 0 へ切り捨てる（fmt=both の照合が落ちる）")
     p.add_argument("--read", default="ring", choices=("ring", "axi"),

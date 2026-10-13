@@ -114,8 +114,29 @@ t_v1() {      # proj021 2-3c: --proto 1（今までの v1）でも basic と同�
   judge $([ "$s" = 800 ] && grep -q "照合: 通過" "$OUT/v1.recv.log" && echo 1) "SPEC $s（期待 800）・版 $v"
 }
 
+t_load() {    # proj021 2-3d: LOAD で proj020 の道具（s45proto v1）↔ proj021（v2）を往復。受けは切らずに続け、番号は続く・説明のない欠け 0・版 1 と 2 の両方
+  echo "== load（2-3d）"
+  local B="$OUT/bits"; mkdir -p "$B"; echo p21 > "$B/p21.bit"; echo p20 > "$B/p20.bit"
+  printf '{"default": "proj021", "bits": {"proj021": {"bit": "p21.bit", "pydir": "%s"}, "proj020": {"bit": "p20.bit", "pydir": "%s"}, "bad": {"bit": "p20.bit", "pydir": "/nonexistent"}}}' \
+    "$PWD" "$(cd ../../proj020/pynq && pwd)" > "$B/bits.json"
+  srv load --bits "$B/bits.json" --boot-timeout 30
+  ctl "START n=20" "SEND ON" > /dev/null
+  rcv --seconds 14 --json "$OUT/load.json" > "$OUT/load.recv.log" &
+  local R=$!
+  sleep 3; ctl "LOAD bit=proj020" "START n=10" > "$OUT/load.ctl1"
+  sleep 2; ctl "LOAD bit=bad" > "$OUT/load.ctl2"
+  ctl "LOAD bit=proj021" "START n=10" > "$OUT/load.ctl3"
+  wait $R
+  stop_srv
+  local s=$(js "$OUT/load.json" spec) u=$(js "$OUT/load.json" unexplained) d=$(js "$OUT/load.json" dup) v=$(js "$OUT/load.json" ver)
+  local ev=$(grep -c '"ev": "LOAD"' "$OUT/load.recv.log")
+  judge $([ "$s" = 320 ] && [ "$u" = 0 ] && [ "$d" = 0 ] && [ "$ev" = 2 ] && grep -q "ERR LOAD bad" "$OUT/load.ctl2" && grep -q "OK bit=proj020" "$OUT/load.ctl1" \
+          && python3 -c "import sys; v=$v; sys.exit(0 if v.get('1') and v.get('2') else 1)" && echo 1) \
+    "SPEC $s（期待 320）・説明のない欠け $u・送り直しとみなした記録 $d・EVENT LOAD $ev・版 $v・bad は元に戻る"
+}
+
 case "${1:-all}" in
-  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1 ;;
+  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1; t_load ;;
   *) "t_$1" ;;
 esac
 if [ $NG = 0 ]; then echo "test_fake: 全部通過"; else echo "test_fake: NG $NG 件"; exit 1; fi

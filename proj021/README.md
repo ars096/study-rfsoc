@@ -1149,6 +1149,67 @@ python3 specctl.py --host $B STATUS STOP
 grep -E "1 周が|BDROP|ERROR" runs/specd_23c.log | head
 ```
 
+### 手順 2-3d — LOAD と bits.json（設計と予言、2026-10-13。コードを書く前）
+
+**INTERFACE 5. の「bit の切り替え」**: `LOAD bit=<名前>`（IDLE のときだけ）で、取得のプロセスを新しい bit で起こし直す。制御・データの口と溜まり（s45ring）・受け側の接続は保つ。
+許す bit はボードの `bits.json` にあるものだけ（**ネットワークから任意のパスを受けない**。名前だけ）。
+
+- **bits.json**: `{"default": 名前, "bits": {名前: {bit, pydir, sha256?, tp_cal?, note?}}}`。パスは bits.json の置き場所から。
+  **pydir = その bit の PS の道具の置き場所**（proj020.bit なら ../proj020 の s45acq・spectrometer・window・timebase と、その版の s45proto v1）。
+  INTERFACE の「期待する IF_ID」は、bit の側の照合（v2 は s45core の自己記述、v1 は今までの ID の照合）がそれぞれの道具の中でするので、bits.json には持たない
+- **取得のプロセスを spawn で起こす**（`acqboot.boot`）。fork だと親（specd）が読み込んだ proj021 の s45proto（v2）が子に持ち込まれ、proj020 の s45acq が v2 の頭を書いてしまう。
+  boot は specd の置き場所の道具を sys.modules から外し、pydir を sys.path の頭に置いて cd し、specd の溜まり（共有メモリ）に pydir の s45ring の形でつなぎ（s45ring は proj018 から同じ形）、pydir の `s45acq.main` を呼ぶ
+- **記録の通し番号は LOAD の前から続ける**（新しい取得の Acq の seq を、LOAD の前の seq で上書き）。戻ると受け側が送り直しとみなして捨てる（偽物の試験の 1 回目で見た）
+- LOAD の手順: 名前を引く → .bit があるか・sha256（bits.json にあれば照らす）→ 取得が IDLE か → quit で止める → 新しい bit で起こす（起動で錨を打ち直す・TP の較正は項目の tp_cal）→
+  データの口に EVENT `LOAD`（bit・sha256・ids・version・秒）。**起こせなければ元の bit に戻す**（戻せなければ specd を止める）
+- 命令: `BITS`（cur と名前の一覧）・`LOAD bit=<名前>`。specd: `--bits bits.json`・`--bit <名前>`（無ければ今までどおり `--bitfile` の 1 本）。例: `pynq/bits.example.json`
+- 受け側は ver 1・2 の両方を読む（2-3c）ので、LOAD の前後で記録の版が変わってもそのまま受けられる
+
+**予言**:
+1. `test_fake.sh all`（PL なし）: 今までの 10 試験 ＋ load（proj021 → proj020 → bad（起動の途中で落ちる → proj020 に戻る）→ proj021、受けは切らずに続け、SPEC 320・説明のない欠け 0・送り直しとみなした記録 0・
+   EVENT LOAD 2・版 1 と 2 の両方）が通る
+2. **V2-d**（実機）: proj021 → `LOAD bit=proj020` → STATUS の time_ok 1（proj020 の timebase で錨を打ち直す）・ID の win_id が proj020 の値・START n=50 で v1 の記録が届く →
+   `LOAD bit=proj021` → ID が 02030000・START n=50 で v2 の記録。受け側は 1 本のまま、説明のない欠け 0。LOAD 1 回 ≒ 10〜20 s（Overlay の読み込み ＋ 錨の待ち）
+3. 回帰: proj021 だけで起こした specd（`--bits` あり・spawn）で S23c-2（`s45v2c.py`）が今までどおり通る
+
+**判定**:
+
+| 判定 | 中身 |
+|---|---|
+| S23d-1 | 予言 1 |
+| S23d-2 | **V2-d**（予言 2） |
+| S23d-3 | 予言 3 |
+
+**実装（2026-10-13）**: `specd.py`（`load_bits`・`sha256_of`・Server の `_start_acq`（spawn・起動の途中で子が落ちたら待たない）・`_stop_acq`・`load`、BITS・LOAD、`--bits`・`--bit`、
+LOAD の間は run の見張りで止まらない）、`acqboot.py`（新）、`bits.example.json`（新）、`test_fake.sh`（load）
+
+**PL なしの確かめ（クラウド、2026-10-13）**: `test_fake.sh all` 11 試験とも通過（S23d-1）。load: SPEC 320（160 ＋ 80 ＋ 80）・版 {2: 366, 1: 122}・EVENT LOAD 2・説明のない欠け 0・送り直し 0、
+bad は「起動の途中で終わった」で proj020 に戻った。acqboot のログで、proj020 の取得が proj020 の s45proto（版 1）を使い、番号を 242 から続けたことを確かめた
+- 1 回目は LOAD の後に番号が 1 から始まり、受け側が 122 個を送り直しとみなして捨てた → 番号を続けるようにした
+- 1 回目は pydir の無い bad で、子が落ちたのに specd が 120 s 起動の結果を待ち、制御の口がふさがった → 子が終わったらすぐ失敗にした
+
+### 2-3d の実機
+
+```bash
+# ボード: proj020 の道具と bit が ~/proj020 にあること（無ければ Vivado サーバから proj020.bit・.hwh・pynq/*.py を送る）
+ls ~/proj020/proj020.bit ~/proj020/proj020.hwh ~/proj020/s45acq.py
+scp pynq/*.py pynq/bits.example.json xilinx@$B:~/proj021/
+cd ~/proj021 && cp bits.example.json bits.json                                  # sha256 を書き足すなら sha256sum proj021.bit ../proj020/proj020.bit
+python3 specd.py --clkin 0 --ref 10 --bits bits.json > runs/specd_23d.log 2>&1 &
+
+# 制御 PC: S23d-3（回帰）
+python3 s45v2c.py --host $B --n 50
+
+# S23d-2 = V2-d（受けは 1 本で通す）
+python3 specrecv.py --host $B --out /tmp/r23d.s45 --seconds 300 --json r23d.json &
+python3 specctl.py --host $B BITS ID "SEND ON"
+python3 specctl.py --host $B "LOAD bit=proj020" ID STATUS "START n=50"
+sleep 5
+python3 specctl.py --host $B "LOAD bit=proj021" ID STATUS "START n=50"
+wait                                                                              # specrecv の 300 s が終わるまで
+grep -E "LOAD|acqboot|錨" runs/specd_23d.log
+```
+
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
 判定 1 つにつき、次の 6 項目を書く。**環境に依る値（ホスト名・IP アドレス・パス）は書かない**（公開を前提にする）。
