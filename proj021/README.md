@@ -250,6 +250,7 @@ python3 gbboot.py --loads 50 --clkin 0 --ref 10 --bitfile proj021_k0.bit --expec
 | 2-3c | s45proto v2（float32・utc_ns の補正） | 同じ | S23c（**V2-b**） | 通過（2026-10-13） |
 | 2-3d | LOAD と bits.json | 同じ | S23d（**V2-d**） | 通過（2026-10-13） |
 | 2-2d | 仮の読み窓を外して 64 KiB に・FULL の TP をレコードで・道具の読みを全部レコードに | 変える | S22d-1〜3 | 通過（2026-10-13） |
+| 2-4 | V2-f（5.1 の見張りを FULL・DDC の NS 1〜8 の全部の流れで） | 2-2d のまま | S24-1〜4（**V2-f**） | 設計中 |
 
 残り: V2-f（5.1 の見張りを FULL・DDC の全部の流れで）・P-5（配線）・INTERFACE 8. の 8（F0 を格子に）と 9（sim-wdelay を PFB 入りで）・F-2
 
@@ -1523,6 +1524,53 @@ python3 plring.py --clkin 0 --ref 10 --tpcompare                        # V2-e�
 python3 plring.py --clkin 0 --ref 10 --soak 60
 # specd（--bits bits.json）で: s45v2c.py --n 50・s45v2a.py --n 100・specrecv 10 分（2-3c と同じ）
 ```
+
+### 手順 2-4 — V2-f（5.1 の見張りを FULL・DDC の全部の流れで）
+
+#### 設計と予言（2026-10-13。コードを書く前）
+
+**V2-f（INTERFACE 9. の (f)）**: 5.1 の見張り（r = DUMP_T − m·BASE が 1 回の RUN の中で一定 ±1）が、**FULL と DDC の全部の流れ（NS 1〜8）**で通ること。
+PL・specd の作りは変えない。判定の道具を 1 本足すだけ。
+
+今までに見たもの・見ていないもの:
+- specd の Bundler（2-3b）は 8 窓の r を見ているが、実機で見たのは **NS 1 と 6（窓 0・窓 1）だけ**（V2-a・V2-b）。r = 524,426 = G ＋ 138 は NS 1 だけ
+- **FULL は specd では RUN しない**（SAM45-Fine の FULL は SNAP と試験の流れ）ので、FULL の r は一度も見張りにかけていない
+- P-4（`timetest --t1`）は 9 流れで DUMP_T の k·N·L からのずれ 0 を見ているが、NS は 1〜6 まで・tint の格子ではなく G の格子・5.1 の m・r の形ではない
+
+**道具 `pynq/s45v2f.py`（新、ボードで root。specd を止めてから）**:
+1. 8 窓を NS 1〜8（A0 = 1・A1 = 2・B0 = 3・… ・D1 = 8）で G の格子に一斉に WRST（`timetest.wrst_on_grid`）、FULL は ADC_A（SRC → WRST → SRST）
+2. 9 流れとも N_ACC = BASE / L（DDC 640〜5、FULL 5,120）・REC_CTRL = ALL、RUN の START_AT は **T の tint の倍数**（specd と同じ。tint 40.96 ms = n_sum 4）
+3. リング（plring.Ring）を --seconds 読み、SPEC のレコードを流れごとに **s45acq.Bundler（specd と同じ見張りのコード）** に入れる。ほかに道具の側でも、r の最小・最大・m の連続（飛び）を数える
+4. --runs 2: STOP → 2 回目の RUN（同じ Overlay・同じ WRST）で r が 1 回目と同じか
+5. 陽性対照 `--posctl`: 走っている途中で A0 だけ STOP し、**tint の倍数 ＋ G** の START_AT で RUN し直す（PL には正しい格子。tint の格子からは外れる）→ A0 の r が G だけ動き、
+   Bundler が r_bad を立てて A0 の束ねを止める。ほかの 8 流れは r_bad 0 のまま
+6. 結果: 流れごとの r・r − G（DDC）・r mod 512（FULL のフレームの位相）・ダンプの数・束の数・r_bad・bdrop
+
+specd の側（同じ見張りが運転の道で通ること）: SET で 8 窓を NS 1〜8（`A0.bw=256 A1.bw=128 B0.bw=64 B1.bw=32 C0.bw=16 C1.bw=8 D0.bw=4 D1.bw=2`）、5 分。
+STATUS の `r_bad 0`・`bund_r`、受け側の欠け 0
+
+**r の見当**: DDC は WRST が G の格子、RUN が tint の格子なので F0 のフレームは「RUN の START_AT ＋ G」から始まり、DUMP_T はそこから F(NS)（窓の最初の z が wspec に入るまで、
+timebase の D(NS) ＋ X(NS)）と、WRST の格子から WSTART までのずれ c 遅れる。2-3b の NS 1 の r = G ＋ 138 と F(1) = 72 から c = 66。
+FULL は F0 = RUN の fin ＋ 2（格子に寄せない。INTERFACE 8. の 8 は未）なので、r = START_AT から 2 フレーム目の頭まで（ADC のフレームの位相しだい）
+
+**予言**:
+1. 9 流れとも **r が RUN の中で一定**（最大 − 最小 ≦ 1。実際は 0 の見込み）・m の飛び 0・Bundler の r_bad 0・bdrop 0（STOP の前の半端を除く）・束の数 = ダンプの数 / 4（端数を除く）
+2. DDC の r − G = F(NS) ＋ 66（±3）: NS 1〜8 で **138・188・277・450・788・1,454・2,776・5,410**（proj017 の F(NS) の表から。PFB T = 4（proj020）で F が変わっていれば外れる。
+   外れたら INTERFACE 8. の 9（sim-wdelay を PFB 入りで出し直す）の材料）。r は BASE / 2 = 1,310,720 より十分小さい（最大 529,698）
+3. FULL の r は 513〜1,536 ビート（START_AT ＋ 1 の RUN から 2 フレーム目の頭）で、r mod 512 = ADC_A のフレームの位相。**2 回目の RUN で同じ値**（START_AT も BASE も 512 の倍数）。
+   Overlay（と SRST）をやり直すと位相が変わって r も変わる見込み（道具を 2 回起こして見る）
+4. DDC の r は 2 回目の RUN・道具の起こし直しでも同じ値（WRST の格子と F(NS) で決まる）
+5. 陽性対照: A0 の r が +524,288 動き、Bundler の r_bad 1（A0 だけ）、A0 の束はそこで止まる。ほかの 8 流れは r_bad 0
+6. specd（NS 1〜8 の 8 窓、5 分）: r_bad 0・bund_r = 予言 2 の 8 つ（道具と同じ値）・bdrop 0・受け側の欠け・kgap・tdev 0
+
+**判定**:
+
+| 判定 | 中身 |
+|---|---|
+| S24-1 | 予言 1・3・4（道具。FULL を含む 9 流れの見張り）= **V2-f** の芯 |
+| S24-2 | 予言 2（DDC の r の値。外れても V2-f は落とさず、INTERFACE 8. の 9 に回す） |
+| S24-3 | 予言 5（陽性対照） |
+| S24-4 | 予言 6（specd の運転の道） |
 
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
