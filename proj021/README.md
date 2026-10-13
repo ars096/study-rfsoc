@@ -250,7 +250,7 @@ python3 gbboot.py --loads 50 --clkin 0 --ref 10 --bitfile proj021_k0.bit --expec
 | 2-3c | s45proto v2（float32・utc_ns の補正） | 同じ | S23c（**V2-b**） | 通過（2026-10-13） |
 | 2-3d | LOAD と bits.json | 同じ | S23d（**V2-d**） | 通過（2026-10-13） |
 | 2-2d | 仮の読み窓を外して 64 KiB に・FULL の TP をレコードで・道具の読みを全部レコードに | 変える | S22d-1〜3 | 通過（2026-10-13） |
-| 2-4 | V2-f（5.1 の見張りを FULL・DDC の NS 1〜8 の全部の流れで） | 2-2d のまま | S24-1〜4（**V2-f**） | 設計中 |
+| 2-4 | V2-f（5.1 の見張りを FULL・DDC の NS 1〜8 の全部の流れで） | 2-2d のまま | S24-1〜4（**V2-f**） | 実機待ち |
 
 残り: V2-f（5.1 の見張りを FULL・DDC の全部の流れで）・P-5（配線）・INTERFACE 8. の 8（F0 を格子に）と 9（sim-wdelay を PFB 入りで）・F-2
 
@@ -1571,6 +1571,26 @@ FULL は F0 = RUN の fin ＋ 2（格子に寄せない。INTERFACE 8. の 8 は
 | S24-2 | 予言 2（DDC の r の値。外れても V2-f は落とさず、INTERFACE 8. の 9 に回す） |
 | S24-3 | 予言 5（陽性対照） |
 | S24-4 | 予言 6（specd の運転の道） |
+
+#### 実装
+
+**実装（2026-10-13）**: `pynq/s45v2f.py`（新）だけ。PL・specd・s45acq は変えない（見張りは `s45acq.Bundler` をそのまま使う）。
+クラウドで作り物の頭（r 一定 40 個 → 束 10・r_bad 0／途中で r を +G → r_bad 1・束ねを止める・m の飛び 1）を通した
+
+#### 実機のコマンド
+
+```bash
+# ボード（root。specd を止めてから。入力はいつもの配線、SG は OFF）
+scp pynq/s45v2f.py xilinx@$B:~/proj021/
+python3 s45v2f.py --clkin 0 --ref 10                       # S24-1・S24-2（60 s × 2 RUN）
+python3 s45v2f.py --clkin 0 --ref 10                       # もう一度（Overlay と SRST をやり直して FULL・DDC の r を比べる: 予言 3・4）
+python3 s45v2f.py --clkin 0 --ref 10 --posctl              # S24-3（陽性対照）
+
+# S24-4: specd を起こし直して（--bits bits.json）、制御 PC から
+python3 specrecv.py --host $B --out /tmp/r24.s45 --seconds 300 --json r24.json &
+python3 specctl.py --host $B "SET A0.bw=256 A1.bw=128 B0.bw=64 B1.bw=32 C0.bw=16 C1.bw=8 D0.bw=4 D1.bw=2 all.shift=9" "SEND ON" "START n=0"
+sleep 280; python3 specctl.py --host $B STATUS STOP; wait
+```
 
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
