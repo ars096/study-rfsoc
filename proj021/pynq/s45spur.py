@@ -242,10 +242,11 @@ def _read_rec(paths, keys):
                     if len(h) < P.HDR.size:
                         break
                     rtype, plen, crc, seq = P.parse_header(h)
+                    ver = P.header_ver(h)
                     pl = fh.read(plen)
                     if len(pl) < plen:
                         break
-                    yield rtype, pl
+                    yield rtype, pl, ver
 
     def absval(d):
         sc = 4.0 ** d["shift"] * 4.0 ** (4 - d["g"]) / 2.0 ** 31
@@ -259,9 +260,9 @@ def run_rec(paths, keys=None, zth=8.0, bin_=25, tsys=139.0, plot=True, edge=EDGE
     it, absval = _read_rec(paths, keys)
     acc = {k: None for k in keys}; cnt = {k: 0 for k in keys}; meta = {}
     tps = {a: [] for a in "ABCD"}
-    for rtype, pl in it():                                     # 1 回目: 平均のスペクトル
+    for rtype, pl, ver in it():                                # 1 回目: 平均のスペクトル
         if rtype == P.T_SPEC:
-            d = P.decode(rtype, pl)
+            d = P.decode(rtype, pl, ver)
             k = f"{'ABCD'[d['adc']]}{d['win']}"
             if k not in acc:
                 continue
@@ -300,10 +301,10 @@ def run_rec(paths, keys=None, zth=8.0, bin_=25, tsys=139.0, plot=True, edge=EDGE
         free = np.flatnonzero(use & ~bad)
         ctrl = free[np.linspace(0, len(free) - 1, 32).astype(int)] if len(free) > 64 else np.array([], int)
         plan[k] = dict(S=S, b=b, z=zz, pks=pks, f=f, ctrl=ctrl, series=[], cur=None, ncur=0, rad=rad, sg=sg, th=th, q=q)
-    for rtype, pl in it():                                     # 2 回目: 束ねた区間ごとの E
+    for rtype, pl, ver in it():                                # 2 回目: 束ねた区間ごとの E
         if rtype != P.T_SPEC:
             continue
-        d = P.decode(rtype, pl)
+        d = P.decode(rtype, pl, ver)
         k = f"{'ABCD'[d['adc']]}{d['win']}"
         if k not in plan:
             continue

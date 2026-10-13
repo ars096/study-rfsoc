@@ -33,6 +33,14 @@ SNAP の中身  <BBHIqqQII ＋ n × int16（proj019 追加。ADC の生サンプ
   （**下位 2 bit は常に 0。14 bit の x = 値 >> 2**）。dump_t = そのフレームの頭のビート、utc_ns その UTC（0 = 答えられない）、
   frame = フレームの番号（SNAP_F = DUMP_F0 を確かめたもの）、health = DUMP_H | サーバーの印、k = SNAP の中での通し番号（0, 1, …）
 
+**v2（proj021 手順 2-3c、INTERFACE 6.）**: 共通の頭の ver = 2。SPEC の中身だけが変わる（TP・SNAP・EVENT は v1 と同じ形）。受け側は ver 1・2 の両方を読む
+SPEC v2 の中身  <8B10I3q2d（88 バイト）＋ nch × float32（fmt 1）/ uint64（fmt 0、試験の照合のときだけ）
+  core s src kind ns shift fmt bit_kind | nch n_sum cfg k nacc sat flags health g rsv | dump_t utc_ns base_ns | if_mhz df_hz
+  core   コアの ADC（CORE_PORT）、s 流れの番号、src そのダンプの入力の ADC、kind 流れの KIND（3 = DDC・1 = FULL）、bit_kind BIT_KIND
+  nch    ch 数、n_sum 束ねた PL のダンプの数、nacc 束の総フレーム数 ΣDUMP_N、base_ns 基本の単位（10,240,000）、df_hz ch の幅
+  utc_ns **実効の区間の始まり**（INTERFACE 5.2: beat_utc(dump_t) − adc_to_core[src] − D_eff。DDC は D(NS) ＋ 1.5·L(NS)）。区間の中心 = utc_ns ＋ tint/2
+  中身   IF の昇順（v1 と同じ）。float32 は u64 の束を**最も近い float32 に丸めたもの**（u64 → float64 は 2^53 未満で厳密 → float32 で 1 回だけ丸める）
+
 EVENT の中身  UTF-8 の JSON（後ろは空白で 8 の倍数に詰める）。{"ev": "START" | "STOP" | "DROP" | "SKIP" | "ERROR" | ...}
   DROP / SKIP は {"ev": ..., "from": 最初の seq, "to": 最後の seq, "n": 数}（両端を含む）
 """
@@ -43,10 +51,12 @@ import zlib
 import numpy as np
 
 MAGIC = b"S45F"
-VERSION = 1
+VERSION = 2                                         # proj021 2-3c: 送る版（specd の --proto 1 で v1）
+VERSIONS = (1, 2)                                   # 読める版
 T_PAD, T_SPEC, T_TP, T_EVENT, T_SNAP = 0, 1, 2, 3, 4
 T_NAMES = {T_PAD: "PAD", T_SPEC: "SPEC", T_TP: "TP", T_EVENT: "EVENT", T_SNAP: "SNAP"}
-FMT_RAW = 0
+FMT_RAW = 0                                         # u64（v1 はこれだけ。v2 では試験の照合のとき）
+FMT_F32 = 1                                         # v2 の運転の形
 NCH = 4096
 
 HDR = struct.Struct("<4sHHIIQ")                     # 24
@@ -56,6 +66,8 @@ SNAP_H = struct.Struct("<BBHIqqQII")                 # 40
 SNAP_N = 8192
 TP_E = np.dtype([("t_beat", "<i8"), ("utc_ns", "<i8"), ("sum", "<u8"), ("nfr", "<u4"), ("flags", "<u4")])   # 32
 SPEC_PLEN = SPEC_H.size + 8 * NCH                   # 32824
+SPEC2_H = struct.Struct("<8B10I3q2d")               # 88（v2）
+BASE_NS = 10_240_000
 H_NOTIME, H_FORCED = 1 << 16, 1 << 17
 TPF_NOTIME = 1 << 16
 
@@ -67,17 +79,30 @@ def pad8(n):
     return (n + 7) & ~7
 
 
-def header(rtype, plen, crc, seq):
-    return HDR.pack(MAGIC, VERSION, rtype, plen, crc, seq)
+def header(rtype, plen, crc, seq, ver=VERSION):
+    return HDR.pack(MAGIC, ver, rtype, plen, crc, seq)
 
 
 def parse_header(b):
     magic, ver, rtype, plen, crc, seq = HDR.unpack_from(b)
     if magic != MAGIC:
         raise ValueError(f"記録の印が違う: {bytes(magic)!r}")
-    if ver != VERSION:
-        raise ValueError(f"記録の版 {ver}（この道具は {VERSION}）")
+    if ver not in VERSIONS:
+        raise ValueError(f"記録の版 {ver}（この道具は {VERSIONS}）")
     return rtype, plen, crc, seq
+
+
+def header_ver(b):
+    """共通の頭の ver（decode に渡す。SPEC の形が版で違う）"""
+    return HDR.unpack_from(b)[1]
+
+
+def f32_round(u):
+    """u64 → 最も近い float32（2^53 未満なら float64 は厳密なので、丸めは float32 への 1 回だけ）"""
+    u = np.asarray(u, np.uint64)
+    if u.size and int(u.max()) >= 1 << 53:
+        raise ValueError("u64 が 2^53 以上（float64 で厳密でない）")
+    return u.astype(np.float64).astype(np.float32)
 
 
 def event_payload(d):
@@ -90,13 +115,21 @@ def event_record(d, seq=0):
     return header(T_EVENT, len(p), crc32(p), seq) + p
 
 
-def decode(rtype, payload):
-    """中身を辞書に（受け側）。SPEC の data は uint64 の 4096 個（IF の昇順）"""
+def decode(rtype, payload, ver=1):
+    """中身を辞書に（受け側）。SPEC の data は v1: uint64 の 4096 個（IF の昇順）/ v2: float32（fmt 1）か uint64（fmt 0）の nch 個。
+    v2 の SPEC にも adc（= core）・win（= s）を入れる（v1 の鍵で読む道具のため）"""
+    if rtype == T_SPEC and ver == 2:
+        (core, s, src, kind, ns, shift, fmt, bit_kind, nch, n_sum, cfg, k, nacc, sat, flags, health, g, _,
+         dump_t, utc_ns, base_ns, if_mhz, df_hz) = SPEC2_H.unpack_from(payload)
+        data = np.frombuffer(payload, "<f4" if fmt == FMT_F32 else "<u8", nch, SPEC2_H.size)
+        return dict(ver=2, core=core, s=s, src=src, kind=kind, adc=core, win=s, ns=ns, shift=shift, fmt=fmt, bit_kind=bit_kind,
+                    nch=nch, n_sum=n_sum, cfg=cfg, k=k, nacc=nacc, sat=sat, flags=flags, health=health, g=g,
+                    dump_t=dump_t, utc_ns=utc_ns, base_ns=base_ns, if_mhz=if_mhz, df_hz=df_hz, data=data)
     if rtype == T_SPEC:
         (adc, win, ns, shift, fmt, g, _, cfg, k, nacc, sat, flags, health, dump_t, utc_ns, if_mhz) = SPEC_H.unpack_from(payload)
         data = np.frombuffer(payload, "<u8", NCH, SPEC_H.size)
-        return dict(adc=adc, win=win, ns=ns, shift=shift, fmt=fmt, g=g, cfg=cfg, k=k, nacc=nacc, sat=sat, flags=flags,
-                    health=health, dump_t=dump_t, utc_ns=utc_ns, if_mhz=if_mhz, data=data)
+        return dict(ver=1, adc=adc, win=win, ns=ns, shift=shift, fmt=fmt, g=g, cfg=cfg, k=k, nacc=nacc, sat=sat, flags=flags,
+                    health=health, dump_t=dump_t, utc_ns=utc_ns, if_mhz=if_mhz, data=data, n_sum=1)
     if rtype == T_TP:
         adc, _, _, n = TP_H.unpack_from(payload)
         return dict(adc=adc, n=n, e=np.frombuffer(payload, TP_E, n, TP_H.size))

@@ -445,6 +445,7 @@ class S45:
     def _recv_loop(self, s):
         hb = bytearray(P.HDR.size)
         run = None
+        run_fmt = None
         t_ack = time.time()
         try:
             while not self._stop.is_set():
@@ -457,6 +458,7 @@ class S45:
                     continue
                 _read_exact(s, hb)
                 rtype, plen, crc, seq = P.parse_header(hb)
+                ver = P.header_ver(hb)                 # proj021 2-3c: SPEC の形が版で違う
                 pb = bytearray(plen)
                 _read_exact(s, pb)
                 with self._lock:
@@ -465,11 +467,13 @@ class S45:
                         continue
                     if self._out:
                         self._out.write(hb); self._out.write(pb)
-                    self.chk.record(rtype, crc, seq, bytes(pb))
+                    self.chk.record(rtype, crc, seq, bytes(pb), ver)
                     if P.crc32(pb) != crc:
                         continue
                     if rtype == P.T_SPEC:
-                        d = P.decode(rtype, pb)
+                        d = P.decode(rtype, pb, ver)
+                        if run_fmt == "both" and d.get("fmt") == P.FMT_RAW:
+                            continue                   # fmt=both の u64 は照合（chk）だけに使い、手元には float32 を残す
                         d["_run"] = run
                         x = d.pop("data").copy()
                         self._w[_key(d["adc"], d["win"])].append((d, x))
@@ -489,6 +493,7 @@ class S45:
                         self.events.append(d)
                         if d.get("ev") == "START":
                             run = d["start_at"]
+                            run_fmt = d.get("fmt")
         except Exception as e:          # 切断など。サーバーが理由を EVENT で言っていれば添える
             if not self._stop.is_set():
                 last = self.events[-1] if self.events else None

@@ -43,7 +43,7 @@ def default_settings():
     for i in range(4):
         wins.append(dict(if_mhz=3000.0, ns=1, shift=9, bundle=1))     # 窓 0: 256 MHz
         wins.append(dict(if_mhz=3000.0, ns=6, shift=9, bundle=1))     # 窓 1: 8 MHz
-    return dict(tint=0.04096, cfg=0, wins=wins)
+    return dict(tint=0.04096, cfg=0, fmt="f32", wins=wins)
 
 
 def win_key(j):
@@ -320,6 +320,7 @@ class HwBackend:
         if self.use_ring:
             self._open_ring()
         self.ids["read"] = "ring" if self.use_ring else "axi"
+        self.bit_kind = (self.cores[0].if_id >> 16) & 0xFF        # proj021 2-3c: v2 の SPEC の bit_kind
         self.anchor()
 
     # ---- proj021 2-3a: リング ----
@@ -809,6 +810,8 @@ class Acq:
         self.err = None
         self.forced = False
         self.posctl = dict(corrupt=opts.posctl_corrupt, gap=opts.posctl_gap)
+        self.proto = int(getattr(opts, "proto", P.VERSION))          # proj021 2-3c: 送る版（1 = 今までの v1）
+        self.f32_trunc = bool(getattr(opts, "posctl_f32_trunc", False))
         self.hist = np.zeros(1001, np.int64)      # 1 周の時間（0.1 ms 刻み、100 ms で頭打ち）
         self.cal = getattr(opts, "tp_cal", None)    # TP の dBm の較正（s45cal、specd が起動時に読む）。bit の ID は open の後で照らす
         self.cal_msg = "較正ファイルが無い" if self.cal is None else "未確認"
@@ -857,7 +860,7 @@ class Acq:
             payload_parts = list(payload_parts)
             b = bytearray(payload_parts[-1]); b[len(b) // 2] ^= 0x01
             payload_parts[-1] = bytes(b)              # 陽性対照: CRC を計算した後に 1 bit 反転（受け側の CRC の不一致が数えるはず）
-        ok = (d["pending"] is None or rtype == P.T_EVENT) and self.ring.put([P.header(rtype, plen, crc, seq)] + list(payload_parts))
+        ok = (d["pending"] is None or rtype == P.T_EVENT) and self.ring.put([P.header(rtype, plen, crc, seq, self.proto)] + list(payload_parts))
         if not ok:
             d["n"] += 1
             if d["pending"] is None:
@@ -869,7 +872,7 @@ class Acq:
         a, b, n = self.drop["pending"]
         p = P.event_payload(dict(ev="DROP", **{"from": a, "to": b, "n": n}))
         seq = self.seq + 1
-        if self.ring.put([P.header(P.T_EVENT, len(p), P.crc32(p), seq), p]):
+        if self.ring.put([P.header(P.T_EVENT, len(p), P.crc32(p), seq, self.proto), p]):
             self.seq = seq
             self.drop["pending"] = None
             self.log(f"溜まりが溢れて捨てた: seq {a}〜{b}（{n} 個）")
@@ -894,7 +897,7 @@ class Acq:
                 if self.state not in (self.IDLE, self.ERROR):
                     return dict(ok=False, code="STATE", msg=f"{self.state} の間は SET できない（STOP の後に）")
                 st = self.st
-                new = dict(tint=st["tint"], cfg=st["cfg"], wins=[dict(w) for w in st["wins"]])
+                new = dict(tint=st["tint"], cfg=st["cfg"], fmt=st.get("fmt", "f32"), wins=[dict(w) for w in st["wins"]])
                 for k, v in cmd["kv"].items():
                     self._set1(new, k, v)
                 check_tint(new["tint"])
@@ -932,6 +935,10 @@ class Acq:
     def _set1(self, new, k, v):
         if k == "tint":
             new["tint"] = float(v)
+        elif k == "fmt":                           # proj021 2-3c: v2 の SPEC の形（f32 = 運転 / u64 = 試験 / both = 同じ束を両方。照合用）
+            if v not in ("f32", "u64", "both"):
+                raise ValueError("fmt は f32・u64・both")
+            new["fmt"] = v
         elif k == "cfg":
             new["cfg"] = int(v, 0) & 0xFFFFFFFF
         else:
@@ -993,6 +1000,7 @@ class Acq:
         self.ndump_target = int(cmd.get("n") or 0)
         utc = self.be.clock.utc_ns(sa)
         self.event(dict(ev="START", start_at=sa, utc_ns=utc, n=self.ndump_target, forced=self.forced, version=VERSION,
+                        proto=self.proto, fmt=self.st.get("fmt", "f32") if self.proto == 2 else "u64",
                         ids=self.be.ids, tint=self.st["tint"], cfg=self.st["cfg"], tp_cal=self._cal_pub(),
                         wins=[dict(key=win_key(j), adc=j // NW, win=j % NW, **cf) for j, cf in enumerate(self.be.cfgs)]))
         self.log(f"START: START_AT {sa}（格子 {sa // G_BEATS}·G、UTC {utc / 1e9:.6f}）n = {self.ndump_target}")
@@ -1077,10 +1085,37 @@ class Acq:
         cf = self.be.cfgs[j]
         h = int(m["h"]) | (0 if self.be.clock.ok else P.H_NOTIME) | (P.H_FORCED if self.forced else 0)
         utc = self.be.clock.utc_ns(m["t"], cf["ns"], j // NW)
+        if self.proto == 2:
+            self._spec_record2(j, m, spec, cf, h, utc)
+            return
         hd = P.SPEC_H.pack(j // NW, j % NW, cf["ns"], cf["shift"], P.FMT_RAW, cf["g"], 0, m["cfg"], m["k"], cf["nacc"],
                            m["sat"], m["flags"], h, m["t"], utc, cf["if_mhz"])
         data = np.ascontiguousarray(spec[P.IF_ORDER])
         self._put(P.T_SPEC, [hd, data], P.crc32(hd, data))
+        self.h_or |= int(m["h"]); self.fl_or |= int(m["flags"]) & FLAGS_OK_MASK; self.sat += int(m["sat"])
+
+    def _spec_record2(self, j, m, spec, cf, h, utc):
+        """proj021 2-3c: s45proto v2 の SPEC（INTERFACE 6.）。utc_ns は実効の区間の始まり（5.2）: v1 の utc（D(NS) を引いたもの）から、
+        さらに PFB の重心のずれ 1.5·L(NS) を引く。fmt = f32（既定）/ u64 / both（同じ束を u64 と f32 の 2 つで。受け側の照合）"""
+        ns = cf["ns"]
+        L = 4096 << (ns - 1)
+        if utc:
+            utc -= (3 * L * 125) // 64                 # 1.5·L ビート → ns（1 ビート = 125/32 ns）
+        df = 512e6 / (1 << ns) / P.NCH
+        raw = np.ascontiguousarray(spec[P.IF_ORDER])
+        fm = self.st.get("fmt", "f32")
+        for f in (("u64", "f32") if fm == "both" else (fm,)):
+            if f == "u64":
+                data, code = raw, P.FMT_RAW
+            else:
+                data, code = P.f32_round(raw), P.FMT_F32
+                if self.f32_trunc:                     # 陽性対照: 0 へ切り捨て（最も近い値でない）→ 受け側の照合が落ちる
+                    up = data.astype(np.float64) > raw.astype(np.float64)
+                    data[up] = np.nextafter(data[up], np.float32(0))
+            hd = P.SPEC2_H.pack(j // NW, j % NW, j // NW, 3, ns, cf["shift"], code, int(getattr(self.be, "bit_kind", 0)),
+                                P.NCH, int(cf.get("n_sum", 1)), m["cfg"], m["k"], cf["nacc"], m["sat"], m["flags"], h, cf["g"], 0,
+                                m["t"], utc, P.BASE_NS, cf["if_mhz"], df)
+            self._put(P.T_SPEC, [hd, data], P.crc32(hd, data))
         self.h_or |= int(m["h"]); self.fl_or |= int(m["flags"]) & FLAGS_OK_MASK; self.sat += int(m["sat"])
 
     def _bdrop(self, j, d):

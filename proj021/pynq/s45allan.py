@@ -83,12 +83,13 @@ def read(paths, keys, chan_bin, frac=0.9):
                 if len(h) < P.HDR.size:
                     break
                 rtype, plen, crc, seq = P.parse_header(h)
+                ver = P.header_ver(h)
                 pl = f.read(plen)
                 if len(pl) < plen:
                     break
                 nrec += 1
                 if rtype == P.T_SPEC:
-                    d = P.decode(rtype, pl)
+                    d = P.decode(rtype, pl, ver)       # proj021 2-3c: v2 は float32（fmt 1）
                     key = f"{'ABCD'[d['adc']]}{d['win']}"
                     if key not in w:
                         continue

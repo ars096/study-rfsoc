@@ -10,6 +10,8 @@
   - seq の欠けが、DROP / SKIP の EVENT の範囲で全部説明できる（説明できない欠け = 0 が合格）
   - SPEC: (ADC, 窓) ごとに DUMP_K が 1 ずつ、DUMP_T が N_ACC·L ずつ進む（START の後。START をまたぐと番号は 0 から）
   - TP: ADC ごとに区切りの頭のビートが 262,144 ずつ進む
+  - proj021 2-3c（s45proto v2）: ver 1・2 の両方を読む。SPEC の連続は (ADC, 窓, fmt) ごと。
+    fmt=both（同じ束を u64 と float32 の 2 つで送る試験）のときは、組の float32 = u64 を最も近い float32 に丸めたもの（全 ch で一致）を確かめる（f32_pairs・f32_bad）
 書いたファイルは受けた記録をそのまま続けたもの（同じ形。--file で読める）。送り直された記録（seq が前と同じか小さい）は書かない。
 ACK: 書き終えた最後の seq を 0.2 秒おきに <Q の 8 バイトで返す（specd はそこまでを溜まりから消す）
 """
@@ -51,8 +53,13 @@ class Check:
         self.first_t = None
         self.epoch = 0
         self.dup = 0
+        self.ver = {}                 # proj021 2-3c: 版ごとの記録の数
+        self.f32_pairs = 0
+        self.f32_bad = 0
+        self.f32_maxulp = 0.0
+        self._pair = {}
 
-    def record(self, rtype, crc, seq, payload):
+    def record(self, rtype, crc, seq, payload, ver=1):
         self.n[rtype] = self.n.get(rtype, 0) + 1
         self.bytes += P.HDR.size + len(payload)
         if P.crc32(payload) != crc:
@@ -66,9 +73,12 @@ class Check:
                 elif seq <= self.last_seq:
                     self.seq_back += 1
             self.last_seq = seq
-        d = P.decode(rtype, payload)
+        d = P.decode(rtype, payload, ver)
+        self.ver[ver] = self.ver.get(ver, 0) + 1
         if rtype == P.T_SPEC:
-            key = (d["adc"], d["win"])
+            key = (d["adc"], d["win"], d.get("fmt", 0))
+            if ver == 2:
+                self._f32_pair(d)
             L = 4096 << (d["ns"] - 1)
             if key in self.k and self.k[key][2] == self.epoch:
                 k0, t0, _ = self.k[key]
@@ -98,6 +108,29 @@ class Check:
             if self.verbose:
                 print(f"  EVENT seq {seq}: {json.dumps(d, ensure_ascii=False)[:300]}", flush=True)
 
+    def _f32_pair(self, d):
+        """fmt=both: 同じ (core, s, k) の u64 と float32 を照らす。float32 = 最も近い丸め（全 ch 一致）・差 ≦ 0.5 ulp"""
+        pk = (d["core"], d["s"], d["k"], d["dump_t"])
+        other = self._pair.pop(pk, None)
+        if other is None:
+            if len(self._pair) > 64:
+                self._pair.clear()
+            d = dict(d)
+            d["data"] = d["data"].copy()               # 受けの箱（pb）は次の記録で上書きされるので写しを持つ
+            self._pair[pk] = d
+            return
+        u, f = (other, d) if other["fmt"] == P.FMT_RAW else (d, other)
+        if u["fmt"] != P.FMT_RAW or f["fmt"] != P.FMT_F32:
+            return
+        self.f32_pairs += 1
+        ud = u["data"].astype(np.float64)
+        fd = f["data"].astype(np.float64)
+        ulp = np.spacing(f["data"]).astype(np.float64)
+        e = float(np.max(np.abs(fd - ud) / ulp)) if len(ud) else 0.0
+        self.f32_maxulp = max(self.f32_maxulp, e)
+        if not np.array_equal(P.f32_round(u["data"]), f["data"]) or e > 0.5:
+            self.f32_bad += 1
+
     def unexplained(self):
         n = 0
         for a, b in self.gaps:
@@ -110,7 +143,8 @@ class Check:
         return dict(spec=self.n[P.T_SPEC], tp=self.n[P.T_TP], event=self.n[P.T_EVENT], snap=self.n.get(P.T_SNAP, 0), mb=round(self.bytes / 2**20, 1),
                     crc_bad=self.crc_bad, gaps=sum(b - a + 1 for a, b in self.gaps), declared=sum(b - a + 1 for a, b in self.declared),
                     unexplained=self.unexplained(), seq_back=self.seq_back, dup=self.dup, kgap=self.kgap, tdev=self.tdev, tp_gap=self.tp_gap,
-                    health=f"{self.h_or:#x}", sat=self.sat, flags=f"{self.flags_or:#x}", last_seq=self.last_seq)
+                    health=f"{self.h_or:#x}", sat=self.sat, flags=f"{self.flags_or:#x}", last_seq=self.last_seq,
+                    ver=self.ver, f32_pairs=self.f32_pairs, f32_bad=self.f32_bad, f32_maxulp=round(self.f32_maxulp, 3))
 
 
 def read_exact(src, n, buf):
@@ -145,6 +179,7 @@ def run(src, chk, out, seconds, report, ready=None, ack=None):
         except EOFError:
             break
         rtype, plen, crc, seq = P.parse_header(h)
+        ver = P.header_ver(h)
         if plen > len(pb):
             pb = bytearray(plen)
         pl = read_exact(src, plen, pb)
@@ -153,7 +188,7 @@ def run(src, chk, out, seconds, report, ready=None, ack=None):
             continue
         if out:
             out.write(h); out.write(pl)
-        chk.record(rtype, crc, seq, bytes(pl) if rtype != P.T_SPEC else pl)
+        chk.record(rtype, crc, seq, bytes(pl) if rtype != P.T_SPEC else pl, ver)
         if report and time.time() > t_rep:
             t_rep += report
             print(f"  {time.time() - t0:7.0f} s: {json.dumps(chk.summary(), ensure_ascii=False)}", flush=True)
@@ -193,7 +228,7 @@ def main():
     print("まとめ: " + json.dumps(sm, ensure_ascii=False), flush=True)
     if a.json:
         json.dump(dict(summary=sm, events=chk.events), open(a.json, "w"), ensure_ascii=False, indent=1)
-    ok = sm["crc_bad"] == 0 and sm["unexplained"] == 0 and sm["kgap"] == 0 and sm["tdev"] == 0 and sm["tp_gap"] == 0
+    ok = sm["crc_bad"] == 0 and sm["unexplained"] == 0 and sm["kgap"] == 0 and sm["tdev"] == 0 and sm["tp_gap"] == 0 and sm["f32_bad"] == 0
     print(f"照合: {'通過' if ok else '失敗'}", flush=True)
     sys.exit(0 if ok else 1)
 

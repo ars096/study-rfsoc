@@ -88,8 +88,34 @@ t_stall() {   # 陽性対照（取得の側）: 窓 A0 の読み出しを 50 ms 
   judge $([ "$kg" -gt 0 ] && [ "$miss" -gt 0 ] && echo 1) "受け側の DUMP_K の飛び $kg・サーバーの miss $miss（どちらも > 0 のはず）"
 }
 
+t_f32() {     # proj021 2-3c: fmt=both（同じ束を u64 と float32 で）→ 組 800、float32 = 最も近い丸め、差 ≦ 0.5 ulp。v2 の記録だけ
+  echo "== f32（s45proto v2）"; srv f32
+  ctl "SET fmt=both" "START n=100" "SEND ON" > /dev/null
+  rcv --seconds 7 --json "$OUT/f32.json" > "$OUT/f32.recv.log"
+  local p=$(js "$OUT/f32.json" f32_pairs) b=$(js "$OUT/f32.json" f32_bad) e=$(js "$OUT/f32.json" f32_maxulp) v=$(js "$OUT/f32.json" ver) k=$(js "$OUT/f32.json" kgap)
+  stop_srv
+  judge $([ "$p" = 800 ] && [ "$b" = 0 ] && [ "$k" = 0 ] && python3 -c "import sys; sys.exit(0 if float('$e') <= 0.5 else 1)" && grep -q "照合: 通過" "$OUT/f32.recv.log" && echo 1) \
+    "組 $p（期待 800）・不一致 $b・最大 $e ulp・DUMP_K の飛び $k・版 $v"
+}
+t_f32p() {    # 陽性対照: float32 を 0 へ切り捨て → 組ごとに不一致（f32_bad = 組の数）
+  echo "== f32p（陽性対照）"; srv f32p --posctl-f32-trunc
+  ctl "SET fmt=both" "START n=50" "SEND ON" > /dev/null
+  rcv --seconds 5 --json "$OUT/f32p.json" > "$OUT/f32p.recv.log"
+  local p=$(js "$OUT/f32p.json" f32_pairs) b=$(js "$OUT/f32p.json" f32_bad)
+  stop_srv
+  judge $([ "$p" -gt 0 ] && [ "$b" = "$p" ] && grep -q "照合: 失敗" "$OUT/f32p.recv.log" && echo 1) "組 $p・不一致 $b（全部であるべき）"
+}
+t_v1() {      # proj021 2-3c: --proto 1（今までの v1）でも basic と同じに通る
+  echo "== v1（--proto 1）"; srv v1 --proto 1
+  ctl "START n=100" "SEND ON" > /dev/null
+  rcv --seconds 7 --json "$OUT/v1.json" > "$OUT/v1.recv.log"
+  local s=$(js "$OUT/v1.json" spec) v=$(js "$OUT/v1.json" ver)
+  stop_srv
+  judge $([ "$s" = 800 ] && grep -q "照合: 通過" "$OUT/v1.recv.log" && echo 1) "SPEC $s（期待 800）・版 $v"
+}
+
 case "${1:-all}" in
-  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall ;;
+  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1 ;;
   *) "t_$1" ;;
 esac
 if [ $NG = 0 ]; then echo "test_fake: 全部通過"; else echo "test_fake: NG $NG 件"; exit 1; fi

@@ -1074,6 +1074,64 @@ python3 specctl.py --host $B "START n=0" "SEND ON"; python3 specrecv.py --host $
 python3 specctl.py --host $B STATUS STOP
 ```
 
+### 手順 2-3c — s45proto v2（float32）と V2-b（設計と予言、2026-10-13。コードを書く前）
+
+**変えるのは「specd が送る SPEC の形」と受け側の読み口**（INTERFACE 6.）。PL・リング・束ねは変えない。TP・SNAP・EVENT の中身は v1 と同じ（共通の頭の ver だけ 2）。
+
+- **SPEC v2**（`s45proto.SPEC2_H`、88 バイト ＋ nch × float32）: core・s・src・kind・ns・shift・fmt・bit_kind | nch・n_sum・cfg・k・nacc・sat・flags・health・g | dump_t・utc_ns・base_ns | if_mhz・df_hz
+- **値の形**: 運転は float32（fmt 1）。束の u64 を**最も近い float32 に 1 回で丸める**（u64 → float64 は 2^53 未満で厳密 → float32）。
+  `SET fmt=u64` は u64 だけ（試験・V2-a）、`SET fmt=both` は同じ束を u64 と float32 の 2 つで送る（INTERFACE 4.5 の「試験の命令」）
+- **utc_ns = 実効の区間の始まり**（5.2）: v1 の utc（beat_utc(dump_t) − adc_to_core − D(NS)）から、さらに PFB の重心のずれ 1.5·L(NS) を引く。
+  **D(NS) は proj017（矩形）の sim の値のまま**（timebase.WIN_DELAY_BEATS。PFB の入った RTL で出し直すのは INTERFACE 8. の 9、未）
+- 受け側: `specrecv`（ver 1・2 を読む。SPEC の連続は (ADC, 窓, fmt) ごと。fmt=both の組を照らして `f32_pairs`・`f32_bad`・`f32_maxulp`）、
+  `s45client`（v2 を読み、fmt=both の u64 は照合だけに使う）、`s45allan`・`s45spur`（ファイルを読む道具）。v2 の SPEC にも鍵 adc・win を入れて今の道具が読めるように
+- specd: `--proto 2`（既定）/ `--proto 1`（今までの v1）、陽性対照 `--posctl-f32-trunc`（float32 を 0 へ切り捨てる）
+- 道具: `s45v2c.py`（fmt=both で n 束 → 組の照合、utc_ns の束の間隔 = tint、窓 0（NS 1）と窓 1（NS 6）で e = utc_ns − dump_t·125/32 ＋ (D ＋ 1.5·L)·125/32 が一致）
+- **V2-b**: tint 10.24 ms（n_sum 1）・float32 で 30 分。8 窓 × 16 KiB / 10.24 ms = 12.8 MB/s（予算 17.7 MB/s の内）
+
+**予言**:
+1. `test_fake.sh all`（PL なし）: 今までの 7 試験 ＋ f32（組 800・不一致 0・≦ 0.5 ulp）・f32p（陽性対照: 全部の組が不一致）・v1（`--proto 1` で今までどおり）が通る
+2. 実機 `s45v2c.py --n 50`: 組 400・不一致 0・≦ 0.5 ulp、束の間隔 40,960,000 ns ちょうど、e(窓 0) − e(窓 1) = 0（±2 ns）。1.5·L と D を足さない e' は 744,000 ＋ (D(6) − D(1))·125/32 ≒ 746,700 ns ずれる（陽性対照）
+3. V2-a（`s45v2a.py`、fmt=u64）は 2-3b と同じに通る
+4. **V2-b**（10.24 ms・float32・30 分）: 受け側の欠け・説明のない欠け・CRC・kgap・tdev 0、miss 0・bdrop 0・pl_drop 0。
+   **1 周 p99 < 10.24 ms で tint を越える周 0** は分からない（1 周あたりの記録が 2-3b の 4 倍。2-3b の 30 分は 40.96 ms で越えた周 0）。越えたらリングが吸うが、続けば落ちる → 越えた周の内訳を見て直す
+5. 送る量: 30 分で ≒ 22 GB（12.8 MB/s）。受け側は /tmp に書いて消す
+
+**判定**:
+
+| 判定 | 中身 |
+|---|---|
+| S23c-1 | 予言 1 |
+| S23c-2 | 予言 2・3 |
+| S23c-3 | **V2-b**（予言 4） |
+
+**実装（2026-10-13）**: `s45proto.py`（VERSION 2・VERSIONS・SPEC2_H・FMT_F32・`header(ver)`・`header_ver`・`f32_round`・`decode(ver)`）、`s45acq.py`（`_spec_record2`・SET `fmt`・START の EVENT に proto・fmt）、
+`specd.py`（`--proto`・`--posctl-f32-trunc`）、`specrecv.py`・`s45client.py`・`s45allan.py`・`s45spur.py`（ver を渡す）、`s45v2c.py`（新）、`s45v2a.py`（fmt=u64 で取る）、`test_fake.sh`（f32・f32p・v1）
+
+**PL なしの確かめ（クラウド、2026-10-13）**: `test_fake.sh all` 10 試験とも通過（S23c-1）。
+- 1 回目の f32 は受け側が落ちた: 組の片方を**受けの箱（次の記録で上書きされる）を指したまま**持っていて、u64 が float32 の中身に化けた → 写しを持つように直した
+- `s45v2c.py` を偽物で: 照合 OK、e(窓 0) − e(窓 1) = −2,698 ns（偽物は D を引かないので (D(1) − D(6))·125/32 になるのが正しい）。
+  1 回目は −2,560 ns と出た: utc_ns（≒ 1.8e18）を float64 にしてから引いていて 256 ns 刻みに丸まった → 整数で引いてから float に直した
+
+### 2-3c の実機
+
+```bash
+scp pynq/*.py xilinx@$B:~/proj021/
+
+# ボード: specd を起こし直す（既定 --proto 2）
+python3 specd.py --clkin 0 --ref 10 > runs/specd_23c.log 2>&1 &
+
+# 制御 PC: S23c-2
+python3 s45v2c.py --host $B --n 50
+python3 s45v2a.py --host $B --n 100
+
+# S23c-3 = V2-b（30 分。終わったら必ず STOP）
+python3 specctl.py --host $B "SET tint=0.01024 fmt=f32 A0.bw=256 A1.bw=8 all.shift=9" "START n=0" "SEND ON"
+python3 specrecv.py --host $B --out /tmp/r23c.s45 --seconds 1800 --json r23c.json
+python3 specctl.py --host $B STATUS STOP
+grep -E "1 周が|BDROP|ERROR" runs/specd_23c.log | head
+```
+
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
 判定 1 つにつき、次の 6 項目を書く。**環境に依る値（ホスト名・IP アドレス・パス）は書かない**（公開を前提にする）。

@@ -27,7 +27,7 @@ def main():
     p.add_argument("--shift", type=int, default=9)
     a = p.parse_args()
     s = S45(a.host)
-    kv = [f"tint=0.04096", f"all.shift={a.shift}"]
+    kv = [f"tint=0.04096", f"all.shift={a.shift}", "fmt=u64"]          # proj021 2-3c: 整数で比べるので u64（v2 の既定は float32）
     for x in "ABCD":
         kv += [f"{x}0.if={a.if_mhz}", f"{x}1.if={a.if_mhz}", f"{x}0.bw={a.bw}", f"{x}1.bw={a.bw}", f"{x}0.bundle=1", f"{x}1.bundle=0"]
     s.set(" ".join(kv))
@@ -37,7 +37,7 @@ def main():
         st = s.status()
         try:
             s.wait_idle(10)
-            s.set(" ".join(f"{x}{w}.bundle=1" for x in "ABCD" for w in "01"))     # 既定に戻す
+            s.set("fmt=f32 " + " ".join(f"{x}{w}.bundle=1" for x in "ABCD" for w in "01"))     # 既定に戻す
         except Exception as e:  # noqa: BLE001
             print(f"NOTE: bundle を既定に戻せなかった（{e}）")
     ok = True
