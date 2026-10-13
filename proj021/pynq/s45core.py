@@ -8,9 +8,10 @@ PS は .hwh の IP の名前（`s45_core_0`〜`3`・`time_core_0`）でコアを
     sudo -E $(which python3) s45core.py --list            # 自己記述の表を出す（S21-4。Overlay を読み込む）
     sudo -E $(which python3) s45core.py --list --no-load  # 載っている .bit をそのまま読む（Overlay(download=False)）
 
-番地（proj021 手順 2-1。コアの 1 MiB）:
-  0x00000–0x000FF コアの共通 / 0x00100 TP のレジスタ / 0x02000 TP のリング / 0x04000 + 0x400·s 流れ s のブロック /
-  0x80000 + 0x20000·w 窓 w の仮の読み窓 / 0xC0000 FULL の仮の読み窓 / 0xE0000 仮の SNAP_SEL（**仮の 3 つは 2-2 で無くなる**）
+番地（proj021 2-2d。コアの 64 KiB = INTERFACE 3.）:
+  0x0000–0x00FF コアの共通 / 0x0100 TP のレジスタ / 0x2000 TP のリング / 0x4000 + 0x400·s 流れ s のブロック
+  （FULL の流れのブロックの 0x100〜 は FULL の TP のレジスタ。スペクトル・スナップショット・FULL の TP の値はレコードだけ: rectap.py）
+  2-1〜2-2c の bit（BIT_REV 1）にあった仮の 3 つ（0x80000〜 の読み窓・0xC0000〜・0xE0000 の SNAP_SEL）は、この道具からは使わない
 """
 import argparse
 import sys
@@ -22,6 +23,7 @@ KIND_FULL, KIND_SLICE, KIND_DDC = 1, 2, 3
 KIND_NAMES = {KIND_FULL: "FULL", KIND_SLICE: "SLICE", KIND_DDC: "DDC"}
 ADC_NAMES = ("ADC_A", "ADC_B", "ADC_C", "ADC_D")
 PROJ_EXPECT = 0x0021_0200        # この README の手順 2-1 の .bit（追跡のため。照合には使わない）
+BIT_REV_MIN = 2                  # proj021 2-2d: 仮の読み窓の無い 64 KiB の番地（道具は記憶をレコードでしか読まない）
 BIT_KIND_EXPECT = 2              # SAM45-Fine
 
 # ---- コアの共通（INTERFACE 2.4。0x20〜 は表 A を +0x10）----
@@ -40,18 +42,13 @@ S_WK, S_WDPHI, S_WNS, S_WCUR, S_WCUR_DPHI, S_WSTART, S_NS_MIN_MAX, S_WRST_T = 0x
 # 診断（約束の外）
 D_PFB_SAT, D_DDC_SAT, D_WS_STALL, D_WS_RDY0, D_DDC_OVR, D_WRST_CNT, D_SNAP_F, D_BANK = 0x200, 0x204, 0x208, 0x20C, 0x210, 0x214, 0x218, 0x220
 DF_SNAP_F, DF_BANK = 0x260, 0x268      # FULL の診断の SNAP_F・BANK（旧 0x44・0x4C）
-# ---- 仮（2-2 で無くなる）----
-LEG_WIN, LEG_WIN_STRIDE, LEG_FULL, LEG_SNAP_SEL = 0x80000, 0x20000, 0xC0000, 0xE0000
+F_TP_REG = 0x100                       # proj021 2-2d: FULL の流れのブロックの中の TP のレジスタ（コアの TP_REG と同じ並び）
 # time_core
 T_IF_ID, T_PROJ = 0x00, 0x5C
 
 
 def blk(s):
     return BLK + BLK_STRIDE * s
-
-
-def leg_win(w):
-    return LEG_WIN + LEG_WIN_STRIDE * w
 
 
 class S45Error(RuntimeError):
@@ -63,13 +60,12 @@ def split_if_id(v):
 
 
 class Stream:
-    """流れ 1 本（コア c の s）。base = 流れのブロック、lbase = 仮の読み窓"""
+    """流れ 1 本（コア c の s）。base = 流れのブロック（2-2d: 仮の読み窓 lbase は無くなった）"""
 
     def __init__(self, core, s, sid):
         self.core, self.s, self.sid = core, s, sid
         self.kind = sid >> 16 & 0xFF
         self.base = blk(s)
-        self.lbase = leg_win(s) if self.kind == KIND_DDC else LEG_FULL
         self.m = core.m
 
     @property
@@ -121,7 +117,7 @@ class Core:
         return [s for s in self.streams if s.kind == KIND_FULL]
 
 
-def discover(ol, bit_kind=BIT_KIND_EXPECT, ncore=4):
+def discover(ol, bit_kind=BIT_KIND_EXPECT, ncore=4, bit_rev_min=BIT_REV_MIN):
     """s45_core_0..ncore−1 と time_core_0 を名前で引き、照合して (cores（ADC の順）, time_core の mmio) を返す"""
     cores = []
     for i in range(ncore):
@@ -135,6 +131,9 @@ def discover(ol, bit_kind=BIT_KIND_EXPECT, ncore=4):
             raise S45Error(f"{c.name} の CORE_KIND {c.core_kind}（期待 {CORE_KIND_ADC} = ADC のコア）")
         if bit_kind is not None and c.bit_kind != bit_kind:
             raise S45Error(f"{c.name} の BIT_KIND {c.bit_kind}（{BIT_KINDS.get(c.bit_kind, '?')}。期待 {bit_kind} = {BIT_KINDS.get(bit_kind)}）")
+        if bit_rev_min is not None and c.bit_rev < bit_rev_min:
+            raise S45Error(f"{c.name} の BIT_REV {c.bit_rev}（{bit_rev_min} 以上が要る: 2-2d の道具は仮の読み窓の無い 64 KiB の bit 用。"
+                           f"2-1〜2-2c の bit には proj021 の 2-3d までの道具を使う）")
         if not 1 <= c.nstream <= 48:
             raise S45Error(f"{c.name} の NSTREAM {c.nstream}")
         for s in range(c.nstream):

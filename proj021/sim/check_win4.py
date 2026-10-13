@@ -95,9 +95,10 @@ def check(d):
     allok &= judge(mi["dump_f0"] == f and len(ref) == 4096 and np.array_equal(snap, ref),
                    f"1: 窓 1 のスナップショット（SNAP_SEL 1）= PFB の模型の出力フレーム {f}（DUMP_F0 {mi['dump_f0']}、不一致 "
                    f"{int(np.count_nonzero(snap != ref)) if len(ref) == 4096 else '長さ違い'}）")
-    allok &= judge(mi["snap_w0"] == 0 and mi["snap_w0i"] == 0, f"1: 選ばれていない窓 0 のスナップショットの範囲 = {mi['snap_w0']} / {mi['snap_w0i']}（0 のはず）")
-    allok &= judge(mi["id_a"] == 0x0202_0101 and mi["nw"] == 4 and mi["snap_sel"] == 1,
-                   f"2: コアの共通 IF_ID {mi['id_a']:#010x}・NSTREAM {mi['nw']}・SNAP_SEL {mi['snap_sel']}")
+    allok &= judge(mi["snap_w0"] == 0 and mi["snap_w0i"] == 0 and mi["snap_rec"] == 1,
+                   f"1: 窓 1 の SNAP のレコード {mi['snap_rec']}（1）・窓 0 の SNAP・SPEC のレコード {mi['snap_w0']} / {mi['snap_w0i']}（0 のはず。2-2d）")
+    allok &= judge(mi["id_a"] == 0x0202_0201 and mi["nw"] == 4 and mi["rec_ctrl1"] == 5,
+                   f"2: コアの共通 IF_ID {mi['id_a']:#010x}・NSTREAM {mi['nw']}・窓 1 の REC_CTRL {mi['rec_ctrl1']}（ALL | SNAP）")
     allok &= judge(mi["bad_sel"] == 0, f"2: 無い流れ（0x05400）の読み = {mi['bad_sel']:#010x}")
     # 3. total power（ADC の共通、tp_core）: リングの個ごとに Σx²（x = 14 bit）を x14 から数えて比べる。RUN の後は F0 + 8n に揃う
     tp = np.loadtxt(os.path.join(d, "tp.txt"), dtype=np.int64, ndmin=2)

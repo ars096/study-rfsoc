@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // proj015 — win_core を 1 ADC × 4 窓（NW = 4）で AXI 越しに（make sim-win4）
 //   窓ごとに別の k・d・NS、WRST を入力の流れの途中の別の時刻に打つ（窓 3 は入力の前）。入力はときどき途切れる。
-//   窓 1 だけ RUN（N_ACC 1・N_DUMP 1）し、SNAP_SEL = 1 のスナップショットを AXI で全部読む。窓 0 のスナップショットの範囲は 0 のはず
+//   窓 1 だけ RUN（N_ACC 1・N_DUMP 1）し、窓 1 のスナップショットを読む。proj021 2-2d: 仮の SNAP_SEL・読み窓の代わりに、窓 1 の
+//   REC_CTRL = ALL | SNAP（窓 1 が書く）で SNAP のレコードを受ける（sim/rec_sink.v）。窓 0 の SNAP のレコードは来ないはず
 //   +IN=x.hex +NSAMP= +DIR= +CFG=<cfg.txt: 1 行 1 窓「k dphi ns wrst のビート」>
 //   出力: DIR/z_w<g>.txt（窓 g の z を出た順に）/ DIR/snap.txt / DIR/meta.txt
 `timescale 1ns / 1ps
@@ -19,14 +20,18 @@ module tb_win4;
     wire [31:0] rdata;
     wire [1:0]  bresp, rresp;
     wire        tready;
-    // proj021 手順 2-1: s45_core（FULL = 0）越しに、v2 の番地で（窓 w の流れのブロック 0x04000 + 0x400·w、仮の読み窓 0x80000 + 0x20000·w）
+    // proj021 手順 2-1: s45_core（FULL = 0）越しに、v2 の番地で（窓 w の流れのブロック 0x04000 + 0x400·w）。2-2d: 64 KiB・記憶はレコードで
+    wire [63:0] rec_d; wire rec_v, rec_l, rec_u;
+    rec_sink u_sink (.clk(clk), .tdata(rec_d), .tvalid(rec_v), .tlast(rec_l), .tuser(rec_u));
     s45_core #(.NW(NW), .N_ACC_DEFAULT(2), .G_L2(12)) dut (
         .aclk(clk), .aresetn(aresetn), .s_axis_tdata(tdata), .s_axis_tvalid(tvalid), .s_axis_tready(tready),
-        .s_axi_awaddr(awaddr), .s_axi_awprot(3'd0), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
+        .s_axi_awaddr(awaddr[15:0]), .s_axi_awprot(3'd0), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
         .s_axi_wdata(wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(wvalid), .s_axi_wready(wready),
         .s_axi_bresp(bresp), .s_axi_bvalid(bvalid), .s_axi_bready(bready),
-        .s_axi_araddr(araddr), .s_axi_arprot(3'd0), .s_axi_arvalid(arvalid), .s_axi_arready(arready),
-        .s_axi_rdata(rdata), .s_axi_rresp(rresp), .s_axi_rvalid(rvalid), .s_axi_rready(rready));
+        .s_axi_araddr(araddr[15:0]), .s_axi_arprot(3'd0), .s_axi_arvalid(arvalid), .s_axi_arready(arready),
+        .s_axi_rdata(rdata), .s_axi_rresp(rresp), .s_axi_rvalid(rvalid), .s_axi_rready(rready),
+        .m_axis_rec_tdata(rec_d), .m_axis_rec_tvalid(rec_v), .m_axis_rec_tready(1'b1), .m_axis_rec_tlast(rec_l), .m_axis_rec_tuser(rec_u),
+        .rec_drop());
 
     task axw(input [19:0] a, input [31:0] d);
         begin
@@ -107,9 +112,9 @@ module tb_win4;
         // ADC の共通
         axr(20'h00000); $fwrite(fm, "id_a %0d\n", rv);
         axr(20'h00008); $fwrite(fm, "nw %0d\n", rv);
-        axw(20'hE0000, 1);
+        axw(20'h04000 + 20'h00400 * 1 + 20'h00084, 5);   // proj021 2-2d: 窓 1 の REC_CTRL = ALL | SNAP（仮の SNAP_SEL = 1 の代わり）
         axw(20'h00100, 8);                        // total power: TP_N 8 フレーム（16 µs）。RUN で取り込む
-        axr(20'hE0000); $fwrite(fm, "snap_sel %0d\n", rv);
+        axr(20'h04000 + 20'h00400 * 1 + 20'h00084); $fwrite(fm, "rec_ctrl1 %0d\n", rv);
         for (g = 0; g < NW; g = g + 1) begin
             axr(20'h04000 + 20'h00400 * g + 20'h00000); $fwrite(fm, "id%0d %0d\n", g, rv);
             $fwrite(fm, "widx%0d %0d\n", g, (rv >> 8) & 8'hFF);   // proj021 手順 2-1: WIDX は SID の [15:8]
@@ -138,13 +143,15 @@ module tb_win4;
         while (rv == seq0) begin repeat (2000) @(posedge clk); axr(20'h04000 + 20'h00400 * 1 + 20'h0001C); end
         axr(20'h04000 + 20'h00400 * 1 + 20'h00040); $fwrite(fm, "dump_f0 %0d\n", rv);
         axr(20'h04000 + 20'h00400 * 1 + 20'h00218); $fwrite(fm, "snap_f %0d\n", rv);
-        for (i = 0; i < 4096; i = i + 1) begin
-            axr(20'h80000 + 20'h20000 * 1 + 20'h08000 + 8 * i); lo = rv;
-            axr(20'h80000 + 20'h20000 * 1 + 20'h08000 + 8 * i + 4);
-            $fwrite(fs, "%0d %0d\n", $signed(lo), $signed(rv));
-        end
-        axr(20'h80000 + 20'h20000 * 0 + 20'h08000 + 8 * 5); $fwrite(fm, "snap_w0 %0d\n", rv);      // 選ばれていない窓は 0
-        axr(20'h80000 + 20'h20000 * 0 + 20'h08000 + 8 * 5 + 4); $fwrite(fm, "snap_w0i %0d\n", rv);
+        // proj021 2-2d: 窓 1 の SNAP のレコード（SEQ = 今の SEQ）を待つ
+        axr(20'h04000 + 20'h00400 * 1 + 20'h0001C); seq0 = rv;
+        i = 0;
+        while (u_sink.snap_seq[1] !== seq0 && i < 100000) begin @(posedge clk); i = i + 1; end
+        $fwrite(fm, "snap_rec %0d\n", u_sink.snap_seq[1] === seq0);
+        for (i = 0; i < 4096; i = i + 1)
+            $fwrite(fs, "%0d %0d\n", $signed(u_sink.snap_m[4096 + i][31:0]), $signed(u_sink.snap_m[4096 + i][63:32]));
+        $fwrite(fm, "snap_w0 %0d\n", u_sink.snap_seq[0] !== 32'hFFFF_FFFF);      // 窓 0 の SNAP のレコードは来ない（REC_CTRL 0）
+        $fwrite(fm, "snap_w0i %0d\n", u_sink.spec_seq[0] !== 32'hFFFF_FFFF);     // 窓 0 は RUN していないので SPEC も来ない
         // 入力の終わりまで
         while (b < nbeat) @(posedge clk);
         repeat (3000) @(posedge clk);
@@ -168,7 +175,7 @@ module tb_win4;
         end
         $fclose(ft);
         $fclose(fz0); $fclose(fz1); $fclose(fz2); $fclose(fz3); $fclose(fm); $fclose(fs);
-        $display("tb_win4: 入力 %0d ビート、終わり", b);
+        $display("tb_win4: 入力 %0d ビート、終わり（レコード %0d 個・捨て %0d・形の不一致 %0d）", b, u_sink.n_rec, u_sink.n_drop, u_sink.n_bad);
         $finish;
     end
 endmodule

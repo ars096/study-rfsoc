@@ -98,18 +98,18 @@ BUILD_SEL = 1 << 21               # proj015: spec_core_0 は 1 本だけで、4 
 
 # ---- レジスタ（src/common/spec_core.v の冒頭と対）----
 # proj021 手順 2-1: FULL の流れのブロック（INTERFACE 2.5。s45_core_0 の 0x4000 + 0x400·s）の中の番地。Spec.rd は base ＋ 番地を読む。
-#   TP のレジスタ（0x100–0x1FF）だけは仮の読み窓（lbase ＋ 0x1100）を読む（FULL には種類に固有のレジスタが無いので重ならない）。
-#   Spec.block は仮の読み窓（lbase）の中を読む（TP のリング 0x2000・スナップショット 0x4000・スペクトル 0x8000。2-2 でリングに替わる）
+#   proj021 2-2d: TP のレジスタ（0x100–0x1FF）も流れのブロックの中（種類に固有の範囲）。スペクトル・スナップショット・TP の値は
+#   レコード（rectap。SPEC・SNAP・TP の s = FULL の流れの s）で読む（2-1〜2-2c の仮の読み窓 0xC0000〜 は無くなった）
 R_ID, R_PARAM, R_CTRL, R_NACC, R_NDUMP, R_SHIFT = 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14     # R_ID は SID
 R_FLAGS, R_SEQ, R_FIN_LO, R_FIN_HI, R_FOUT_LO, R_FOUT_HI = 0x18, 0x1C, 0x70, 0x74, 0x78, 0x7C
 R_DUMP_K, R_DUMP_N, R_DUMP_F0_LO, R_DUMP_F0_HI, R_DUMP_SAT = 0x3C, 0x48, 0x40, 0x44, 0x4C
 R_SNAP_F_LO, R_SNAP_F_HI, R_BANK, R_RUN_F0_LO, R_RUN_F0_HI = 0x260, 0x264, 0x268, 0x68, 0x6C
 R_SRC = 0x28
-SNAP_BASE, SPEC_BASE = 0x4000, 0x8000
 CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_DCLR, CTRL_WRST = 1 << 0, 1 << 1, 1 << 8, 1 << 9, 1 << 12
 # ---- total power（src/common/tp_core.v の冒頭と対。proj013）----
 R_TP_N, R_TP_NEFF, R_TP_WP, R_TP_F0_LO, R_TP_F0_HI, R_TP_PARAM, R_TP_STAT = 0x100, 0x104, 0x108, 0x10C, 0x110, 0x114, 0x118
-TP_BASE, TP_DEPTH, TP_PARAM_EXPECT = 0x2000, 512, (512 << 16) | (16 << 8) | 2
+TP_BASE, TP_DEPTH, TP_PARAM_EXPECT = 0x2000, 512, (512 << 16) | (16 << 8) | 2   # TP_BASE: コアの TP の AXI4-Lite のリング（FULL には無い。2-2d）
+R_TP_REC_CTRL, TP_REC_K = 0x11C, 10           # proj021 2-2b / 2-2d: TP のレコード（[0] EN・[12:8] K 個 / レコード）
 TPF_SHORT, TPF_RUN, TPF_GAP, TPF_BOOT = 1, 2, 4, 8
 # 診断（約束の外）: 旧番地 ＋ 0x1A8
 R_DIAG_TL, R_DIAG_EV, R_DIAG_FS, R_DIAG_EVCNT, R_DIAG_FSCNT = 0x200, 0x204, 0x208, 0x20C, 0x210   # rev3
@@ -145,18 +145,22 @@ def if_of_ch(k, zone=2):
 
 # --------------------------------------------------------------------- spec_core
 class Spec:
-    """FULL の流れ（spec_core）の AXI4-Lite。**読んだ中身は seqlock で 1 つのダンプのものと保証する。**
-    proj021 手順 2-1: base = 流れのブロック、lbase = 仮の読み窓（s45core.LEG_FULL）"""
+    """FULL の流れ（spec_core）の AXI4-Lite。base = 流れのブロック。
+    proj021 2-2d: スペクトル・スナップショットはレコード（rectap）で読む。run()・arm() が RUN の前に REC_CTRL = ALL（snap なら | SNAP）を書き、
+    read_dump() は今の SEQ のダンプのレコードを返す（形は今までと同じ）。**スナップショットが要るなら run() の前に snap = True**。
+    rec_key = レコードの (core, s)（FULL の流れのコアの ADC と s。open_full_stream が入れる。SAM45-Fine の既定は (0, 2)）。slow は使わない"""
 
-    def __init__(self, mmio, slow=False, idx=0, label="?", base=0x4800, lbase=0xC0000):
+    def __init__(self, mmio, slow=False, idx=0, label="?", base=0x4800, rec_key=(0, 2)):
         self.m = mmio
         self.slow = slow
         self.idx = idx
         self.label = label
-        self.base, self.lbase = base, lbase
+        self.base = base
+        self.rec_key = rec_key
+        self.snap = False
 
     def _a(self, a):
-        return self.lbase + 0x1000 + a if 0x100 <= a < 0x200 else self.base + a
+        return self.base + a
 
     def rd(self, a):
         return self.m.read(self._a(a))
@@ -172,13 +176,6 @@ class Spec:
         l = self.rd(lo)                      # LO を読むと HI が固定される（FIN / FOUT）
         return (self.rd(hi) << 32) | l
 
-    def block(self, base, nwords):
-        """32 bit 語を nwords 個読む。既定は numpy で一括（速い）。--slow-read で 1 語ずつ。"""
-        if self.slow:
-            return np.array([self.m.read(self.lbase + base + 4 * i) for i in range(nwords)], dtype=np.uint32)
-        i0 = (self.lbase + base) // 4
-        return np.array(self.m.array[i0:i0 + nwords], dtype=np.uint32)
-
     def flags(self):
         return self.rd(R_FLAGS)
 
@@ -190,19 +187,22 @@ class Spec:
             snap_f=(self.rd(R_SNAP_F_HI) << 32) | self.rd(R_SNAP_F_LO),
             bank=self.rd(R_BANK), flags=self.rd(R_FLAGS))
 
-    def run(self, nacc, ndump, shift):
-        self.wr(R_NACC, nacc)
-        self.wr(R_NDUMP, ndump)
-        self.wr(R_SHIFT, shift)
+    def run(self, nacc, ndump, shift, snap=None):
+        self.arm(nacc, ndump, shift, snap)
         seq0 = self.rd(R_SEQ)
         self.wr(R_CTRL, CTRL_RUN)
         return seq0
 
-    def arm(self, nacc, ndump, shift):
-        """RUN の前の設定だけを書く（4 本の開始を揃えるとき、RUN の書き込みを 1 語ずつ続けて打てるように）"""
+    def arm(self, nacc, ndump, shift, snap=None):
+        """RUN の前の設定だけを書く（4 本の開始を揃えるとき、RUN の書き込みを 1 語ずつ続けて打てるように）。
+        proj021 2-2d: REC_CTRL = ALL（| SNAP）もここで（ダンプごとにレコード）"""
+        import rectap
+        if snap is not None:
+            self.snap = snap
         self.wr(R_NACC, nacc)
         self.wr(R_NDUMP, ndump)
         self.wr(R_SHIFT, shift)
+        rectap.tap().arm(self.m, self.base, self.snap)
 
     def stop(self):
         self.wr(R_CTRL, CTRL_STOP)
@@ -217,21 +217,16 @@ class Spec:
                 return None
             time.sleep(0.001)
 
-    def read_dump(self, with_snap=False, tries=5):
-        """凍っている面を読む。**SEQ が読む前後で同じなら 1 つのダンプ。**違えば読み直す。"""
-        for _ in range(tries):
-            m = self.meta()
-            w = self.block(SPEC_BASE, 2 * NCH_OUT)
-            spec = w[0::2].astype(np.uint64) | (w[1::2].astype(np.uint64) << np.uint64(32))
-            snap = None
-            if with_snap:
-                s = self.block(SNAP_BASE, NFFT // 2)
-                snap = np.empty(NFFT, dtype=np.int16)
-                snap[0::2] = (s & 0xFFFF).astype(np.uint16).view(np.int16)
-                snap[1::2] = (s >> 16).astype(np.uint16).view(np.int16)
-            if self.rd(R_SEQ) == m["seq"]:
-                return m, spec, snap
-        raise RuntimeError("読み出しのあいだに毎回ダンプが閉じた。積分時間に対して読み出しが遅すぎる")
+    def read_dump(self, with_snap=False, timeout=5.0):
+        """今の SEQ のダンプ（最後に閉じたダンプ）: (meta, スペクトル u64 × 4096, スナップショット int16 × 8192 か None)。
+        proj021 2-2d: レコードで（rectap）。meta の snap_f は SNAP のレコードが組で来たら DUMP_F0（PL が面の番号を照らした）"""
+        import rectap
+        if with_snap and not self.snap:
+            raise RuntimeError("スナップショットは run() の前に snap = True にしておく（2-2d: SNAP はダンプの頭で決まる）")
+        m, spec, sn = rectap.tap().latest(self.rec_key, lambda: self.rd(R_SEQ), with_snap, timeout)
+        m["snap_f"] = m["f0"] if sn is not None else (self.rd(R_SNAP_F_HI) << 32) | self.rd(R_SNAP_F_LO)
+        m["bank"] = self.rd(R_BANK)
+        return m, spec, (rectap.snap_full(sn) if sn is not None else None)
 
 
 def flag_text(f):
@@ -282,7 +277,7 @@ def check_tiles(rfdc, zone):
 def open_full_stream(st, adc, slow=False):
     """proj021 手順 2-1: FULL の流れ st（s45core.Stream）の SRC を ADC adc にし、WRST で効かせ、SRST で起動し直して Spec を返す
     （旧: win_core_0 の FULL_SEL を書いて spec_core_0 を SRST）"""
-    sp = Spec(st.m, slow=slow, idx=adc, label=CHANS[adc][0], base=st.base, lbase=st.lbase)
+    sp = Spec(st.m, slow=slow, idx=adc, label=CHANS[adc][0], base=st.base, rec_key=(st.core.adc, st.s))
     sp.wr(R_SRC, adc)
     sp.wr(R_CTRL, CTRL_WRST)
     time.sleep(0.001)
@@ -337,7 +332,7 @@ def parse_ch(text):
 
 def auto_shift(sp):
     """SHIFT: 雑音の成分の σ が SHIFT 後に 2^9 付近になるように選ぶ（強い線が 18 bit に収まる余地を残す）。ch ごと"""
-    sp.run(1, 1, 0)
+    sp.run(1, 1, 0, snap=True)
     time.sleep(0.01)
     _, _, snap = sp.read_dump(with_snap=True)
     sx = (snap.astype(np.int64) >> 2).std()
@@ -461,18 +456,14 @@ def probe(sp):
     f = sp.flags()
     log(f"FLAGS = {f:02x}（{flag_text(f)}）")
     ok &= f == 0
-    # 一括読み出しと 1 語ずつの読み出しが一致するか（MMIO の読み方の確認）
-    a = Spec(sp.m, slow=False).block(SPEC_BASE, 64)
-    b = Spec(sp.m, slow=True).block(SPEC_BASE, 64)
-    log(f"一括読み出しと 1 語ずつの読み出し: {'一致' if np.array_equal(a, b) else '**不一致**（--slow-read を使う）'}")
-    ok &= np.array_equal(a, b)
+    # （一括読み出しと 1 語ずつの読み出しの比べは proj021 2-2d で外した。スペクトルは AXI4-Lite で読まない）
     log(f"判定 0: {'OK' if ok else '**NG**'}")
     return ok
 
 
 def golden(sp, shift, tone):
     """判定 2: N_ACC = 1 のダンプと、同じフレームのスナップショットを numpy で FFT したものが一致するか。"""
-    seq0 = sp.run(1, 1, shift)
+    seq0 = sp.run(1, 1, shift, snap=True)
     if sp.wait_dump(seq0, 1.0) is None:
         log("ERROR: 1 フレームのダンプが閉じない")
         return False
@@ -1316,11 +1307,12 @@ def image_report(spec, tone, zone=2):
 # --------------------------------------------------------------------- main
 # --------------------------------------------------------------------- total power（proj013）
 class TpReader:
-    """1 本の tp_core のリングバッファを取りこぼさずに読む。
+    """1 本の tp_core（FULL の流れの TP）の個を取りこぼさずに読む。
 
-    **読み方**: TP_WP を読む → 前回からの個を読む → TP_WP を読み直す。個は 512 個で一巡するので、
-    読み直した TP_WP が「前回の続き + 512」を越えていたら、読んでいる間に上書きされた恐れがある（読み落としとして数える）。
+    proj021 2-2d: 個は TP のレコード（type 2、s = FULL の流れの s。rectap）で受ける（FULL の AXI4-Lite のリングは無くなった）。
+    レコードの SEQ = 最初の個の番号（TP_WP の数え）・DUMP_N = 個の数なので、**SEQ の飛びを読み落としとして数える**。
     個は自分の最初のフレームの番号（下位 32 bit）を持つので、**番号が TP_N ずつ進むことで中身の正しさも確かめる**。
+    proj013〜2-2c は AXI4-Lite のリング（512 個）を TP_WP の前後読みで読んでいた。
     """
 
     def __init__(self, sp, tp_n, run_f0):
@@ -1335,44 +1327,21 @@ class TpReader:
         self.pre = 0              # F0 より前の個（捨てた）
         self.last_f0 = None
 
-    def _entries(self, i0, n):
-        """個 i0..i0+n−1 を読む（slot は i mod 512。巻き戻りで 2 回に分ける）"""
-        out = []
-        while n > 0:
-            s0 = i0 % TP_DEPTH
-            k = min(n, TP_DEPTH - s0)
-            w = self.sp.block(TP_BASE + 16 * s0, 4 * k).reshape(k, 4).astype(np.uint64)
-            out.append(w)
-            i0 += k
-            n -= k
-        return np.concatenate(out) if out else np.zeros((0, 4), np.uint64)
-
     def poll(self):
-        wp0 = self.sp.rd(R_TP_WP)
-        if self.wp is None:
-            # 初回: F0 の個はまだ閉じていない（RUN の直後に呼ぶ）ので、直近の 64 個から読めば足りる。
-            # **初版は 512 個を全部読みにいき、読んでいる間に進んだ 1 個（F0 より前の捨てる個）を「読み落とし」と数えた**
-            # （2026-09-29、実機の --tp 10 で A・B・C に 1 個ずつ。D だけ読み出しが 1 ms に収まって 0）
-            self.wp = max(0, wp0 - 64)
-        n = wp0 - self.wp
-        if n <= 0:
-            return 0
-        if n > TP_DEPTH:
-            if self.started:                 # F0 より前の個は捨てるので、落ちても数えない
-                self.lost += n - TP_DEPTH
-            self.wp = wp0 - TP_DEPTH
-            n = TP_DEPTH
-        w = self._entries(self.wp, n)
-        wp1 = self.sp.rd(R_TP_WP)
-        over = wp1 - TP_DEPTH - self.wp          # 読んでいる間に上書きされたかもしれない個の数
-        if over > 0:
-            if self.started:
-                self.lost += over
-            w = w[over:]
-        self.wp = wp0
-        for e in w:
-            self._take(int(e[0]) | (int(e[1]) << 32), int(e[2]), int(e[3]) >> 24, int(e[3]) & 0xFFFFFF)
-        return len(w)
+        import rectap
+        n_all = 0
+        for r in rectap.tap().take_tp(self.sp.rec_key):
+            seq, hw, pay = r[2], r[3], r[4]
+            n = int(hw[5]) & 0xFFFFFFFF
+            if self.wp is not None and seq != self.wp and self.started:   # F0 より前の個は捨てるので、落ちても数えない
+                self.lost += (seq - self.wp) & 0xFFFFFFFF
+            self.wp = (seq + n) & 0xFFFFFFFF
+            v = pay.tolist()
+            for i in range(n):
+                x = v[2 * i + 1]
+                self._take(v[2 * i], x & 0xFFFFFFFF, x >> 56, (x >> 32) & 0xFFFFFF)
+            n_all += n
+        return n_all
 
     def _take(self, tsum, f0lo, fl, nfr):
         if not self.started:
@@ -1398,6 +1367,46 @@ class TpReader:
     def arrays(self):
         return (np.array(self.f0, np.int64), np.array(self.nfr, np.int64),
                 np.array(self.sum, np.float64), np.array(self.flags, np.int64))
+
+
+class AxiTpReader(TpReader):
+    """コアの TP（AXI4-Lite のリング 512 個。0x2000、INTERFACE 4.6 の移行用で 2-2d でも残る）を TpReader と同じ形で読む。
+    sp は rd(番地)・block(番地, 語数) を持つもの（fine.WinTp）。proj013〜2-2c の TpReader.poll と同じ読み方:
+    TP_WP を読む → 前回からの個を読む → TP_WP を読み直す。読み直した TP_WP が「前回の続き + 512」を越えていたら上書きの恐れ（読み落とし）"""
+
+    def _entries(self, i0, n):
+        out = []
+        while n > 0:
+            s0 = i0 % TP_DEPTH
+            k = min(n, TP_DEPTH - s0)
+            out.append(self.sp.block(TP_BASE + 16 * s0, 4 * k).reshape(k, 4).astype(np.uint64))
+            i0 += k
+            n -= k
+        return np.concatenate(out) if out else np.zeros((0, 4), np.uint64)
+
+    def poll(self):
+        wp0 = self.sp.rd(R_TP_WP)
+        if self.wp is None:
+            self.wp = max(0, wp0 - 64)       # 初回: F0 の個はまだ閉じていない（RUN の直後に呼ぶ）。直近の 64 個から
+        n = wp0 - self.wp
+        if n <= 0:
+            return 0
+        if n > TP_DEPTH:
+            if self.started:
+                self.lost += n - TP_DEPTH
+            self.wp = wp0 - TP_DEPTH
+            n = TP_DEPTH
+        w = self._entries(self.wp, n)
+        wp1 = self.sp.rd(R_TP_WP)
+        over = wp1 - TP_DEPTH - self.wp
+        if over > 0:
+            if self.started:
+                self.lost += over
+            w = w[over:]
+        self.wp = wp0
+        for e in w:
+            self._take(int(e[0]) | (int(e[1]) << 32), int(e[2]), int(e[3]) >> 24, int(e[3]) & 0xFFFFFF)
+        return len(w)
 
 
 FULL_SCALE_P = 8191.0 ** 2 / 2.0      # 14 bit の正弦波の満振幅の平均電力（dBFS の基準）
@@ -1447,7 +1456,8 @@ def tp_run(specs, args, shifts):
         log(f"TP-0 ch {sp.idx}（{sp.label}）: TP_PARAM {prm:08x}（期待 {TP_PARAM_EXPECT:08x}）{'OK' if good else 'NG'}")
         ok &= good
         sp.wr(R_TP_N, tp_n)
-        sp.arm(nacc, 0, shifts[sp.idx])
+        sp.wr(R_TP_REC_CTRL, (TP_REC_K << 8) | 1)     # proj021 2-2d: FULL の TP をレコードで
+        sp.arm(nacc, 0, shifts[sp.idx], snap=True)    # ナイキストの推定にスナップショット（2-2d: SNAP のレコード）
     if not ok:
         return False
     for sp in specs:                              # RUN を続けて打つ（ch 間の開始のずれは ≒ 25 フレーム。proj012）

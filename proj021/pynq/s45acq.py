@@ -11,7 +11,8 @@
 裏（backend）は 2 つ: HwBackend（PYNQ・proj017 の bit）と FakeBackend（PL なしで同じ間隔・同じ形の記録を作る。通信の試験用）。
 
 proj021 手順 2-3a: HwBackend の読み口を **PL が書くリング**（s45_ring_0。plring.Ring）に替えた（`--read ring`、既定）。
-  SPEC・TP・SNAP をレコードで受け、記録の形（s45proto v1）は今のまま。今の道（仮の読み窓を seqlock で）は `--read axi`（2-2d まで）
+  SPEC・TP・SNAP をレコードで受け、記録の形（s45proto v1）は今のまま。2-3a〜2-3d にあった `--read axi`（仮の読み窓を seqlock で）は
+  2-2d で外した（bit に仮の読み窓が無い）
 """
 import collections
 import gc
@@ -274,7 +275,9 @@ class HwBackend:
     def __init__(self, opts, log):
         self.o, self.log = opts, log
         self.running = False
-        self.use_ring = getattr(opts, "read", "ring") == "ring"
+        if getattr(opts, "read", "ring") != "ring":
+            raise RuntimeError("proj021 2-2d: 読み口はリングだけ（--read axi の道は外した。仮の読み窓の無い bit）")
+        self.use_ring = True
         self.ring = None
         self.ring_crc = 0
         self.stall_at = getattr(opts, "posctl_ring_stall", 0.0)
@@ -312,7 +315,7 @@ class HwBackend:
         self.tb = TB.Timebase(self.tc, path=self.o.path)
         self.TpStream = make_tp_reader(S)
         c0 = self.cores[0]
-        self.ids = dict(win=f"{self.wins[0].rd(W.R_ID):08x}", adc=f"{c0.if_id:08x}", time=f"{TB.TimeCore.ID:08x}",
+        self.ids = dict(win=f"{self.wins[0].rd(W.R_ID):08x}", adc=f"{c0.if_id:08x}", time=f"{self.tc.rd(0x00):08x}",   # proj021 2-2d: 載っている time_core の IF_ID（BIT_REV 1 / 2）
                         proj=f"{c0.proj:08x}",
                         lmx_vco=f"{self.lmx['vco_mhz']:.2f}" if self.lmx else "7864.32",
                         lmx_pwr=str(self.lmx.get("outa_pwr", 31)) if self.lmx else "31")
@@ -330,10 +333,10 @@ class HwBackend:
         self.SC = SC
         bad = [c.name for c in self.cores if (c.caps & 7) != 7]
         if bad:
-            raise RuntimeError(f"CAPS の [0]〜[2]（SPEC・TP・SNAP のレコード）が無いコア {bad}。2-2c 以降の .bit か、--read axi")
+            raise RuntimeError(f"CAPS の [0]〜[2]（SPEC・TP・SNAP のレコード）が無いコア {bad}。2-2c 以降の .bit を")
         rip = getattr(self.ol, "s45_ring_0", None)
         if rip is None:
-            raise RuntimeError("ol.s45_ring_0 が無い（2-2a 以降の .bit ではない）。--read axi")
+            raise RuntimeError("ol.s45_ring_0 が無い（2-2a 以降の .bit ではない）")
         self.ring = PR.Ring(rip.mmio, getattr(self.o, "ring_mib", 32) << 20)
         self.ring.enable(True)
         self.jmap = {(self.cores[c.adc].adc, c.widx): j for j, c in enumerate(self.wins)}   # レコードの core = CORE_PORT の ADC
@@ -377,7 +380,7 @@ class HwBackend:
                 j = self.jmap.get((core, s))
                 if j is not None:
                     self.q[j].append((seq, hw, pay))
-            elif ty == TYPE_TP and core in self.amap and self.running:
+            elif ty == TYPE_TP and s == 0xFF and core in self.amap and self.running:   # 2-2d: FULL の TP（s = FULL の流れ）は使わない
                 self.tps[self.amap[core]].feed(seq, int(hw[5]) & 0xFFFFFFFF, pay, TP_REC_K)
         self.last_pump = (t1 - t0, time.perf_counter() - t1)      # 遅い周の内訳（リングの読み・振り分け）
         return len(recs)
@@ -535,21 +538,7 @@ class HwBackend:
                 self.seq[j] = seq
                 return rec_meta(hw), pay, d - 1
             return None
-        c = self.wins[j]
-        s = c.rd(W.R_SEQ)
-        if s == self.seq[j]:
-            return None
-        i0 = (c.lbase + W.SPEC_BASE) // 4         # proj021 手順 2-1: 仮の読み窓（2-2 でリングに替わる）
-        for _ in range(5):
-            m = c.meta()
-            m["sat"] = c.rd(W.R_DUMP_SAT)
-            m["flags"] = c.rd(W.R_FLAGS)
-            w = np.array(c.m.array[i0:i0 + 2 * P.NCH], dtype=np.uint32)
-            if c.rd(W.R_SEQ) == m["seq"]:
-                miss = ((m["seq"] - self.seq[j]) & 0xFFFFFFFF) - 1
-                self.seq[j] = m["seq"]
-                return m, w.view("<u8"), miss
-        raise RuntimeError(f"{c.name}: 読む間に毎回ダンプが閉じた（読み出しが積分に間に合わない）")
+        raise RuntimeError("proj021 2-2d: 仮の読み窓の道は外した")
 
     def poll_tp(self, i):
         if not self.use_ring:
@@ -564,44 +553,7 @@ class HwBackend:
         """全帯域コア（spec_core_0）を ADC adc につないで N_ACC = nacc・N_DUMP = n で走らせ、ダンプごとの最初のフレームの
         生サンプル 8192 個を読む（IDLE のときだけ。窓・TP の RUN には触らない: specd は全帯域コアを RUN に入れていない）。
         戻り値 [(meta, int16 の 8192 個)]。SNAP_F ≠ DUMP_F0（別のフレームを読んだ）・読む間に閉じたものは読み直す"""
-        if self.use_ring:
-            return self._snap_ring(adc, n, nacc, timeout)
-        S, T, W = self.S, self.T, self.W
-        full = self.full
-        T.select_full(self.wms, full, adc)
-        full.wr(S.R_NACC, nacc)
-        full.wr(S.R_NDUMP, n)
-        seq = full.rd(W.R_SEQ)
-        full.wr(S.R_CTRL, S.CTRL_CLR | S.CTRL_RUN)
-        out = []
-        t_end = time.time() + timeout + n * nacc * 2e-6
-        i0 = (full.lbase + S.SNAP_BASE) // 4      # proj021 手順 2-1: 仮の読み窓（2-2 で REC_CTRL の ONE | SNAP に替わる）
-        while len(out) < n:
-            if time.time() > t_end:
-                raise RuntimeError(f"SNAP: {len(out)}/{n} 個で時間切れ（全帯域コアのダンプが閉じない）")
-            s = full.rd(W.R_SEQ)
-            if s == seq:
-                time.sleep(0.0005)
-                continue
-            for _ in range(5):
-                m = full.meta()
-                sf = full.rd(S.R_SNAP_F_LO) | (full.rd(S.R_SNAP_F_HI) << 32)
-                w = np.array(full.m.array[i0:i0 + S.NFFT // 2], dtype=np.uint32)
-                if full.rd(W.R_SEQ) == m["seq"]:
-                    break
-            else:
-                raise RuntimeError("SNAP: 読む間に毎回ダンプが閉じた（every を長く）")
-            if ((m["seq"] - seq) & 0xFFFFFFFF) != 1:
-                raise RuntimeError(f"SNAP: ダンプを読み落とした（seq {seq} → {m['seq']}。every を長く）")
-            if sf != m["f0"]:
-                raise RuntimeError(f"SNAP: スナップショットのフレーム {sf} ≠ ダンプの最初 {m['f0']}")
-            seq = m["seq"]
-            x = np.empty(S.NFFT, np.int16)
-            x[0::2] = (w & 0xFFFF).astype(np.uint16).view(np.int16)
-            x[1::2] = (w >> 16).astype(np.uint16).view(np.int16)
-            out.append((m, x))
-        full.wr(S.R_CTRL, S.CTRL_STOP)
-        return out
+        return self._snap_ring(adc, n, nacc, timeout)     # proj021 2-2d: 仮の読み窓の道は外した
 
     def _snap_ring(self, adc, n, nacc, timeout):
         """proj021 2-3a: FULL の流れを REC_CTRL = ALL | SNAP・N_DUMP = n で走らせ、SNAP のレコード（type 4）を n 個集める。

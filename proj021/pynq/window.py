@@ -50,7 +50,7 @@ BUILD_WIN = 1 << 22
 WIN_CH = 0                       # 既定の ADC（proj017: 4 本 = ADC_A..D。proj016 は ADC_A の 1 本、proj015 は 1 = ADC_B）
 WIN_STRIDE = SC.BLK_STRIDE       # 窓 w の流れのブロックは SC.blk(w) = 0x4000 + 0x400·w
 A_BASE = 0                       # コアの共通（0x00000–）。下の R_A_* はコアの番地そのもの
-R_A_ID, R_A_NW, R_A_SNAP_SEL, R_A_BUILD, R_A_TP_CTRL = SC.C_IF_ID, SC.C_NSTREAM, SC.LEG_SNAP_SEL, SC.C_BUILD, SC.C_TP_CTRL
+R_A_ID, R_A_NW, R_A_BUILD, R_A_TP_CTRL = SC.C_IF_ID, SC.C_NSTREAM, SC.C_BUILD, SC.C_TP_CTRL   # proj021 2-2d: 仮の SNAP_SEL は無くなった
 R_A_TFIN_LO, R_A_TFIN_HI, R_A_GB_K, R_A_GB_STAT, R_A_ADC_STAT = SC.C_TFIN_LO, SC.C_TFIN_HI, SC.C_GB_K, SC.C_GB_STAT, SC.C_ADC_STAT
 SEL = {"adc": WIN_CH, "win": 0}  # add_sel_args / set_sel で決める（open_win・open_full が使う）
 NFFT_W = 4096
@@ -62,7 +62,6 @@ R_SNAP_F_LO, R_SNAP_F_HI, R_BANK, R_RUN_F0_LO, R_RUN_F0_HI = SC.D_SNAP_F, SC.D_S
 R_WK, R_WDPHI, R_WNS, R_WCUR, R_WCUR_DPHI, R_PFB_SAT, R_DDC_SAT = SC.S_WK, SC.S_WDPHI, SC.S_WNS, SC.S_WCUR, SC.S_WCUR_DPHI, SC.D_PFB_SAT, SC.D_DDC_SAT
 R_WS_STALL, R_WS_RDY0, R_WRST_CNT, R_WSTART, R_DDC_OVR = SC.D_WS_STALL, SC.D_WS_RDY0, SC.D_WRST_CNT, SC.S_WSTART, SC.D_DDC_OVR
 CTRL_RUN, CTRL_STOP, CTRL_CLR, CTRL_WRST = 1 << 0, 1 << 1, 1 << 8, 1 << 12
-SNAP_BASE, SPEC_BASE = 0x08000, 0x10000   # 仮の読み窓（SC.leg_win(w)）の中
 FLAG_NAMES = ["XK_INDEX の飛び", "溜めの読み出しが間に合わない", "IP の TLAST 事象", "IP の入力の途切れ", "IP に待たされた（tready = 0）", "窓の PFB（T = 4）の飽和"]
 LINES_IF = (2048.0, 2560.0, 3072.0, 3584.0, 4096.0)   # k·fs/8（2048 = fs/2・4096 = DC も ADC の線が立つ）
 
@@ -118,15 +117,17 @@ def ch_if(c, w):
 
 
 class Win:
-    """DDC の流れ 1 本（s45_core_i の流れ w）。proj021 手順 2-1: base = 流れのブロック（SC.blk(w)）、lbase = 仮の読み窓（SC.leg_win(w)）。
-    読んだ中身は seqlock（SEQ → 中身 → SEQ）で 1 つのダンプのものと保証する。コアの共通（0x00000–）は ard / awr"""
+    """DDC の流れ 1 本（s45_core_i の流れ w）。base = 流れのブロック（SC.blk(w)）。コアの共通（0x00000–）は ard / awr。
+    proj021 2-2d: スペクトル・スナップショットはレコード（rectap）で読む。run() が RUN の前に REC_CTRL = ALL（snap なら | SNAP）を書き、
+    read_dump() は今の SEQ のダンプのレコードを返す（形は今までと同じ）。**スナップショットが要るなら run() の前に snap = True**
+    （DDC のスナップショットの記憶は ADC で 1 つ。SNAP の立った最も小さい窓が書く）"""
 
-    def __init__(self, mmio, base=None, adc=None, win=0, lbase=None):
+    def __init__(self, mmio, base=None, adc=None, win=0):
         self.m = mmio
         self.base = SC.blk(win) if base is None else base
-        self.lbase = SC.leg_win(win) if lbase is None else lbase
         self.adc = adc
         self.win = win
+        self.snap = False
 
     def rd(self, a):
         return self.m.read(self.base + a)
@@ -139,11 +140,6 @@ class Win:
 
     def awr(self, a, v):
         self.m.write(A_BASE + a, int(v))
-
-    def block(self, base, nwords):
-        """仮の読み窓（lbase）の中を読む（スペクトル・スナップショット。2-2 でリングに替わる）"""
-        i0 = (self.lbase + base) // 4
-        return np.array(self.m.array[i0:i0 + nwords], dtype=np.uint32)
 
     def set_window(self, k, dphi, ns):
         self.wr(R_WK, k); self.wr(R_WDPHI, dphi); self.wr(R_WNS, ns)
@@ -159,9 +155,17 @@ class Win:
         if ((par >> 8) & 15) != ns or ((par >> 12) & 15) != g_of(ns):
             raise RuntimeError(f"WRST の後の PARAM {par:#x} の NS・G が期待（NS {ns}・G {g_of(ns)}）と違う")
 
-    def run(self, nacc, ndump, shift):
+    def rec_key(self):
+        """レコードの (core, s)。core = コアの CORE_PORT の ADC"""
+        return (self.adc if self.adc is not None else SEL["adc"], self.win)
+
+    def run(self, nacc, ndump, shift, snap=None):
+        import rectap
+        if snap is not None:
+            self.snap = snap
         self.wr(R_NACC, nacc); self.wr(R_NDUMP, ndump); self.wr(R_SHIFT, shift)
         self.wr(R_CTRL, CTRL_CLR)
+        rectap.tap().arm(self.m, self.base, self.snap)   # proj021 2-2d: ダンプごとにレコード（RUN の前に）
         seq0 = self.rd(R_SEQ)
         self.wr(R_CTRL, CTRL_RUN)
         return seq0
@@ -180,18 +184,16 @@ class Win:
                     f0=(self.rd(R_DUMP_F0_HI) << 32) | self.rd(R_DUMP_F0_LO), sat=self.rd(R_DUMP_SAT),
                     snap_f=(self.rd(R_SNAP_F_HI) << 32) | self.rd(R_SNAP_F_LO), bank=self.rd(R_BANK), flags=self.rd(R_FLAGS))
 
-    def read_dump(self, with_snap=False, tries=5):
-        for _ in range(tries):
-            m = self.meta()
-            w = self.block(SPEC_BASE, 2 * NFFT_W)
-            spec = w[0::2].astype(np.uint64) | (w[1::2].astype(np.uint64) << np.uint64(32))
-            snap = None
-            if with_snap:
-                s = self.block(SNAP_BASE, 2 * NFFT_W).view(np.int32)
-                snap = s[0::2] + 1j * s[1::2]
-            if self.rd(R_SEQ) == m["seq"]:
-                return m, spec, snap
-        raise RuntimeError("読み出しのあいだに毎回ダンプが閉じた。積分時間に対して読み出しが遅すぎる")
+    def read_dump(self, with_snap=False, timeout=5.0):
+        """今の SEQ のダンプ（最後に閉じたダンプ）: (meta, スペクトル u64 × 4096, スナップショット 複素 × 4096 か None)。
+        proj021 2-2d: レコードで（rectap）。meta の snap_f は SNAP のレコードが組で来たら DUMP_F0（PL が面の番号を照らした）"""
+        import rectap
+        if with_snap and not self.snap:
+            raise RuntimeError("スナップショットは run() の前に snap = True にしておく（2-2d: SNAP はダンプの頭で決まる）")
+        m, spec, sn = rectap.tap().latest(self.rec_key(), lambda: self.rd(R_SEQ), with_snap, timeout)
+        m["snap_f"] = m["f0"] if sn is not None else (self.rd(R_SNAP_F_HI) << 32) | self.rd(R_SNAP_F_LO)
+        m["bank"] = self.rd(R_BANK)
+        return m, spec, (rectap.snap_ddc(sn) if sn is not None else None)
 
 
 def wg_cmp(spec, snap, shift):
@@ -248,11 +250,11 @@ def open_win(ol, allow_nopreset=False, allow_rev1=False):
     if not (0 <= win < len(ddc)):
         log(f"ERROR: {core.name}（{core.adc_name}）に DDC の流れ {win} が無い（{len(ddc)} 本）"); sys.exit(1)
     st = ddc[win]
-    wn = Win(core.m, base=st.base, adc=adc, win=win, lbase=st.lbase)
+    wn = Win(core.m, base=st.base, adc=adc, win=win)
     bt = core.build
     log(f"{core.name}（{core.adc_name}）の流れ {st.s}: SID {st.sid:08x} / IF_ID {core.if_id:08x} / PROJ {core.proj:08x} / BUILD {bt:08x}"
         f"（プリセット {'あり' if bt >> 30 & 1 else '**なし**'} / -{bt >> 28 & 3} / 窓 {bt >> 22 & 1} / ch {bt & 3}）/ NSTREAM {core.nstream}")
-    wn.awr(R_A_SNAP_SEL, win)                     # スナップショットはこの窓（ADC で 1 つ。仮の SNAP_SEL）
+    # （proj021 2-2d: 仮の SNAP_SEL は無くなった。スナップショットを書く窓は run() の REC_CTRL の SNAP で決まる）
     if not (bt & BUILD_WIN) or (bt & 3) != adc:
         log(f"ERROR: BUILD が「窓・ch {adc}」でない"); sys.exit(1)
     if not (bt >> 30 & 1) and not allow_nopreset:
@@ -354,14 +356,14 @@ def main():
         spf = open_full(ol)
         nacc_full = int(round(args.tint / S.T_FRAME))
         seqf = spf.run(nacc_full, args.ndump, args.shift_full)
-    seq = wn.run(nacc, args.ndump, args.shift)
+    seq = wn.run(nacc, args.ndump, args.shift, snap=bool(args.golden))   # proj021 2-2d: W-G はスナップショットのレコードも
     dumps = []
     for i in range(args.ndump):
         s = wn.wait_dump(seq, timeout=args.tint * 3 + 2)
         if s is None:
             judge(False, f"ダンプ {i} が {args.tint * 3 + 2:.1f} s のうちに閉じない"); break
         seq = s
-        m, spec, snap = wn.read_dump(with_snap=(i == 0))
+        m, spec, snap = wn.read_dump(with_snap=(i == 0 and bool(args.golden)))
         dumps.append((m, spec))
         log(f"ダンプ {m['k']}: f0 {m['f0']} / n {m['n']} / 飽和 {m['sat']} / FLAGS {flag_text(m['flags'])}")
     flags = wn.rd(R_FLAGS)

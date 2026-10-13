@@ -170,7 +170,7 @@ BIT_KIND（BITS.md の 9 本。proj の番号とは別の固定の番号）:
 | 0x84 | REC_CTRL | [0] ALL / [1] ONE / [2] SNAP（4.6） |
 | 0x88 | REC_LATE | 出し切れずに捨てたダンプの数（4.1） |
 | 0x8C〜0xFF | （予約） | 時刻の補正の定数（見直しの 4 番目）などを足す場所 |
-| 0x100〜0x1FF | 種類に固有の設定 | DDC: WK・WDPHI・WNS・WCUR・WCUR_DPHI・WSTART・NS_MIN_MAX・WRST_T。SLICE: 下の表（点数はコアの FFT_N、2.4）。FULL: なし |
+| 0x100〜0x1FF | 種類に固有の設定 | DDC: WK・WDPHI・WNS・WCUR・WCUR_DPHI・WSTART・NS_MIN_MAX・WRST_T。SLICE: 下の表（点数はコアの FFT_N、2.4）。FULL: その流れの TP のレジスタ（コアの 0x0100〜 と同じ並び。値は TP のレコードで、s = この流れ。proj021 2-2d で決めた。FULL の流れは SRC を選べるので、その入力の Σx² を FULL のフレームの格子で持つ） |
 | 0x200〜0x3FF | 診断（約束の外） | DDC: PFB_SAT・DDC_SAT・WS_STALL・WS_RDY0・DDC_OVR・WRST_CNT。FULL: DIAG_*・SRST・GRST・INJ・RAW_*・ST_* |
 
 SLICE の種類に固有の設定（0x100〜。2026-10-09、proj022 から。DDC の WK → WCUR と同じ「書いた値」と「今効いている値」の形）:
@@ -352,7 +352,7 @@ REC_CTRL（流れのブロックの 0x84。REC_EN を置き換える）:
 
 TP のレコード（type 2）:
 
-- 頭: core = コア、s = 0xFF（流れではない）、SEQ = 最初の個の TP_WP、DUMP_F0 = 最初の区切りの最初のフレーム、DUMP_T = そのフレームの頭の T、DUMP_N = 個の数（ふつう 10）。ほかは 0
+- 頭: core = コア、s = 0xFF（コアの TP。流れではない）／流れが持つ TP（SAM45-Fine の FULL。2.5 の 0x100〜）は s = その流れ（proj021 2-2d）、SEQ = 最初の個の TP_WP、DUMP_F0 = 最初の区切りの最初のフレーム、DUMP_T = そのフレームの頭の T、DUMP_N = 個の数（ふつう 10）。ほかは 0
 - 中身: 今の TP のリングの個（16 バイト: 和 u64・最初のフレームの番号の下位 32 bit・[31:24] FLAGS / [23:0] フレーム数）を DUMP_N 個、64 バイトの倍数まで 0 で詰める
 - 区切り方: TP_ARM の F0 から 10 個ずつ。短い区切り（FLAGS[0]）が来たら、そこで区切り直す（細部は proj021）
 

@@ -28,7 +28,7 @@ sys.path.insert(0, HERE)
 #   どちらの .bit かは .hwh の IP の名前で決める（LAYOUT）
 LAYOUT = {
     "win_core": dict(base=0x80000, r_id=0x00, r_gb_k=0x1C, r_gb_stat=0x24, r_adc_stat=0x28, id=None),
-    "s45_core": dict(base=0x00000, r_id=0x00, r_gb_k=0x2C, r_gb_stat=0x34, r_adc_stat=0x38, id=0x0202_0101),
+    "s45_core": dict(base=0x00000, r_id=0x00, r_gb_k=0x2C, r_gb_stat=0x34, r_adc_stat=0x38, id=(0x0202_0101, 0x0202_0201)),   # proj021 2-2d: BIT_REV 2
 }
 LABELS = ["ADC_A", "ADC_B", "ADC_C", "ADC_D"]
 
@@ -96,8 +96,9 @@ def main():
         for i in range(4):
             x, y = r1[i], r2[i]
             want_id = L["id"] if L["id"] is not None else 0x0021_A100
-            if not a.any_id and x["id"] != want_id:
-                bad.append(f"{LABELS[i]} ID {x['id']:#010x}（期待 {want_id:#010x}）")
+            want = want_id if isinstance(want_id, tuple) else (want_id,)
+            if not a.any_id and x["id"] not in want:
+                bad.append(f"{LABELS[i]} ID {x['id']:#010x}（期待 {' / '.join(f'{v:#010x}' for v in want)}）")
             if x["gb_k"] != a.expect_k:
                 bad.append(f"{LABELS[i]} GB_K {x['gb_k']}（期待 {a.expect_k}）")
             if not x["armed"]:

@@ -58,13 +58,16 @@ module tp_core #(
     parameter integer TPN_DEFAULT = 500,
     parameter integer FW          = 48,
     parameter integer OVR_TH      = 32764,
-    // proj021 2-2b: TP のレコード（INTERFACE 4.6、type 2）。REC = 1 は win_core の TP だけ（FULL の TP は 0 で今どおり）
+    // proj021 2-2b: TP のレコード（INTERFACE 4.6、type 2）。2-2d から FULL の TP も REC = 1（REC_S = FULL の流れの s）
     parameter integer REC         = 0,
     parameter [7:0]   REC_CORE    = 8'd0,
+    parameter [7:0]   REC_S       = 8'hFF,  // proj021 2-2d: レコードの頭の s（コアの TP は 0xFF、FULL の流れの TP はその流れの s）
     parameter integer REC_EN_DEFAULT = 0
 )(
     input  wire          clk,
     input  wire          rst,          // spec_core の rst_core（起動のやり直しでも張り直す）
+    input  wire          rst_rec,      // proj021 2-2d: レコードの出口と TP_REC_CTRL のリセット（コアのリセットだけ。起動のやり直しでは張らない）。
+                                       //   rst で出口を止めると、rec_arb がレコードの途中（tlast の前）で待ち続ける。win_core では rst と同じ
     input  wire          in_acc,       // このクロックのビートを IP が受けた（spec_core の in_acc）
     input  wire [8:0]    m_in,         // そのビートのフレーム内の番号
     input  wire [FW-1:0] fin,          // そのビートのフレーム番号
@@ -285,14 +288,14 @@ module tp_core #(
     // proj021 2-2b: TP のレコード（type 2）。個（e_we）を K 個ずつ 1 レコードに
     //   区切り: K 個 / F0 で始まった個（FLAGS[1]）の前 / 短い個（FLAGS[0]）の後
     //   溜め 2 面。2 面とも埋まっているときに始まったレコードは丸ごと捨てる（rc_late・rec_drop）
-    //   頭: w0 {0xFF, core, 2, 1, "S45R"} / w1 SEQ（最初の個の番号）/ w2 F0（48 bit）/ w3 T / w5 DUMP_N / w7 中身のバイト数
+    //   頭: w0 {REC_S（コアの TP は 0xFF）, core, 2, 1, "S45R"} / w1 SEQ（最初の個の番号）/ w2 F0（48 bit）/ w3 T / w5 DUMP_N / w7 中身のバイト数
     // =====================================================================
     reg        rc_en;
     reg [4:0]  rc_k;
     reg [31:0] rc_late;
     wire [4:0] kk = (rc_k == 5'd0) ? 5'd10 : (rc_k > 5'd16) ? 5'd16 : rc_k;
     always @(posedge clk) begin
-        if (rst) begin rc_en <= (REC_EN_DEFAULT != 0); rc_k <= 5'd10; end
+        if (rst_rec) begin rc_en <= (REC_EN_DEFAULT != 0); rc_k <= 5'd10; end
         else if (wr_en && wr_addr == 6'h07) begin rc_en <= wr_data[0]; rc_k <= wr_data[12:8]; end
     end
     generate
@@ -311,7 +314,7 @@ module tp_core #(
             reg         busy;
             reg [5:0]   oi;                   // 出した語（頭 8 ＋ 中身）
             reg [5:0]   olen;                 // 語の数（8 ＋ 中身の語）
-            wire [63:0] w_hdr = (oi == 6'd0) ? {8'hFF, REC_CORE, 8'd2, 8'd1, 32'h5235_3453} :
+            wire [63:0] w_hdr = (oi == 6'd0) ? {REC_S, REC_CORE, 8'd2, 8'd1, 32'h5235_3453} :
                                 (oi == 6'd1) ? {32'd0, bseq[eb]} :
                                 (oi == 6'd2) ? {{(64-FW){1'b0}}, bf0[eb]} :
                                 (oi == 6'd3) ? bt[eb] :
@@ -334,7 +337,7 @@ module tp_core #(
             reg [4:0]   nc;
             always @(posedge clk) begin
                 rec_drop <= 1'b0;
-                if (rst) begin
+                if (rst_rec) begin
                     full <= 2'b00; cb <= 1'b0; cnt <= 5'd0; dropping <= 1'b0; rc_late <= 32'd0;
                     eb <= 1'b0; busy <= 1'b0; oi <= 6'd0; olen <= 6'd0;
                 end else begin
@@ -348,7 +351,7 @@ module tp_core #(
                         end else oi <= oi + 6'd1;
                     end
                     // ---- 受ける ----
-                    if (!rc_en) begin
+                    if (rst || !rc_en) begin           // 2-2d: 起動のやり直し（rst）では埋めかけのレコードだけ捨てる（出口・出待ちの面は続ける）
                         cnt <= 5'd0; dropping <= 1'b0;
                     end else if (e_we) begin
                         nb = cb; nd = dropping; nc = cnt;

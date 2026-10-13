@@ -29,6 +29,7 @@ import window as W
 from timebase import BEATS_PER_SEC, TimeCore, Timebase, TimebaseError, beats_to_ns
 
 import s45core as SC
+import rectap as RT
 
 # proj021 手順 2-1: 流れのブロック（INTERFACE 2.5）の中。**窓（DDC）と全帯域（FULL）で同じ番地**（v2 の約束）
 R_CFG, R_RUN_CFG, R_WRST_CFG = SC.S_CFG, SC.S_RUN_CFG, SC.S_WRST_CFG
@@ -97,12 +98,11 @@ def open_all(ol, ns_list):
         i, w = divmod(j, nw)
         st = cores[i].ddc()[w]
         c = Core(f"{S.CHANS[i][0]} 窓 {w}", wms[i], st.base, regs, 4096 << (ns - 1), adc=i, widx=w)
-        c.lbase = st.lbase
         c.ns = ns
         wins.append(c)
     fs = SC.full_stream(cores)
     full = Core("全帯域", fs.m, fs.base, regs, 512)
-    full.lbase = fs.lbase
+    full.rec_key = (fs.core.adc, fs.s)          # proj021 2-2d: FULL の流れのレコードの (core, s)
     return tc, wms, wins, full
 
 
@@ -180,7 +180,7 @@ def setup_windows(wins, ns_list, if_c, cfg):
         w_mhz = 512.0 / (1 << ns)
         _, k, dphi, ns_, _ = W.window_params(if_c, w_mhz)
         c.wr(R_CFG, cfg)
-        wn = W.Win(c.m, base=c.base, win=c.widx or 0, lbase=getattr(c, "lbase", None))
+        wn = W.Win(c.m, base=c.base, win=c.widx or 0)
         wn.set_window(k, dphi, ns_)
 
 
@@ -346,8 +346,10 @@ def t2(tc, tb, wins, full, wms, path="trig", n_trial=5, if_c=2200.0, out=None, a
     # (a) 全帯域（spec_core_0）のスナップショット = 1 フレーム 8192 サンプル（512 ビート = 2 µs）の**生の ADC 値**。フィルタを通らないので
     #     縁のサンプルがそのまま読める（proj008 の閉ループの型）。フレームは 512 ビートで 1 s = 500,000 フレームちょうどなので、
     #     フレームの位相（DUMP_T mod 512）は PPS に対して動かない → 1 回測って、縁（の見当）を含むフレームを狙う
-    sp = S.Spec(full.m, idx=adc, label=lbl, base=full.base, lbase=full.lbase)
+    sp = S.Spec(full.m, idx=adc, label=lbl, base=full.base, rec_key=full.rec_key)
+    sp.snap = True
     full.wr(W.R_NACC, 1); full.wr(W.R_NDUMP, 1); full.wr(W.R_SHIFT, 7)
+    RT.tap().arm(full.m, full.base, True)         # proj021 2-2d: SPEC と SNAP のレコード（RUN・ARM の前に）
     seq0 = full.rd(W.R_SEQ)
     full.wr(W.R_CTRL, W.CTRL_CLR | W.CTRL_RUN)
     t_e = time.time() + 1.0
@@ -395,9 +397,10 @@ def t2(tc, tb, wins, full, wms, path="trig", n_trial=5, if_c=2200.0, out=None, a
         log("  (a) 全帯域: 縁が見えた試行が 2 回に満たない")
     c = [w_ for w_ in wins if w_.adc == adc and w_.widx == 0][0]
     setup_windows([c], [1], if_c, 0)
-    wm.write(W.A_BASE + W.R_A_SNAP_SEL, 0)
     c.wr(W.R_NACC, 1); c.wr(W.R_NDUMP, 1); c.wr(W.R_SHIFT, 7)
-    wn = W.Win(c.m, base=c.base, win=c.widx or 0, lbase=getattr(c, "lbase", None))
+    wn = W.Win(c.m, base=c.base, adc=c.adc, win=c.widx or 0)
+    wn.snap = True
+    RT.tap().arm(c.m, c.base, True)               # proj021 2-2d: 仮の SNAP_SEL の代わりに REC_CTRL の SNAP（この窓が書く）
     d1 = WIN_DELAY_BEATS[1]
     offs, snaps = [], []
     # 窓のフレーム（4096 ビート）も 1 s = 62,500 フレームちょうどで位相は PPS に対して動かない → (a) と同じく位相を 1 回測って狙う
@@ -421,8 +424,7 @@ def t2(tc, tb, wins, full, wms, path="trig", n_trial=5, if_c=2200.0, out=None, a
             log(f"  NG 試行 {k}: 窓 0 のダンプが閉じない"); return False
         st = _stamp_of(tc, path, edge)
         m = c.meta()
-        z = wn.block(W.SNAP_BASE, 2 * 4096).view(np.int32)
-        z = z[0::2] + 1j * z[1::2]
+        _, _, z = wn.read_dump(with_snap=True)        # proj021 2-2d: SNAP のレコード
         a = np.abs(z)
         med = float(np.median(a)) or 1.0
         j_pk = int(np.argmax(a))
@@ -522,11 +524,12 @@ def t4(tc, tb, wins, full, wms, ns_list):
         n = max(1, int(round(0.1 * BEATS_PER_SEC / c.L)))
         c.wr(c.r["cfg"], 0x1234)
         c.wr(W.R_NACC, n); c.wr(W.R_NDUMP, 0); c.wr(W.R_SHIFT, 4)
+        RT.tap().arm(c.m, c.base, False)              # proj021 2-2d: ダンプごとにレコード
         c.wr(W.R_CTRL, W.CTRL_CLR | W.CTRL_RUN)
         seq = c.rd(W.R_SEQ)
         sums = []
         cfgs = []
-        wn = W.Win(c.m, base=c.base, win=c.widx or 0, lbase=getattr(c, "lbase", None)) if c is not full else None
+        wn = W.Win(c.m, base=c.base, adc=c.adc, win=c.widx or 0) if c is not full else None
         for i in range(8):
             if i == 3:
                 c.wr(W.R_SHIFT, 2); c.wr(c.r["cfg"], 0x9999)          # RUN の間に書く
@@ -537,8 +540,7 @@ def t4(tc, tb, wins, full, wms, ns_list):
             seq = c.rd(W.R_SEQ)
             m = c.meta()
             if wn is not None:
-                w = wn.block(W.SPEC_BASE, 2 * 4096)
-                sp = w[0::2].astype(np.uint64) | (w[1::2].astype(np.uint64) << np.uint64(32))
+                _, sp, _ = wn.read_dump()                 # proj021 2-2d: SPEC のレコード
             else:
                 sp = None
             sums.append(float(sp.sum()) if sp is not None else float("nan"))

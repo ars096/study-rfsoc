@@ -59,9 +59,9 @@ module tb_t4adc;
 `endif
         s45_core #(.NW(2), .N_ACC_DEFAULT(2), .G_L2(12), .CORE_PORT(g)) u_w (   // proj021 手順 2-1: BD と同じく s45_core（FULL = 0）
             .aclk(clk), .aresetn(aresetn), .s_axis_tdata(tdata), .s_axis_tvalid(tvalid), .s_axis_tready(),
-            .s_axi_awaddr(awaddr), .s_axi_awprot(3'd0), .s_axi_awvalid(awv[g]), .s_axi_awready(awr[g]),
+            .s_axi_awaddr(awaddr[15:0]), .s_axi_awprot(3'd0), .s_axi_awvalid(awv[g]), .s_axi_awready(awr[g]),
             .s_axi_wdata(wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(wv[g]), .s_axi_wready(wr_[g]), .s_axi_bresp(), .s_axi_bvalid(bv[g]), .s_axi_bready(1'b1),
-            .s_axi_araddr(araddr), .s_axi_arprot(3'd0), .s_axi_arvalid(arv[g]), .s_axi_arready(arr[g]),
+            .s_axi_araddr(araddr[15:0]), .s_axi_arprot(3'd0), .s_axi_arvalid(arv[g]), .s_axi_arready(arr[g]),
             .s_axi_rdata(rdw[g]), .s_axi_rresp(), .s_axi_rvalid(rv_[g]), .s_axi_rready(1'b1),
             .gb_hold(), .gb_adj(), .gb_dn_rstn(), .gb_k(), .gb_stat(32'd0), .adc_stat(32'd0), .full_sel(),
             .s_axis_full_tdata(256'd0), .s_axis_full_tvalid(1'b0), .s_axis_full_tready(), .full_gb_stat(32'd0), .full_adc_stat(32'd0),
@@ -103,12 +103,12 @@ module tb_t4adc;
         repeat (16) @(posedge clk);
         for (i = 0; i < 4; i = i + 1) begin
             // proj021 手順 2-1: 自己記述（INTERFACE 2.4）
-            axr(i, 20'h00000); if (rv !== 32'h0202_0101) begin $display("tb_t4adc: NG s45_core_%0d の IF_ID %08x", i, rv); ng = ng + 1; end
+            axr(i, 20'h00000); if (rv !== 32'h0202_0201) begin $display("tb_t4adc: NG s45_core_%0d の IF_ID %08x", i, rv); ng = ng + 1; end
             axr(i, 20'h00004); if (rv !== 32'h0021_0200) begin $display("tb_t4adc: NG s45_core_%0d の PROJ %08x", i, rv); ng = ng + 1; end
             axr(i, 20'h00008); if (rv !== 2) begin $display("tb_t4adc: NG s45_core_%0d の NSTREAM %0d", i, rv); ng = ng + 1; end
             axr(i, 20'h00018); if (rv !== i) begin $display("tb_t4adc: NG s45_core_%0d の CORE_PORT %08x", i, rv); ng = ng + 1; end
         end
-        axr(4, 20'h00); if (rv !== 32'h0202_0102) begin $display("tb_t4adc: NG time_core の IF_ID %08x", rv); ng = ng + 1; end
+        axr(4, 20'h00); if (rv !== 32'h0202_0202) begin $display("tb_t4adc: NG time_core の IF_ID %08x", rv); ng = ng + 1; end
         axr(4, 20'h5C); if (rv !== 32'h0021_0200) begin $display("tb_t4adc: NG time_core の PROJ %08x", rv); ng = ng + 1; end
         // ---- 1・2. 8 窓と TP 4 本を ARM して予約 ----
         sa = T + 3000;

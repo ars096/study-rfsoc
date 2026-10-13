@@ -37,6 +37,7 @@ import numpy as np
 import spectrometer as S
 import timetest as T
 import window as W
+import rectap as RT
 from timebase import BEATS_PER_SEC, WIN_BOUNDARY_BEATS, WIN_DELAY_BEATS, Timebase, TimebaseError, beats_to_ns
 
 log = S.log
@@ -63,7 +64,7 @@ class WinTp:
         return np.array(self.m.array[i0:i0 + nwords], dtype=np.uint32)
 
 
-class NpTpReader(S.TpReader):
+class NpTpReader(S.AxiTpReader):
     """TpReader の記録を numpy の前置きの配列に（30 分 × 1.024 ms × 4 ADC を Python のリストで持たない）。FLAGS[4] は異常に数えない"""
 
     def __init__(self, sp, tp_n, run_f0, cap):
@@ -119,14 +120,14 @@ def tanch(wm, timeout=0.5):
 
 
 def read_win(c, tries=5):
-    """窓 c の閉じたダンプのメタとスペクトル（seqlock: SEQ → メタ・中身 → SEQ）"""
-    wn = W.Win(c.m, base=c.base, win=c.widx or 0, lbase=getattr(c, "lbase", None))
+    """窓 c の閉じたダンプのメタとスペクトル。proj021 2-2d: SPEC のレコード（rectap。RUN の前に REC_CTRL = ALL）。
+    メタは今までどおり c.meta()（DUMP_T・DUMP_H・DUMP_CFG…）を、レコードと同じ SEQ のときだけ使う"""
+    wn = W.Win(c.m, base=c.base, adc=c.adc, win=c.widx or 0)
     for _ in range(tries):
         m = c.meta()
-        w = wn.block(W.SPEC_BASE, 2 * W.NFFT_W)
-        m["flags"] = c.rd(W.R_FLAGS)
-        if c.rd(W.R_SEQ) == m["seq"]:
-            spec = w[0::2].astype(np.uint64) | (w[1::2].astype(np.uint64) << np.uint64(32))
+        mr, spec, _ = wn.read_dump()
+        m["flags"] = mr["flags"]
+        if mr["seq"] == m["seq"]:
             return m, spec
     raise RuntimeError(f"{c.name}: 読む間に毎回ダンプが閉じた（読み出しが積分に間に合わない）")
 
@@ -220,6 +221,8 @@ def f4(tc, tb, wins, full, wms, ndumps, tint, shift, keep, out=None, offgrid=0, 
         wm.write(W.A_BASE + T.RA_TP_N, TP_N)
     log("  N_ACC: " + " / ".join(f"{c.name}（NS {c.ns}）{n} = {n * c.L / BEATS_PER_SEC * 1e3:.3f} ms" for c, n in zip(wins, nacc)))
     sa = T.start_at_grid(tb)
+    for c in wins:
+        RT.tap().arm(c.m, c.base, False)          # proj021 2-2d: ダンプごとに SPEC のレコード（RUN の前に）
     T.arm_all(tc, wins, full, wms, sa, tp=True, with_full=False)
     log(f"  START_AT = {sa}（格子 {sa // G}·G、UTC {tb.beat_utc_ns(sa) / 1e9:.6f}）")
     while not tc.status()["fired"]:
@@ -354,14 +357,29 @@ def f5(tc, tb, wins, full, wms, seconds=1.0):
         T.select_full(wms, full, i)                 # SRST で spec_core_0 の中の tp_core も起動し直す（TP_N は既定 512 = 1.024 ms）
         time.sleep(seconds + 0.1)                   # どちらの TP も RUN なしで自走している（区切りは起動からのフレーム）
         vals = []
-        for a in (WinTp(wm), S.Spec(full.m, idx=i, label=S.CHANS[i][0], base=full.base, lbase=full.lbase)):
+        # proj021 2-2d: 全帯域の TP は AXI4-Lite のリングが無くなったので TP のレコード（s = FULL の流れの s）で。窓の側（コアの TP）は今までどおり
+        sp = S.Spec(full.m, idx=i, label=S.CHANS[i][0], base=full.base, rec_key=full.rec_key)
+        RT.tap().take_tp(sp.rec_key)                # 前の ADC のぶんを捨てる
+        sp.wr(S.R_TP_REC_CTRL, (S.TP_REC_K << 8) | 1)
+        time.sleep(seconds + 0.1)
+        for a in (WinTp(wm), sp):
             if a.rd(S.R_TP_NEFF) != TP_N:
                 log(f"  NG {S.CHANS[i][0]}: TP_NEFF {a.rd(S.R_TP_NEFF)}（期待 {TP_N}）"); bad += 1
             n = min(int(seconds * 1000), 480)
-            wp = a.rd(S.R_TP_WP)
-            ent = np.array([a.block(S.TP_BASE + 16 * (j % S.TP_DEPTH), 4) for j in range(wp - n, wp)], np.uint64)
-            sm = (ent[:, 0] | (ent[:, 1] << np.uint64(32))).astype(np.float64)
-            nf = (ent[:, 3] & np.uint64(0xFFFFFF)).astype(np.float64)
+            if a is sp:
+                ent = []
+                for r in RT.tap().take_tp(sp.rec_key):
+                    v = r[4].tolist()
+                    ent += [(v[2 * j], v[2 * j + 1] >> 32 & 0xFFFFFF) for j in range(int(r[3][5]) & 0xFFFFFFFF)]
+                ent = ent[-n:]
+                sm = np.array([e[0] for e in ent], np.float64)
+                nf = np.array([e[1] for e in ent], np.float64)
+                sp.wr(S.R_TP_REC_CTRL, S.TP_REC_K << 8)
+            else:
+                wp = a.rd(S.R_TP_WP)
+                ent = np.array([a.block(S.TP_BASE + 16 * (j % S.TP_DEPTH), 4) for j in range(wp - n, wp)], np.uint64)
+                sm = (ent[:, 0] | (ent[:, 1] << np.uint64(32))).astype(np.float64)
+                nf = (ent[:, 3] & np.uint64(0xFFFFFF)).astype(np.float64)
             vals.append(sm.sum() / nf.sum())
         r = vals[0] / vals[1]
         ok = abs(r - 1) < 2e-3

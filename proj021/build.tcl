@@ -2,7 +2,7 @@
 # proj021 手順 2-1 — インターフェース v2 の流れのブロックと自己記述（INTERFACE.md の 2.〜3.、proj021/README の手順 2-1）
 #   1. コアのセルを s45_core_i（src/common/s45_core.v = win_core ＋ i = 0 だけ FULL の流れの spec_core）に。**spec_core_0 のセルは無い**。
 #      axis_sel4（full_sel）の出口 → s45_core_0/s_axis_full、選ぶのは s45_core_0 の full_sel（FULL の流れの SRC）
-#   2. CORE_PORT（ADC・タイル・スライス）を chans から、BIT_KIND 2・BIT_REV 1・PROJ 0x0021_0200 を s45_core_i と time_core_0 に
+#   2. CORE_PORT（ADC・タイル・スライス）を chans から、BIT_KIND 2・BIT_REV 2（2-2d。2-1〜2-2c は 1）・PROJ 0x0021_0200 を s45_core_i と time_core_0 に
 #   3. SmartConnect の M は 1 + nch + 1（spec_core_0 の M が無くなった）。コアの窓は 1 MiB のまま（仮の読み窓。2-2 で 64 KiB に）
 #   4. 資源の数え: FULL は s45_core_0/inst/g_full.u_full、窓は s45_core_i/inst/u_win の下
 # proj021 手順 2-2a（proj021/README の手順 2-2a）
@@ -928,7 +928,7 @@ set sel_m [BI full_sel [list "m_axis" "M_AXIS"] "full_sel の出力"]
 # proj016: 時刻（time_core_0）。BUILD_TAG = 土台 ＋ [20] 時刻のコア
 set tcore [create_bd_cell -type module -reference time_core time_core_0]
 set time_tag [expr {$build_tag_base | (1 << 20)}]
-foreach {k want} [list CONFIG.BUILD_TAG $time_tag CONFIG.BIT_KIND 2 CONFIG.BIT_REV 1 CONFIG.PROJ [expr {0x00210200}]] {
+foreach {k want} [list CONFIG.BUILD_TAG $time_tag CONFIG.BIT_KIND 2 CONFIG.BIT_REV 2 CONFIG.PROJ [expr {0x00210200}]] {
     set_property $k $want $tcore
     if {[get_property $k $tcore] != $want} { puts "ERROR: time_core_0 の $k が [get_property $k $tcore]（要求 $want）"; exit 1 }
 }
@@ -945,7 +945,7 @@ puts [format "time_core_0: BUILD_TAG = 0x%08x / 1 秒 = %d ビート" $time_tag 
 
 # proj021 手順 2-2a: リング（s45_ring_0、src/common/s45_ring.v）。入口 i = s45_core_i/m_axis_rec、書き手 → PS の S_AXI_HP0_FPD
 set rcore [create_bd_cell -type module -reference s45_ring s45_ring_0]
-foreach {k want} [list CONFIG.NIN $nch CONFIG.BIT_KIND 2 CONFIG.BIT_REV 1 CONFIG.PROJ [expr {0x00210200}]] {
+foreach {k want} [list CONFIG.NIN $nch CONFIG.BIT_KIND 2 CONFIG.BIT_REV 2 CONFIG.PROJ [expr {0x00210200}]] {
     set_property $k $want $rcore
     if {[get_property $k $rcore] != $want} { puts "ERROR: s45_ring_0 の $k が [get_property $k $rcore]（要求 $want）"; exit 1 }
 }
@@ -970,7 +970,7 @@ for {set i 0} {$i < $nch} {incr i} {
     set core_port [expr {$i | ($cp_t << 8) | ($cp_s << 12)}]
     set full [expr {$i == 0 ? 1 : 0}]
     set kv [list CONFIG.NW $WIN_NW CONFIG.BUILD_TAG $win_tag CONFIG.GB_K_RST $gb_k_rst CONFIG.CORE_PORT $core_port CONFIG.FULL $full \
-                 CONFIG.BIT_KIND 2 CONFIG.BIT_REV 1 CONFIG.PROJ [expr {0x00210200}]]
+                 CONFIG.BIT_KIND 2 CONFIG.BIT_REV 2 CONFIG.PROJ [expr {0x00210200}]]
     if {$full} { lappend kv CONFIG.FULL_FFT_CFG $fft_code CONFIG.FULL_BUILD_TAG $spec_build_tag }
     foreach {k want} $kv {
         set_property $k $want $wcore

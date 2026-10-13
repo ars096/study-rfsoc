@@ -619,8 +619,8 @@ def main():
     p.add_argument("--bit", default=None, help="起こすときの bit の名前（bits.json の。既定はその default）")
     p.add_argument("--proto", type=int, default=2, choices=(1, 2), help="proj021 2-3c: 送る記録の版（2 = s45proto v2・float32 / 1 = 今までの v1）")
     p.add_argument("--posctl-f32-trunc", action="store_true", help="陽性対照: v2 の float32 を最も近い値でなく 0 へ切り捨てる（fmt=both の照合が落ちる）")
-    p.add_argument("--read", default="ring", choices=("ring", "axi"),
-                   help="proj021 2-3a: PL からの読み口（ring = PL が書くリングのレコード / axi = 仮の読み窓、2-2d まで）")
+    p.add_argument("--read", default="ring", choices=("ring",),
+                   help="proj021 2-3a: PL からの読み口（ring = PL が書くリングのレコード。2-2d で axi = 仮の読み窓の道は外した）")
     p.add_argument("--ring-mib", type=int, default=32, help="PL が書くリングの大きさ [MiB]（--read ring）")
     p.add_argument("--posctl-ring-stall", type=float, default=0.0, help="陽性対照: RUN の 100 周目にこの秒数リングを読まない")
     a = p.parse_args()

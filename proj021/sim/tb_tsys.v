@@ -41,9 +41,9 @@ module tb_tsys;
     s45_core #(.NW(2), .N_ACC_DEFAULT(2), .G_L2(12), .FULL(1), .FULL_N_ACC_DEFAULT(8), .FULL_STABLE_N(0)) u_c (
         .aclk(clk), .aresetn(aresetn), .s_axis_tdata(tdata), .s_axis_tvalid(tvalid), .s_axis_tready(),
         .s_axis_full_tdata(tdata), .s_axis_full_tvalid(tvalid), .s_axis_full_tready(), .full_gb_stat(32'd0), .full_adc_stat(32'd0), .full_sel(),
-        .s_axi_awaddr(c_aw), .s_axi_awprot(3'd0), .s_axi_awvalid(awv[0] | awv[1]), .s_axi_awready(c_awr),
+        .s_axi_awaddr(c_aw[15:0]), .s_axi_awprot(3'd0), .s_axi_awvalid(awv[0] | awv[1]), .s_axi_awready(c_awr),
         .s_axi_wdata(wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(wv[0] | wv[1]), .s_axi_wready(c_wr), .s_axi_bresp(), .s_axi_bvalid(c_bv), .s_axi_bready(1'b1),
-        .s_axi_araddr(c_ar), .s_axi_arprot(3'd0), .s_axi_arvalid(arv[0] | arv[1]), .s_axi_arready(c_arr),
+        .s_axi_araddr(c_ar[15:0]), .s_axi_arprot(3'd0), .s_axi_arvalid(arv[0] | arv[1]), .s_axi_arready(c_arr),
         .s_axi_rdata(c_rd), .s_axi_rresp(), .s_axi_rvalid(c_rv), .s_axi_rready(1'b1),
         .gb_hold(), .gb_adj(), .gb_dn_rstn(), .gb_k(), .gb_stat(32'd0), .adc_stat(32'd0),
         .t_in(t_out), .go_in(go_out), .tev_in(ev_out));
@@ -78,12 +78,16 @@ module tb_tsys;
     endfunction
     function [19:0] xa(input integer s, input [19:0] a);
         if (s == 2) xa = a;
-        else if (s == 1) xa = (a[15:8] == 8'h00) ? 20'h04800 + smap(a[7:0]) : 20'hC0000 + a[15:0] + ((a[15:8] == 8'h01) ? 20'h01000 : 20'h0);
+        else if (s == 1) begin                          // proj021 2-2d: 全帯域の TP のレジスタは流れのブロックの 0x100〜（2-1〜2-2c は仮の 0xC1100）
+            if (a[15:8] == 8'h00) xa = 20'h04800 + smap(a[7:0]);
+            else if (a[15:8] == 8'h01) xa = 20'h04900 + a[7:0];
+            else begin xa = 20'hFFFFF; $display("tb_tsys: NG 全帯域の旧番地 %04x は 2-2d に無い（仮の読み窓）", a[15:0]); end
+        end
         else if (a[19:17] == 3'd4) begin                // ADC の共通（表 A）
             if (a[16:8] != 9'd0) xa = {4'd0, a[15:0]};   // TP のレジスタ・リング
             else if (a[7:0] >= 8'h10) xa = a[7:0] + 20'h10;
             else begin xa = 20'hFFFFF; $display("tb_tsys: NG 旧番地の表に無い表 A %02x", a[7:0]); end
-        end else if (a[16:15] != 2'd0) xa = 20'h80000 + a;                   // 仮の読み窓
+        end else if (a[16:15] != 2'd0) begin xa = 20'hFFFFF; $display("tb_tsys: NG 窓の旧番地 %05x は 2-2d に無い（仮の読み窓）", a); end
         else xa = 20'h04000 + 20'h00400 * a[19:17] + wmap(a[7:0]);
     endfunction
     wire [63:0] T = u_t.T;
@@ -159,7 +163,7 @@ module tb_tsys;
         repeat (16) @(posedge clk);
         axr(0, 20'h00000); if (rv !== 32'h0203_0000) begin $display("tb_tsys: NG 窓 0 の SID %08x", rv); ng = ng + 1; end
         axr(1, 20'h00000); if (rv !== 32'h0201_0200) begin $display("tb_tsys: NG 全帯域の SID %08x", rv); ng = ng + 1; end
-        axr(2, 20'h00);    if (rv !== 32'h0202_0102) begin $display("tb_tsys: NG time_core の IF_ID %08x", rv); ng = ng + 1; end
+        axr(2, 20'h00);    if (rv !== 32'h0202_0202) begin $display("tb_tsys: NG time_core の IF_ID %08x", rv); ng = ng + 1; end
         $display("tb_tsys: 起動（T %0d）", T);
         axw(2, 20'h08, 32'h8);                         // ANCHORED
         // 窓 0・1: k 5・NS 1、窓 0 は CFG 0x1234 で WRST、窓 1 も 0x1234 で WRST した後 CFG を 0x5555 に（[6] が立つはず）

@@ -129,7 +129,7 @@ def main():
         time.sleep(0.01)
         f_start = wn.rd(WN.R_FLAGS)
         wn.wr(WN.R_CTRL, WN.CTRL_CLR)
-        seq = wn.run(1, 1, shift)
+        seq = wn.run(1, 1, shift, snap=True)      # proj021 2-2d: スナップショットはレコードで（RUN の前に SNAP）
         tf = NFFT_W / w * 1e-6
         if wn.wait_dump(seq, 20 * tf + 1.0) is None:
             err.append("ダンプが閉じない")

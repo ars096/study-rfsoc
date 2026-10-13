@@ -9,7 +9,7 @@
 //   3. 書けるレジスタ（N_ACC・N_DUMP・SHIFT・CFG_ID・WK・WDPHI・WNS・WRST_T・GB_K）を流れごとに違う値で書いて読み返す（ほかの流れに漏れない）
 //   4. WRST: 窓の WCUR・FRAME_BEATS・PARAM の NS が書いた WNS に、WRST_CFG が CFG_ID に。FULL の SRC は書いただけでは効かず、
 //      WRST（CTRL[12]）で効き、full_sel に出る。ARM_WRST（CTRL[13]）は time_core の発火で効く
-//   5. TP のレジスタ（0x100）・FULL の TP（仮の 0xC1100）・仮の SNAP_SEL（0xE0000）・仮の範囲の空き（0xDEADBEEF）
+//   5. TP のレジスタ（0x100）・FULL の TP のレジスタ（2-2d: FULL の流れのブロックの 0x100〜）。コアの番地は 64 KiB（2-2d。仮の範囲は無い）
 //   6. time_core の IF_ID・PROJ
 // 陽性対照（-DREGMAP_POSCTL）: tb の流れのブロックの番地を 4 バイトずらす → 落ちること
 `timescale 1ns / 1ps
@@ -42,18 +42,18 @@ module tb_regmap;
                .FULL_FFT_CFG(8'hA5), .FULL_STABLE_N(0)) u_c0 (
         .aclk(clk), .aresetn(aresetn), .s_axis_tdata(256'd0), .s_axis_tvalid(1'b0), .s_axis_tready(),
         .s_axis_full_tdata(256'd0), .s_axis_full_tvalid(1'b0), .s_axis_full_tready(), .full_gb_stat(32'd0), .full_adc_stat(32'd0), .full_sel(fsel0),
-        .s_axi_awaddr(awaddr), .s_axi_awprot(3'd0), .s_axi_awvalid(awv[0]), .s_axi_awready(awr[0]),
+        .s_axi_awaddr(awaddr[15:0]), .s_axi_awprot(3'd0), .s_axi_awvalid(awv[0]), .s_axi_awready(awr[0]),
         .s_axi_wdata(wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(wv[0]), .s_axi_wready(wr_[0]), .s_axi_bresp(), .s_axi_bvalid(bv[0]), .s_axi_bready(1'b1),
-        .s_axi_araddr(araddr), .s_axi_arprot(3'd0), .s_axi_arvalid(arv[0]), .s_axi_arready(arr[0]),
+        .s_axi_araddr(araddr[15:0]), .s_axi_arprot(3'd0), .s_axi_arvalid(arv[0]), .s_axi_arready(arr[0]),
         .s_axi_rdata(rdw[0]), .s_axi_rresp(), .s_axi_rvalid(rv_[0]), .s_axi_rready(1'b1),
         .gb_hold(), .gb_adj(), .gb_dn_rstn(), .gb_k(), .gb_stat(32'd0), .adc_stat(32'd0),
         .t_in(t_out), .go_in(go_out), .tev_in(ev_out));
     s45_core #(.NW(2), .G_L2(12), .BUILD_TAG(32'h1234_0001), .CORE_PORT(16'h0201), .FULL(0)) u_c1 (
         .aclk(clk), .aresetn(aresetn), .s_axis_tdata(256'd0), .s_axis_tvalid(1'b0), .s_axis_tready(),
         .s_axis_full_tdata(256'd0), .s_axis_full_tvalid(1'b0), .s_axis_full_tready(), .full_gb_stat(32'd0), .full_adc_stat(32'd0), .full_sel(fsel1),
-        .s_axi_awaddr(awaddr), .s_axi_awprot(3'd0), .s_axi_awvalid(awv[1]), .s_axi_awready(awr[1]),
+        .s_axi_awaddr(awaddr[15:0]), .s_axi_awprot(3'd0), .s_axi_awvalid(awv[1]), .s_axi_awready(awr[1]),
         .s_axi_wdata(wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(wv[1]), .s_axi_wready(wr_[1]), .s_axi_bresp(), .s_axi_bvalid(bv[1]), .s_axi_bready(1'b1),
-        .s_axi_araddr(araddr), .s_axi_arprot(3'd0), .s_axi_arvalid(arv[1]), .s_axi_arready(arr[1]),
+        .s_axi_araddr(araddr[15:0]), .s_axi_arprot(3'd0), .s_axi_arvalid(arv[1]), .s_axi_arready(arr[1]),
         .s_axi_rdata(rdw[1]), .s_axi_rresp(), .s_axi_rvalid(rv_[1]), .s_axi_rready(1'b1),
         .gb_hold(), .gb_adj(), .gb_dn_rstn(), .gb_k(), .gb_stat(32'd0), .adc_stat(32'd0),
         .t_in(t_out), .go_in(go_out), .tev_in(ev_out));
@@ -94,7 +94,7 @@ module tb_regmap;
         repeat (16) @(posedge clk);
         // ---- 1. コアの共通 ----
         for (c = 0; c < 2; c = c + 1) begin
-            expect(c, 20'h00000, 32'h0202_0101, "IF_ID");
+            expect(c, 20'h00000, 32'h0202_0201, "IF_ID（BIT_REV 2。2-2d）");
             expect(c, 20'h00004, 32'h0021_0200, "PROJ");
             expect(c, 20'h00008, (c == 0) ? 3 : 2, "NSTREAM");
             expect(c, 20'h0000C, 7, "CAPS（[0] DMA のレコード 2-2a・[1] TP をレコードで 2-2b・[2] SNAP をレコードで 2-2c）");
@@ -134,7 +134,10 @@ module tb_regmap;
         expect(0, B(2, 12'h028), 32'h8000_0000, "SRC（FULL、書き換えられる）");
         expect(0, B(2, 12'h080), 32'h0000_0D0D, "NFFT_MIN_MAX（FULL）");
         expect(0, B(2, 12'h084), 0, "REC_CTRL（FULL）");
-        expect(0, B(2, 12'h100), 0, "FULL の種類に固有（なし）");
+        expect(0, B(2, 12'h100), 512, "FULL の TP_N（2-2d: 種類に固有の 0x100〜 = FULL の TP のレジスタ）");
+        expect(0, B(2, 12'h114), (512 << 16) | (16 << 8) | 2, "FULL の TP_PARAM（0x114）");
+        expect(0, B(2, 12'h11C), 32'h0000_0A00, "FULL の TP_REC_CTRL（既定: K 10・EN 0。2-2d）");
+        expect(0, B(2, 12'h120), 0, "FULL の TP_REC_LATE（2-2d）");
         expect(0, B(2, 12'h214), 32'h5678_0000, "FULL の診断の BUILD（0x214）");
         expect(0, B(3, 12'h000), 0, "無い流れ s = 3");
         expect(1, B(2, 12'h000), 0, "無い流れ s = 2（コア 1）");
@@ -208,14 +211,17 @@ module tb_regmap;
         expectm(0, B(2, 12'h008), 32'h40, 32'h0000_0000, "CTRL の [6]（発火の後）");
         // ---- 5. TP・仮の範囲 ----
         for (c = 0; c < 2; c = c + 1) expect(c, 20'h00114, (512 << 16) | (16 << 8) | 2, "TP_PARAM（0x114）");
-        expect(0, 20'hC1114, (512 << 16) | (16 << 8) | 2, "FULL の TP_PARAM（仮 0xC1114）");
-        expect(0, 20'hE0000, 0, "仮の SNAP_SEL（既定）");
-        axw(0, 20'hE0000, 1);
-        expect(0, 20'hE0000, 1, "仮の SNAP_SEL");
-        expect(0, 20'hD0000, 32'hDEAD_BEEF, "仮の範囲の空き（窓 2 は無い）");
-        expect(1, 20'hC0000, 32'hDEAD_BEEF, "仮の範囲の空き（コア 1 に FULL は無い）");
-        expect(0, 20'hC0400, 32'hDEAD_BEEF, "FULL の仮の範囲の空き（0xC0400）");
-        expect(0, 20'hC001C, 0, "FULL の仮の範囲の 0x1C = SEQ（0）");
+        // 2-2d: FULL の TP のレジスタは書けて、コアの TP に漏れない
+        axw(0, B(2, 12'h100), 1000); axw(0, B(2, 12'h11C), 32'h0000_0C01);
+        expect(0, B(2, 12'h100), 1000, "FULL の TP_N（書いて読み返す）");
+        expect(0, B(2, 12'h11C), 32'h0000_0C01, "FULL の TP_REC_CTRL（書いて読み返す）");
+        for (c = 0; c < 2; c = c + 1) begin
+            expect(c, 20'h00100, 512, "コアの TP_N（FULL の TP を書いても変わらない）");
+            expect(c, 20'h0011C, 32'h0000_0A00, "コアの TP_REC_CTRL（同上）");
+        end
+        axw(0, B(2, 12'h100), 512); axw(0, B(2, 12'h11C), 32'h0000_0A00);
+        expect(0, 20'h08000, 0, "流れ s = 16 のブロック（無い。2-1〜2-2c の仮の読み窓の 0x88000 の下位）");
+        expect(0, 20'h0C01C, 0, "流れ s = 32 のブロック（無い。2-1〜2-2c の FULL の仮の読み窓の 0xC001C の下位）");
         // ---- 7. +DUMP=ファイル: 約束の番地の読みを全部書き出す（pynq/test_regmap.py が s45core.py の自己記述の読み手を、この値で回す）----
         if ($value$plusargs("DUMP=%s", dump_fn)) begin
             fd = $fopen(dump_fn, "w");
@@ -226,14 +232,12 @@ module tb_regmap;
                     for (k = 0; k < 256; k = k + 1) if (k < 36 || (k >= 64 && k < 72) || (k >= 128 && k < 156)) begin
                         axr(c, 20'h04000 + 20'h400 * st + 4 * k); $fwrite(fd, "%0d %05x %08x\n", c, 20'h04000 + 20'h400 * st + 4 * k, rv); end
             end
-            for (k = 0; k < 64; k = k + 1) begin axr(0, 20'hC1100 + 4 * k); $fwrite(fd, "0 %05x %08x\n", 20'hC1100 + 4 * k, rv); end
-            axr(0, 20'hE0000); $fwrite(fd, "0 e0000 %08x\n", rv);
             for (k = 0; k < 24; k = k + 1) begin axr(2, 4 * k); $fwrite(fd, "2 %05x %08x\n", 4 * k, rv); end
             $fclose(fd);
             $display("tb_regmap: 書き出した %0s", dump_fn);
         end
         // ---- 6. time_core ----
-        expect(2, 20'h00, 32'h0202_0102, "time_core の IF_ID");
+        expect(2, 20'h00, 32'h0202_0202, "time_core の IF_ID（BIT_REV 2。2-2d）");
         expect(2, 20'h5C, 32'h0021_0200, "time_core の PROJ");
 `ifdef REGMAP_POSCTL
         $display("tb_regmap: 陽性対照（流れのブロックの番地を 4 バイトずらした）: NG %0d 件 / %0d", ng, nchk);

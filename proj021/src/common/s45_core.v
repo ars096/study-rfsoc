@@ -11,12 +11,10 @@
 // ブロックデザインには module reference で `s45_core_i`（i = 0..3 = ADC_A..D）として置く。**PS はこの名前でコアを見つける**（2.3）。
 // 全部が DSP ドメイン（256 MHz）。
 //
-// ---- 番地（コアの 1 MiB。手順 2-1。2-2 で 64 KiB に縮める）----
-//   0x04000 + 0x400·NW（FULL の流れのブロック）     → spec_core の 0x0000–0x03FF
-//   0xC0000–0xCFFFF（FULL の仮の読み窓、約束の外）  → spec_core の 0x0000–0xFFFF
+// ---- 番地（コアの 64 KiB。proj021 2-2d。手順 2-1〜2-2c は 1 MiB で、仮の読み窓 0x80000〜・0xC0000〜・0xE0000 があった）----
+//   0x4000 + 0x400·NW（FULL の流れのブロック）      → spec_core の 0x000–0x3FF（0x100〜 は FULL の TP のレジスタ）
 //   ほか                                            → win_core（番地はそのまま。win_core.v の冒頭）
-//   FULL = 0 のコアでは全部 win_core へ（FULL の範囲は win_core が 0 / 0xDEADBEEF を返す）
-//   **FULL = 1 は NW ≦ 2 のときだけ**（0xC0000 は窓 2 の仮の読み窓と重なる。仮の読み窓は 2-2 で無くなる）
+//   FULL = 0 のコアでは全部 win_core へ（FULL の範囲は win_core が 0 を返す）
 //
 // ---- 振り分け ----
 // 取り引きを 1 つずつ（書きと読みのどちらか 1 つ、応答を返し終えるまで次を受けない）。上流の口・下流の口とも全部レジスタで
@@ -36,7 +34,7 @@ module s45_core #(
     parameter integer GB_K_RST      = 2,
     parameter integer G_L2          = 19,
     parameter integer BIT_KIND      = 2,
-    parameter integer BIT_REV       = 1,
+    parameter integer BIT_REV       = 2,     // proj021 2-2d: 2（64 KiB の番地・仮の読み窓なし）。2-1〜2-2c は 1
     parameter integer PROJ          = 2163200,   // = 0x0021_0200。**10 進で書く**（32'h で書くと Vivado が CONFIG.PROJ を読み返しで別の形にし、build.tcl の照合が落ちた。2026-10-09）
     parameter integer CORE_PORT     = 0,
     parameter integer BASE_BEATS    = 2621440,
@@ -66,7 +64,7 @@ module s45_core #(
     input  wire [31:0]  full_adc_stat,
     output wire [1:0]   full_sel,
     // AXI4-Lite
-    input  wire [19:0]  s_axi_awaddr,
+    input  wire [15:0]  s_axi_awaddr,
     input  wire [2:0]   s_axi_awprot,
     input  wire         s_axi_awvalid,
     output wire         s_axi_awready,
@@ -77,7 +75,7 @@ module s45_core #(
     output wire [1:0]   s_axi_bresp,
     output reg          s_axi_bvalid,
     input  wire         s_axi_bready,
-    input  wire [19:0]  s_axi_araddr,
+    input  wire [15:0]  s_axi_araddr,
     input  wire [2:0]   s_axi_arprot,
     input  wire         s_axi_arvalid,
     output wire         s_axi_arready,
@@ -113,17 +111,16 @@ module s45_core #(
     (* max_fanout = 50 *) reg rstn_l = 1'b0;
     always @(posedge aclk) begin rstn_q1 <= aresetn; rstn_q2 <= rstn_q1; rstn_l <= rstn_q2; end
     wire rst = ~rstn_l;
-    initial if (FULL != 0 && NW > 2) begin $display("s45_core: FULL = 1 は NW ≦ 2 のときだけ（NW %0d）", NW); $finish; end
-    localparam [19:0] FBLK = 20'h04000 + 20'h00400 * NW;     // FULL の流れのブロック
+    localparam [15:0] FBLK = 16'h4000 + 16'h0400 * NW;       // FULL の流れのブロック
 
-    function automatic is_full(input [19:0] a);
-        is_full = (FULL != 0) && ((a[19:10] == FBLK[19:10]) || (a[19:16] == 4'hC));
+    function automatic is_full(input [15:0] a);
+        is_full = (FULL != 0) && (a[15:10] == FBLK[15:10]);
     endfunction
 
     // ---- 上流の口 ----
     localparam [2:0] S_IDLE = 3'd0, S_WREQ = 3'd1, S_WRSP = 3'd2, S_RREQ = 3'd3, S_RRSP = 3'd4, S_DONE = 3'd5;
     reg  [2:0]  st;
-    reg  [19:0] q_addr;
+    reg  [15:0] q_addr;
     reg  [31:0] q_wdata;
     reg  [3:0]  q_wstrb;
     reg         q_full;
@@ -149,12 +146,12 @@ module s45_core #(
     wire [31:0] dn_rdata   = q_full ? f_rdata   : w_rdata;
     wire        d_bready   = (st == S_WRSP);
     wire        d_rready   = (st == S_RRSP);
-    // spec_core の番地（16 bit）: 流れのブロックは 0x0000–0x03FF、仮の読み窓はそのまま
-    wire [15:0] f_addr = (q_addr[19:16] == 4'hC) ? q_addr[15:0] : {6'd0, q_addr[9:0]};
+    // spec_core の番地（16 bit）: 流れのブロックの 0x000–0x3FF
+    wire [15:0] f_addr = {6'd0, q_addr[9:0]};
 
     always @(posedge aclk) begin
         if (rst) begin
-            st <= S_IDLE; q_addr <= 20'd0; q_wdata <= 32'd0; q_wstrb <= 4'd0; q_full <= 1'b0;
+            st <= S_IDLE; q_addr <= 16'd0; q_wdata <= 32'd0; q_wstrb <= 4'd0; q_full <= 1'b0;
             s_axi_bvalid <= 1'b0; s_axi_rvalid <= 1'b0; s_axi_rdata <= 32'd0;
         end else begin
             case (st)
@@ -196,16 +193,27 @@ module s45_core #(
 
     // ---- proj021 2-2a: レコード（win_core の DDC の流れ・spec_core の FULL の流れ）----
     wire [63:0]   wr_d, fr_d;
-    wire          wr_v, wr_r, wr_l, wr_u, fr_v, fr_r, fr_l, fr_u, f_drop;
+    wire          wr_v, wr_r, wr_l, wr_u, fr_v, fr_r, fr_l, fr_u;
+    wire [1:0]    f_drop;               // proj021 2-2d: [0] FULL の SPEC・SNAP / [1] FULL の TP のレコード
     wire [NW:0]   w_drop;               // proj021 2-2b: [NW] = TP のレコード
     integer di;
-    reg   [2:0]   drop_sum;
+    reg   [5:0]   drop_sum;
     always @* begin
-        drop_sum = (FULL != 0) ? {2'd0, f_drop} : 3'd0;
-        for (di = 0; di <= NW; di = di + 1) drop_sum = drop_sum + {2'd0, w_drop[di]};
+        drop_sum = (FULL != 0) ? {5'd0, f_drop[0]} + {5'd0, f_drop[1]} : 6'd0;
+        for (di = 0; di <= NW; di = di + 1) drop_sum = drop_sum + {5'd0, w_drop[di]};
     end
+    // proj021 2-2d: 1 クロックに 4 本以上（DDC 2 ＋ FULL ＋ コアの TP ＋ FULL の TP）来ても数え落とさないよう、溜めて 1 クロック 3 までずつ出す
+    //   （2-2c までは 3 で切っていた。FULL の TP とコアの TP は同じ区切りで閉じうる）
+    reg [7:0] drop_pend;
     reg [1:0] drop_q;
-    always @(posedge aclk) drop_q <= (drop_sum > 3'd3) ? 2'd3 : drop_sum[1:0];   // 同じクロックに 4 本は来ない（NW ≦ 2 ＋ FULL ＋ TP。TP の捨ては個の来るクロックだけ）
+    wire [7:0] drop_tot = drop_pend + {2'd0, drop_sum};
+    always @(posedge aclk) begin
+        if (rst) begin drop_pend <= 8'd0; drop_q <= 2'd0; end
+        else begin
+            drop_q    <= (drop_tot > 8'd3) ? 2'd3 : drop_tot[1:0];
+            drop_pend <= (drop_tot > 8'd3) ? drop_tot - 8'd3 : 8'd0;
+        end
+    end
     assign rec_drop = drop_q;
 
     // ---- spec_core（FULL の流れ）----
@@ -230,7 +238,7 @@ module s45_core #(
                 .m_tdata(m_axis_rec_tdata), .m_tvalid(m_axis_rec_tvalid), .m_tready(m_axis_rec_tready),
                 .m_tlast(m_axis_rec_tlast), .m_tuser(m_axis_rec_tuser));
         end else begin : g_nofull
-            assign f_drop = 1'b0;
+            assign f_drop = 2'b00;
             assign m_axis_rec_tdata = wr_d; assign m_axis_rec_tvalid = wr_v; assign wr_r = m_axis_rec_tready;
             assign m_axis_rec_tlast = wr_l; assign m_axis_rec_tuser = wr_u;
             assign s_axis_full_tready = 1'b1;

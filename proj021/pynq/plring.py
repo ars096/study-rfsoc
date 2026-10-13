@@ -5,16 +5,13 @@
 **s45ring.py（proj018 の PS の中の溜まり。specd が使う）とは別物**。こちらは書き手が PL、読み手が PS（specd は 2-3 でこれを使う）。
 
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --list
-    sudo -E $(which python3) plring.py --clkin 0 --ref 10 --compare              # 全部の流れ: レコード = AXI4-Lite（bit 単位）
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --soak 60              # ALL・10.24 ms を 60 s
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --soak 20 --no-inval --touch-ahead 256   # 陽性対照: 先の行をキャッシュに載せ、捨てずに読む → 古い行
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --soak 20 --touch-ahead 256              # 同じ先読みでも、捨てる道なら全部正しい
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --soak 20 --pause 3    # 陽性対照: 3 s 読まない → DROP_CNT = SEQ の飛び
-    sudo -E $(which python3) plring.py --clkin 0 --ref 10 --snapcompare          # 2-2c: SNAP のレコード = 仮の読み窓のスナップショット
     sudo -E $(which python3) plring.py --clkin 0 --ref 10 --golden               # 2-2c V2-c: W-G・全帯域の golden をレコードだけで
 
---compare: 流れごとに N_ACC を長く（ダンプ ≈ --period s）し、REC_CTRL の ONE で 1 個出させ、リングに来たら**次のダンプが閉じる前に**
-  同じ流れの仮の読み窓を AXI4-Lite（seqlock）で読み、SEQ が同じ・頭（DUMP_*）・本体 4096 語が bit 単位で同じことを確かめる。
+（2-2a〜2-2c の --compare・--snapcompare（レコード = 仮の読み窓）は、2-2d で仮の読み窓が無くなったので外した）
 --soak: 全部の流れを BASE（10.24 ms）のダンプ・ALL で回し、リングを読み続ける。数えるもの: 流れごとのレコード・SEQ の飛び・CRC の不一致・
   DROP_CNT・REC_LATE・PEAK・1 周の読みの時間。**DROP_CNT ＝ SEQ の飛びの和**（INTERFACE 4.1）を確かめる。
 
@@ -200,7 +197,7 @@ def setup(cores, period, shift_ddc, shift_full, ns):
     out = []
     for c in cores:
         for st in c.ddc():
-            wn = WN.Win(c.m, base=st.base, adc=c.adc, win=st.s, lbase=st.lbase)
+            wn = WN.Win(c.m, base=st.base, adc=c.adc, win=st.s)
             _, k, dphi, ns_, _ = WN.window_params(3000.0 + 37.0 * st.s, 256 >> (ns - 1))
             wn.set_window(k, dphi, ns_)
             fb = st.rd(SC.S_FRAME_BEATS)
@@ -214,69 +211,6 @@ def setup(cores, period, shift_ddc, shift_full, ns):
     for st, o, nacc, sh in out:
         o.run(nacc, 0, sh)
     return out
-
-
-def hdr_from_axi(st):
-    """AXI4-Lite で DUMP_* を読み、レコードの頭 w1..w6 を組む（seqlock。崩れたら None）"""
-    rd = st.rd
-    s0 = rd(SC.S_SEQ)
-    k, f0 = rd(SC.S_DUMP_K), rd(SC.S_DUMP_F0) | rd(SC.S_DUMP_F0 + 4) << 32
-    t = rd(SC.S_DUMP_T) | rd(SC.S_DUMP_T + 4) << 32
-    par, sh, src, h = rd(SC.S_PARAM), rd(SC.S_RUN_SHIFT), rd(SC.S_SRC), rd(SC.S_DUMP_H)
-    n, sat, fl, cfg = rd(SC.S_DUMP_N), rd(SC.S_DUMP_SAT), rd(SC.S_FLAGS), rd(SC.S_DUMP_CFG)
-    if rd(SC.S_SEQ) != s0:
-        return None, s0
-    ddc = st.kind == SC.KIND_DDC
-    w4 = ((12 if ddc else 13) | ((par >> 8 & 15) if ddc else 0) << 8 | (sh & 15) << 16 | ((par >> 12 & 15) if ddc else 0) << 24
-          | (src & 15) << 40 | (h & 0xFFFF) << 48)
-    return [s0 | k << 32, f0, t, w4, n | sat << 32, cfg | fl << 32], s0
-
-
-def axi_spectrum(st, o):
-    """仮の読み窓のスペクトル（seqlock）。(seq, np.uint64[4096])"""
-    m, spec, _ = o.read_dump()
-    return m["seq"], spec
-
-
-# ------------------------------------------------------------------ 判定
-def do_compare(cores, ring, a):
-    ss = setup(cores, a.period, a.shift, a.shift_full, a.ns)
-    ring.enable(True)
-    time.sleep(2 * a.period + 0.5)
-    ring.read()                                               # 出だしの残り（無いはず）を捨てる
-    ng = 0
-    for st, o, nacc, _ in ss:
-        st.wr(SC.S_REC_CTRL, 2)                               # ONE
-        t0 = time.time()
-        got = []
-        while not got and time.time() - t0 < 3 * a.period + 2:
-            got = [r for r in ring.read() if (r[0], r[1]) == (st.core.adc, st.s)]
-            time.sleep(0.002)
-        if not got:
-            log(f"NG {st.name}: ONE を書いたのにレコードが来ない"); ng += 1; continue
-        core, s, seq, hw, pay, crc_ok, tail_ok = got[0]
-        hdr, hseq = hdr_from_axi(st)
-        aseq, spec = axi_spectrum(st, o)
-        rc = st.rd(SC.S_REC_CTRL)
-        res = []
-        if not (crc_ok and tail_ok): res.append("CRC・尾")
-        if len(got) != 1: res.append(f"ONE で {len(got)} 個")
-        if rc & 2: res.append(f"ONE が 0 に戻らない（REC_CTRL {rc:#x}）")
-        if hdr is None or hseq != seq: res.append(f"頭の seqlock（AXI SEQ {hseq} / レコード {seq}）")
-        elif [int(x) for x in hw[1:7]] != hdr:
-            bad = [i + 1 for i in range(6) if int(hw[1 + i]) != hdr[i]]
-            res.append(f"頭の w{bad} が DUMP_* と違う")
-        if aseq != seq: res.append(f"AXI の SEQ {aseq}（次のダンプが閉じた。--period を長く）")
-        elif not np.array_equal(pay, spec):
-            res.append(f"本体が {int(np.sum(pay != spec))} 語違う")
-        tag = "OK" if not res else "NG " + "・".join(res)
-        ng += bool(res)
-        log(f"{st.name:<22} SEQ {seq:>6} N_ACC {nacc:>7}: {tag}（Σ {int(pay.sum(dtype=np.uint64)):#x}）")
-        st.wr(SC.S_REC_CTRL, 0)
-    r = ring.regs()
-    log(f"リング: REC_CNT {r['rec']} / DROP_CNT {r['drop']} / PEAK {r['peak']} / ERR {r['err']}")
-    log(f"結果: {'通過' if ng == 0 and r['drop'] == 0 and not r['err'] else f'失敗（{ng} 本）'}")
-    return ng
 
 
 def rtype(r_):
@@ -330,53 +264,6 @@ def check_pair(st, spec_r, snap_r, got):
     return res
 
 
-def do_snapcompare(cores, ring, a):
-    """2-2c: 流れごとに SNAP を立てて（書く流れにして）1 ダンプ以上待ち、ONE | SNAP で SPEC と SNAP を 1 組出させ、
-    **次の上書きの前に**仮の読み窓のスナップショットを AXI4-Lite で読んで、SNAP の本体と bit 単位で比べる"""
-    import window as WN
-    import spectrometer as S
-    ss = setup(cores, a.period, a.shift, a.shift_full, a.ns)
-    ring.enable(True)
-    time.sleep(2 * a.period + 0.5)
-    ring.read()
-    ng = 0
-    for st, o, nacc, _ in ss:
-        st.wr(SC.S_REC_CTRL, REC_SNAP)                        # 書く流れに（DDC はコアで 1 本。このダンプの頭はまだ前の持ち主）
-        time.sleep(2 * a.period + 0.2)
-        ring.read()
-        st.wr(SC.S_REC_CTRL, REC_ONE | REC_SNAP)
-        spec_r, snap_r, got = wait_pair(ring, st, 3 * a.period + 2)
-        res = check_pair(st, spec_r, snap_r, got)
-        if snap_r is not None:
-            seq = snap_r[2]
-            m = o.meta()
-            base, nw = (WN.SNAP_BASE, 2 * NCH) if st.kind == SC.KIND_DDC else (S.SNAP_BASE, NCH)
-            raw = o.block(base, nw).view(np.uint64)
-            seq2 = st.rd(SC.S_SEQ)
-            if not (m["seq"] == seq == seq2):
-                res.append(f"仮の読み窓の SEQ {m['seq']}→{seq2}（レコード {seq}。--period を長く）")
-            elif m["snap_f"] != m["f0"]:
-                res.append(f"SNAP_F {m['snap_f']} ≠ DUMP_F0 {m['f0']}")
-            elif not np.array_equal(raw, snap_r[4]):
-                res.append(f"本体が {int(np.sum(raw != snap_r[4]))} 語違う")
-            elif (int(snap_r[3][2]) & 0xFFFFFFFFFFFF) != m["f0"]:
-                res.append("SNAP の DUMP_F0 が AXI4-Lite と違う")
-        rc = st.rd(SC.S_REC_CTRL)
-        if rc & REC_ONE:
-            res.append(f"ONE が 0 に戻らない（REC_CTRL {rc:#x}）")
-        tag = "OK" if not res else "NG " + "・".join(res)
-        ng += bool(res)
-        sq = snap_r[2] if snap_r is not None else -1
-        log(f"{st.name:<22} SEQ {sq:>6} N_ACC {nacc:>7}: {tag}" + (f"（SNAP Σ {int(snap_r[4].sum(dtype=np.uint64)):#x}）" if snap_r is not None else ""))
-        st.wr(SC.S_REC_CTRL, 0)
-    r = ring.regs()
-    late = sum(st.rd(SC.S_REC_LATE) for st, _, _, _ in ss)
-    log(f"リング: REC_CNT {r['rec']} / DROP_CNT {r['drop']} / ERR {r['err']} / REC_LATE 計 {late}")
-    ok = ng == 0 and r["drop"] == 0 and not r["err"]
-    log(f"結果（S22c-4 のスナップショットの照合）: {'通過' if ok else f'失敗（{ng} 本）'}")
-    return 0 if ok else 1
-
-
 def do_golden(cores, ring, a):
     """2-2c V2-c: 9 本とも N_ACC 1・N_DUMP 1・ONE | SNAP で SPEC と SNAP を 1 組出させ、window の W-G・spectrometer の
     全帯域の golden と同じ判定を**レコードだけで**行う（仮の読み窓は読まない）"""
@@ -394,14 +281,14 @@ def do_golden(cores, ring, a):
         st.wr(SC.S_CTRL, 1 << 1)
         if not ddc and a.golden_shift_full is None:
             st.wr(SC.S_REC_CTRL, REC_ONE | REC_SNAP)          # SHIFT を決めるための 1 組（auto_shift と同じ式）
-            o.run(1, 1, 0)
+            o.run(1, 1, 0, snap=True)                          # 2-2d: run が REC_CTRL = ALL | SNAP を書く（N_DUMP 1 なので ONE | SNAP と同じ 1 組）
             _, sn0, _ = wait_pair(ring, st, 2.0)
             sh = S.shift_of_snap(snap_of(st, sn0[4])) if sn0 is not None else a.shift_full
             st.wr(SC.S_CTRL, 1 << 1)
         else:
             sh = (a.golden_shift if ddc else a.golden_shift_full)
         st.wr(SC.S_REC_CTRL, REC_ONE | REC_SNAP)              # RUN の前に SNAP（このダンプの頭のスナップショットをこの流れが書く）
-        o.run(1, 1, sh)
+        o.run(1, 1, sh, snap=True)
         spec_r, snap_r, got = wait_pair(ring, st, 2.0)
         res = check_pair(st, spec_r, snap_r, got)
         msg = ""
@@ -454,7 +341,7 @@ def acct(r_, last, nrec):
     k = (core, s)
     nrec[k] = nrec.get(k, 0) + 1
     g = 0
-    if s == 0xFF:
+    if (int(hw[0]) >> 40 & 0xFF) == TYPE_TP:            # 2-2d: FULL の TP（s = FULL の流れ）も
         n = int(hw[5]) & 0xFFFFFFFF
         if k in last and seq != last[k]:
             g = -(-((seq - last[k]) & 0xFFFFFFFF) // TP_K)
@@ -613,11 +500,9 @@ def main():
     p.add_argument("--settle", type=float, default=5.0)
     p.add_argument("--size-mib", type=int, default=32)
     p.add_argument("--list", action="store_true")
-    p.add_argument("--compare", action="store_true")
     p.add_argument("--soak", type=float, default=0.0)
     p.add_argument("--tpcompare", action="store_true", help="proj021 2-2b V2-e: TP のレコード = AXI4-Lite の TP のリング")
     p.add_argument("--tp-seconds", type=float, default=3.0, help="--tpcompare で集める時間 [s]（AXI4-Lite のリングは 0.52 s ぶん）")
-    p.add_argument("--period", type=float, default=1.0, help="--compare のダンプの長さ [s]")
     p.add_argument("--ns", type=int, default=1, help="DDC の NS（1 = 256 MHz）")
     p.add_argument("--shift", type=int, default=4)
     p.add_argument("--shift-full", type=int, default=6)
@@ -626,7 +511,6 @@ def main():
     p.add_argument("--touch-ahead", type=int, default=0,
                    help="読み終えた W から この KiB 先までをわざと読んでキャッシュに載せる（--no-inval の陽性対照を確かにする。捨てる道でも通るべき）")
     p.add_argument("--pause", type=float, default=0.0, help="陽性対照: --soak の途中でこれだけ読まない [s]")
-    p.add_argument("--snapcompare", action="store_true", help="proj021 2-2c: SNAP のレコード = 仮の読み窓のスナップショット")
     p.add_argument("--golden", action="store_true", help="proj021 2-2c V2-c: W-G・全帯域の golden をレコードだけで")
     p.add_argument("--golden-shift", type=int, default=7, help="--golden の DDC の SHIFT（window.py の W-G と同じ 7）")
     p.add_argument("--golden-shift-full", type=int, default=None, help="--golden の FULL の SHIFT（既定: スナップショットから auto と同じ式）")
@@ -646,6 +530,8 @@ def main():
         if rip is None:
             raise SC.S45Error("ol.s45_ring_0 が無い（手順 2-2a 以降の .bit ではない）")
         ring = Ring(rip.mmio, a.size_mib * MiB, inval=not a.no_inval, touch=a.touch_ahead * 1024)
+        import rectap
+        rectap.use_ring(ring)                                  # 2-2d: Win・Spec の run() が REC_CTRL を書く口（リングは同じ 1 つ）
     except SC.S45Error as e:
         log(f"ERROR: {e}"); sys.exit(1)
     log(SC.table(cores, tmm))
@@ -654,14 +540,10 @@ def main():
         f"CAPS（コア）{[c.caps for c in cores]} / 範囲の invalidate {'あり' if ring.bo_sync else 'なし'}")
     rc = 0
     try:
-        if a.compare:
-            rc |= do_compare(cores, ring, a) != 0
         if a.tpcompare:
             rc |= do_tpcompare(cores, ring, a)
         if a.soak > 0:
             rc |= do_soak(cores, ring, a)
-        if a.snapcompare:
-            rc |= do_snapcompare(cores, ring, a)
         if a.golden:
             rc |= do_golden(cores, ring, a)
     finally:

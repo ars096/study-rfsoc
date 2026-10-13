@@ -43,7 +43,7 @@ module tb_tp_core;
 `else
     tp_core #(.TPN_DEFAULT(TPN)) dut (
 `endif
-        .clk(clk), .rst(rst), .in_acc(in_acc), .m_in(m_in), .fin(fin), .tdata(tdata),
+        .clk(clk), .rst(rst), .rst_rec(rst), .in_acc(in_acc), .m_in(m_in), .fin(fin), .tdata(tdata),
         .cmd_run(cmd_run), .wr_en(wr_en), .wr_addr(6'h00), .wr_data(wr_data),
         .rd_addr(rd_addr), .rd_ring(rd_ring), .rd_reg(rd_reg),
         .t_now(t_now), .m_tdata(m_tdata), .m_tvalid(m_tvalid), .m_tready(m_tready), .m_tlast(m_tlast), .m_tuser(m_tuser),

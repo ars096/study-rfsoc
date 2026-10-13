@@ -6,7 +6,8 @@
 //   変種（+MODE）:
 //     all  : 流れ 0 と FULL を REC_CTRL の ALL、流れ 1 は途中で ONE を 1 回。ダンプは 16384 クロック（DDC N_ACC 4・FULL N_ACC 32）。
 //            読み出し 4096 クロック × 3 本が間に合う → REC_LATE 0・DROP 0 であるべき（WANT = nolate）。
-//            ダンプごとに AXI4-Lite で DUMP_*（seqlock）と仮の読み窓のスペクトル 16 ch を読む（**rec_fr が口を持っている間に読みが待たされる**道）
+//            ダンプごとに AXI4-Lite で DUMP_*（seqlock）を読む（2-2c までは仮の読み窓のスペクトル 16 ch も読み、rec_fr が口を持っている間に
+//            読みが待たされる道を見ていた。2-2d で仮の読み窓は無くなった）
 //     late : 全部 ALL、DDC の N_ACC 2（8192 クロック）・FULL の N_ACC 16 → 3 本の読み出し（12,300 クロック）が追いつかない（WANT = late）。
 //            AXI4-Lite は読まない。**N_ACC 1（4096 クロック）では 4096 語の読み出しが 1 本も間に合わず、レコードが 1 個も出ない**（1 回目で見た）
 //     snap : proj021 2-2c。流れ 0 と FULL を ALL | SNAP、流れ 1 に途中で ONE | SNAP を 1 回（書く窓は流れ 0 なので流れ 1 の SNAP は出ない）。
@@ -19,7 +20,7 @@
 //     S 行（2-2c、snap・late）: SEQ が進んだときの読みの面のスナップショットを記憶から直に写したもの（流れ 0: {im, re} を 32 bit に
 //            符号拡張した 4096 語、FULL: 生サンプルの 2048 語）。面の番号 ≠ DUMP_F0・札が揃わないなら書かない
 //     ring.txt: 読み手（PS の代わり）がリングから写したレコード
-//   tb の中の照合: AXI4-Lite の 16 ch = Q の同じ ch（AXI_CMP）、ONE で 1 個出た後 REC_CTRL の [1] が 0（ONE）
+//   tb の中の照合: ONE で 1 個出た後 REC_CTRL の [1] が 0（ONE）。AXI_CMP は tb の中の NG が 0（2-2c までの「AXI4-Lite の 16 ch = Q」は 2-2d で外した）
 `timescale 1ns / 1ps
 
 module tb_ring;
@@ -78,9 +79,9 @@ module tb_ring;
                .FULL_STABLE_N(0)) u_c0 (
         .aclk(clk), .aresetn(rstn), .s_axis_tdata(tdata), .s_axis_tvalid(tvalid), .s_axis_tready(),
         .s_axis_full_tdata(tdata), .s_axis_full_tvalid(tvalid), .s_axis_full_tready(), .full_gb_stat(32'd0), .full_adc_stat(32'd0), .full_sel(),
-        .s_axi_awaddr(awaddr), .s_axi_awprot(3'd0), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
+        .s_axi_awaddr(awaddr[15:0]), .s_axi_awprot(3'd0), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
         .s_axi_wdata(wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(wvalid), .s_axi_wready(wready), .s_axi_bresp(), .s_axi_bvalid(bvalid), .s_axi_bready(1'b1),
-        .s_axi_araddr(araddr), .s_axi_arprot(3'd0), .s_axi_arvalid(arvalid), .s_axi_arready(arready),
+        .s_axi_araddr(araddr[15:0]), .s_axi_arprot(3'd0), .s_axi_arvalid(arvalid), .s_axi_arready(arready),
         .s_axi_rdata(rdata), .s_axi_rresp(), .s_axi_rvalid(rvalid), .s_axi_rready(1'b1),
         .gb_hold(), .gb_adj(), .gb_dn_rstn(), .gb_k(), .gb_stat(32'd0), .adc_stat(32'd0),
         .t_in(tcnt), .go_in(1'b0), .tev_in(4'd0),
@@ -279,11 +280,6 @@ module tb_ring;
         axr(B(s, 12'h038)); h_sh = rv;  axr(B(s, 12'h028)); h_src = rv; axr(B(s, 12'h058)); h_h = rv;
         axr(B(s, 12'h048)); h_n = rv;   axr(B(s, 12'h04C)); h_sat = rv; axr(B(s, 12'h018)); h_fl = rv;
         axr(B(s, 12'h05C)); h_cfg = rv;
-        // 仮の読み窓のスペクトル 16 ch（LO・HI）
-        for (n = 0; n < 16; n = n + 1) begin
-            axr((s < 2) ? (20'h90000 + 20'h20000 * s + 8 * cht(n)) : (20'hC8000 + 8 * cht(n))); a16[n][31:0] = rv;
-            axr((s < 2) ? (20'h90004 + 20'h20000 * s + 8 * cht(n)) : (20'hC8004 + 8 * cht(n))); a16[n][63:32] = rv;
-        end
         axr(B(s, 12'h01C)); h_seq2 = rv;
         if (h_seq != h_seq2 || h_seq != pseq[s]) nskip = nskip + 1;
         else begin
@@ -293,13 +289,6 @@ module tb_ring;
                 {h_h[15:0], {4'd0, h_src[3:0]}, 8'd0, (s < 2) ? {4'd0, h_par[15:12]} : 8'd0, {4'd0, h_sh[3:0]},
                  (s < 2) ? {4'd0, h_par[11:8]} : 8'd0, (s < 2) ? 8'd12 : 8'd13},
                 {h_sat, h_n}, {h_fl, h_cfg});
-            for (n = 0; n < 16; n = n + 1) begin
-                ncmp = ncmp + 1;
-                if (a16[n] !== p16[s * 16 + n]) begin
-                    $display("tb_ring: NG AXI4-Lite の ch %0d（流れ %0d SEQ %0d）= %h / 凍ったバンク %h", cht(n), s, h_seq, a16[n], p16[s * 16 + n]);
-                    ng = ng + 1;
-                end
-            end
         end
     end endtask
 

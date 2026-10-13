@@ -15,7 +15,7 @@
 // **入力の途切れ（ギアボックスの出口の tvalid = 0）は値を変えない**: pfb_core は valid なビートだけで窓を進め、以降は組ごとに進む。
 //
 // ---- proj021 手順 2-1: 番地を INTERFACE.md v2（2.4・2.5）にそろえた（意味は変えない。対応表は proj021/README の手順 2-1）----
-//   このモジュールは s45_core（src/common/s45_core.v）の中に置く。コアの番地は 1 MiB（2-2 で 64 KiB に縮める）:
+//   このモジュールは s45_core（src/common/s45_core.v）の中に置く。コアの番地は 64 KiB（proj021 2-2d。2-1〜2-2c は 1 MiB で、下の仮の 3 つがあった）:
 //     0x00000–0x000FF  コアの共通（2.4）: 0x00 IF_ID / 0x04 PROJ / 0x08 NSTREAM / 0x0C CAPS / 0x10 BASE_BEATS / 0x14 BUILD / 0x18 CORE_PORT /
 //                      0x20〜 下の表 A の CTRL 以降を **+0x10** ずらしたもの（0x20 CTRL・0x24 TFIN・0x2C GB_K・0x34 GB_STAT・…・0x5C GAP_CNT）。
 //                      表 A の ID・NW・SNAP_SEL・BUILD・FULL_SEL は無くなった（IF_ID・NSTREAM・仮の SNAP_SEL・BUILD・FULL の流れの SRC へ）
@@ -26,10 +26,9 @@
 //                      0x58 DUMP_H / 0x5C DUMP_CFG / 0x60·64 RUN_T / 0x68·6C RUN_F0 / 0x70·74 FIN / 0x78·7C FOUT / 0x80 NFFT_MIN_MAX / 0x84 REC_CTRL・0x88 REC_LATE（0）/
 //                      0x100 WK / 0x104 WDPHI / 0x108 WNS / 0x10C WCUR / 0x110 WCUR_DPHI / 0x114 WSTART / 0x118 NS_MIN_MAX / 0x11C WRST_T /
 //                      0x200〜（診断、約束の外）PFB_SAT / DDC_SAT / WS_STALL / WS_RDY0 / DDC_OVR / WRST_CNT / SNAP_F_LO / SNAP_F_HI / BANK
-//     0x80000 + 0x20000·w **仮の読み窓（約束の外。2-2 で外す）**: 下の旧番地の窓 w の +0x08000 スナップショット・+0x10000 スペクトルと同じ
-//     0xE0000          **仮**: SNAP_SEL（2-2 で REC_CTRL の SNAP に替わる）
-//     0xC0000–0xCFFFF は FULL = 1 のコアでは s45_core が FULL の流れ（spec_core）へ振る（そのときは NW ≦ 2。窓 2 の仮の読み窓と重なるため）
-//   約束の範囲（0x00000–0x0FFFF）の空きは 0、仮の範囲の空きは 0xDEADBEEF
+//     （2-2d で外した仮の 3 つ: 0x80000 + 0x20000·w の読み窓（スナップショット・スペクトル）・0xE0000 の SNAP_SEL・FULL の 0xC0000。
+//      スペクトルとスナップショットはレコード（rec_fr）だけで出る。スナップショットを書く窓は REC_CTRL の SNAP の最も小さい窓、無ければ 0）
+//   空きは 0
 //
 // ---- 旧アドレスマップ（proj020 まで。レジスタの意味はここに書いたまま）----
 //   窓 w（0..NW−1）: 0x20000·w + 下の 128 KiB（proj014 の win_core と同じ並び）
@@ -125,7 +124,7 @@ module win_core #(
     parameter integer G_L2          = 19,     // proj017: 時刻の格子 2^G_L2 ビート（wspec_core の F0 の切り上げ。sim は小さくしてよい）
     // proj021 手順 2-1: 自己記述（INTERFACE 2.4）
     parameter integer BIT_KIND      = 2,      // SAM45-Fine（BITS.md の 9 本の番号）
-    parameter integer BIT_REV       = 1,
+    parameter integer BIT_REV       = 2,     // proj021 2-2d: 2（64 KiB の番地・仮の読み窓なし）。2-1〜2-2c は 1
     parameter integer PROJ          = 2163200,   // = 0x0021_0200。**10 進で書く**（32'h で書くと Vivado が CONFIG.PROJ を読み返しで別の形にし、build.tcl の照合が落ちた。2026-10-09）
     parameter integer CORE_PORT     = 0,      // [3:0] ADC（0..3 = ADC_A..D）/ [11:8] タイル / [15:12] スライス（build.tcl が与える）
     parameter integer NFULL         = 0,      // このコアの FULL の流れの数（s45_core が持つ。NSTREAM = NW + NFULL）
@@ -140,7 +139,7 @@ module win_core #(
     input  wire [255:0] s_axis_tdata,
     input  wire         s_axis_tvalid,
     output wire         s_axis_tready,
-    input  wire [19:0]  s_axi_awaddr,
+    input  wire [15:0]  s_axi_awaddr,
     input  wire [2:0]   s_axi_awprot,
     input  wire         s_axi_awvalid,
     output wire         s_axi_awready,
@@ -151,7 +150,7 @@ module win_core #(
     output wire [1:0]   s_axi_bresp,
     output reg          s_axi_bvalid,
     input  wire         s_axi_bready,
-    input  wire [19:0]  s_axi_araddr,
+    input  wire [15:0]  s_axi_araddr,
     input  wire [2:0]   s_axi_arprot,
     input  wire         s_axi_arvalid,
     output wire         s_axi_arready,
@@ -205,11 +204,10 @@ module win_core #(
     assign s_axi_awready = wr_go;
     assign s_axi_wready  = wr_go;
     assign s_axi_bresp   = 2'b00;
-    wire       wr_com = (s_axi_awaddr[19:8] == 12'h000);                         // コアの共通
-    wire       wr_tpr = (s_axi_awaddr[19:8] == 12'h001);                         // TP のレジスタ
-    wire       wr_blk = (s_axi_awaddr[19:16] == 4'd0) && (s_axi_awaddr[15:14] != 2'd0);   // 流れのブロック（0x04000–0x0FFFF）
+    wire       wr_com = (s_axi_awaddr[15:8] == 8'h00);                           // コアの共通
+    wire       wr_tpr = (s_axi_awaddr[15:8] == 8'h01);                           // TP のレジスタ
+    wire       wr_blk = (s_axi_awaddr[15:14] != 2'd0);                           // 流れのブロック（0x4000–0xFFFF）
     wire [5:0] wr_s   = {s_axi_awaddr[15:14] - 2'd1, s_axi_awaddr[13:10]};       // 流れの番号
-    wire       wr_ss  = (s_axi_awaddr[19:0] == 20'hE0000);                       // 仮の SNAP_SEL
     always @(posedge aclk) begin
         if (rst) s_axi_bvalid <= 1'b0;
         else begin
@@ -219,15 +217,11 @@ module win_core #(
     end
 
     // ---- ADC の共通 ----
-    reg [3:0] snap_sel;
     reg [5:0] r_gbk;
     wire      wr_a = wr_go && wr_com;
     always @(posedge aclk) begin
-        if (rst) begin snap_sel <= 4'd0; r_gbk <= GB_K_RST; end
-        else begin
-            if (wr_go && wr_ss)                     snap_sel <= s_axi_wdata[3:0];
-            if (wr_a && s_axi_awaddr[7:2] == 6'h0B) r_gbk    <= s_axi_wdata[5:0];   // 0x2C GB_K（表 A の 0x1C）
-        end
+        if (rst) r_gbk <= GB_K_RST;
+        else if (wr_a && s_axi_awaddr[7:2] == 6'h0B) r_gbk <= s_axi_wdata[5:0];   // 0x2C GB_K（表 A の 0x1C）
     end
     assign gb_hold = 1'b0;
     assign gb_adj = 2'd0;
@@ -272,7 +266,7 @@ module win_core #(
         if (TP != 0) begin : g_tp
             // proj021 2-2b: REC = 1（TP のレコード、type 2）。T は t_loc（TANCH の ANCH_T と同じ物差し）
             tp_core #(.TPN_DEFAULT(TPN_DEFAULT), .FW(FW), .REC(1), .REC_CORE({4'd0, CP16[3:0]})) u_tp (
-                .clk(aclk), .rst(rst), .in_acc(s_axis_tvalid), .m_in(a_cnt[8:0]), .fin(a_fin), .tdata(s_axis_tdata),
+                .clk(aclk), .rst(rst), .rst_rec(rst), .in_acc(s_axis_tvalid), .m_in(a_cnt[8:0]), .fin(a_fin), .tdata(s_axis_tdata),
                 .cmd_run(tp_run),
                 .wr_en(wr_go && wr_tpr), .wr_addr(s_axi_awaddr[7:2]), .wr_data(s_axi_wdata),
                 .rd_addr(tp_rd_addr), .rd_ring(tp_ring_rd), .rd_reg(tp_reg_rd),
@@ -285,21 +279,18 @@ module win_core #(
     endgenerate
 
     // ---- 読み出しの受け口 ----
-    reg [19:0]   ar_addr;
+    reg [15:0]   ar_addr;
     reg [2:0]    ar_wait;
     reg          ar_busy;
-    reg          fr_gnt;                 // proj021 2-2a: レコードの組み立て（rec_fr）が読みの口を持っている間は AXI4-Lite の読みを待たせる
-    assign s_axi_arready = !ar_busy && !s_axi_rvalid && !fr_gnt;
+    reg          fr_gnt;                 // proj021 2-2a: レコードの組み立て（rec_fr）が読みの口を持つ。2-2d: 口は rec_fr だけのもの（AXI4-Lite は記憶を読まない）
+    assign s_axi_arready = !ar_busy && !s_axi_rvalid;
     assign s_axi_rresp   = 2'b00;
-    // proj021 手順 2-1: 応答の選び（ar_addr から。ar_addr はレジスタ）
-    wire       ar_blk  = (ar_addr[19:16] == 4'd0) && (ar_addr[15:14] != 2'd0);
+    // proj021 手順 2-1: 応答の選び（ar_addr から。ar_addr はレジスタ）。2-2d: 64 KiB
+    wire       ar_blk  = (ar_addr[15:14] != 2'd0);
     wire [5:0] ar_s    = {ar_addr[15:14] - 2'd1, ar_addr[13:10]};
-    wire       ar_leg  = ar_addr[19];                                 // 仮の読み窓（0x80000 + 0x20000·w。0xE0000 は SNAP_SEL が先）
-    wire [5:0] ar_w    = ar_blk ? ar_s : {4'd0, ar_addr[18:17]};
-    wire       ar_win  = (ar_blk || ar_leg) && (ar_w < NW);
-    wire       ar_com  = (ar_addr[19:14] == 6'd0) || (ar_addr[19:0] == 20'hE0000);
-    wire       ar_prom = (ar_addr[19:16] == 4'd0);                    // 約束の範囲（空きは 0）
-    assign tp_rd_addr = ar_addr[15:0];
+    wire       ar_win  = ar_blk && (ar_s < NW);
+    wire       ar_com  = (ar_addr[15:14] == 2'd0);
+    assign tp_rd_addr = ar_addr;
     wire       ar_go  = s_axi_arvalid && s_axi_arready;
     // rev3: LO の読みで HI を固定するのは ar_go の 1 クロック後に、ar_addr（レジスタ）で決める。rev2 は SmartConnect の
     //   araddr から 48 bit の固定の enable を直に作っていて、`-1` の群 Y（ファンアウト 48）だった。応答は 4 クロック以上後なので中身は同じ
@@ -327,9 +318,9 @@ module win_core #(
     reg  [11:0]      ax_ch;
     reg  [35:0]      sn1;
     // proj021 2-2a（PETO のビルドの最悪 −0.077: snap_mem の BRAM → rq_w）: sn2 を布の FF に残す（BRAM の出口のレジスタに吸わせない）。
-    //   仮の読み窓のスナップショットの読み（2-2c で消える）。値・段数は同じ
+    //   2-2d で仮の読み窓（rq_w の道）は消え、sn2 は SNAP のレコード（fr_data）だけへ。値・段数は同じ
     (* dont_touch = "true" *) reg [35:0] sn2;
-    // proj021 2-2c: 書く窓 = REC_CTRL の [2] SNAP が立った最も小さい s。どれも立っていなければ仮の SNAP_SEL（今の道具のため）
+    // proj021 2-2c: 書く窓 = REC_CTRL の [2] SNAP が立った最も小さい s。どれも立っていなければ 0（2-2d。2-2c までは仮の SNAP_SEL）
     wire [NW-1:0]    fr_snapb;
     reg  [3:0]       ss_rec;
     reg              ss_has;
@@ -338,7 +329,7 @@ module win_core #(
         ss_rec = 4'd0; ss_has = 1'b0;
         for (si = NW - 1; si >= 0; si = si - 1) if (fr_snapb[si]) begin ss_rec = si; ss_has = 1'b1; end
     end
-    wire [3:0]       ss = ss_has ? ss_rec : (snap_sel < NW) ? snap_sel : 4'd0;
+    wire [3:0]       ss = ss_has ? ss_rec : 4'd0;
     // rev2: 書き込みを 2 段のレジスタで受ける（窓ごとに 1 段 → SNAP_SEL で選んで 1 段 → 記憶）。rev1 は wspec の fin == sn_next の
     //   48 bit の比べ → 4 窓の選び → BRAM の書き込みの入口が 1 クロックで、`-1` の最悪経路だった。書き込みが 2 クロック遅れるだけで、
     //   読むのはダンプが閉じた後（少なくとも 1 フレーム後）なので中身は同じ
@@ -625,7 +616,7 @@ module win_core #(
     endgenerate
 
     // ---- proj021 2-2a: レコードの組み立て（窓の凍ったバンクを、AXI4-Lite の読みと同じ口 ax_ch・ax_bank から読む）----
-    //   fr_req → fr_gnt（AXI4-Lite の読みが無いクロックで渡す）。fr_gnt の間は ax_ch・ax_bank を rec_fr が握り、arready を下げる。
+    //   fr_req → fr_gnt（2-2c までは AXI4-Lite の読みが無いクロックで渡し、fr_gnt の間は arready を下げていた。2-2d から rec_fr だけの口）。
     //   rd_ch（rec_fr のレジスタ）→ ax_ch（ここ）→ wspec の rd1 → rd2 → fr_data（ここ）= 5 クロック（rec_fr の LAT。
     //   sim-ring の 1 回目は 4 にしていて、レコードの本体が 1 語ずれた: 2026-10-09）
     //   proj021 2-2c: SNAP の相（fr_rsnap）は同じ口でスナップショットの記憶を読む: ax_ch → sn1 → sn2（スペクトルの sp_data と同じ遅れ）
@@ -636,7 +627,7 @@ module win_core #(
     reg  [63:0] fr_data;
     always @(posedge aclk) begin
         if (rst) fr_gnt <= 1'b0;
-        else     fr_gnt <= fr_req && (fr_gnt || (!ar_busy && !ar_go && !s_axi_rvalid));
+        else     fr_gnt <= fr_req;                  // 2-2d: 取り合う相手（仮の読み窓の AXI4-Lite の読み）が居ない
         fr_data <= fr_rsnap ? {{14{sn2[35]}}, sn2[35:18], {14{sn2[17]}}, sn2[17:0]} : sp_data_v[fr_s];   // SNAP: {im, re}（32 bit に符号拡張）
     end
     rec_fr #(.NS(NW), .S_BASE(0), .CORE({4'd0, CP16[3:0]}), .LAT(5), .SNAP(1), .NSN(4096)) u_rec (.clk(aclk), .rst(rst),
@@ -657,7 +648,7 @@ module win_core #(
     reg [FW-1:0] afin_lat;
     always @(posedge aclk) begin
         if (rst) afin_lat <= {FW{1'b0}};
-        else if (ar_go_d && ar_addr[19:2] == 18'h00009) afin_lat <= a_fin;   // 0x24 TFIN_LO
+        else if (ar_go_d && ar_addr[15:2] == 14'h0009) afin_lat <= a_fin;   // 0x24 TFIN_LO
     end
     reg [31:0] reg_a;
     always @* begin
@@ -692,55 +683,40 @@ module win_core #(
     //   rev2 は「37 本の case → 窓の選び → 種類の選び」を応答のクロックで一度にやっていて、`-1` の群 X（snap_mem・rd_f0・tp_n・
     //   ar_addr → s_axi_rdata）だった。候補は rev2 が応答で使ったのと同じクロック（ar_wait == 3）の値を受けるので、中身は同じ。
     //   応答が 1 クロック遅れるだけ（AXI4-Lite の読み 1 回 ≒ 20 クロックのうちの 1）
-    wire [35:0] sn_data = sn2;
     reg  [31:0] rq_a;
     reg  [31:0] rq_w [0:NW-1];
     always @(posedge aclk) begin
-        rq_a <= ar_addr[19]                  ? {28'd0, snap_sel} :      // 0xE0000（仮の SNAP_SEL）
-                (ar_addr[13:8] == 6'd0)      ? reg_a :
+        rq_a <= (ar_addr[13:8] == 6'd0)      ? reg_a :
                 (ar_addr[13:8] == 6'h01)     ? tp_reg_rd :
                 ar_addr[13]                  ? tp_ring_rd : 32'd0;
     end
     generate
         for (g = 0; g < NW; g = g + 1) begin : g_rq
-            always @(posedge aclk) begin
-                if (!ar_leg)
-                    rq_w[g] <= reg_rd_v[g];
-                else if (ar_addr[16])
-                    rq_w[g] <= ar_addr[2] ? sp_data_v[g][63:32] : sp_data_v[g][31:0];
-                else if (ar_addr[15])
-                    rq_w[g] <= (g != ss) ? 32'd0 :
-                               ar_addr[2] ? {{14{sn_data[35]}}, sn_data[35:18]} : {{14{sn_data[17]}}, sn_data[17:0]};
-                else
-                    rq_w[g] <= 32'hDEAD_BEEF;
-            end
+            always @(posedge aclk) rq_w[g] <= reg_rd_v[g];
         end
     endgenerate
     always @(posedge aclk) begin
         if (rst) begin
             ar_busy <= 1'b0; ar_wait <= 3'd0; s_axi_rvalid <= 1'b0; s_axi_rdata <= 32'd0;
-            ar_addr <= 20'd0; ax_bank <= 1'b0; ax_ch <= 12'd0;
+            ar_addr <= 16'd0; ax_bank <= 1'b0; ax_ch <= 12'd0;
         end else begin
             if (s_axi_rvalid && s_axi_rready) s_axi_rvalid <= 1'b0;
             if (fr_gnt) begin
-                ax_bank <= rd_bank_v[fr_s];         // proj021 2-2a: rec_fr が口を持っている（AXI4-Lite の読みは来ない）
+                ax_bank <= rd_bank_v[fr_s];         // proj021 2-2a: rec_fr が口を持っている
                 ax_ch   <= fr_ch;
             end
             if (ar_go) begin
                 ar_busy <= 1'b1;
                 ar_wait <= 3'd0;
                 ar_addr <= s_axi_araddr;
-                ax_bank <= (s_axi_araddr[18:17] < NW) ? rd_bank_v[s_axi_araddr[18:17]] : 1'b0;   // 仮の読み窓の w
-                ax_ch   <= s_axi_araddr[14:3];      // スナップショット・スペクトルとも 8 バイト / 語
             end else if (ar_busy) begin
                 ar_wait <= ar_wait + 3'd1;
                 if (ar_wait == 3'd4) begin          // rq_* は ar_wait == 3 のクロックの候補（rev2 の応答と同じ値）
                     ar_busy      <= 1'b0;
                     s_axi_rvalid <= 1'b1;
                     if (ar_com)              s_axi_rdata <= rq_a;
-                    else if (ar_win)         s_axi_rdata <= rq_w[ar_w];
-                    else if (ar_prom)        s_axi_rdata <= 32'd0;
-                    else                     s_axi_rdata <= 32'hDEAD_BEEF;
+                    else if (ar_win)         s_axi_rdata <= rq_w[ar_s];
+                    else                     s_axi_rdata <= 32'd0;
                 end
             end
         end

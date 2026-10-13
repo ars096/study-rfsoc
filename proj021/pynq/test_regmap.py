@@ -64,13 +64,13 @@ def main():
     judge((cores[0].tile, cores[0].slice, cores[1].tile, cores[1].slice) == (2, 2, 2, 0), "CORE_PORT のタイル・スライス")
     judge([len(c.ddc()) for c in cores] == [2, 2] and len(cores[0].full()) == 1 and not cores[1].full(), "流れの数と KIND")
     fs = SC.full_stream(cores)
-    judge((fs.core.name, fs.s, fs.base, fs.lbase) == ("s45_core_0", 2, 0x4800, 0xC0000), "FULL の流れの番地")
+    judge((fs.core.name, fs.s, fs.base) == ("s45_core_0", 2, 0x4800), "FULL の流れの番地")
     # 窓（tb: 流れ s・コア c で k = 16c + s。N_ACC 100 + k・N_DUMP 200 + k・SHIFT (5 + k) & 15・CFG_ID 0xC0F0_0000 + k・
     #   WK (k + 1) & 31・WDPHI 0x1357_0000 + k・WNS 3 + s・WRST_T 80 + k。WRST の後）
     for c in cores:
         for st in c.ddc():
             k = 16 * c.adc + st.s
-            wn = W.Win(c.m, base=st.base, adc=c.adc, win=st.s, lbase=st.lbase)
+            wn = W.Win(c.m, base=st.base, adc=c.adc, win=st.s)
             ns = 3 + st.s
             got = dict(nacc=wn.rd(W.R_NACC), ndump=wn.rd(W.R_NDUMP), shift=wn.rd(W.R_SHIFT), cfg=wn.rd(T.R_CFG),
                        wrst_cfg=wn.rd(T.R_WRST_CFG), wk=wn.rd(W.R_WK), wdphi=wn.rd(W.R_WDPHI), wns=wn.rd(W.R_WNS),
@@ -85,14 +85,16 @@ def main():
         judge(c.rd(W.A_BASE + W.R_A_GB_K) == 3 + c.adc, f"{c.adc_name} の GB_K（コアの共通）")
         judge(c.rd(W.A_BASE + S.R_TP_PARAM) == S.TP_PARAM_EXPECT, f"{c.adc_name} の TP_PARAM（コアの TP）")
     # 全帯域（FULL。tb: k = 2）
-    sp = S.Spec(fs.m, idx=1, label="ADC_B", base=fs.base, lbase=fs.lbase)
+    sp = S.Spec(fs.m, idx=1, label="ADC_B", base=fs.base, rec_key=(fs.core.adc, fs.s))
     judge(sp.rd(S.R_NACC) == 102 and sp.rd(S.R_NDUMP) == 202 and sp.rd(S.R_SHIFT) == 7, "FULL の N_ACC・N_DUMP・SHIFT")
     judge(sp.rd(T.RS_CFG) == 0xC0F0_0002, "FULL の CFG_ID（timetest.RS_CFG）")
     judge(sp.rd(S.R_SRC) == 0x8000_0001, f"FULL の SRC {sp.rd(S.R_SRC):#x}（ARM_WRST で 1）")
     judge(sp.rd(S.R_BUILD) == 0x5678_0000, "FULL の BUILD（診断 0x214）")
     judge(sp.legacy_id() == 0x0021_02A5 and S.feat_rev(sp.rd(S.R_ID)) == 6, "FULL の FFT_CFG（PARAM）と feat_rev")
-    judge(sp.rd(S.R_TP_PARAM) == S.TP_PARAM_EXPECT, "FULL の TP_PARAM（Spec.rd の 0x100 → 仮の 0xC1100）")
-    judge(cores[0].rd(W.A_BASE + W.R_A_SNAP_SEL) == 1, "仮の SNAP_SEL（window.R_A_SNAP_SEL）")
+    judge(sp.rd(S.R_TP_PARAM) == S.TP_PARAM_EXPECT, "FULL の TP_PARAM（2-2d: 流れのブロックの 0x114）")
+    judge(sp.rd(S.R_TP_N) == 512 and sp.rd(S.R_TP_REC_CTRL) == S.TP_REC_K << 8, "FULL の TP_N・TP_REC_CTRL（流れのブロックの 0x100・0x11C）")
+    judge(sp.rec_key == (0, 2), "FULL のレコードの (core, s)")
+    judge(all(c.bit_rev == 2 for c in cores), "BIT_REV 2（2-2d）")
     # time_core
     tc = TB.TimeCore(tmm)
     judge(tc.proj == 0x0021_0200 and tc.proj in TB.CAL, "time_core の PROJ と CAL の鍵")

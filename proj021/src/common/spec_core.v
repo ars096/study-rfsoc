@@ -77,17 +77,18 @@
 //
 // ---- proj021 手順 2-1: 番地を INTERFACE.md v2 の流れのブロック（2.5、KIND 1 = FULL）にそろえた（意味は変えない）----
 //   このモジュールは s45_core の中（FULL = 1 のコア）に置き、s45_core が番地を振る:
-//     コアの 0x04000 + 0x400·SID_S（流れのブロック）→ ここの 0x0000–0x03FF / コアの 0xC0000–0xCFFFF（仮の読み窓）→ ここの 0x0000–0xFFFF
+//     コアの 0x4000 + 0x400·SID_S（流れのブロック）→ ここの 0x0000–0x03FF（proj021 2-2d。2-2c まではコアの 0xC0000–0xCFFFF の仮の読み窓 → ここの 0x0000–0xFFFF もあった）
 //   ここの番地（16 bit）:
 //     0x0000–0x03FF  流れのブロック: 0x00 SID / 0x04 PARAM（[7:0] 13・[15:8] FFT_CFG・[23:16] 64・[31:24] 0）/ 0x08〜0x1C は下の旧番地と同じ /
 //                    0x20 NCH 4096 / 0x24 FRAME_BEATS 512 / 0x28 SRC（[3:0] 今効いている入力・[31] 1。書いた値は次の WRST で効く）/
 //                    0x2C CFG_ID / 0x30 RUN_CFG / 0x34 WRST_CFG / 0x38 RUN_SHIFT / 0x3C DUMP_K / 0x40·44 DUMP_F0 / 0x48 DUMP_N / 0x4C DUMP_SAT /
 //                    0x50·54 DUMP_T / 0x58 DUMP_H / 0x5C DUMP_CFG / 0x60·64 RUN_T / 0x68·6C RUN_F0 / 0x70·74 FIN / 0x78·7C FOUT / 0x80 NFFT_MIN_MAX /
-//                    0x84 REC_CTRL・0x88 REC_LATE（0。2-2 で）/ 0x200〜0x25C 旧 0x58〜0xB4（診断。BUILD は 0x214）/ 0x260·264 SNAP_F / 0x268 BANK。空きは 0
+//                    0x84 REC_CTRL・0x88 REC_LATE / 0x100〜0x1FF FULL の TP のレジスタ（2-2d。種類に固有の範囲。コアの TP の 0x100〜 と同じ並び）/
+//                    0x200〜0x25C 旧 0x58〜0xB4（診断。BUILD は 0x214）/ 0x260·264 SNAP_F / 0x268 BANK。空きは 0
 //                    CTRL の書き込みに [12] WRST・[13] ARM_WRST（time_core の発火で WRST）を足した: **SRC と CFG_ID を取り込むだけ**（FULL には
 //                    リセットする窓の経路が無い）。CTRL の読みの [6] = ARM_WRST 中。[9]〜[11]（診断を消す・SRST・GRST）は FULL の診断として残す
-//     0x1100–0x11FF  total power のレジスタ（旧 0x0100）/ 0x2000 TP のリング / 0x4000 スナップショット / 0x8000 スペクトル（**仮。2-2 で外す**）
-//     ほか           0xDEADBEEF
+//     2-2d で外したもの: 0x1100 TP のレジスタ（→ 流れのブロックの 0x100）/ 0x2000 TP のリング（→ TP のレコード、s = SID_S）/
+//                    0x4000 スナップショット・0x8000 スペクトル（→ SNAP・SPEC のレコード）。ここの番地は 10 bit だけ見る
 //
 // ---- 旧アドレスマップ（proj020 まで。レジスタの意味はここに書いたまま）----
 //   0x0000–0x00FF  レジスタ（下の表）
@@ -233,7 +234,7 @@ module spec_core #(
     input  wire         m_axis_rec_tready,
     output wire         m_axis_rec_tlast,
     output wire         m_axis_rec_tuser,
-    output wire         rec_drop
+    output wire [1:0]   rec_drop             // [0] SPEC・SNAP（rec_fr）/ [1] TP のレコード（2-2d）
 );
     localparam integer NL = 16;        // レーン
     localparam integer NB = 8;         // 1 クロックに出る ch（k2 = 0..7）
@@ -990,29 +991,33 @@ module spec_core #(
     reg        ar_busy;
     reg        ar_bank;
     reg [FW-1:0] fin_lat, fout_lat;
-    reg        fr_gnt;                 // proj021 2-2a: rec_fr が読みの口（axi_k1・ar_bank）を持っている間は AXI4-Lite の読みを待たせる
-    assign s_axi_arready = !ar_busy && !s_axi_rvalid && !fr_gnt;
+    reg        fr_gnt;                 // proj021 2-2a: rec_fr が読みの口（axi_k1・ar_bank）を持つ。2-2d: 口は rec_fr だけのもの
+    assign s_axi_arready = !ar_busy && !s_axi_rvalid;
     assign s_axi_rresp   = 2'b00;
 
     // ---- total power（proj013）----
     // 入力は spec_core の in_acc・m_in・fin・s_axis_tdata をそのまま渡す（フレームの数え方を 2 つ持たない）
-    wire [31:0] tp_ring_rd, tp_reg_rd;
-    tp_core #(.TPN_DEFAULT(TPN_DEFAULT), .FW(FW)) u_tp (
+    //   proj021 2-2d: レコード（REC = 1、頭の s = SID_S）。AXI4-Lite のリングは外した（rd_ring は使わない）
+    wire [31:0] tp_reg_rd;
+    wire [63:0] tp_d;
+    wire        tp_v, tp_r, tp_l, tp_u, tp_drop;
+    tp_core #(.TPN_DEFAULT(TPN_DEFAULT), .FW(FW), .REC(1), .REC_CORE(REC_CORE % 256), .REC_S(SID_S % 256)) u_tp (
         .clk     (aclk),
         .rst     (rst_core),
+        .rst_rec (rst),                    // proj021 2-2d: レコードの出口は SRST・GRST では止めない（rec_arb がレコードの途中で待たないように）
         .in_acc  (in_acc),
         .m_in    (m_in),
         .fin     (fin),
         .tdata   (s_axis_tdata),
         .cmd_run (cmd_run),
-        .wr_en   (wr_go && s_axi_awaddr[15:8] == 8'h11),   // proj021 手順 2-1: 0x1100（旧 0x0100）
+        .wr_en   (wr_go && s_axi_awaddr[15:8] == 8'h01),   // proj021 2-2d: 流れのブロックの 0x100（2-1〜2-2c は 0x1100）
         .wr_addr (s_axi_awaddr[7:2]),
         .wr_data (s_axi_wdata),
         .rd_addr (ar_addr),
-        .rd_ring (tp_ring_rd),
+        .rd_ring (),
         .rd_reg  (tp_reg_rd),
-        .t_now   (64'd0),                  // proj021 2-2b: FULL の TP はレコードにしない（REC = 0）
-        .m_tdata (), .m_tvalid (), .m_tready (1'b1), .m_tlast (), .m_tuser (), .rec_drop ()
+        .t_now   (t_loc),                  // proj021 2-2d: FULL の TP もレコードに（T はコアの TP と同じ t_loc）
+        .m_tdata (tp_d), .m_tvalid (tp_v), .m_tready (tp_r), .m_tlast (tp_l), .m_tuser (tp_u), .rec_drop (tp_drop)
     );
 
     reg [8:0] snap_ra;
@@ -1104,7 +1109,7 @@ module spec_core #(
     reg  [31:0] rec_late;
     always @(posedge aclk) begin
         if (rst) fr_gnt <= 1'b0;
-        else     fr_gnt <= fr_req && (fr_gnt || (!ar_busy && !(s_axi_arvalid && s_axi_arready) && !s_axi_rvalid));
+        else     fr_gnt <= fr_req;                  // 2-2d: 取り合う相手（仮の読み窓の AXI4-Lite の読み）が居ない
         fr_k2a <= fr_ch[11:9]; fr_k2b <= fr_k2a; fr_k2c <= fr_k2b;
         fr_sba <= fr_ch[1:0];  fr_sbb <= fr_sba; fr_sbc <= fr_sbb;
         // proj021 2-2c: SNAP の相は snap_ra → snap_rd1 → snap_rd2（スペクトルと同じ遅れ）。語 j = サンプル 4j〜4j+3
@@ -1125,8 +1130,15 @@ module spec_core #(
         rd_k, seq};                                                 // w1 SEQ | DUMP_K
     rec_fr #(.NS(1), .S_BASE(SID_S), .CORE(RC8), .LAT(5), .SNAP(1), .NSN(2048)) u_rec (.clk(aclk), .rst(rst),
         .seq(fr_seq), .hdr(fr_hdr), .rec_all(r_rec[0]), .rec_one(r_rec[1]), .rec_snap(r_rec[2]), .snap_ok(snok), .rd_snap(fr_rsnap),
-        .one_clr(fr_one_clr), .late(fr_late), .drop(rec_drop),
+        .one_clr(fr_one_clr), .late(fr_late), .drop(rec_drop[0]),
         .req(fr_req), .gnt(fr_gnt), .rd_s(), .rd_ch(fr_ch), .rd_data(fr_data),
+        .m_tdata(sr_d), .m_tvalid(sr_v), .m_tready(sr_r), .m_tlast(sr_l), .m_tuser(sr_u));
+    // proj021 2-2d: SPEC・SNAP のレコード（u_rec）と FULL の TP のレコード（u_tp）をレコード単位で束ねる（win_core と同じ形）
+    wire [63:0] sr_d;
+    wire        sr_v, sr_r, sr_l, sr_u;
+    assign rec_drop[1] = tp_drop;
+    rec_arb #(.N(2)) u_sarb (.clk(aclk), .rst(rst),
+        .s_tdata({tp_d, sr_d}), .s_tvalid({tp_v, sr_v}), .s_tready({tp_r, sr_r}), .s_tlast({tp_l, sr_l}), .s_tuser({tp_u, sr_u}),
         .m_tdata(m_axis_rec_tdata), .m_tvalid(m_axis_rec_tvalid), .m_tready(m_axis_rec_tready),
         .m_tlast(m_axis_rec_tlast), .m_tuser(m_axis_rec_tuser));
 
@@ -1137,7 +1149,7 @@ module spec_core #(
             fin_lat <= {FW{1'b0}}; fout_lat <= {FW{1'b0}};
         end else begin
             if (s_axi_rvalid && s_axi_rready) s_axi_rvalid <= 1'b0;
-            if (fr_gnt) begin                  // proj021 2-2a: rec_fr が口を持っている（AXI4-Lite の読みは来ない）
+            if (fr_gnt) begin                  // proj021 2-2a: rec_fr が口を持っている
                 ar_bank <= rd_bank;
                 axi_k1  <= fr_ch[8:0];
                 snap_ra <= fr_ch[10:2];          // proj021 2-2c: SNAP の相（スナップショットの拍 m = 語 j の j[10:2]）
@@ -1146,9 +1158,6 @@ module spec_core #(
                 ar_busy <= 1'b1;
                 ar_wait <= 3'd0;
                 ar_addr <= s_axi_araddr;
-                ar_bank <= rd_bank;
-                axi_k1  <= s_axi_araddr[11:3];   // スペクトル: k1 = A[11:3]
-                snap_ra <= s_axi_araddr[13:5];   // スナップショット: m = A[13:5]
                 if (s_axi_araddr[15:2] == 14'h1C) fin_lat  <= fin;    // proj021 手順 2-1: 0x70 FIN_LO（旧 0x20）
                 if (s_axi_araddr[15:2] == 14'h1E) fout_lat <= fout;   // 0x78 FOUT_LO（旧 0x28）
             end else if (ar_busy) begin
@@ -1156,21 +1165,8 @@ module spec_core #(
                 if (ar_wait == 3'd3) begin
                     ar_busy      <= 1'b0;
                     s_axi_rvalid <= 1'b1;
-                    if (ar_addr[15]) begin
-                        // スペクトル: k2 = A[14:12]、上位語 = A[2]
-                        s_axi_rdata <= ar_addr[2] ? acc_rd[ar_bank][ar_addr[14:12]][63:32]
-                                                  : acc_rd[ar_bank][ar_addr[14:12]][31:0];
-                    end else if (ar_addr[14]) begin
-                        s_axi_rdata <= snap_rd2[32*ar_addr[4:2] +: 32];
-                    end else if (ar_addr[13]) begin
-                        s_axi_rdata <= tp_ring_rd;                   // proj013: 0x2000–0x3FFF
-                    end else if (ar_addr[12:8] == 5'h11) begin
-                        s_axi_rdata <= tp_reg_rd;                    // proj021 手順 2-1: 0x1100–0x11FF（旧 0x0100）
-                    end else if (ar_addr[12:10] == 3'd0) begin
-                        s_axi_rdata <= reg_rd;                       // 流れのブロック 0x0000–0x03FF
-                    end else begin
-                        s_axi_rdata <= 32'hDEAD_BEEF;
-                    end
+                    // proj021 2-2d: 流れのブロック（10 bit）だけ。0x100〜0x1FF は FULL の TP のレジスタ
+                    s_axi_rdata <= (ar_addr[9:8] == 2'd1) ? tp_reg_rd : reg_rd;
                 end
             end
         end

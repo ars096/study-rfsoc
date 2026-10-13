@@ -1281,6 +1281,78 @@ acqboot のログで、取得が proj021 の道具（s45proto 版 2）を使い�
 | S22d-2 | 予言 3・4（ビルド・`make worst-paths`・CDC は 2-2c と同じ件数） |
 | S22d-3 | 予言 5（実機） |
 
+**実装（2026-10-13）**:
+- RTL: `s45_core.v`（番地 16 bit・FULL の振り分けは流れのブロックだけ・「FULL = 1 は NW ≦ 2」を外す・rec_drop を溜めて 1 クロック 3 までずつ出す。
+  FULL の TP のレコードで 1 クロックに 5 本来うるので、2-2c までの「3 で切る」は数え落としうる）、
+  `win_core.v`（番地 16 bit・仮の読み窓・SNAP_SEL・fr_gnt の待たせを外す・スナップショットを書く窓は SNAP の最も小さい窓、無ければ 0）、
+  `spec_core.v`（AXI4-Lite の読みは流れのブロックの 10 bit だけ・TP のレジスタを 0x100 に・tp_core を REC = 1（s = SID_S）にして rec_fr と rec_arb で束ねる・rec_drop 2 bit）、
+  `tp_core.v`（REC_S・rst_rec）、IF_ID の BIT_REV 2（s45_core・win_core・time_core・s45_ring の既定と build.tcl の照合）
+- **設計に無かった変更 1 つ（実装で気づいた）**: FULL の tp_core のリセットは rst_core（SRST・GRST で張る）なので、そのままレコードを出すと、
+  **SRST がレコードの途中（tlast の前）に来たとき rec_arb が tlast を待ち続け、FULL の SPEC のレコードも止まる**。tp_core に `rst_rec`
+  （レコードの出口と TP_REC_CTRL のリセット）を分け、spec_core ではコアのリセット（rst）をつなぐ。rst_core（起動のやり直し）では埋めかけのレコードだけ捨てる。win_core は rst_rec = rst（今と同じ）
+- **予言 3 の見落とし（実装で気づいた。結果の前に書く）**: FULL の tp_core の AXI4-Lite のリング（512 × 16 B = BRAM36 × 2）は読み手が無くなるので合成で消える見込み。
+  予言の「BRAM は同じ」は **BRAM −2** が当たりのはず
+- sim: `sim/rec_sink.v`（新。tb のレコードの受け手）。tb_top・tb_win4（窓 1 の REC_CTRL = ALL | SNAP が仮の SNAP_SEL の代わり）・tb_spec_core（REC_CTRL = ALL | SNAP・TP_REC_CTRL = K 16）は
+  スペクトル・スナップショット・FULL の TP の個をレコードから、tb_spec_core の裏口の照合（bdcheck）は 16 か所を AXI4-Lite ではなくレコードと。
+  tb_tsys・tb_spec_core の旧番地の表から仮の範囲を外す。tb_ring の「AXI4-Lite の 16 ch = 凍ったバンク」（rec_fr が口を持つ間の読みの待たせの照合）を外す（AXI_CMP は「tb の中の NG 0」の意味に）。
+  tb_regmap（IF_ID 0x0202_0201・FULL の TP のレジスタを書いて読み返し、コアの TP に漏れない・仮の範囲の代わりに s = 16・32 のブロックが 0）、tb_t4adc・tb_time・tb_tsys（IF_ID）
+- PS: `rectap.py`（新）、window（Win.run が REC_CTRL = ALL（| SNAP）を書く・read_dump はレコード・`snap`）、spectrometer（Spec も同じ・TpReader は FULL の TP のレコード・
+  コアの TP の AXI4-Lite のリングは `AxiTpReader`）、timetest（T-2・T-4 をレコードで）、fine（F-4 の窓・F-5 の全帯域の TP をレコードで）、s45core（LEG_* を外す・BIT_REV ≧ 2 を照らす）、
+  s45acq（`--read axi` と仮の SNAP の道を外す・TP は s = 0xFF だけ）、specd（`--read` は ring だけ）、plring（`--compare`・`--snapcompare` を外す・自分のリングを rectap に渡す）、
+  timebase（time_core の IF_ID は BIT_REV 1・2 の両方を受ける）、gbboot・test_regmap・winlin・winwrst
+
+**sim（クラウドの iverilog 12、2026-10-13）**:
+
+| sim | 結果 |
+|---|---|
+| sim-regmap | **全部通過**（194 項目。FULL の TP のレジスタ = 流れのブロックの 0x100〜、書いてもコアの TP に漏れない）＋ test_regmap 78 項目 通過 |
+| sim-regmap-p（陽性対照） | 落ちるべきところで落ちた |
+| sim（tb_spec_core、SHIFT 7） | **全部通過**。t1 はスペクトル・スナップショットとも全部をレコードから、t2〜t7 の裏口とレコードの 16 か所の照合 0 件の不一致、TP の個（FULL の TP のレコード）= Σ(snap>>2)²・パーセバル 1.000005 |
+| sim-top | **全部通過**（3 ダンプ × 4096 ch が模型と bit 単位で一致・スナップショット = PFB の模型。レコード 6 個・捨て 0） |
+| sim-win4 | **全部通過**（窓 1 の SNAP のレコード = PFB の模型のフレーム 7、窓 0 の SNAP・SPEC のレコードは来ない） |
+| sim-tsys（1 回目） | time_core の IF_ID の期待（0x0202_0102）を直し忘れた 1 件だけ NG、ほかは全部通る。直して 2 回目を回している |
+| PL なし（`test_fake.sh all`） | 11 試験とも通過（取得の `--read` の変更の回帰） |
+
+残り（Vivado サーバ）: sim-all（sim-spec-all の 5 変種・sim-win-all・sim-t-all）・sim-ring（all・late・snap・snap-nochk・flip）・sim-tsys-p。クラウドでは sim-ring・sim-tsys の 2 回目を回している
+
+### 2-2d のビルドと実機
+
+```bash
+cd ~/git/rfsoc && git pull && cd proj021
+mkdir -p old && mv build-PE old/build-2-2c-PE 2>/dev/null; mv build-PETO old/build-2-2c-PETO 2>/dev/null
+make sim-all > sim-all.log 2>&1 &                       # 回帰（記憶の読みはレコードに。sim-regmap は 64 KiB・BIT_REV 2）
+make sim-ring > /dev/null 2>&1 &                        # all・late・snap・snap-nochk（1〜2 時間）
+make sim-tsys-p > /dev/null 2>&1 &                      # 陽性対照（1〜2 時間）
+make IMPL=Performance_Explore JOBS=14 > /dev/null 2>&1 &
+make JOBS=14 > /dev/null 2>&1 &                         # 既定の戦略（予言 4: −0.02〜+0.02）
+wait
+grep -E 'TIMING \(確定\)' build-PE/vivado.log build/vivado.log
+tail -n 1 sim-all.log; cat build-sim-ring/check.log; cat build-sim-tsys-posctl/check.log | tail -n 2
+make worst-paths OUTDIR=build-PE                         # 仮の読み窓の経路（ax_ch → rq_w・snap_sel → swd2）が消えたこと
+# 資源（予言 3: DSP・URAM 同じ、BRAM −2、LUT −1,000〜−3,000）は build-PE/vivado.log の資源の表を 2-2c と並べる
+
+# ボード: 新しい bit を ~/proj021 に（bits.json の proj021 はこの bit。2-2c の bit は 2-2d の道具では動かない: s45core が BIT_REV 2 を求める）
+scp build-PE/proj021.bit build-PE/proj021.hwh xilinx@$B:~/proj021/
+scp pynq/*.py xilinx@$B:~/proj021/
+
+# ボード（root。specd を止めてから）。S22d-3
+cd ~/proj021
+python3 s45core.py --list --clkin 0 --ref 10                            # IF_ID 0x02020201・CAPS 0x007
+python3 timetest.py --clkin 0 --ref 10 --t0 --seconds 30                # P-0
+python3 window.py --clkin 0 --ref 10 --probe --adc 0 --win 0            # P-1（レコードで）
+python3 window.py --clkin 0 --ref 10 --golden --w 256                   # P-2（W-G。SNAP のレコードで）
+python3 window.py --clkin 0 --ref 10 --golden --w 8
+python3 spectrometer.py --clkin 0 --ref 10 --ch A --golden              # 全帯域の golden
+python3 window.py --clkin 0 --ref 10 --tone 3010.5 --w6 --w 256 --shift 11 --shift-full 8   # P-3（SG −20 dBm）
+python3 timetest.py --clkin 0 --ref 10 --t1 --seconds 120               # P-4
+python3 spectrometer.py --clkin 0 --ref 10 --ch A --tp 10               # 全帯域の Parseval（FULL の TP のレコード）
+python3 fine.py --clkin 0 --ref 10 --f5                                 # F-5（コアの TP / 全帯域の TP = 1）
+python3 plring.py --clkin 0 --ref 10 --golden                           # V2-c（2-2c と同じ）
+python3 plring.py --clkin 0 --ref 10 --tpcompare                        # V2-e（コアの TP の AXI4-Lite のリングは残る）
+python3 plring.py --clkin 0 --ref 10 --soak 60
+# specd（--bits bits.json）で: s45v2c.py --n 50・s45v2a.py --n 100・specrecv 10 分（2-3c と同じ）
+```
+
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
 判定 1 つにつき、次の 6 項目を書く。**環境に依る値（ホスト名・IP アドレス・パス）は書かない**（公開を前提にする）。

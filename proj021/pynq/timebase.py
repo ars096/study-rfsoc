@@ -107,7 +107,8 @@ def pps_is_consistent(d_count, d_stamp, tol=2):
 
 class TimeCore:
     """time_core_0 のレジスタ（src/common/time_core.v の冒頭の表）。mmio は pynq.MMIO か、read(off) / write(off, v) を持つもの。"""
-    ID = 0x0202_0102              # proj021 手順 2-1: IF_ID（IF_VER 2・BIT_KIND 2 = SAM45-Fine・BIT_REV 1・CORE_KIND 2）。旧 0x0021_7101
+    ID = 0x0202_0202              # proj021 2-2d: IF_ID（IF_VER 2・BIT_KIND 2 = SAM45-Fine・BIT_REV 2・CORE_KIND 2）。2-1〜2-2c は 0x0202_0102、旧 0x0021_7101
+    IDS = (0x0202_0102, 0x0202_0202)   # BIT_REV 1（2-1〜2-2c）と 2（2-2d〜）。time_core の中身は同じ
     PROJ = 0x0021_0200            # 0x5C。CAL の鍵
     CTRL_ARM, CTRL_CANCEL, CTRL_ASET, CTRL_ACLR, CTRL_NCLR = 1, 2, 8, 16, 256
 
@@ -116,7 +117,7 @@ class TimeCore:
         idv = self.rd(0x00)
         if idv >> 24 != 2 or idv & 0xFF != 2:
             raise TimebaseError(f"time_core の IF_ID 0x{idv:08x}（IF_VER 2・CORE_KIND 2 でない）。載っている .bit が違う")
-        if idv != self.ID:
+        if idv not in self.IDS:
             raise TimebaseError(f"time_core の IF_ID 0x{idv:08x}（期待 0x{self.ID:08x}: BIT_KIND・BIT_REV が違う）")
         self.proj = self.rd(0x5C)
         if self.rd(0x04) != BEATS_PER_SEC:

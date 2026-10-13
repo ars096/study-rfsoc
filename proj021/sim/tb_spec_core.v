@@ -60,8 +60,13 @@ module tb_spec_core;
         .s_axi_wdata(wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(wvalid), .s_axi_wready(wready),
         .s_axi_bresp(bresp), .s_axi_bvalid(bvalid), .s_axi_bready(bready),
         .s_axi_araddr(araddr), .s_axi_arprot(3'd0), .s_axi_arvalid(arvalid), .s_axi_arready(arready),
-        .s_axi_rdata(rdata), .s_axi_rresp(rresp), .s_axi_rvalid(rvalid), .s_axi_rready(rready)
+        .s_axi_rdata(rdata), .s_axi_rresp(rresp), .s_axi_rvalid(rvalid), .s_axi_rready(rready),
+        .m_axis_rec_tdata(rec_d), .m_axis_rec_tvalid(rec_v), .m_axis_rec_tready(1'b1), .m_axis_rec_tlast(rec_l), .m_axis_rec_tuser(rec_u),
+        .rec_drop()
     );
+    // proj021 2-2d: スペクトル・スナップショット・TP の個はレコードで（仮の読み窓 0x2000・0x4000・0x8000 は無くなった）。s = SID_S = 2
+    wire [63:0] rec_d; wire rec_v, rec_l, rec_u;
+    rec_sink #(.TP_S(8'd2)) u_sink (.clk(clk), .tdata(rec_d), .tvalid(rec_v), .tlast(rec_l), .tuser(rec_u));
 
     // ---- ADC の流し込み（リセット解除から途切れなく。ループする）----
     // 実機のギアボックスと同じく **backpressure を見ない**。IP が受け始める前のビートは捨てられる。
@@ -117,9 +122,11 @@ module tb_spec_core;
 
     // ---- AXI4-Lite ----
     // proj021 手順 2-1: tb の中は旧番地のまま書き、ここで v2 の番地（spec_core の中の 16 bit。src/common/spec_core.v の冒頭）に直す
+    //   2-2d: total power のレジスタは流れのブロックの 0x100〜。リング・スナップショット・スペクトルの番地は無い（レコードで読む）
     function [15:0] xs(input [15:0] a);
-        if (a[15:8] == 8'h01) xs = 16'h1100 + a[7:0];                 // total power のレジスタ
-        else if (a[15:8] != 8'h00) xs = a;                             // リング・スナップショット・スペクトル
+        if (a[15:12] == 4'hF) xs = {4'd0, a[11:0]};                     // 2-2d: 0xFxxx = v2 の番地そのもの（REC_CTRL など、旧番地の無いもの）
+        else if (a[15:8] == 8'h01) xs = 16'h0100 + a[7:0];            // total power のレジスタ
+        else if (a[15:8] != 8'h00) begin xs = 16'h03FC; $display("tb_spec_core: NG 2-2d に無い番地 %04x（仮の読み窓）", a); end
         else if (a[7:0] < 8'h20) xs = a;
         else if (a[7:0] >= 8'h58 && a[7:0] <= 8'hB4) xs = a + 16'h01A8;   // 診断
         else case (a[7:0])
@@ -180,9 +187,8 @@ module tb_spec_core;
     endtask
 
     // ---- 裏口（fast = 1 のダンプ用）----
-    // AXI4-Lite で 4096 ch × 2 語 ＋ スナップショット 4096 語を読むのが sim の時間の大半を占める。
-    // t1 だけは全部を AXI で読み（読み出しの経路の試験）、t2 以降は凍っている面（rd_bank）のメモリを直接覗く。
-    // 裏口の値が AXI と同じ面・同じ番地を指していることは、毎回 16 か所を AXI でも読んで照合する（bdcheck の行）
+    // t1 だけは全部をレコードから出し（読み出しの経路の試験。2-2c までは AXI4-Lite）、t2 以降は凍っている面（rd_bank）のメモリを直接覗く。
+    // 裏口の値がレコードと同じ面・同じ番地を指していることは、毎回 16 か所をレコードとも照合する（bdcheck の行。2-2d）
     reg [63:0]  bd_spec [0:4095];
     reg [31:0]  bd_snap [0:4095];
     reg [255:0] bd_beat;
@@ -215,41 +221,40 @@ module tb_spec_core;
                 $fwrite(fo, "tpreg %0d %0d\n", i * 4, v);
             end
             axi_rd(16'h0108, tp_wp);
+            // proj021 2-2d: 個は TP のレコード（K 16 個 / レコード）。TP_WP までの個がレコードで来るまで待つ（最長 16 フレーム ＋ α）
+            guard = 0;
+            while (u_sink.tp_end < tp_wp && guard < 40000) begin @(posedge clk); guard = guard + 1; end
+            if (u_sink.tp_end < tp_wp) $display("tb_spec_core: NG TP のレコードが TP_WP %0d まで来ない（%0d）", tp_wp, u_sink.tp_end);
             for (i = 0; i < 32; i = i + 1) begin
                 if (tp_wp >= 32 - i) begin
                     tp_k = tp_wp - 32 + i;
-                    axi_rd(16'h2000 + 16 * (tp_k % 512),      tw0);
-                    axi_rd(16'h2000 + 16 * (tp_k % 512) + 4,  tw1);
-                    axi_rd(16'h2000 + 16 * (tp_k % 512) + 8,  tw2);
-                    axi_rd(16'h2000 + 16 * (tp_k % 512) + 12, tw3);
+                    {tw3, tw2, tw1, tw0} = u_sink.tp_m[tp_k % 1024];
                     $fwrite(fo, "tpent %0d %0d %0d %0d %0d\n", tp_k, tw0, tw1, tw2, tw3);
                 end
             end
+            // proj021 2-2d: このダンプの SPEC と SNAP のレコード（ALL | SNAP。途中のダンプは REC_LATE で捨てられても、最後のダンプは必ず出る）
+            axi_rd(16'h001C, v);
+            guard = 0;
+            while ((u_sink.spec_seq[2] !== v || u_sink.snap_seq[2] !== v) && guard < 40000) begin @(posedge clk); guard = guard + 1; end
+            if (u_sink.spec_seq[2] !== v || u_sink.snap_seq[2] !== v)
+                $display("tb_spec_core: NG SEQ %0d の SPEC・SNAP のレコードが来ない（%0d / %0d）", v, u_sink.spec_seq[2], u_sink.snap_seq[2]);
             if (fast) begin
                 bd_read;
                 bmis = 0;
                 // 照合する 16 か所: 面の端・k2 の境目・中ほど
                 for (i = 0; i < 16; i = i + 1) begin
                     q = (i == 0) ? 0 : (i == 1) ? 511 : (i == 2) ? 512 : (i == 3) ? 4095 : (i * 263) % 4096;
-                    axi_rd(16'h8000 + q * 8, lo);
-                    axi_rd(16'h8000 + q * 8 + 4, hi);
-                    if ({hi, lo} !== bd_spec[q]) bmis = bmis + 1;
-                    axi_rd(16'h4000 + q * 4, v);
-                    if (v !== bd_snap[q]) bmis = bmis + 1;
+                    if (u_sink.spec_m[4096 * 2 + q] !== bd_spec[q]) bmis = bmis + 1;
+                    if (u_sink.snap_m[4096 * 2 + q / 2][32 * (q % 2) +: 32] !== bd_snap[q]) bmis = bmis + 1;
                 end
                 $fwrite(fo, "bdcheck 32 %0d\n", bmis);
                 for (i = 0; i < 4096; i = i + 1) $fwrite(fo, "snap %0d %0d\n", i, bd_snap[i]);
                 for (i = 0; i < 4096; i = i + 1) $fwrite(fo, "spec %0d %0d %0d\n", i, bd_spec[i][63:32], bd_spec[i][31:0]);
             end else begin
-                for (i = 0; i < 4096; i = i + 1) begin
-                    axi_rd(16'h4000 + i * 4, v);
-                    $fwrite(fo, "snap %0d %0d\n", i, v);
-                end
-                for (i = 0; i < 4096; i = i + 1) begin
-                    axi_rd(16'h8000 + i * 8, lo);
-                    axi_rd(16'h8000 + i * 8 + 4, hi);
-                    $fwrite(fo, "spec %0d %0d %0d\n", i, hi, lo);
-                end
+                for (i = 0; i < 4096; i = i + 1)
+                    $fwrite(fo, "snap %0d %0d\n", i, u_sink.snap_m[4096 * 2 + i / 2][32 * (i % 2) +: 32]);
+                for (i = 0; i < 4096; i = i + 1)
+                    $fwrite(fo, "spec %0d %0d %0d\n", i, u_sink.spec_m[4096 * 2 + i][63:32], u_sink.spec_m[4096 * 2 + i][31:0]);
             end
             axi_rd(16'h001C, v);
             $fwrite(fo, "seq_after %0d\n", v);
@@ -274,6 +279,8 @@ module tb_spec_core;
         $display("ID = %08h", v);
         axi_wr(16'h0008, 32'h100);
         axi_wr(16'h0014, `SHIFT);
+        axi_wr(16'hF084, 32'h5);          // proj021 2-2d: REC_CTRL = ALL | SNAP（ダンプごとに SPEC と SNAP のレコード）
+        axi_wr(16'h011C, 32'h1001);       // proj021 2-2d: TP_REC_CTRL = K 16・EN（FULL の TP のレコード）
 
         // ---- t1 ----
         $display("t1: N_ACC = 1 / N_DUMP = 1");

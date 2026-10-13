@@ -2,7 +2,7 @@
 // proj014 — win_core を AXI4-Lite 越しに動かす sim（端から端まで）。x.hex（1 行 16 bit）→ ギアボックスの出口の形で流す
 //   +K= +DPHI= +NS= +NACC= +NDUMP= +SHIFT= +GAP=<0|1> +NSAMP= +IN= +DIR=
 // ダンプが閉じたら**入力を止めて**（tvalid = 0。窓の経路は valid なビートだけで進むので値は変わらない）、
-// レジスタ・スナップショット・スペクトルを AXI で全部読み、入力を再開する。
+// レジスタを AXI で読み、スナップショット・スペクトルはレコード（proj021 2-2d: REC_CTRL = ALL | SNAP。sim/rec_sink.v が受ける）から取り、入力を再開する。
 // 出力（tb_wspec と同じ形 ＋ z）: DIR/z.txt（ddc_core の出力）/ fft.txt / dumps.txt / snaps.txt / meta.txt
 `timescale 1ns / 1ps
 module tb_top;
@@ -18,16 +18,20 @@ module tb_top;
     wire [31:0] rdata;
     wire [1:0]  bresp, rresp;
     wire        tready;
-    // proj021 手順 2-1: BD と同じく s45_core（FULL = 0）越しに。番地は v2（窓 0 の流れのブロック 0x04000、仮の読み窓 0x80000）
+    // proj021 手順 2-1: BD と同じく s45_core（FULL = 0）越しに。番地は v2（窓 0 の流れのブロック 0x04000）。2-2d: 64 KiB・記憶はレコードで
+    wire [63:0] rec_d; wire rec_v, rec_l, rec_u;
+    rec_sink u_sink (.clk(clk), .tdata(rec_d), .tvalid(rec_v), .tlast(rec_l), .tuser(rec_u));
     s45_core #(.N_ACC_DEFAULT(2), .G_L2(12)) dut (
         .aclk(clk), .aresetn(aresetn), .s_axis_tdata(tdata), .s_axis_tvalid(tvalid), .s_axis_tready(tready),
-        .s_axi_awaddr(awaddr), .s_axi_awprot(3'd0), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
+        .s_axi_awaddr(awaddr[15:0]), .s_axi_awprot(3'd0), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
         .s_axi_wdata(wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(wvalid), .s_axi_wready(wready),
         .s_axi_bresp(bresp), .s_axi_bvalid(bvalid), .s_axi_bready(bready),
-        .s_axi_araddr(araddr), .s_axi_arprot(3'd0), .s_axi_arvalid(arvalid), .s_axi_arready(arready),
+        .s_axi_araddr(araddr[15:0]), .s_axi_arprot(3'd0), .s_axi_arvalid(arvalid), .s_axi_arready(arready),
         .s_axi_rdata(rdata), .s_axi_rresp(rresp), .s_axi_rvalid(rvalid), .s_axi_rready(rready),
         .s_axis_full_tdata(256'd0), .s_axis_full_tvalid(1'b0), .full_gb_stat(32'd0), .full_adc_stat(32'd0),
-        .gb_stat(32'd0), .adc_stat(32'd0), .t_in(64'd0), .go_in(1'b0), .tev_in(4'd0));
+        .gb_stat(32'd0), .adc_stat(32'd0), .t_in(64'd0), .go_in(1'b0), .tev_in(4'd0),
+        .m_axis_rec_tdata(rec_d), .m_axis_rec_tvalid(rec_v), .m_axis_rec_tready(1'b1), .m_axis_rec_tlast(rec_l), .m_axis_rec_tuser(rec_u),
+        .rec_drop());
 
     task axw(input [19:0] a, input [31:0] d);
         begin
@@ -101,6 +105,7 @@ module tb_top;
         // 3 フレーム溜まるまで待つ（FIN を読む）
         rv = 0;
         while (rv < 3) begin repeat (2000) @(posedge clk); axr(20'h04070); end
+        axw(20'h04084, 32'h5);                    // proj021 2-2d: REC_CTRL = ALL | SNAP（RUN の前に。ダンプごとに SPEC と SNAP のレコード）
         axw(20'h04008, 32'h1);                    // RUN
         axr(20'h04068); $fwrite(fm, "run_f0 %0d\n", rv);
         axr(20'h0401C); seq_seen = rv;
@@ -115,16 +120,14 @@ module tb_top;
                 axr(20'h0403C); dk = rv;  axr(20'h04048); dn = rv;  axr(20'h04040); df0 = rv;
                 axr(20'h0404C); dsat = rv; axr(20'h04220); dbk = rv; axr(20'h04218); dsnf = rv;
                 $fwrite(fd, "# %0d %0d %0d %0d %0d %0d %0d\n", seq_seen, dk, df0, dn, dsat, dbk, dsnf);
-                for (i = 0; i < 4096; i = i + 1) begin
-                    axr(20'h88000 + 8 * i);     lo = rv;
-                    axr(20'h88000 + 8 * i + 4);
-                    $fwrite(fs, "%0d %0d\n", $signed(lo), $signed(rv));
-                end
-                for (i = 0; i < 4096; i = i + 1) begin
-                    axr(20'h90000 + 8 * i);     lo = rv;
-                    axr(20'h90000 + 8 * i + 4);
-                    $fwrite(fd, "%0d\n", {rv, lo});
-                end
+                // proj021 2-2d: このダンプの SPEC と SNAP のレコードが来るのを待つ（入力は止めてあるので次のダンプは閉じない）
+                rc = 0;
+                while ((u_sink.spec_seq[0] !== seq_seen || u_sink.snap_seq[0] !== seq_seen) && rc < 200000) begin @(posedge clk); rc = rc + 1; end
+                if (rc >= 200000) $display("tb_top: SEQ %0d のレコードが来ない（SPEC %0d / SNAP %0d）", seq_seen, u_sink.spec_seq[0], u_sink.snap_seq[0]);
+                for (i = 0; i < 4096; i = i + 1)
+                    $fwrite(fs, "%0d %0d\n", $signed(u_sink.snap_m[i][31:0]), $signed(u_sink.snap_m[i][63:32]));
+                for (i = 0; i < 4096; i = i + 1)
+                    $fwrite(fd, "%0d\n", u_sink.spec_m[i]);
                 axr(20'h0401C);
                 if (rv != seq_seen) $display("tb_top: 読み出しの間に SEQ が進んだ（%0d → %0d）", seq_seen, rv);
                 nd = nd + 1;
@@ -140,6 +143,7 @@ module tb_top;
         axr(20'h04208); $fwrite(fm, "stall %0d\n", rv);
         axr(20'h0420C); $fwrite(fm, "rdy0 %0d\n", rv);
         $display("tb_top: K=%0d NS=%0d NACC=%0d NDUMP=%0d SHIFT=%0d ダンプ %0d 個、入力 %0d / %0d ビート", kk, nsv, na, ndm, shv, nd, b, nbeat);
+        $display("tb_top: レコード %0d 個・捨て %0d・形の不一致 %0d（2-2d）", u_sink.n_rec, u_sink.n_drop, u_sink.n_bad);
         $fclose(fz); $fclose(ff); $fclose(fd); $fclose(fs); $fclose(fm);
         $finish;
     end

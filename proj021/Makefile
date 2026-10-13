@@ -80,7 +80,7 @@ SIM_SKEW  ?= 0
 SIM_START ?= 0
 SIM_DEFS  := $(if $(filter 1 2,$(SIM_START)),-DSTART_GAPS) $(if $(filter 2,$(SIM_START)),-DNO_GUARD)
 SIMDIR    := build-sim-s$(SIM_SHIFT)$(if $(filter-out 0,$(SIM_SKEW)),-k$(SIM_SKEW))$(if $(filter-out 0,$(SIM_START)),-g$(SIM_START))
-RTL       := src/common/spec_core.v src/common/tp_core.v src/common/cmul.v src/common/dft16.v src/common/tw_rom.v src/common/dstamp.v src/common/adc_ev.v src/common/rec_fr.v
+RTL       := src/common/spec_core.v src/common/tp_core.v src/common/cmul.v src/common/dft16.v src/common/tw_rom.v src/common/dstamp.v src/common/adc_ev.v src/common/rec_fr.v src/common/rec_arb.v sim/rec_sink.v
 
 .PHONY: sim-regmap sim-regmap-p sim-time sim-time-p sim-wstamp sim-wstamp-p sim-tsys sim-tsys-p sim-wdelay sim-t-all sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p
 .PHONY: all sim sim-gb sim-tp sim-all sim-spec-all gb-cdc worst-paths survey twiddle prog id timing-check ps-preset clean
@@ -409,7 +409,7 @@ survey:
 sim-top:
 	mkdir -p build-sim-top/ns1
 	$(PYTHON) sim/check_top.py gen build-sim-top 1
-	$(IVERILOG) -g2005 -Isrc/common -o build-sim-top/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/s45_core.v src/common/rec_fr.v src/common/rec_arb.v src/common/adc_ev.v sim/win_fft_model.v sim/tb_top.v
+	$(IVERILOG) -g2005 -Isrc/common -o build-sim-top/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/s45_core.v src/common/rec_fr.v src/common/rec_arb.v src/common/adc_ev.v sim/win_fft_model.v sim/rec_sink.v sim/tb_top.v
 	$(VVP) -n build-sim-top/tb +K=5 +DPHI=3977774351 +NS=1 +NACC=2 +NDUMP=3 +SHIFT=4 +GAP=1 +NSAMP=917504 +IN=build-sim-top/x.hex +DIR=build-sim-top/ns1 | grep '^tb_top:'
 	$(PYTHON) sim/check_top.py check build-sim-top 1 2 3 4 | tee build-sim-top/check.log
 
@@ -418,7 +418,7 @@ sim-top:
 sim-win4:
 	mkdir -p build-sim-win4
 	$(PYTHON) sim/check_win4.py gen build-sim-win4
-	$(IVERILOG) -g2005 -Isrc/common -o build-sim-win4/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/s45_core.v src/common/rec_fr.v src/common/rec_arb.v src/common/adc_ev.v sim/win_fft_model.v sim/tb_win4.v
+	$(IVERILOG) -g2005 -Isrc/common -o build-sim-win4/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/s45_core.v src/common/rec_fr.v src/common/rec_arb.v src/common/adc_ev.v sim/win_fft_model.v sim/rec_sink.v sim/tb_win4.v
 	$(VVP) -n build-sim-win4/tb +IN=build-sim-win4/x.hex +CFG=build-sim-win4/cfg.txt +DIR=build-sim-win4 +NSAMP=1048576 | grep '^tb_win4:'
 	$(PYTHON) sim/check_win4.py check build-sim-win4 | tee build-sim-win4/check.log
 

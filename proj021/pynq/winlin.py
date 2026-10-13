@@ -121,7 +121,7 @@ def main():
         nw = WN.nacc_for(w, a.tint)
         nf = max(1, int(round(a.tint / S.T_FRAME)))
         sf = spf.run(nf, 1, shf)
-        s = wn.run(nw, 1, sh)
+        s = wn.run(nw, 1, sh, snap=True)          # proj021 2-2d: スナップショットはレコードで（RUN の前に SNAP）
         to = a.tint * 3 + 2
         if wn.wait_dump(s, to) is None or spf.wait_dump(sf, to) is None:
             raise RuntimeError("ダンプが閉じない")
