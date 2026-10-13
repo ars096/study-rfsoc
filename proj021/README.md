@@ -1210,6 +1210,22 @@ wait                                                                            
 grep -E "LOAD|acqboot|錨" runs/specd_23d.log
 ```
 
+**S23d-3（2026-10-13、specd `--bits bits.json`・取得は spawn）**: **通過** — `s45v2c.py --n 50`: 組 400・不一致 0・e(窓 0) − e(窓 1) = −1.1 ns（2-3c と同じ）。
+acqboot のログで、取得が proj021 の道具（s45proto 版 2）を使い、番号を 0 から始めたことを確かめた
+
+**S23d-2 = V2-d（2026-10-13、受けは 1 本で 300 s、`r23d.json`）**: **通過**
+- proj021 → `LOAD bit=proj020`（20.8 s）→ START n=50 → `LOAD bit=proj020`（もう一度、17.4 s）→ ID・STATUS → START n=50 → `LOAD bit=proj021`（20.3 s）→ ID・STATUS → START n=50
+- proj020 のとき: ID が win_id=00200100・adc_id=0020a100・time_id=00207101、STATUS の time_ok=1（proj020 の timebase で錨を打ち直した）、記録は版 1。
+  acqboot のログで proj020 の s45acq が proj020 の s45proto（版 1）を使い、番号を 1006・1584 から続けた
+- proj021 に戻ったとき: ID が win_id=02030000・adc_id=02020101・time_id=02020102・time_ok=1、STATUS に pl_* が戻り（pl_drop・pl_crc 0）、START の EVENT に proto 2・fmt f32・read ring、番号は 2156 から
+- 3 回の START とも STOP は「n に達した」・8 窓 × 50・miss 0、TP の anch_dev 0・gap 0
+- 受け側: **SPEC 1,200（3 回 × 8 窓 × 50）・版 {1: 1,150, 2: 609}・EVENT 9（LOAD 3）・CRC・欠け・説明のない欠け・送り直し（dup）・kgap・tdev・tp_gap 0**、照合 通過
+- LOAD 1 回 17.4〜20.8 s（予言 10〜20 s、少し越えた。Overlay の読み込みと錨の待ちが主で、運転の合間の切り替えには困らない）
+- 予言 2 の「錨・CAL が切り替わる」のうち CAL（tp_cal）は bits.json の項目に書いていないので今回は空のまま。切り替えの道は試験の bad と同じ道（項目を渡すだけ）
+
+**2-3d の判定**: S23d-1（PL なし 11 試験）・S23d-2（**V2-d**）・S23d-3（回帰）通過 → **2-3d 通過**。
+これで手順 2-3（a〜d）が全部通過。V2 の判定は V2-a〜e 通過、V2-g は 2-2a・2-3a の陽性対照で中身を確かめ済み、V2-f は FULL・DDC の全部の流れを 2-2d の後にまとめて回す
+
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
 判定 1 つにつき、次の 6 項目を書く。**環境に依る値（ホスト名・IP アドレス・パス）は書かない**（公開を前提にする）。
