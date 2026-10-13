@@ -202,7 +202,7 @@ module tb_ring_u;
         repeat (10) @(posedge clk); rstn = 1;
         repeat (5) @(posedge clk);
         lr(12'h000); $display("tb_ring_u: IF_ID = %h", rv);
-        if (rv !== 32'h0202_0103) begin $display("tb_ring_u: NG IF_ID"); nerr = nerr + 1; end
+        if (rv !== 32'h0202_0203) begin $display("tb_ring_u: NG IF_ID（2-2d: BIT_REV 2）"); nerr = nerr + 1; end
         lr(12'h02C); if (rv !== 32'h0021_0200) begin $display("tb_ring_u: NG PROJ %h", rv); nerr = nerr + 1; end
         lw(12'h008, BASE[31:0]); lw(12'h00C, {15'd0, BASE[48:32]}); lw(12'h010, SIZE);
         lr(12'h010); if (rv !== SIZE) begin $display("tb_ring_u: NG SIZE"); nerr = nerr + 1; end

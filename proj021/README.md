@@ -1310,10 +1310,12 @@ acqboot のログで、取得が proj021 の道具（s45proto 版 2）を使い�
 | sim（tb_spec_core、SHIFT 7） | **全部通過**。t1 はスペクトル・スナップショットとも全部をレコードから、t2〜t7 の裏口とレコードの 16 か所の照合 0 件の不一致、TP の個（FULL の TP のレコード）= Σ(snap>>2)²・パーセバル 1.000005 |
 | sim-top | **全部通過**（3 ダンプ × 4096 ch が模型と bit 単位で一致・スナップショット = PFB の模型。レコード 6 個・捨て 0） |
 | sim-win4 | **全部通過**（窓 1 の SNAP のレコード = PFB の模型のフレーム 7、窓 0 の SNAP・SPEC のレコードは来ない） |
-| sim-tsys（1 回目） | time_core の IF_ID の期待（0x0202_0102）を直し忘れた 1 件だけ NG、ほかは全部通る。直して 2 回目を回している |
+| sim-tsys（1 回目） | time_core の IF_ID の期待（0x0202_0102）を直し忘れた 1 件だけ NG（RUN_T・DUMP_T・SHIFT と CFG の取り込み・健全性・予約の WRST は全部通る）。期待を 0x0202_0202 に直した。2 回目は Vivado サーバで |
+| sim-tprec・sim-tprec-p | 通過・落ちるべきところで落ちた（tp_core の rst_rec を足した回帰） |
+| sim-ringu | 1 回目は s45_ring の IF_ID の期待（0x0202_0103）を直し忘れて base・noread が NG。0x0202_0203 に直して **3 変種とも通過・flip は失敗**（陽性対照） |
 | PL なし（`test_fake.sh all`） | 11 試験とも通過（取得の `--read` の変更の回帰） |
 
-残り（Vivado サーバ）: sim-all（sim-spec-all の 5 変種・sim-win-all・sim-t-all）・sim-ring（all・late・snap・snap-nochk・flip）・sim-tsys-p。クラウドでは sim-ring・sim-tsys の 2 回目を回している
+残り（Vivado サーバ）: sim-all（sim-spec-all の 5 変種・sim-win-all・sim-t-all）・sim-ring（all・late・snap・snap-nochk・flip）・sim-tsys・sim-tsys-p。クラウドでは sim-ring を回している
 
 ### 2-2d のビルドと実機
 
@@ -1322,12 +1324,13 @@ cd ~/git/rfsoc && git pull && cd proj021
 mkdir -p old && mv build-PE old/build-2-2c-PE 2>/dev/null; mv build-PETO old/build-2-2c-PETO 2>/dev/null
 make sim-all > sim-all.log 2>&1 &                       # 回帰（記憶の読みはレコードに。sim-regmap は 64 KiB・BIT_REV 2）
 make sim-ring > /dev/null 2>&1 &                        # all・late・snap・snap-nochk（1〜2 時間）
+make sim-tsys > /dev/null 2>&1 &                        # 1 回目（クラウド）の IF_ID の期待を直した後の 2 回目（1〜2 時間）
 make sim-tsys-p > /dev/null 2>&1 &                      # 陽性対照（1〜2 時間）
 make IMPL=Performance_Explore JOBS=14 > /dev/null 2>&1 &
 make JOBS=14 > /dev/null 2>&1 &                         # 既定の戦略（予言 4: −0.02〜+0.02）
 wait
 grep -E 'TIMING \(確定\)' build-PE/vivado.log build/vivado.log
-tail -n 1 sim-all.log; cat build-sim-ring/check.log; cat build-sim-tsys-posctl/check.log | tail -n 2
+tail -n 1 sim-all.log; cat build-sim-ring/check.log; tail -n 1 build-sim-tsys/check.log build-sim-tsys-posctl/check.log
 make worst-paths OUTDIR=build-PE                         # 仮の読み窓の経路（ax_ch → rq_w・snap_sel → swd2）が消えたこと
 # 資源（予言 3: DSP・URAM 同じ、BRAM −2、LUT −1,000〜−3,000）は build-PE/vivado.log の資源の表を 2-2c と並べる
 
