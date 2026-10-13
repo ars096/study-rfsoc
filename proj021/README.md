@@ -1449,6 +1449,29 @@ acqboot のログで、取得が proj021 の道具（s45proto 版 2）を使い�
 - 番地: s45_core_0〜3 が 0xA004_0000 から 64 KiB ずつ（`WIN ADDR`）
 - 判定 **S22d-1（sim）・S22d-2（ビルド）は通過**（sim-win-all・sim-t-all の回し直しが残り）
 
+#### 実機の結果（2026-10-13、`build/`（既定）の bit。S22d-3）
+
+入力はノイズソース ＋ SG を分配器で 4 ADC へ（2-2a〜2-2c と同じ）。SG は P-3 だけ ON
+
+| 試験 | 結果 | 判定 |
+|---|---|---|
+| `s45core.py --list` | 4 コアとも IF_ID 0x0202_0201・time_core 0x0202_0202・CAPS 0x007、流れの表は 2-2c と同じ（予言 5 の 1 つ目） | 通過 |
+| P-0 `timetest --t0`（30 s） | TRIG ±1・COMP ±0 ビート、GLITCH・BAD・MISS 0 | 通過 |
+| P-1 `window --probe`（A0） | 3 ダンプ × 6250 フレーム・FLAGS 0・pfb/ddc の飽和 0（スペクトルはレコードで） | 通過 |
+| P-2 `window --golden --w 256` / `--w 8` | SNAP_F = DUMP_F0・超えた ch 0・最悪の差 1.4 / 許容 4.9・2.4（SNAP のレコードで。2-1 は 1.3〜1.4） | 通過 |
+| P-3 `window --tone 3010.5 --w6 --w 256`（SG **+20 dBm**） | W-1 ch 3928（+0.10 ppm）・W-1b +6.56 kHz・**W-6 −0.055 dB**（2-2a −0.055・2-1 −0.054） | 通過 |
+| P-4 `timetest --t1`（120 s × 2 回） | 13 コアとも RUN_T = START_AT + 1・9 流れ × 2930 ダンプで DUMP_T のずれ 0 | 通過 |
+| `plring --golden`（V2-c） | 8 窓とも SHIFT 7 で超えた ch 0・最悪 1.4、全帯域（SHIFT 10）差の平均 0.49・最大 1.39・差/許容 0.65。REC_CNT 20・DROP 0 | 通過 |
+| `plring --tpcompare`（V2-e） | 4 ADC とも TP のレコード 304 個・AXI4-Lite のリングと照らした個 509〜511・不一致 0・SEQ の飛び 0・DUMP_T の式の外れ 0 | 通過 |
+| `plring --soak 60` | 13 本（DDC 8・FULL 1・TP 4）× 5,859〜5,865 レコード、SEQ の飛び・DROP・REC_LATE・CRC・尾の不一致 0、PEAK 1.0 % | 通過 |
+| `fine --f5`（F-5） | 4 ADC ともコアの TP / 全帯域の TP（**FULL の TP のレコード**）= 1.000017・1.000002・1.000005・0.999986（許容 ±2e-3） | 通過 |
+| `spectrometer --ch A --tp 10`（2 回） | **FULL の TP のレコード: 読み落とし 0・番号の飛び 0（10,020 個）・フレーム数の違い 0・TP_F0 = RUN_F0・TP-1 パーセバル 99 / 99 OK（差 −2.4e-6・−2.0e-5）**。TP-4 は F0 の後の 10,019 個と最初の個に FLAGS[4]（振り切れ）で NG | 保留 |
+
+- P-3 の 1 回目は SG の宛先を付けずに回して CW が無く、2 回目は −20 dBm で CW がノイズに埋もれて W-1b・W-6 が NG（窓の山の隣 −25 dB、全帯域の端数 δ の推定がノイズで 0.13 ch ずれた）。2-2a と同じ +20 dBm で通過。README のコマンドの「SG −20 dBm」は誤り（直した）
+- `--tp` の TP-4: 入力が平均 −2.6 dBFS・std 4,300 LSB（ノイズソースだけで 14 bit の満振幅 8191 に対して強すぎる）で、1 ms の区切りのほぼ全部で ADC が振り切れ、FLAGS[4] が立った。
+  spectrometer の TP-4 は FLAGS[4] も数える（fine の F-5 は数えない）。**レコードの道（欠け・番号・中身）は全部正しく**、NG は入力の条件。入力を下げて回し直す（判定は緩めない）
+- 予言 5 の残り: specd の回帰（s45v2c・s45v2a・specrecv 10 分）
+
 #### ビルドと実機のコマンド
 
 ```bash
@@ -1478,7 +1501,7 @@ python3 window.py --clkin 0 --ref 10 --probe --adc 0 --win 0            # P-1（
 python3 window.py --clkin 0 --ref 10 --golden --w 256                   # P-2（W-G。SNAP のレコードで）
 python3 window.py --clkin 0 --ref 10 --golden --w 8
 python3 spectrometer.py --clkin 0 --ref 10 --ch A --golden              # 全帯域の golden
-python3 window.py --clkin 0 --ref 10 --tone 3010.5 --w6 --w 256 --shift 11 --shift-full 8   # P-3（SG −20 dBm）
+python3 window.py --clkin 0 --ref 10 --tone 3010.5 --w6 --w 256 --shift 11 --shift-full 8 --sg $SG --sg-dbm 20   # P-3（分配器を通るので +20 dBm）
 python3 timetest.py --clkin 0 --ref 10 --t1 --seconds 120               # P-4
 python3 spectrometer.py --clkin 0 --ref 10 --ch A --tp 10               # 全帯域の Parseval（FULL の TP のレコード）
 python3 fine.py --clkin 0 --ref 10 --f5                                 # F-5（コアの TP / 全帯域の TP = 1）
