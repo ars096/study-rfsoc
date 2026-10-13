@@ -251,7 +251,7 @@ python3 gbboot.py --loads 50 --clkin 0 --ref 10 --bitfile proj021_k0.bit --expec
 | 2-3d | LOAD と bits.json | 同じ | S23d（**V2-d**） | 通過（2026-10-13） |
 | 2-2d | 仮の読み窓を外して 64 KiB に・FULL の TP をレコードで・道具の読みを全部レコードに | 変える | S22d-1〜3 | 通過（2026-10-13） |
 | 2-4 | V2-f（5.1 の見張りを FULL・DDC の NS 1〜8 の全部の流れで） | 2-2d のまま | S24-1〜4（**V2-f**） | 通過（2026-10-13） |
-| 2-5 | FULL（spec_core）を生サンプルの流れ（KIND 4 RAW）に替える（B1） | 変える | S25-1〜3 | 実装・sim 中 |
+| 2-5 | FULL（spec_core）を生サンプルの流れ（KIND 4 RAW）に替える（B1） | 変える | S25-1〜3 | sim・ビルド通過、実機待ち |
 
 残り: P-5（配線）・INTERFACE 8. の 8（F0 を格子に）と 9（sim-wdelay を PFB 入りで）・F-2。**V2-a〜g は全部通過**
 
@@ -1718,10 +1718,34 @@ spec_core は SAM45-Wide・2G・512M の全帯域で使う共通部品として�
 | sim-regmap（コア 0 の流れ 2 = RAW: SID 0x0204_0200・PARAM 13・NCH 0・0x100〜 = 0・IF_ID 0x0202_0301・time_core 0x0202_0302）＋ test_regmap | **通過**（193 項目・test_regmap 77 項目。自己記述の表に `RAW` の行） |
 | sim-regmap-p | **通過**（NG 98 / 193 で落ちた） |
 | sim-time（IF_ID 0x0202_0302）・sim-ringu（IF_ID 0x0202_0303） | **通過** |
-| sim-tsys・sim-tsys-p（全帯域 → RAW）・sim-ring（流れ 2 = RAW の SNAP を面の写しと AXI4-Lite の DUMP_* と照らす。check_ring.py に「KIND2 = RAW」）・sim-t4adc・sim-top・sim-win4（IF_ID だけ） | Vivado のサーバで（1〜2 時間級） |
+| sim-tsys（全帯域 → RAW） | **通過**（RUN_T・DUMP_T = 頭のビートの T・間隔 k·N·512・SHIFT・CFG・健全性・予約の WRST） |
+| sim-tsys-p | **通過**（「RUN の間の SHIFT が RUN の値でない」の 1 件で落ちた。RAW にも陽性対照の口が効いた） |
+| sim-ring | **総合: 通過**。all: RAW の SNAP 5 個が面の写しと一致・頭 5 個とも AXI4-Lite の DUMP_* と一致・DROP 0 / late: RAW の SNAP 11 個とも一致・REC_LATE 計 18 = DROP_CNT 18 / snap: SNAP 10 個（窓 0 が 5・RAW が 5）・DROP 1（流れ 1 の SNAP、2-2c と同じ）。陽性対照 snap-nochk・flip は落ちた |
+| sim-t4adc・sim-top・sim-win4 | **通過**（IF_ID 0x0202_0301・0x0202_0302） |
+
+**S25-1（sim）は通過**。
 
 - 1 回目は tb の数え違いで NG（中身が 2 ビート・DUMP_T が 2 クロックずれた）: tb がビートを `aresetn` から数えていたが、s45_core はリセットをコアの中で 3 段遅らせるので raw_core は最初の 2 ビートを数えない。tb を「raw_core のリセットが明けてから受けたビート」で数えるように直した（RTL は変えていない）
 - 日本語の文をタスクの引数（ベクタ）に渡すと iverilog が壊す（NG の文が化けた）。tb_raw は $display に直に書く
+
+#### ビルド（S25-2、2026-10-14）
+
+- 1 回目は build.tcl の止まり: OOC の先回し（`foreach ip [list $xfft $wfft]`）が、作らなかった lane_fft の変数を読んだ（`can't read "xfft"`）。fft のときだけ入れるように直した（02ce268）
+- 2 回目（`build/`、既定の戦略）: **WNS +0.044・WHS +0.010**（2-2d の既定 +0.029）
+
+| 資源（`utilization.rpt`） | 2-2d（build-PE） | 2-5（build、既定） | 差 | 予言 |
+|---|---|---|---|---|
+| DSP | 2,600 | **2,096** | −504 | 2,096 |
+| BRAM タイル | 305 | **233.5**（RAMB36 113・RAMB18 241） | −71.5 | 230〜238 |
+| LUT | 212,104 | **168,982**（39.7 %） | −43,122 | −40,000〜−44,000 |
+| FF | 338,729 | **256,455**（30.2 %） | −82,274 | −79,000〜−83,000 |
+| URAM | 56 | 56 | 0 | 56 のまま |
+
+- raw_core（`raw_core_util.rpt`）: LUT 1,270・FF 1,501・BRAM タイル 7.5・DSP 0。**FF は予言（2,000〜4,000）より少ない**（頭の待ちを 2 つ持つ見積もりが大きすぎた。実際は q_h 2 × 384 bit ＋ 送りの s_h 384 bit ほどで、合計には効かない）
+- lane_fft 0 個・s45_core_i/u_win の DSP 524 × 4 は 2-2d と同じ
+- 2-2d の比べの相手は build-PE（2-2d の既定の build の utilization は記録が無い。2-2d の既定と PE の差は LUT・FF で 0.1 % 未満）
+
+**S25-2（ビルド）は通過**（予言 2・3 とも範囲の中。raw_core の FF だけ予言の下）。
 
 #### ビルドと実機の手順（S25-2・S25-3）
 
