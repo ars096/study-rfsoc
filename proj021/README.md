@@ -251,6 +251,7 @@ python3 gbboot.py --loads 50 --clkin 0 --ref 10 --bitfile proj021_k0.bit --expec
 | 2-3d | LOAD と bits.json | 同じ | S23d（**V2-d**） | 通過（2026-10-13） |
 | 2-2d | 仮の読み窓を外して 64 KiB に・FULL の TP をレコードで・道具の読みを全部レコードに | 変える | S22d-1〜3 | 通過（2026-10-13） |
 | 2-4 | V2-f（5.1 の見張りを FULL・DDC の NS 1〜8 の全部の流れで） | 2-2d のまま | S24-1〜4（**V2-f**） | 通過（2026-10-13） |
+| 2-5 | FULL（spec_core）を生サンプルの流れ（KIND 4 RAW）に替える（B1） | 変える | S25-1〜3 | 設計中 |
 
 残り: P-5（配線）・INTERFACE 8. の 8（F0 を格子に）と 9（sim-wdelay を PFB 入りで）・F-2。**V2-a〜g は全部通過**
 
@@ -1627,6 +1628,63 @@ python3 specrecv.py --host $B --out /tmp/r24.s45 --seconds 300 --json r24.json &
 python3 specctl.py --host $B "SET A0.bw=256 A1.bw=128 B0.bw=64 B1.bw=32 C0.bw=16 C1.bw=8 D0.bw=256 D1.bw=8 all.shift=9" "SEND ON" "START n=0"
 sleep 280; python3 specctl.py --host $B STATUS STOP; wait
 ```
+
+### 手順 2-5 — FULL を生サンプルの流れ（RAW）に替える（B1）
+
+#### 設計と予言（2026-10-13。RTL を書く前）
+
+**検討事項 3 (1) の実施**。SAM45-Fine の製品の出力は「4 ADC × 2 窓」で、全帯域のスペクトルは無い。今の FULL（spec_core、16 レーンの 8192 点 FFT）が使われているのは
+F-2（1PPS の縁を生サンプルで見る）・specd の SNAP・W-6・W-1b・全帯域の golden・F-5・`--tp` の Parseval（どれも開発の確かめ）だけで、前の 2 つは生サンプルで足りる。
+spec_core は SAM45-Wide・2G・512M の全帯域で使う共通部品として残し（sim-spec-all は今までどおり回す）、**SAM45-Fine の bit からだけ外す**。
+
+**変えるもの**:
+- **新しい KIND 4 = RAW**（INTERFACE 2.1 に足す）: 選んだ ADC の生サンプルを 1 フレーム（512 ビート = 8192 サンプル）取って SNAP のレコード（type 4）で出す流れ。FFT・積分・TP は持たない
+- **`src/common/raw_core.v`（新）**: 入力は今の FULL と同じ（axis_sel4 の出口、s_axis_full）。1 段受けて、spec_core と**同じ約束**で区切る:
+  - フレーム = 有効なビート 512 個（入力の数え fin）。RUN（CTRL[0]、または ARM_RUN と time_core の発火）の fin を f として、ダンプ k の頭のフレームは f ＋ 2 ＋ k·N（N = N_ACC）、N_DUMP 個で止まる（0 は止めるまで）
+  - **ダンプ k の頭のフレーム 512 ビートを取る**（2 面。面が空いていなければ取らず、そのダンプは REC_LATE・rec_drop）
+  - ダンプ k は「頭のフレームから N フレーム」が過ぎたところで閉じ（SEQ ＋1）、DUMP_K・DUMP_F0・DUMP_N（= N）・DUMP_T（頭のフレームの最初のビートを受けたクロックの T）・
+    DUMP_H（ダンプの間の PPS の健全性・振り切れ・途切れの OR）・DUMP_CFG を流れのブロックに出す（v2 の 2.5 と同じ番地。DUMP_SAT は 0）
+  - REC_CTRL の ALL・ONE（SNAP の bit は受けるが意味は無い）で、閉じたダンプの SNAP のレコードを出す。頭 w1..w6 は SPEC のレコードと同じ形（w4 は log2 = 13・SRC・DUMP_H）、
+    中身は 2,048 語（語 j = サンプル 4j〜4j+3、**今の FULL の SNAP と同じ並び**）。SPEC のレコードは出さない
+  - レジスタ: SID {2, 4, s, 0}・PARAM [7:0] 13（1 回に取るサンプルの log2）・NCH 0・FRAME_BEATS 512・NFFT_MIN_MAX 0・SRC（書いて WRST・ARM_WRST で効く。今の FULL と同じ）・
+    CFG_ID・RUN_CFG・WRST_CFG・RUN_T・RUN_F0・FIN（LO で HI を固定）・FOUT（= FIN）・FLAGS（[4] 入力の途切れ、粘着・CTRL[8] で消す）・REC_CTRL・REC_LATE。
+    CTRL の [10] SRST・[11] GRST・SHIFT・RUN_SHIFT は受けるが効かない（道具の select_full がそのまま使える）。0x100〜・0x200〜 は 0
+- `s45_core.v`: パラメタ `RAW`（1 のとき FULL の位置に raw_core）。`FULL` と `RAW` は同時に立てない。NSTREAM は今と同じ 3（コア 0）
+- build.tcl: s45_core_0 を `FULL 0・RAW 1` に。lane_fft（FFT IP）の作成と照合・FULL の資源の照合は FULL のときだけ。BIT_REV 2 → **3**（KIND が変わる。PS は自己記述で分かれる）
+- PS: s45core（KIND_RAW・`snap_stream()` = RAW か FULL）・rectap（SNAP だけの `latest_snap`）・timetest（T-1 は RAW も 13 コアに入れたまま、T-2 (a) の生サンプルを SNAP のレコードで）・
+  s45acq（SNAP 命令は RAW で。fkey を snap_stream から）・plring の `--golden`・s45v2f は FULL が無ければ FULL の行を飛ばし、RAW は 5.1 の見張りに入れない（DUMP_T の間隔だけ見る）・
+  window の `--w6` と spectrometer・fine の F-5 は FULL が無い bit では「全帯域が無い（2-5 以降の SAM45-Fine）」と言って止まる・test_regmap
+- 判定の置き換え: W-6・W-1b・全帯域の golden・F-5・FULL の `--tp` は SAM45-Fine の判定から外す。代わりに **P-8（窓の和 = TP、proj020 の型）** と W-1 の ppm（SG の絶対周波数）
+- INTERFACE: 2.1 に KIND 4 RAW、2.5 の RAW の読み方、4.6 の SNAP に「RAW は SNAP だけ」
+
+**sim**:
+- **sim-raw（新、tb_raw）**: s45_core（RAW = 1）に作り物の入力（ビートの番号を埋めたサンプル）。(a) ALL・N 8・N_DUMP 6: SNAP のレコード 6 個の中身 = 入力のフレーム f ＋ 2 ＋ k·8 の 512 ビート（bit 単位）・
+  DUMP_T(k) − DUMP_T(0) = k·8·512・DUMP_T = tb が覗いた頭のビートの T・SEQ・DUMP_K が続く (b) ONE: 1 個だけ出て ONE が 0 に戻る (c) N 1・ALL: 面が足りず REC_LATE > 0・
+  出たレコードは全部正しい・DROP_CNT（rec_drop）= REC_LATE (d) ARM_RUN: RUN_T = START_AT ＋ 1、頭のフレーム = f ＋ 2 (e) SRC を書いて WRST → full_sel が変わる。
+  陽性対照 sim-raw-p: 照合の側で 1 語ずらす → 落ちる
+- 回帰: sim-regmap（コア 0 の流れ 2 が KIND 4、IF_ID 0x0202_0301）・sim-tsys（全帯域 → RAW: RUN_T・DUMP_T の間隔・TANCH・予約の WRST）・sim-ring（FULL の流れを RAW に。RAW の SNAP のレコード = tb が覗いた面）・
+  sim-top・sim-win4・sim-t4adc・sim-ringu・sim-tprec はそのまま。sim-spec-all（spec_core 単体）も今までどおり
+
+**予言**:
+1. sim-raw の (a)〜(e) と陽性対照、回帰の sim が通る
+2. 資源（build の utilization、2-2d の `build/` と比べて）: spec_core（LUT 44,405・FF 84,855・RAMB36 23・RAMB18 112・DSP 504、`utilization_hier.rpt`）が抜け、raw_core（RAMB36 8 前後・LUT 1,000〜3,000・FF 2,000〜4,000）が入る →
+   **DSP 2,600 → 2,096**・**BRAM 305 → 230〜238**・LUT −40,000〜−44,000・FF −79,000〜−83,000・URAM 56 のまま
+3. 時間: FULL の入っていたクロック領域が空き、**既定の戦略で閉じ、WNS +0.03〜+0.15**（2-2d の既定は +0.029）
+4. 実機:
+   - `s45core --list`: コア 0 の流れ 2 が RAW（SID 0x0204_0200・NCH 0・FRAME_BEATS 512）、IF_ID 0x0202_0301
+   - P-0〜P-2・P-4（13 コアとも RUN_T = START_AT ＋ 1、RAW の DUMP_T の間隔のずれ 0）が 2-2d と同じ
+   - specd の SNAP 命令（`SNAP adc=… n=…`）が RAW の生サンプルを返す（2-3a の S23a-3 と同じ形）
+   - T-2 (a)（`timetest --t2`、1PPS を ADC_A に入れる配線のとき）の生サンプルの縁が見える（配線が無ければ F-2 と一緒に保留）
+   - P-8（`winlin` の型、窓の和 = TP）が proj020 と同じ（0.5 %）
+   - V2-a・V2-f（DDC 8 本。RAW は DUMP_T の間隔だけ）・specd の 10 分が 2-4 と同じ
+
+**判定**:
+
+| 判定 | 中身 |
+|---|---|
+| S25-1 | 予言 1（sim） |
+| S25-2 | 予言 2・3（ビルド） |
+| S25-3 | 予言 4（実機） |
 
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
