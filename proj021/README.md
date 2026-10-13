@@ -251,7 +251,7 @@ python3 gbboot.py --loads 50 --clkin 0 --ref 10 --bitfile proj021_k0.bit --expec
 | 2-3d | LOAD と bits.json | 同じ | S23d（**V2-d**） | 通過（2026-10-13） |
 | 2-2d | 仮の読み窓を外して 64 KiB に・FULL の TP をレコードで・道具の読みを全部レコードに | 変える | S22d-1〜3 | 通過（2026-10-13） |
 | 2-4 | V2-f（5.1 の見張りを FULL・DDC の NS 1〜8 の全部の流れで） | 2-2d のまま | S24-1〜4（**V2-f**） | 通過（2026-10-13） |
-| 2-5 | FULL（spec_core）を生サンプルの流れ（KIND 4 RAW）に替える（B1） | 変える | S25-1〜3 | 設計中 |
+| 2-5 | FULL（spec_core）を生サンプルの流れ（KIND 4 RAW）に替える（B1） | 変える | S25-1〜3 | 実装・sim 中 |
 
 残り: P-5（配線）・INTERFACE 8. の 8（F0 を格子に）と 9（sim-wdelay を PFB 入りで）・F-2。**V2-a〜g は全部通過**
 
@@ -1685,6 +1685,68 @@ spec_core は SAM45-Wide・2G・512M の全帯域で使う共通部品として�
 | S25-1 | 予言 1（sim） |
 | S25-2 | 予言 2・3（ビルド） |
 | S25-3 | 予言 4（実機） |
+
+#### 実装（2026-10-13）
+
+- **`src/common/raw_core.v`（新）**: 設計どおり。細部:
+  - 入力は**受けずに口の s_axis をそのまま数える**（spec_core と同じ。1 段受けると DUMP_T が spec_core の DUMP_T より 1 ビート後ろの点になる）。記憶の書き口は 1 つ（頭のビートは「ダンプを始める」クロックに空いた面へ、残りは取っている面へ）
+  - 面は 2 つ。空けるのは「送り終えた」「レコードを出さずに閉じた」、取るのは「ダンプを始めた」。**同じクロックに空いた面もそのダンプに使える**（N_ACC 1・REC_CTRL 0 で 1 つおきに面を取り損なわないように）
+  - 閉じたダンプの頭は 2 つまで待たせる（実際は開いているダンプが 1 面を持つので 1 つまで）。送りは 3 段（語の番号 → 記憶の読み → 出口）で、3 段とも出口が空くときだけ進む（tready が落ちても語は落ちない）
+  - CTRL の [9]〜[11]・SHIFT は受けるが効かない。sim-tsys-p の陽性対照の口（`SPEC_POSCTL_SHIFT`）は spec_core と同じ形で持つ
+- `src/common/s45_core.v`: パラメタ `RAW`（と `RAW_N_ACC_DEFAULT`）。`g_raw` で FULL の位置に raw_core、rec_arb で DDC のレコードと束ねる。rec_drop は [0] だけ。NSTREAM は 3 のまま
+- BIT_REV 3: s45_core・win_core・time_core・s45_ring の既定と build.tcl
+- build.tcl: `set full_kind raw`（`fft` で 2-2d〜2-4 の FULL に戻る）。raw のとき spec_core.v・dft16.v・tw_rom.v を足さず、lane_fft を作らない。
+  s45_core_0 は `CONFIG.FULL 0・CONFIG.RAW 1`。資源の報告に lane_fft 0 個・DSP の予言 2,096・`g_raw.u_raw` の資源（`raw_core_util.rpt`）
+- INTERFACE: 2 の決定に「2026-10-13 RAW に替える」、2.1 の表に KIND 4 RAW、2.5 の NCH・0x100〜・0x200〜 と RAW の読み方、4.6 の SNAP の中身、5.2 の D_eff に RAW
+- PS:
+  - `s45core`: `KIND_RAW`・`Core.raw()`・`snap_stream()`（RAW、無ければ FULL）・`has_full()`。`full_stream()` は FULL が無ければ `FullMissing`（「全帯域が無い（2-5 以降の SAM45-Fine…）」）
+  - `rectap.latest_snap()`（SNAP のレコードだけの流れの今の SEQ）
+  - `timetest`: `open_all` の `full` は snap_stream（`full.kind`）。T-1・T-3・T-4 はそのまま（区切り・DUMP_T・RUN_T・RUN_SHIFT・DUMP_CFG の約束が同じ）、T-2 (a) は RAW なら latest_snap で生サンプル
+  - `s45acq`: SNAP 命令の流れ（fkey）は snap_stream。手順は今のまま（RAW は SNAP の bit を無視して ALL で SNAP を出す）
+  - `s45v2f`: RAW は SNAP のレコードで DUMP_T の間隔 = N_ACC·512 と SEQ の飛び 0 だけを見る（5.1 の見張りに入れない）
+  - `plring`: setup は FULL が無ければ RAW を ALL で回す（`--soak`）。`--golden` は RAW を飛ばす
+  - `window --w6`・`fine --f5`・`spectrometer`（全帯域）は FULL が無い bit で「全帯域が無い…」と言って止まる
+  - `timebase.TimeCore.IDS`・`gbboot` に BIT_REV 3 の IF_ID、`test_regmap` は RAW の流れ（SID・PARAM 13・NCH 0・0x100〜 = 0・FullMissing）
+- 予言の訂正（測る前）: 予言 4 の P-8 の道具は **`s45lin`**（proj019〜020 の L-1〜L-3、specd 経由。窓の和 / TP）。`winlin` は窓と全帯域の比（W-7）で、FULL が要る
+
+#### sim（S25-1）
+
+| sim | 結果 |
+|---|---|
+| sim-raw（新、tb_raw） | **通過**: (e) WRST で full_sel 3・SRC 0x8000_0003 / (a) SNAP 6 個・中身 bit 一致・DUMP_F0 = RUN_F0 + 8k・DUMP_T = 覗いた頭のビートの T・間隔 4096 / (b) ONE で 1 個・REC_CTRL が 0 に / (c) N 1: レコード 3 ＋ REC_LATE 9 = 12・rec_drop 9・FLAGS[4] / (d) RUN_T − SA = 1・最初の DUMP_F0 = RUN_F0。レコード 12 個・中身の不一致 0 |
+| sim-raw-p（陽性対照: 照合で 1 語ずらす） | **通過**（中身の不一致 24,576 語で FAIL になった） |
+| sim-regmap（コア 0 の流れ 2 = RAW: SID 0x0204_0200・PARAM 13・NCH 0・0x100〜 = 0・IF_ID 0x0202_0301・time_core 0x0202_0302）＋ test_regmap | **通過**（193 項目・test_regmap 77 項目。自己記述の表に `RAW` の行） |
+| sim-regmap-p | **通過**（NG 98 / 193 で落ちた） |
+| sim-time（IF_ID 0x0202_0302）・sim-ringu（IF_ID 0x0202_0303） | **通過** |
+| sim-tsys・sim-tsys-p（全帯域 → RAW）・sim-ring（流れ 2 = RAW の SNAP を面の写しと AXI4-Lite の DUMP_* と照らす。check_ring.py に「KIND2 = RAW」）・sim-t4adc・sim-top・sim-win4（IF_ID だけ） | Vivado のサーバで（1〜2 時間級） |
+
+- 1 回目は tb の数え違いで NG（中身が 2 ビート・DUMP_T が 2 クロックずれた）: tb がビートを `aresetn` から数えていたが、s45_core はリセットをコアの中で 3 段遅らせるので raw_core は最初の 2 ビートを数えない。tb を「raw_core のリセットが明けてから受けたビート」で数えるように直した（RTL は変えていない）
+- 日本語の文をタスクの引数（ベクタ）に渡すと iverilog が壊す（NG の文が化けた）。tb_raw は $display に直に書く
+
+#### ビルドと実機の手順（S25-2・S25-3）
+
+```bash
+# Vivado のサーバで（ビルドと並べて、残りの sim）
+make > /dev/null 2>&1 &                     # → build/（既定の戦略。FULL の位置は RAW = build.tcl の full_kind）
+make sim-tsys sim-tsys-p sim-ring sim-t4adc sim-top sim-win4 > sim-25.log 2>&1 &   # 成否は各 check.log の「結果:」「総合:」
+
+# ボードで（root。specd を止めて）
+python3 s45core.py --list --clkin 0 --ref 10                 # RAW の行: SID 0x02040200・NCH 0・FRAME_BEATS 512、IF_ID 0x02020301
+python3 timetest.py --clkin 0 --ref 10 --t0 --seconds 30     # P-0
+python3 window.py --clkin 0 --ref 10 --probe --adc 0 --win 0 # P-1
+python3 window.py --clkin 0 --ref 10 --golden --w 256        # P-2
+python3 timetest.py --clkin 0 --ref 10 --t1 --seconds 120    # P-4（13 コア: 8 窓 ＋ RAW ＋ TP 4）
+python3 timetest.py --clkin 0 --ref 10 --t4                  # T-4（RAW も RUN_SHIFT・DUMP_CFG は RUN の値）
+python3 window.py --clkin 0 --ref 10 --tone 3010.5 --w6 --w 256   # 止まること（「全帯域が無い…」）
+python3 plring.py --clkin 0 --ref 10 --golden                # V2-c（8 窓。RAW は飛ばす）
+python3 plring.py --clkin 0 --ref 10 --soak 60               # RAW も ALL（SNAP のレコード）で
+python3 s45v2f.py --clkin 0 --ref 10                         # V2-f（DDC 8 本の r − G は 2-4 と同じ。RAW は間隔だけ）
+# specd（--bits bits.json）で:
+python3 s45snap.py --host $B --adc ABCD --n 16 --every 20 --out snap25   # SNAP（RAW の生サンプル。S-1〜S-4）
+python3 s45v2a.py --host $B --n 100                                      # V2-a
+python3 specrecv.py --host $B --out /tmp/r25.s45 --seconds 600 --json r25.json   # 10 分（SET・START・SEND は 2-4 と同じ）
+# P-8（窓の和 = TP、パワーメーター・PATT の配線のとき）: s45lin.py --host $B --pm <PM> --att <ATT> --out lin_p25 → --analyze
+```
 
 ## 判定の書き方（`test/acceptance/` に移せる形）
 

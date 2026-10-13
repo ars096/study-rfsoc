@@ -27,7 +27,7 @@
 module s45_ring #(
     parameter integer NIN      = 4,
     parameter integer BIT_KIND = 2,
-    parameter integer BIT_REV  = 2,      // proj021 2-2d: 2。2-2a〜2-2c は 1
+    parameter integer BIT_REV  = 3,      // proj021 2-5: 3。2-2d〜2-4 は 2。2-2a〜2-2c は 1
     parameter integer PROJ     = 2163200,       // = 0x0021_0200（10 進で書く。time_core と同じ理由）
     parameter integer FDEPTH   = 512            // 書き手の FIFO（拍）
 ) (

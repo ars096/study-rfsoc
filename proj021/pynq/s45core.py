@@ -12,6 +12,10 @@ PS は .hwh の IP の名前（`s45_core_0`〜`3`・`time_core_0`）でコアを
   0x0000–0x00FF コアの共通 / 0x0100 TP のレジスタ / 0x2000 TP のリング / 0x4000 + 0x400·s 流れ s のブロック
   （FULL の流れのブロックの 0x100〜 は FULL の TP のレジスタ。スペクトル・スナップショット・FULL の TP の値はレコードだけ: rectap.py）
   2-1〜2-2c の bit（BIT_REV 1）にあった仮の 3 つ（0x80000〜 の読み窓・0xC0000〜・0xE0000 の SNAP_SEL）は、この道具からは使わない
+
+proj021 2-5（BIT_REV 3）: SAM45-Fine のコア 0 の流れ 2 は FULL（spec_core）から **RAW（KIND 4、raw_core）**に替わった。
+RAW は生サンプルの SNAP のレコードだけを出す（スペクトル・FULL の TP は無い）。`snap_stream()` が RAW か FULL の流れを返す
+（生サンプルを取る道具はこれを使う）。`full_stream()` は FULL が無い bit では FullMissing を投げる（全帯域のスペクトルを使う道具が止まる）
 """
 import argparse
 import sys
@@ -19,8 +23,8 @@ import sys
 IF_VER = 2
 BIT_KINDS = {1: "SAM45-Wide", 2: "SAM45-Fine", 3: "2G", 4: "512M", 5: "256M", 6: "SpW6", 7: "SpW8", 8: "SpW20", 9: "Fine"}
 CORE_KIND_ADC, CORE_KIND_TIME, CORE_KIND_RING = 1, 2, 3
-KIND_FULL, KIND_SLICE, KIND_DDC = 1, 2, 3
-KIND_NAMES = {KIND_FULL: "FULL", KIND_SLICE: "SLICE", KIND_DDC: "DDC"}
+KIND_FULL, KIND_SLICE, KIND_DDC, KIND_RAW = 1, 2, 3, 4
+KIND_NAMES = {KIND_FULL: "FULL", KIND_SLICE: "SLICE", KIND_DDC: "DDC", KIND_RAW: "RAW"}
 ADC_NAMES = ("ADC_A", "ADC_B", "ADC_C", "ADC_D")
 PROJ_EXPECT = 0x0021_0200        # この README の手順 2-1 の .bit（追跡のため。照合には使わない）
 BIT_REV_MIN = 2                  # proj021 2-2d: 仮の読み窓の無い 64 KiB の番地（道具は記憶をレコードでしか読まない）
@@ -55,6 +59,14 @@ class S45Error(RuntimeError):
     pass
 
 
+class FullMissing(S45Error):
+    """FULL（全帯域のスペクトル）の流れが無い bit（proj021 2-5 以降の SAM45-Fine）"""
+    pass
+
+
+NO_FULL_MSG = "全帯域が無い（2-5 以降の SAM45-Fine。FULL の位置は RAW = 生サンプルだけ）"
+
+
 def split_if_id(v):
     return dict(if_ver=v >> 24 & 0xFF, bit_kind=v >> 16 & 0xFF, bit_rev=v >> 8 & 0xFF, core_kind=v & 0xFF)
 
@@ -70,7 +82,11 @@ class Stream:
 
     @property
     def name(self):
-        return f"{self.core.adc_name}{self.s}" if self.kind == KIND_DDC else f"FULL（{self.core.name} の s {self.s}）"
+        if self.kind == KIND_DDC:
+            return f"{self.core.adc_name}{self.s}"
+        if self.kind == KIND_RAW:
+            return f"RAW {self.core.adc_name}{self.s}"
+        return f"{KIND_NAMES.get(self.kind, '?')}（{self.core.name} の s {self.s}）"
 
     def rd(self, a):
         return int(self.m.read(self.base + a)) & 0xFFFFFFFF
@@ -116,6 +132,9 @@ class Core:
     def full(self):
         return [s for s in self.streams if s.kind == KIND_FULL]
 
+    def raw(self):
+        return [s for s in self.streams if s.kind == KIND_RAW]
+
 
 def discover(ol, bit_kind=BIT_KIND_EXPECT, ncore=4, bit_rev_min=BIT_REV_MIN):
     """s45_core_0..ncore−1 と time_core_0 を名前で引き、照合して (cores（ADC の順）, time_core の mmio) を返す"""
@@ -160,10 +179,24 @@ def discover(ol, bit_kind=BIT_KIND_EXPECT, ncore=4, bit_rev_min=BIT_REV_MIN):
 
 
 def full_stream(cores):
-    """FULL の流れ（SAM45-Fine は 1 本）"""
+    """FULL の流れ（2-4 までの SAM45-Fine は 1 本）。無ければ FullMissing（2-5 以降）"""
     fs = [s for c in cores for s in c.full()]
+    if not fs:
+        raise FullMissing(NO_FULL_MSG)
     if len(fs) != 1:
         raise S45Error(f"FULL の流れが {len(fs)} 本（期待 1）")
+    return fs[0]
+
+
+def has_full(cores):
+    return any(c.full() for c in cores)
+
+
+def snap_stream(cores):
+    """生サンプルを取る流れ（2-5 以降は RAW、2-4 までは FULL）。SRC で ADC を選べる 1 本"""
+    fs = [s for c in cores for s in c.raw()] or [s for c in cores for s in c.full()]
+    if len(fs) != 1:
+        raise S45Error(f"RAW・FULL の流れが {len(fs)} 本（期待 1）")
     return fs[0]
 
 

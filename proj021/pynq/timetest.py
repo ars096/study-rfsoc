@@ -82,7 +82,7 @@ class Core:
 
 def open_all(ol, ns_list):
     """proj021 手順 2-1: 自己記述（s45core.discover）で。wms = ADC の順のコアの mmio（4 本）、wins = ADC の順・窓の順の全部の DDC の流れ、
-    full = FULL の流れ（s45_core_0 の s = 2）"""
+    full = FULL の流れ（s45_core_0 の s = 2）。proj021 2-5 から RAW の流れ（full.kind で見分ける。区切り・DUMP_T・RUN_T の約束は FULL と同じ）"""
     cores, tmm = SC.discover(ol)
     tc = TimeCore(tmm)
     wms = [c.m for c in cores]
@@ -100,9 +100,10 @@ def open_all(ol, ns_list):
         c = Core(f"{S.CHANS[i][0]} 窓 {w}", wms[i], st.base, regs, 4096 << (ns - 1), adc=i, widx=w)
         c.ns = ns
         wins.append(c)
-    fs = SC.full_stream(cores)
-    full = Core("全帯域", fs.m, fs.base, regs, 512)
+    fs = SC.snap_stream(cores)                  # proj021 2-5: RAW（生サンプルの流れ）。2-4 までの bit は FULL
+    full = Core("RAW" if fs.kind == SC.KIND_RAW else "全帯域", fs.m, fs.base, regs, 512)
     full.rec_key = (fs.core.adc, fs.s)          # proj021 2-2d: FULL の流れのレコードの (core, s)
+    full.kind = fs.kind
     return tc, wms, wins, full
 
 
@@ -117,7 +118,7 @@ def select_full(wms, full, adc):
     time.sleep(0.01)
     full.wr(S.R_CTRL, S.CTRL_SRST)
     time.sleep(0.1)
-    log(f"全帯域: FULL の流れの SRC = {adc}（{S.CHANS[adc][0]}）で WRST・SRST")
+    log(f"{full.name}: 流れの SRC = {adc}（{S.CHANS[adc][0]}）で WRST・SRST")
 
 
 def tp_run_t(wm):
@@ -272,7 +273,7 @@ def t1(tc, tb, wins, full, wms, ns_list, seconds, tint, out=None):
     if tc.fired_at() != sa:
         log(f"  NG FIRED {tc.fired_at()}（START_AT {sa}）"); bad += 1
     runts = [c.rd64(c.r["run_t"]) for c in wins] + [full.rd64(full.r["run_t"])] + [tp_run_t(wm) for wm in wms]
-    names = [c.name for c in wins] + ["全帯域"] + [f"TP {S.CHANS[i][0]}" for i in range(len(wms))]
+    names = [c.name for c in wins] + [full.name] + [f"TP {S.CHANS[i][0]}" for i in range(len(wms))]
     log("  RUN_T: " + " / ".join(f"{n} {t - sa:+d}" for n, t in zip(names, runts)) + f"（START_AT との差。期待 +1、{len(runts)} コア）")
     if any(t != sa + 1 for t in runts):
         log("  NG: RUN を受けたビートが揃っていない"); bad += 1
@@ -346,10 +347,17 @@ def t2(tc, tb, wins, full, wms, path="trig", n_trial=5, if_c=2200.0, out=None, a
     # (a) 全帯域（spec_core_0）のスナップショット = 1 フレーム 8192 サンプル（512 ビート = 2 µs）の**生の ADC 値**。フィルタを通らないので
     #     縁のサンプルがそのまま読める（proj008 の閉ループの型）。フレームは 512 ビートで 1 s = 500,000 フレームちょうどなので、
     #     フレームの位相（DUMP_T mod 512）は PPS に対して動かない → 1 回測って、縁（の見当）を含むフレームを狙う
-    sp = S.Spec(full.m, idx=adc, label=lbl, base=full.base, rec_key=full.rec_key)
-    sp.snap = True
+    #     proj021 2-5: RAW の流れ（SNAP のレコードだけ）なら rectap.latest_snap で読む。2-4 までの FULL は SPEC ＋ SNAP（Spec.read_dump）
+    is_raw = getattr(full, "kind", SC.KIND_FULL) == SC.KIND_RAW
+    if is_raw:
+        def read_raw():
+            _m, pay = RT.tap().latest_snap(full.rec_key, lambda: full.rd(W.R_SEQ))
+            return RT.snap_full(pay)
+    else:
+        sp = S.Spec(full.m, idx=adc, label=lbl, base=full.base, rec_key=full.rec_key)
+        sp.snap = True
     full.wr(W.R_NACC, 1); full.wr(W.R_NDUMP, 1); full.wr(W.R_SHIFT, 7)
-    RT.tap().arm(full.m, full.base, True)         # proj021 2-2d: SPEC と SNAP のレコード（RUN・ARM の前に）
+    RT.tap().arm(full.m, full.base, not is_raw)   # proj021 2-2d: SPEC と SNAP のレコード（RUN・ARM の前に）。2-5 の RAW は ALL だけ（SNAP を出す）
     seq0 = full.rd(W.R_SEQ)
     full.wr(W.R_CTRL, W.CTRL_CLR | W.CTRL_RUN)
     t_e = time.time() + 1.0
@@ -370,7 +378,7 @@ def t2(tc, tb, wins, full, wms, path="trig", n_trial=5, if_c=2200.0, out=None, a
         if full.rd(W.R_SEQ) == seq0:
             log(f"  NG (a) 試行 {k}: 全帯域のダンプが閉じない"); return False
         st = _stamp_of(tc, path, edge)
-        m, _, snap = sp.read_dump(with_snap=True)
+        snap = read_raw() if is_raw else sp.read_dump(with_snap=True)[2]
         x = (snap.astype(np.int64) >> 2).astype(float)
         x -= np.median(x[:1024])
         sig = 1.4826 * float(np.median(np.abs(x[:1024]))) or 1.0

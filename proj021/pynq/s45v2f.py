@@ -9,6 +9,9 @@
 
 手順: 8 窓を NS 1〜8（--ns）で G の格子に一斉に WRST、FULL は ADC_A。9 流れとも N_ACC = BASE / L・REC_CTRL = ALL、RUN の START_AT は T の tint の倍数（specd と同じ）。
 リングの SPEC のレコードを流れごとに **s45acq.Bundler（specd と同じ見張りのコード）** に入れ、道具の側でも r の最小・最大・m の飛びを数える。
+
+proj021 2-5: FULL の位置が RAW（KIND 4、SNAP のレコードだけ）の bit では、RAW は 5.1 の見張り（束ね）に入れず、
+**DUMP_T の間隔 = N_ACC·512（= BASE）ちょうど**・SEQ の飛び 0 だけを見る（RAW の SNAP のレコードで）。
 """
 import argparse
 import sys
@@ -30,10 +33,14 @@ def log(*a):
     print(*a, flush=True)
 
 
+TYPE_SNAP = 4
+
+
 class Stream:
-    def __init__(self, name, c, key, L, ns):
+    def __init__(self, name, c, key, L, ns, raw=False):
         import s45acq as A
         self.name, self.c, self.key, self.L, self.ns = name, c, key, L, ns
+        self.raw = raw                     # proj021 2-5: RAW（SNAP のレコードだけ。束ねない、DUMP_T の間隔だけ）
         self.nacc = A.BASE_BEATS // L
         self.A = A
 
@@ -43,10 +50,16 @@ class Stream:
         self.nbund = 0
         self.nbad_n = 0
         self.drops = []
+        self.ts, self.seqs = [], []
 
     def add(self, hw, pay):
         m = self.A.rec_meta(hw)
         t = int(m["t"])
+        if self.raw:
+            self.ts.append(t); self.seqs.append(int(hw[1]) & 0xFFFFFFFF)
+            if int(m["n"]) != self.nacc:
+                self.nbad_n += 1
+            return
         mi = (t + self.A.BASE_BEATS // 2) // self.A.BASE_BEATS
         self.rs.append(t - mi * self.A.BASE_BEATS)
         self.ms.append(mi)
@@ -58,7 +71,16 @@ class Stream:
         if dropped is not None:
             self.drops.append(dropped)
 
+    def summary_raw(self):
+        ts = np.array(self.ts, np.int64)
+        sq = np.array(self.seqs, np.int64)
+        d = np.diff(ts) - self.nacc * 512 if len(ts) > 1 else np.zeros(0, np.int64)
+        return dict(n=len(ts), dev=int(np.abs(d).max()) if len(d) else None, gaps=int(np.sum(np.diff(sq) != 1)) if len(sq) > 1 else 0,
+                    bad_n=self.nbad_n, rmin=None)
+
     def summary(self):
+        if self.raw:
+            return self.summary_raw()
         rs = np.array(self.rs, np.int64)
         ms = np.array(self.ms, np.int64)
         gaps = int(np.sum(np.diff(ms) != 1)) if len(ms) > 1 else 0
@@ -95,10 +117,9 @@ def run_once(tc, wins, full, wms, streams, ring, tint_beats, n_sum, seconds, pos
         for core, s, seq, hw, pay, crc_ok, tail_ok in ring.read():
             if not (crc_ok and tail_ok):
                 log(f"  NG CRC・尾（{core}, {s}）"); continue
-            if (int(hw[0]) >> 40 & 0xFF) != TYPE_SPEC:
-                continue
+            ty = int(hw[0]) >> 40 & 0xFF
             st = by.get((core, s))
-            if st is not None:
+            if st is not None and ty == (TYPE_SNAP if st.raw else TYPE_SPEC):
                 st.add(hw, pay); nrec += 1
         if posctl and not pos_done and time.time() - t0 > seconds / 2:
             c = streams[0].c                                         # A0
@@ -113,11 +134,13 @@ def run_once(tc, wins, full, wms, streams, ring, tint_beats, n_sum, seconds, pos
         st.c.wr(SC.S_CTRL, 1 << 1)
     time.sleep(0.2)
     for core, s, seq, hw, pay, crc_ok, tail_ok in ring.read():
-        if crc_ok and tail_ok and (int(hw[0]) >> 40 & 0xFF) == TYPE_SPEC and (core, s) in by:
-            by[(core, s)].add(hw, pay)
+        st = by.get((core, s))
+        if crc_ok and tail_ok and st is not None and (int(hw[0]) >> 40 & 0xFF) == (TYPE_SNAP if st.raw else TYPE_SPEC):
+            st.add(hw, pay)
     for st in streams:
         st.c.wr(SC.S_REC_CTRL, 0)
-        st.b.stop()
+        if not st.raw:
+            st.b.stop()
     return sa
 
 
@@ -165,7 +188,8 @@ def main():
     T.select_full(wms, full, a.full_adc)
     T.wrst_on_grid(tc, tb, wins, full, wms, ns_list, a.if_c, 0x0024_0001)
     streams = [Stream(c.name, c, (c.adc, c.widx), c.L, ns) for c, ns in zip(wins, ns_list)]
-    streams.append(Stream("全帯域", full, full.rec_key, 512, None))
+    is_raw = getattr(full, "kind", SC.KIND_FULL) == SC.KIND_RAW
+    streams.append(Stream("RAW" if is_raw else "全帯域", full, full.rec_key, 512, None, raw=is_raw))
     log(f"流れ: " + " / ".join(f"{st.name}（{'NS ' + str(st.ns) if st.ns else 'FULL'}・L {st.L}・N_ACC {st.nacc}）" for st in streams))
     log(f"tint {a.tint} s = n_sum {n_sum} × BASE {A.BASE_BEATS}・1 回 {a.seconds} s × {a.runs} 回")
     res = []
@@ -178,6 +202,12 @@ def main():
             for j, st in enumerate(streams):
                 sm = st.summary()
                 rr[st.name] = sm
+                if st.raw:
+                    good = sm["n"] > 1 and sm["dev"] == 0 and sm["gaps"] == 0 and sm["bad_n"] == 0
+                    ok &= bool(good)
+                    log(f"  {st.name:<12} RAW   SNAP {sm['n']:>5}・DUMP_T の間隔の N_ACC·512 からのずれ 最大 {sm['dev']}・SEQ の飛び {sm['gaps']}・"
+                        f"DUMP_N の違い {sm['bad_n']}（5.1 の見張りには入れない）: {'OK' if good else 'NG'}")
+                    continue
                 const = sm["n"] > 0 and sm["rmax"] - sm["rmin"] <= 1
                 pos = a.posctl and k == 0 and j == 0
                 if pos:
@@ -193,6 +223,8 @@ def main():
         if len(res) > 1:
             log("---- RUN の間で r が同じか（陽性対照で動かした A0 の 1 回目は除く）----")
             for j, st in enumerate(streams):
+                if st.raw:
+                    continue
                 vals = [rr[st.name]["rmin"] for i, rr in enumerate(res) if not (a.posctl and i == 0 and j == 0)]
                 same = len(set(vals)) == 1
                 ok &= same
@@ -202,8 +234,9 @@ def main():
         ok &= r["drop"] == 0 and not r["err"]
         tab = {st.ns: res[-1][st.name]["rmin"] - G for st in streams if st.ns}
         log("DDC の r − G（NS: 値）: " + " / ".join(f"{k_}: {v}" for k_, v in sorted(tab.items())))
-        fr = res[-1]["全帯域"]["rmin"]
-        log(f"FULL の r = {fr}（START_AT から {fr / 512:.3f} フレーム、r mod 512 = {fr % 512}）")
+        if not is_raw:
+            fr = res[-1]["全帯域"]["rmin"]
+            log(f"FULL の r = {fr}（START_AT から {fr / 512:.3f} フレーム、r mod 512 = {fr % 512}）")
     finally:
         ring.close([st.c for st in streams])
     log(f"結果（V2-f{'・陽性対照' if a.posctl else ''}）: {'通過' if ok else '失敗'}")

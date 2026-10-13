@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //
 // tb_ring — s45_core（NW 2 ＋ FULL）→ s45_ring → 止まりの入る HP0 の記憶（proj021 手順 2-2a、sim-ring。S22a-1 の予言 1・2 (c)）
+//   **proj021 2-5: 流れ 2 は FULL（spec_core）から RAW（raw_core）に替えた**。以下の「FULL」は流れ 2 = RAW のこと。RAW は SPEC のレコードを出さず、
+//   SNAP のレコード（生サンプル 2,048 語）だけを出す。照合: 本体 = tb がレコードにすると決まったクロックに面を直に写したもの（S 行）、
+//   頭 w1..w6 = AXI4-Lite の DUMP_*（H 行）。ALL（all・late）でも ALL | SNAP（snap）でも、RAW は閉じたダンプごとに SNAP を 1 個
 //
 //   入力: ランダムな ADC のビート（16 × 13 bit）。DDC の流れ 0・1 は NS 1、FULL は 1 本（同じ入力）
 //   変種（+MODE）:
@@ -75,8 +78,7 @@ module tb_ring;
     wire [63:0] rec_d;
     wire        rec_v, rec_r, rec_l, rec_u;
     wire [1:0]  rec_dp;
-    s45_core #(.NW(2), .G_L2(12), .BUILD_TAG(32'h1234_0000), .CORE_PORT(16'h2200), .FULL(1), .FULL_BUILD_TAG(32'h5678_0000),
-               .FULL_STABLE_N(0)) u_c0 (
+    s45_core #(.NW(2), .G_L2(12), .BUILD_TAG(32'h1234_0000), .CORE_PORT(16'h2200), .RAW(1)) u_c0 (   // 2-5: 流れ 2 は RAW
         .aclk(clk), .aresetn(rstn), .s_axis_tdata(tdata), .s_axis_tvalid(tvalid), .s_axis_tready(),
         .s_axis_full_tdata(tdata), .s_axis_full_tvalid(tvalid), .s_axis_full_tready(), .full_gb_stat(32'd0), .full_adc_stat(32'd0), .full_sel(),
         .s_axi_awaddr(awaddr[15:0]), .s_axi_awprot(3'd0), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
@@ -157,8 +159,8 @@ module tb_ring;
         .m_axi_bresp(2'b00), .m_axi_bvalid(m_bvalid), .m_axi_bready(m_bready));
 
     // ---- 凍ったバンクを直に写す（Q 行）----
-    wire [31:0] seq0 = u_c0.u_win.g_w[0].seq, seq1 = u_c0.u_win.g_w[1].seq, seq2 = u_c0.g_full.u_full.seq;
-    wire        bk0 = u_c0.u_win.g_w[0].rd_bank, bk1 = u_c0.u_win.g_w[1].rd_bank, bk2 = u_c0.g_full.u_full.rd_bank;
+    wire [31:0] seq0 = u_c0.u_win.g_w[0].seq, seq1 = u_c0.u_win.g_w[1].seq, seq2 = u_c0.g_raw.u_raw.seq;
+    wire        bk0 = u_c0.u_win.g_w[0].rd_bank, bk1 = u_c0.u_win.g_w[1].rd_bank, bk2 = 1'b0;
     reg  [63:0] pk [0:3*4096-1];
     reg  [2:0]  pk_tg = 0;
     reg  [2:0]  pk_bk;
@@ -167,10 +169,6 @@ module tb_ring;
         for (gg = 0; gg < 2; gg = gg + 1) for (bb = 0; bb < 2; bb = bb + 1) begin : g_pd
             integer i;
             always @(pk_tg[gg]) if (pk_bk[gg] == bb) for (i = 0; i < 4096; i = i + 1) pk[gg * 4096 + i] = u_c0.u_win.g_w[gg].u_ws.g_bank[bb].mem[i];
-        end
-        for (jj = 0; jj < 8; jj = jj + 1) for (bb = 0; bb < 2; bb = bb + 1) begin : g_pf
-            integer i;
-            always @(pk_tg[2]) if (pk_bk[2] == bb) for (i = 0; i < 512; i = i + 1) pk[2 * 4096 + jj * 512 + i] = u_c0.g_full.u_full.g_bin[jj].g_bank[bb].mem[i];
         end
     endgenerate
     integer fq, fr;
@@ -197,27 +195,16 @@ module tb_ring;
                 end
                 $fwrite(fq, "\n");
             end else $fwrite(fq, "S- 0 0 %0d\n", sq);
-        end else begin
-            if ((bk2 ? u_c0.g_full.u_full.snap_f1 : u_c0.g_full.u_full.snap_f0) == u_c0.g_full.u_full.rd_f0) begin
-                $fwrite(fq, "S 0 2 %0d", sq);
-                for (kk = 0; kk < 512; kk = kk + 1) begin
-                    fv = u_c0.g_full.u_full.snap_mem[{bk2, kk[8:0]}];
-                    $fwrite(fq, " %h %h %h %h", fv[63:0], fv[127:64], fv[191:128], fv[255:192]);
-                end
-                $fwrite(fq, "\n");
-            end else $fwrite(fq, "S- 0 2 %0d\n", sq);
         end
     end endtask
     always @(posedge clk) begin
         if (u_c0.u_win.u_rec.dbg_sab) nsab_w = nsab_w + 1;
         if (u_c0.u_win.u_rec.dbg_eab) neab_w = neab_w + 1;
-        if (u_c0.g_full.u_full.u_rec.dbg_sab) nsab_f = nsab_f + 1;
-        if (u_c0.g_full.u_full.u_rec.dbg_eab) neab_f = neab_f + 1;
     end
     integer s_, n_, kq;
     initial begin nq[0] = 0; nq[1] = 0; nq[2] = 0; sq_d[0] = 0; sq_d[1] = 0; sq_d[2] = 0; end
     always @(posedge clk) if (rstn) begin
-        for (s_ = 0; s_ < 3; s_ = s_ + 1) begin
+        for (s_ = 0; s_ < 2; s_ = s_ + 1) begin                // 2-5: 流れ 2（RAW）は下で
             if (((s_ == 0) ? seq0 : (s_ == 1) ? seq1 : seq2) == sq_d[s_] + 1) begin
                 sq_d[s_] = sq_d[s_] + 1;
                 pk_bk[s_] = (s_ == 0) ? bk0 : (s_ == 1) ? bk1 : bk2;
@@ -227,13 +214,33 @@ module tb_ring;
                 for (kq = 0; kq < 4096; kq = kq + 1) $fwrite(fq, " %h", pk[s_ * 4096 + kq]);
                 $fwrite(fq, "\n");
                 for (n_ = 0; n_ < 16; n_ = n_ + 1) p16[s_ * 16 + n_] = pk[s_ * 4096 + cht(n_)];
-                if ((is_snap || is_late) && s_ != 1) put_snap(s_, sq_d[s_]);
+                if ((is_snap || is_late) && s_ == 0) put_snap(s_, sq_d[s_]);
                 pseq[s_] = sq_d[s_];
                 nq[s_] = nq[s_] + 1;
                 todo[s_] = 1'b1;
             end else if (((s_ == 0) ? seq0 : (s_ == 1) ? seq1 : seq2) != sq_d[s_]) begin
                 sq_d[s_] = (s_ == 0) ? seq0 : (s_ == 1) ? seq1 : seq2;       // リセット
             end
+        end
+    end
+
+    // ---- 2-5: RAW（流れ 2）。閉じるダンプをレコードにすると決まったクロックに、その面（送り終えるまで書かれない）を直に写す（S 行）----
+    integer kr, nraw_s = 0;
+    reg [255:0] rv256;
+    always @(posedge clk) if (rstn) begin
+        if (u_c0.g_raw.u_raw.o_close) begin
+            if (u_c0.g_raw.u_raw.rec_ok) begin
+                $fwrite(fq, "S 0 2 %0d", seq2 + 1);
+                for (kr = 0; kr < 512; kr = kr + 1) begin
+                    rv256 = u_c0.g_raw.u_raw.mem[{u_c0.g_raw.u_raw.o_p, kr[8:0]}];
+                    $fwrite(fq, " %h %h %h %h", rv256[63:0], rv256[127:64], rv256[191:128], rv256[255:192]);
+                end
+                $fwrite(fq, "\n");
+                nraw_s = nraw_s + 1;
+            end
+            pseq[2] = seq2 + 1;
+            nq[2] = nq[2] + 1;
+            todo[2] = 1'b1;
         end
     end
 
@@ -286,7 +293,7 @@ module tb_ring;
             nh = nh + 1;
             $fwrite(fq, "H 0 %0d %0d %h %h %h %h %h %h\n", s, h_seq,
                 {h_k, h_seq}, {h_f0h, h_f0l}, {h_th, h_tl},
-                {h_h[15:0], {4'd0, h_src[3:0]}, 8'd0, (s < 2) ? {4'd0, h_par[15:12]} : 8'd0, {4'd0, h_sh[3:0]},
+                {h_h[15:0], {4'd0, h_src[3:0]}, 8'd0, (s < 2) ? {4'd0, h_par[15:12]} : 8'd0, (s < 2) ? {4'd0, h_sh[3:0]} : 8'd0,   // 2-5: RAW の w4 に SHIFT は無い
                  (s < 2) ? {4'd0, h_par[11:8]} : 8'd0, (s < 2) ? 8'd12 : 8'd13},
                 {h_sat, h_n}, {h_fl, h_cfg});
         end
@@ -333,6 +340,8 @@ module tb_ring;
         $display("tb_ring: WANT = %0s", is_late ? "late" : is_snap ? "snap" : "nolate");
         $display("tb_ring: SNAP_AB = %0d %0d %0d %0d", nsab_w, neab_w, nsab_f, neab_f);   // 2-2c: 頭・終わりの見張りで捨てた SNAP（窓・FULL）
         $display("tb_ring: SIZE = %0d", SIZE);
+        $display("tb_ring: KIND2 = RAW");                                            // 2-5: check_ring.py が流れ 2 を RAW として照らす
+        $display("tb_ring: RAW_S = %0d", nraw_s);
         lr(12'h014); $display("tb_ring: W = %0d", lrv);
         lr(12'h01C); $display("tb_ring: DROP_CNT = %0d", lrv);
         lr(12'h020); $display("tb_ring: REC_CNT = %0d", lrv);

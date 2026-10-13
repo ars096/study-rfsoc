@@ -107,8 +107,8 @@ def pps_is_consistent(d_count, d_stamp, tol=2):
 
 class TimeCore:
     """time_core_0 のレジスタ（src/common/time_core.v の冒頭の表）。mmio は pynq.MMIO か、read(off) / write(off, v) を持つもの。"""
-    ID = 0x0202_0202              # proj021 2-2d: IF_ID（IF_VER 2・BIT_KIND 2 = SAM45-Fine・BIT_REV 2・CORE_KIND 2）。2-1〜2-2c は 0x0202_0102、旧 0x0021_7101
-    IDS = (0x0202_0102, 0x0202_0202)   # BIT_REV 1（2-1〜2-2c）と 2（2-2d〜）。time_core の中身は同じ
+    ID = 0x0202_0302              # proj021 2-5: IF_ID（IF_VER 2・BIT_KIND 2 = SAM45-Fine・BIT_REV 3・CORE_KIND 2）。2-2d〜2-4 は 0x0202_0202、2-1〜2-2c は 0x0202_0102、旧 0x0021_7101
+    IDS = (0x0202_0102, 0x0202_0202, 0x0202_0302)   # BIT_REV 1（2-1〜2-2c）・2（2-2d〜2-4）・3（2-5〜）。time_core の中身は同じ
     PROJ = 0x0021_0200            # 0x5C。CAL の鍵
     CTRL_ARM, CTRL_CANCEL, CTRL_ASET, CTRL_ACLR, CTRL_NCLR = 1, 2, 8, 16, 256
 

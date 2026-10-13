@@ -82,7 +82,7 @@ SIM_DEFS  := $(if $(filter 1 2,$(SIM_START)),-DSTART_GAPS) $(if $(filter 2,$(SIM
 SIMDIR    := build-sim-s$(SIM_SHIFT)$(if $(filter-out 0,$(SIM_SKEW)),-k$(SIM_SKEW))$(if $(filter-out 0,$(SIM_START)),-g$(SIM_START))
 RTL       := src/common/spec_core.v src/common/tp_core.v src/common/cmul.v src/common/dft16.v src/common/tw_rom.v src/common/dstamp.v src/common/adc_ev.v src/common/rec_fr.v src/common/rec_arb.v sim/rec_sink.v
 
-.PHONY: sim-regmap sim-regmap-p sim-time sim-time-p sim-wstamp sim-wstamp-p sim-tsys sim-tsys-p sim-wdelay sim-t-all sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p
+.PHONY: sim-raw sim-raw-p sim-regmap sim-regmap-p sim-time sim-time-p sim-wstamp sim-wstamp-p sim-tsys sim-tsys-p sim-wdelay sim-t-all sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p
 .PHONY: all sim sim-gb sim-tp sim-all sim-spec-all gb-cdc worst-paths survey twiddle prog id timing-check ps-preset clean
 
 all: $(OUTDIR)
@@ -445,13 +445,13 @@ sim-wstamp:
 # 陽性対照: スタンプを 1 ビートずらす → 失敗になること（成否は「結果: 失敗」）
 sim-wstamp-p:
 	$(MAKE) --no-print-directory sim-wstamp SIM_WSTAMP_POSCTL=1 WSTAMP_VARS=n2:2:4:0:200
-# sim-tsys: time_core ＋ win_core（NW 2）＋ spec_core（S-T3・S-T4・系での S-T2）。iverilog で 1〜2 時間級（FFT のモデルが重い）
+# sim-tsys: time_core ＋ win_core（NW 2）＋ spec_core（S-T3・S-T4・系での S-T2）。iverilog で 1〜2 時間級（FFT のモデルが重い）。proj021 2-5: spec_core → raw_core
 #   陽性対照 sim-tsys-p: SHIFT・CFG を RUN で取り込まない（-DWIN_POSCTL_SHIFT -DSPEC_POSCTL_SHIFT）→ 3 が落ちること
 TSYS_DIR := build-sim-tsys$(if $(filter 1,$(SIM_TSYS_POSCTL)),-posctl)
 sim-tsys:
 	mkdir -p $(TSYS_DIR)
 	$(IVERILOG) -g2005 -Isrc/common $(if $(filter 1,$(SIM_TSYS_POSCTL)),-DWIN_POSCTL_SHIFT -DSPEC_POSCTL_SHIFT) -o $(TSYS_DIR)/tb src/common/time_core.v src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) \
-	  src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/s45_core.v src/common/rec_fr.v src/common/rec_arb.v src/common/adc_ev.v src/common/spec_core.v src/common/dft16.v src/common/tw_rom.v sim/win_fft_model.v sim/lane_fft_model.v sim/tb_tsys.v
+	  src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/s45_core.v src/common/rec_fr.v src/common/rec_arb.v src/common/adc_ev.v src/common/raw_core.v sim/win_fft_model.v sim/tb_tsys.v
 	$(VVP) -n $(TSYS_DIR)/tb | grep '^tb_tsys:' | tee $(TSYS_DIR)/check.log
 sim-tsys-p:
 	$(MAKE) --no-print-directory sim-tsys SIM_TSYS_POSCTL=1
@@ -481,19 +481,19 @@ sim-regmap:
 	mkdir -p $(REGMAP_DIR)
 	$(IVERILOG) -g2005 -Isrc/common $(if $(filter 1,$(SIM_REGMAP_POSCTL)),-DREGMAP_POSCTL) -o $(REGMAP_DIR)/tb src/common/time_core.v src/common/cmul.v src/common/dft16f.v \
 	  src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v \
-	  src/common/s45_core.v src/common/rec_fr.v src/common/rec_arb.v src/common/adc_ev.v src/common/spec_core.v src/common/dft16.v src/common/tw_rom.v sim/win_fft_model.v sim/lane_fft_model.v sim/tb_regmap.v
+	  src/common/s45_core.v src/common/rec_fr.v src/common/rec_arb.v src/common/adc_ev.v src/common/raw_core.v sim/win_fft_model.v sim/tb_regmap.v
 	$(VVP) -n $(REGMAP_DIR)/tb +DUMP=$(REGMAP_DIR)/regs.txt | grep '^tb_regmap:' | tee $(REGMAP_DIR)/check.log
 	$(if $(filter 1,$(SIM_REGMAP_POSCTL)),,cd pynq && $(PYTHON) test_regmap.py ../$(REGMAP_DIR)/regs.txt | tee -a ../$(REGMAP_DIR)/check.log)
 sim-regmap-p:
 	$(MAKE) --no-print-directory sim-regmap SIM_REGMAP_POSCTL=1
 # proj021 2-2c: ＋ snap（流れ 0・FULL に ALL | SNAP、流れ 1 に ONE | SNAP 1 回）・snap-nochk（snap_ok を見ない陽性対照 → 落ちるべき）。late にも SNAP
-# proj021 手順 2-2a S22a-1: s45_core（NW 2 ＋ FULL）→ s45_ring → 記憶。変種 all（ALL・ONE、間に合う。AXI4-Lite の DUMP_* と
+# proj021 手順 2-2a S22a-1: s45_core（NW 2 ＋ FULL。2-5 から FULL の位置は RAW）→ s45_ring → 記憶。変種 all（ALL・ONE、間に合う。AXI4-Lite の DUMP_* と
 #   仮の読み窓の 16 ch とも照らす）/ late（DDC の N_ACC 2、間に合わない → REC_LATE。出たレコードは全部正しい。陽性対照 (c)）。
 #   ＋ flip（陽性対照 (a)）。iverilog で 1〜2 時間級（2 本は並べて走る）。成否は build-sim-ring/check.log の「総合:」
 RING_DIR := build-sim-ring
 RING_RTL := src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v \
   src/sam45fine/pfb4_rom.v src/common/tp_core.v src/common/win_core.v src/common/s45_core.v src/common/rec_fr.v src/common/rec_arb.v \
-  src/common/s45_ring.v src/common/adc_ev.v src/common/spec_core.v src/common/dft16.v src/common/tw_rom.v sim/win_fft_model.v sim/lane_fft_model.v
+  src/common/s45_ring.v src/common/adc_ev.v src/common/raw_core.v sim/win_fft_model.v
 sim-ring:
 	mkdir -p $(RING_DIR)/all $(RING_DIR)/late $(RING_DIR)/snap $(RING_DIR)/snap-nochk
 	$(IVERILOG) -g2005 -Isrc/common -o $(RING_DIR)/tb $(RING_RTL) sim/tb_ring.v
@@ -527,15 +527,31 @@ sim-ringu:
 	@n=$$(grep -c '^結果: 通過' $(RINGU_DIR)/check.log); f=$$(tail -1 $(RINGU_DIR)/check.log | grep -c '失敗'); \
 	 if [ $$n -eq 3 ] && [ $$f -eq 1 ]; then echo "総合: 通過（3 変種 ＋ 陽性対照 flip）" | tee -a $(RINGU_DIR)/check.log; \
 	 else echo "総合: 失敗（通過 $$n / 3、flip の失敗 $$f / 1）" | tee -a $(RINGU_DIR)/check.log; fi
+# proj021 手順 2-5 S25-1: 生サンプルの流れ（raw_core、KIND 4）を s45_core（RAW = 1）越しに。(a)〜(e) は sim/tb_raw.v の冒頭。
+#   sim-raw-p は陽性対照（照合の側で中身を 1 語ずらす → 失敗になるべき）。成否は check.log の「結果:」。iverilog で 15 分級（win_core が重い）
+RAW_RTL := src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) src/common/wspec_core.v src/common/dstamp.v src/sam45fine/pfb4_rom.v \
+           src/common/tp_core.v src/common/win_core.v src/common/s45_core.v src/common/raw_core.v src/common/rec_fr.v src/common/rec_arb.v src/common/adc_ev.v sim/win_fft_model.v
+sim-raw:
+	mkdir -p build-sim-raw
+	$(IVERILOG) -g2005 -Isrc/common -o build-sim-raw/tb $(RAW_RTL) sim/tb_raw.v
+	$(VVP) -n build-sim-raw/tb | grep '^tb_raw:\|^  ' | tee build-sim-raw/log.txt
+	@if grep -q '^tb_raw: PASS' build-sim-raw/log.txt; then echo "結果: 通過（sim-raw）"; else echo "結果: 失敗（sim-raw）"; fi | tee build-sim-raw/check.log
+sim-raw-p:
+	mkdir -p build-sim-raw-posctl
+	$(IVERILOG) -g2005 -Isrc/common -DRAW_POSCTL -o build-sim-raw-posctl/tb $(RAW_RTL) sim/tb_raw.v
+	$(VVP) -n build-sim-raw-posctl/tb | grep '^tb_raw:\|^  ' | tee build-sim-raw-posctl/log.txt
+	@if grep -q '^tb_raw: FAIL' build-sim-raw-posctl/log.txt && grep -q '中身の不一致' build-sim-raw-posctl/log.txt; then echo "結果: 通過（陽性対照: 中身の照合が落ちた）"; \
+	 else echo "結果: 失敗（陽性対照なのに中身の照合が落ちない）"; fi | tee build-sim-raw-posctl/check.log
 # sim-wdelay: 窓の遅れ D(NS)（ADC のビート → z が wspec に入るまで）。pynq/timebase.py の WIN_DELAY_BEATS の出どころ
 sim-wdelay:
 	mkdir -p build-sim-wdelay
 	$(IVERILOG) -g2005 -Isrc/common -o build-sim-wdelay/tb src/common/cmul.v src/common/dft16f.v src/common/pfb_core.v $(DDC_RTL) sim/tb_wdelay.v
 	for n in 1 2 3 4 5 6 7 8; do $(VVP) -n build-sim-wdelay/tb +NS=$$n +LEN=$$(( n < 4 ? 8000 : 1000 << (n - 2) )) | grep -E '^(wdelay|wfirst):'; done | tee build-sim-wdelay/delay.log
 sim-t-all:
-	$(MAKE) --no-print-directory -j4 sim-time sim-time-p sim-wstamp sim-wstamp-p sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p sim-regmap sim-regmap-p sim-ringu sim-tprec sim-tprec-p
+	$(MAKE) --no-print-directory -j4 sim-time sim-time-p sim-wstamp sim-wstamp-p sim-t4adc sim-t4adc-p sim-wgrid sim-wgrid-p sim-regmap sim-regmap-p sim-ringu sim-tprec sim-tprec-p sim-raw sim-raw-p
 	@grep -H "結果" build-sim-regmap/check.log build-sim-regmap-posctl/check.log build-sim-time/check.log build-sim-time/check1.log build-sim-wstamp/check.log build-sim-wstamp-posctl/check.log \
-	  build-sim-t4adc/check.log build-sim-t4adc-posctl/check.log build-sim-wgrid/check.log build-sim-wgrid-posctl/check.log build-sim-ringu/check.log build-sim-tprec/check.log build-sim-tprec-posctl/check.log
+	  build-sim-t4adc/check.log build-sim-t4adc-posctl/check.log build-sim-wgrid/check.log build-sim-wgrid-posctl/check.log build-sim-ringu/check.log build-sim-tprec/check.log build-sim-tprec-posctl/check.log \
+	  build-sim-raw/check.log build-sim-raw-posctl/check.log
 
 # spec_core の sim と窓の sim を全部（proj016: ＋ 時刻の速い sim。sim-tsys・sim-win4・sim-ring（proj021 2-2a）は別に回す）
 sim-all:

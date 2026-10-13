@@ -342,7 +342,7 @@ class HwBackend:
         self.jmap = {(self.cores[c.adc].adc, c.widx): j for j, c in enumerate(self.wins)}   # レコードの core = CORE_PORT の ADC
         self.amap = {c.adc: i for i, c in enumerate(self.cores)}
         self.q = [collections.deque() for _ in self.wins]
-        fs = SC.full_stream(self.cores)
+        fs = SC.snap_stream(self.cores)            # proj021 2-5: SNAP は RAW の流れ（2-4 までは FULL）
         self.fkey = (fs.core.adc, fs.s)
         self.log(f"リング: BASE {self.ring.base:#x} / SIZE {self.ring.size}（範囲の invalidate {'あり' if self.ring.bo_sync else 'なし'}）")
 
@@ -557,6 +557,7 @@ class HwBackend:
 
     def _snap_ring(self, adc, n, nacc, timeout):
         """proj021 2-3a: FULL の流れを REC_CTRL = ALL | SNAP・N_DUMP = n で走らせ、SNAP のレコード（type 4）を n 個集める。
+        2-5: RAW の流れ（SNAP のレコードだけを出す。SNAP の bit は意味が無いが害も無い）でも同じ手順。
         上書きの見張りは PL（2-2c の snap_ok）。ここは SEQ の飛び・DUMP_K・CRC を見る"""
         S, T, SC = self.S, self.T, self.SC
         full = self.full

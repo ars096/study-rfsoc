@@ -351,6 +351,10 @@ def f4(tc, tb, wins, full, wms, ndumps, tint, shift, keep, out=None, offgrid=0, 
 def f5(tc, tb, wins, full, wms, seconds=1.0):
     """ADC ごとの TP（win_core_i の tp_core）と、同じ ADC につないだ全帯域（spec_core_0 の中の tp_core）の TP の、
     1 フレームあたりの平均の比。同じサンプルの Σx² なので、区切りの位相の違い（< 1 フレーム / 区切り）を除けば 1 に一致する"""
+    import s45core as SC
+    if getattr(full, "kind", SC.KIND_FULL) != SC.KIND_FULL:   # proj021 2-5: FULL の位置は RAW（TP を持たない）
+        log(f"ERROR: F-5: {SC.NO_FULL_MSG}。F-5 は 2-4 までの bit で（2-5 からは P-8: 窓の和 = TP）")
+        return False
     log(f"F-5: ADC ごとの TP と全帯域の TP の比（{seconds} s 平均）")
     bad = 0
     for i, wm in enumerate(wms):

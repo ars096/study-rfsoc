@@ -62,9 +62,15 @@ def main():
         print("test_regmap:   " + ln)
     judge([c.adc for c in cores] == [0, 1], "CORE_PORT の ADC")
     judge((cores[0].tile, cores[0].slice, cores[1].tile, cores[1].slice) == (2, 2, 2, 0), "CORE_PORT のタイル・スライス")
-    judge([len(c.ddc()) for c in cores] == [2, 2] and len(cores[0].full()) == 1 and not cores[1].full(), "流れの数と KIND")
-    fs = SC.full_stream(cores)
-    judge((fs.core.name, fs.s, fs.base) == ("s45_core_0", 2, 0x4800), "FULL の流れの番地")
+    judge([len(c.ddc()) for c in cores] == [2, 2] and len(cores[0].raw()) == 1 and not cores[1].raw()
+          and not cores[0].full() and not cores[1].full(), "流れの数と KIND（2-5: コア 0 の流れ 2 は RAW、FULL は無い）")
+    fs = SC.snap_stream(cores)
+    judge((fs.core.name, fs.s, fs.base, fs.kind) == ("s45_core_0", 2, 0x4800, SC.KIND_RAW), "RAW の流れの番地（snap_stream）")
+    try:
+        SC.full_stream(cores)
+        judge(False, "full_stream が FullMissing を投げない")
+    except SC.FullMissing:
+        judge(True, "full_stream は FullMissing（全帯域の道具が止まる）")
     # 窓（tb: 流れ s・コア c で k = 16c + s。N_ACC 100 + k・N_DUMP 200 + k・SHIFT (5 + k) & 15・CFG_ID 0xC0F0_0000 + k・
     #   WK (k + 1) & 31・WDPHI 0x1357_0000 + k・WNS 3 + s・WRST_T 80 + k。WRST の後）
     for c in cores:
@@ -84,17 +90,14 @@ def main():
             judge(st.rd(SC.S_FRAME_BEATS) == 4096 << (ns - 1), f"{c.adc_name} 窓 {st.s} の FRAME_BEATS（s45acq.frame_beats と同じ式）")
         judge(c.rd(W.A_BASE + W.R_A_GB_K) == 3 + c.adc, f"{c.adc_name} の GB_K（コアの共通）")
         judge(c.rd(W.A_BASE + S.R_TP_PARAM) == S.TP_PARAM_EXPECT, f"{c.adc_name} の TP_PARAM（コアの TP）")
-    # 全帯域（FULL。tb: k = 2）
-    sp = S.Spec(fs.m, idx=1, label="ADC_B", base=fs.base, rec_key=(fs.core.adc, fs.s))
-    judge(sp.rd(S.R_NACC) == 102 and sp.rd(S.R_NDUMP) == 202 and sp.rd(S.R_SHIFT) == 7, "FULL の N_ACC・N_DUMP・SHIFT")
-    judge(sp.rd(T.RS_CFG) == 0xC0F0_0002, "FULL の CFG_ID（timetest.RS_CFG）")
-    judge(sp.rd(S.R_SRC) == 0x8000_0001, f"FULL の SRC {sp.rd(S.R_SRC):#x}（ARM_WRST で 1）")
-    judge(sp.rd(S.R_BUILD) == 0x5678_0000, "FULL の BUILD（診断 0x214）")
-    judge(sp.legacy_id() == 0x0021_02A5 and S.feat_rev(sp.rd(S.R_ID)) == 6, "FULL の FFT_CFG（PARAM）と feat_rev")
-    judge(sp.rd(S.R_TP_PARAM) == S.TP_PARAM_EXPECT, "FULL の TP_PARAM（2-2d: 流れのブロックの 0x114）")
-    judge(sp.rd(S.R_TP_N) == 512 and sp.rd(S.R_TP_REC_CTRL) == S.TP_REC_K << 8, "FULL の TP_N・TP_REC_CTRL（流れのブロックの 0x100・0x11C）")
-    judge(sp.rec_key == (0, 2), "FULL のレコードの (core, s)")
-    judge(all(c.bit_rev == 2 for c in cores), "BIT_REV 2（2-2d）")
+    # RAW（2-5。tb: k = 2）
+    judge(fs.rd(SC.S_NACC) == 102 and fs.rd(SC.S_NDUMP) == 202 and fs.rd(SC.S_SHIFT) == 7, "RAW の N_ACC・N_DUMP・SHIFT")
+    judge(fs.rd(SC.S_CFG) == 0xC0F0_0002, "RAW の CFG_ID")
+    judge(fs.rd(SC.S_SRC) == 0x8000_0001, f"RAW の SRC {fs.rd(SC.S_SRC):#x}（ARM_WRST で 1）")
+    judge(fs.rd(SC.S_PARAM) & 0xFF == 13 and fs.rd(SC.S_NCH) == 0 and fs.rd(SC.S_FRAME_BEATS) == 512, "RAW の PARAM・NCH・FRAME_BEATS")
+    judge(fs.rd(SC.F_TP_REG) == 0 and fs.rd(0x214) == 0, "RAW の 0x100〜・0x200〜 は 0")
+    judge((fs.core.adc, fs.s) == (0, 2), "RAW のレコードの (core, s)")
+    judge(all(c.bit_rev == 3 for c in cores), "BIT_REV 3（2-5）")
     # time_core
     tc = TB.TimeCore(tmm)
     judge(tc.proj == 0x0021_0200 and tc.proj in TB.CAL, "time_core の PROJ と CAL の鍵")

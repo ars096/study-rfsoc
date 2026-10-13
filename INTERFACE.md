@@ -60,6 +60,8 @@
   **理由**: SAM45-Wide・2G・512M は全帯域側がデータの本体。窓だけの枠では足りず、SAM45-Wide の作り方（DDC か切り出しか）もまだ決まっていない
 - **決定**: SAM45-Fine の全帯域（今の spec_core_0）は ADC_A のコアの流れ（s = 2、KIND FULL）として置き、入力は SRC で選ぶ
   **見送った案**: 別の共有コア s45_core_4（コアの種類が 2 つに増える）
+- **決定**（2026-10-13、proj021 手順 2-5）: SAM45-Fine の製品に全帯域のスペクトルは無いので、その流れを **KIND 4 RAW**（生サンプルの SNAP だけ）に替える。BIT_REV 3 から
+  **理由**: FULL（spec_core）は DSP 504・FF 約 8.5 万を使い、使い道は開発の確かめと F-2・specd の SNAP（どちらも生サンプルで足りる）だけだった。spec_core は SAM45-Wide・2G・512M の部品として残す
 - **決定**: PS は .hwh の IP の名前（`s45_core_i`・`time_core_0`）でコアを見つける
   **見送った案**: 目録のレジスタ（PYNQ はすでに .hwh を読み、番地の重なりは build.tcl が確かめている）
 - **決定**: 診断のレジスタ（0x200〜）は約束の外。中身を変えても IF_VER を上げない
@@ -87,6 +89,7 @@ SAM45-Wide の「1024 MHz × 2」が DDC か全帯域の切り出しかはまだ
 | 1 | FULL | 全帯域の FFT（今の spec_core） | （なし） |
 | 2 | SLICE | 全帯域の FFT の連続した ch の切り出し（SAM45-Wide・512M の候補） | 点数・切り出しの最初の ch |
 | 3 | DDC | DDC ＋ PFB ＋ FFT（今の窓） | WK・WDPHI・WNS（・点数） |
+| 4 | RAW | 入力の生サンプルを、ダンプの最初のフレーム（512 ビート = 8192 サンプル）だけ SNAP のレコードにする。FFT・積分・TP は無い（2026-10-13、proj021 2-5。SAM45-Fine の FULL の代わり） | （なし。SRC は FULL と同じく書ける） |
 
 PS は KIND から「ch → IF の対応の式」と「種類に固有の設定のキー」を選ぶ。それ以外（帳簿・時刻・健全性・単位・束ね）は KIND に依らない。
 
@@ -148,7 +151,7 @@ BIT_KIND（BITS.md の 9 本。proj の番号とは別の固定の番号）:
 | 0x14 | SHIFT | RUN で取り込む |
 | 0x18 | FLAGS | 粘着。ビットの意味は KIND ごと（PS は KIND で名前を引く） |
 | 0x1C | SEQ | 閉じたダンプの通し番号 |
-| 0x20 | NCH | 出力の ch 数（FULL の 8192 点なら 4096）。**0 = 空の流れ**（今の設定では出すものが無い。SEQ は進まず、REC_CTRL を書いてもレコードを出さない。2.1） |
+| 0x20 | NCH | 出力の ch 数（FULL の 8192 点なら 4096）。**0 = 空の流れ**（今の設定では出すものが無い。SEQ は進まず、REC_CTRL を書いてもレコードを出さない。2.1）。RAW は 0（スペクトルを出さない。SEQ は進み、SNAP のレコードを出す。空の流れとは KIND で見分ける） |
 | 0x24 | FRAME_BEATS | 今の 1 フレームのビート数（L。束ねと格子の検算に使う） |
 | 0x28 | SRC | [3:0] 入力の ADC（今効いている値）/ [31] 書き換えられる流れ。書けば次の WRST で効く |
 | 0x2C | CFG_ID | WRST と RUN で取り込む |
@@ -170,8 +173,14 @@ BIT_KIND（BITS.md の 9 本。proj の番号とは別の固定の番号）:
 | 0x84 | REC_CTRL | [0] ALL / [1] ONE / [2] SNAP（4.6） |
 | 0x88 | REC_LATE | 出し切れずに捨てたダンプの数（4.1） |
 | 0x8C〜0xFF | （予約） | 時刻の補正の定数（見直しの 4 番目）などを足す場所 |
-| 0x100〜0x1FF | 種類に固有の設定 | DDC: WK・WDPHI・WNS・WCUR・WCUR_DPHI・WSTART・NS_MIN_MAX・WRST_T。SLICE: 下の表（点数はコアの FFT_N、2.4）。FULL: その流れの TP のレジスタ（コアの 0x0100〜 と同じ並び。値は TP のレコードで、s = この流れ。proj021 2-2d で決めた。FULL の流れは SRC を選べるので、その入力の Σx² を FULL のフレームの格子で持つ） |
-| 0x200〜0x3FF | 診断（約束の外） | DDC: PFB_SAT・DDC_SAT・WS_STALL・WS_RDY0・DDC_OVR・WRST_CNT。FULL: DIAG_*・SRST・GRST・INJ・RAW_*・ST_* |
+| 0x100〜0x1FF | 種類に固有の設定 | DDC: WK・WDPHI・WNS・WCUR・WCUR_DPHI・WSTART・NS_MIN_MAX・WRST_T。SLICE: 下の表（点数はコアの FFT_N、2.4）。FULL: その流れの TP のレジスタ（コアの 0x0100〜 と同じ並び。値は TP のレコードで、s = この流れ。proj021 2-2d で決めた。FULL の流れは SRC を選べるので、その入力の Σx² を FULL のフレームの格子で持つ）。RAW: なし（0 を返す） |
+| 0x200〜0x3FF | 診断（約束の外） | DDC: PFB_SAT・DDC_SAT・WS_STALL・WS_RDY0・DDC_OVR・WRST_CNT。FULL: DIAG_*・SRST・GRST・INJ・RAW_*・ST_*。RAW: なし（0 を返す） |
+
+RAW の流れ（KIND 4。proj021 2-5、`src/common/raw_core.v`）の 0x000〜0x0FF の読み方:
+- 区切りは FULL と同じ約束（フレーム 512 ビート、RUN の fin + 2 から N_ACC フレームごと、N_DUMP 個）。**DUMP_T・DUMP_F0 はダンプの最初のフレーム**（FULL と同じ点）、DUMP_N = N_ACC
+- PARAM [7:0] = 13（1 回に取るサンプル数の log2）・NCH 0・FRAME_BEATS 512・NFFT_MIN_MAX 0・DUMP_SAT 0。SHIFT・RUN_SHIFT は書けるが効かない。CTRL の [9]〜[11] は受けるが効かない
+- FLAGS: [4] 入力の途切れ（粘着）。DUMP_H: [3:0] 時刻の健全性・[4] 振り切れ・[5] 途切れ（ダンプの間の OR）
+- REC_CTRL: ALL・ONE で、閉じたダンプの SNAP のレコード（type 4）を出す（SPEC のレコードは無い。[2] SNAP は受けるが意味は無い）。記憶は 2 面で、空いた面が無いダンプは REC_LATE・DROP_CNT に数える
 
 SLICE の種類に固有の設定（0x100〜。2026-10-09、proj022 から。DDC の WK → WCUR と同じ「書いた値」と「今効いている値」の形）:
 
@@ -346,9 +355,11 @@ REC_CTRL（流れのブロックの 0x84。REC_EN を置き換える）:
   PS は SNAP を立ててから 1 ダンプ以上待って ONE を書くか、RUN の前に ONE | SNAP を書く（スナップショットはダンプの最初のフレームなので、書く流れはそのダンプの頭で決まっている必要がある）。
   スナップショットはダンプ k+2 の頭で上書きされる（SEQ が動く前）ので、PL は面の番号（= DUMP_F0）を SNAP のレコードの頭と終わりで確かめ、違えば捨てる
 
-- スナップショットの中身は KIND ごと: FULL = ADC の生サンプル 8192 個（16 bit、今の spec_core の 0x4000 と同じ）、DDC = PFB の出口（FFT の入力）NFFT 個（re・im を 32 bit に符号拡張、今の win_core の 0x08000 と同じ）
+- スナップショットの中身は KIND ごと: FULL = ADC の生サンプル 8192 個（16 bit、今の spec_core の 0x4000 と同じ）、DDC = PFB の出口（FFT の入力）NFFT 個（re・im を 32 bit に符号拡張、今の win_core の 0x08000 と同じ）、
+  RAW = FULL と同じ形の生サンプル 8192 個（語 j = サンプル 4j〜4j+3）
+- **RAW の流れは SNAP のレコードだけを出す**（proj021 2-5）。REC_CTRL の ALL・ONE で、閉じたダンプごとに 1 個。頭の語 1〜6 は SPEC のレコードと同じ形（語 4 の log2 = 13）で、SEQ・DUMP_F0 はそのダンプのもの
 - **SPEC と SNAP は同じ SEQ・DUMP_F0 で組になる**（今の SNAP_F = DUMP_F0 の照合の代わり）
-- specd の SNAP 命令（proj019）は FULL の流れの REC_CTRL = ONE | SNAP で作り直す
+- specd の SNAP 命令（proj019）は FULL の流れの REC_CTRL = ONE | SNAP で作り直す（2-5 以降の SAM45-Fine は RAW の流れの ONE）
 
 TP のレコード（type 2）:
 
@@ -418,6 +429,7 @@ TP のレコード（type 2）:
 | KIND | D_eff | 出どころ |
 |---|---|---|
 | FULL | 0（コアの入口 = フレームの最初のビート。矩形の FFT） | — |
+| RAW | 0（FULL と同じ点。生サンプルのフレームの最初のビート） | — |
 | DDC（PFB T = 4） | D(NS) ＋ 1.5·L(NS)（D は |z|² の重心が wspec に入るまでの遅れ。矩形の区切りに PFB の重心のずれを足す） | sim-wdelay・proj020 の模型 |
 | SLICE | 作るときに決める | — |
 

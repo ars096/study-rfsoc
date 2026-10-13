@@ -234,7 +234,11 @@ def open_full(ol):
     WRST で効かせ、SRST で起動し直す（旧: spec_core_0 を win_core_0 の FULL_SEL で）"""
     adc = SEL["adc"]
     cores, _ = SC.discover(ol)
-    return S.open_full_stream(SC.full_stream(cores), adc)
+    try:
+        fs = SC.full_stream(cores)
+    except SC.FullMissing as e:                      # proj021 2-5: SAM45-Fine の FULL は RAW に替わった
+        log(f"ERROR: {e}。--w6（W-6・W-1b）は 2-4 までの bit で"); sys.exit(1)
+    return S.open_full_stream(fs, adc)
 
 
 def open_win(ol, allow_nopreset=False, allow_rev1=False):

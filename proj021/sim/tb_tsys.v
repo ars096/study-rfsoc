@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// proj016 — time_core ＋ win_core（NW = 2・TP）＋ spec_core をつないだ sim（S-T3 同時開始・S-T4 設定の取り込み・S-T2 の系での確かめ）
+// proj016 — time_core ＋ win_core（NW = 2・TP）＋ spec_core をつないだ sim。**proj021 2-5: 全帯域（spec_core）の位置は RAW（raw_core）に替えた**。
+//   以下の「全帯域」は RAW の流れ（s = 2）のこと。判定は同じ（DUMP_T = 頭のフレームの頭のビートの T・間隔 k·N·512・RUN_T・SHIFT・CFG・健全性）（S-T3 同時開始・S-T4 設定の取り込み・S-T2 の系での確かめ）
 //   実機の BD と同じく、t_out・go_out・ev_out を win_core・spec_core の t_in・go_in・tev_in へ直につなぐ。入力は毎クロック valid
 // 判定（この tb の中、「tb_tsys: NG」を数える）:
 //   1. ARM した窓 0・窓 1・TP・全帯域が、どれも T = START_AT + 1 のクロックに RUN を受ける（RUN_T・TP_RUN_T も START_AT + 1）
@@ -38,7 +39,7 @@ module tb_tsys;
     wire        c_awr, c_wr, c_bv, c_arr, c_rv;
     wire [31:0] c_rd;
     reg  [19:0] c_aw = 0, c_ar = 0;
-    s45_core #(.NW(2), .N_ACC_DEFAULT(2), .G_L2(12), .FULL(1), .FULL_N_ACC_DEFAULT(8), .FULL_STABLE_N(0)) u_c (
+    s45_core #(.NW(2), .N_ACC_DEFAULT(2), .G_L2(12), .RAW(1), .RAW_N_ACC_DEFAULT(8)) u_c (   // proj021 2-5: 全帯域の位置は RAW
         .aclk(clk), .aresetn(aresetn), .s_axis_tdata(tdata), .s_axis_tvalid(tvalid), .s_axis_tready(),
         .s_axis_full_tdata(tdata), .s_axis_full_tvalid(tvalid), .s_axis_full_tready(), .full_gb_stat(32'd0), .full_adc_stat(32'd0), .full_sel(),
         .s_axi_awaddr(c_aw[15:0]), .s_axi_awprot(3'd0), .s_axi_awvalid(awv[0] | awv[1]), .s_axi_awready(c_awr),
@@ -128,7 +129,7 @@ module tb_tsys;
     reg [63:0] tw0 [0:255], ts [0:1023], ta [0:1023];
     always @(posedge clk) begin
         if (u_c.u_win.g_w[0].zv && u_c.u_win.g_w[0].u_ws.wa == 12'd0) tw0[u_c.u_win.g_w[0].u_ws.fin[7:0]] <= T;
-        if (u_c.g_full.u_full.in_acc && u_c.g_full.u_full.m_in == 9'd0) ts[u_c.g_full.u_full.fin[9:0]] <= T;
+        if (u_c.g_raw.u_raw.fhead) ts[u_c.g_raw.u_raw.fin[9:0]] <= T;       // 2-5: RAW のフレームの頭のビートを受けたクロック
         if (tvalid && u_c.u_win.a_cnt[8:0] == 9'd0) ta[u_c.u_win.a_fin[9:0]] <= T;
     end
     // RUN・WRST を受けたクロック
@@ -138,7 +139,7 @@ module tb_tsys;
         if (u_c.u_win.g_w[0].cmd_run)  begin t_r0  <= T; n_r0  = n_r0 + 1; end
         if (u_c.u_win.g_w[1].cmd_run)  begin t_r1  <= T; n_r1  = n_r1 + 1; end
         if (u_c.u_win.tp_run)          begin t_rtp <= T; n_rtp = n_rtp + 1; end
-        if (u_c.g_full.u_full.cmd_run)         begin t_rs  <= T; n_rs  = n_rs + 1; end
+        if (u_c.g_raw.u_raw.cmd_run)           begin t_rs  <= T; n_rs  = n_rs + 1; end
         if (u_c.u_win.g_w[0].cmd_wrst) begin t_wr0 <= T; n_wr0 = n_wr0 + 1; end
         if (u_c.u_win.g_w[1].cmd_wrst) begin t_wr1 <= T; n_wr1 = n_wr1 + 1; end
     end
@@ -147,7 +148,7 @@ module tb_tsys;
     integer n_shbad_w = 0, n_shbad_s = 0;
     always @(posedge clk) if (chk_sh) begin
         if (u_c.u_win.g_w[0].u_ws.sh_q !== 4'd7) n_shbad_w = n_shbad_w + 1;
-        if (u_c.g_full.u_full.run_shift !== 4'd7)        n_shbad_s = n_shbad_s + 1;
+        if (u_c.g_raw.u_raw.run_shift !== 4'd7)          n_shbad_s = n_shbad_s + 1;   // 2-5: RAW は SHIFT を使わないが、RUN で取り込む約束は同じ
     end
 
     localparam NDW = 4, NAW = 2, NDS = 6, NAS = 8;
@@ -162,8 +163,8 @@ module tb_tsys;
         aresetn <= 1;
         repeat (16) @(posedge clk);
         axr(0, 20'h00000); if (rv !== 32'h0203_0000) begin $display("tb_tsys: NG 窓 0 の SID %08x", rv); ng = ng + 1; end
-        axr(1, 20'h00000); if (rv !== 32'h0201_0200) begin $display("tb_tsys: NG 全帯域の SID %08x", rv); ng = ng + 1; end
-        axr(2, 20'h00);    if (rv !== 32'h0202_0202) begin $display("tb_tsys: NG time_core の IF_ID %08x", rv); ng = ng + 1; end
+        axr(1, 20'h00000); if (rv !== 32'h0204_0200) begin $display("tb_tsys: NG RAW（2-5。全帯域の位置）の SID %08x", rv); ng = ng + 1; end
+        axr(2, 20'h00);    if (rv !== 32'h0202_0302) begin $display("tb_tsys: NG time_core の IF_ID %08x", rv); ng = ng + 1; end
         $display("tb_tsys: 起動（T %0d）", T);
         axw(2, 20'h08, 32'h8);                         // ANCHORED
         // 窓 0・1: k 5・NS 1、窓 0 は CFG 0x1234 で WRST、窓 1 も 0x1234 で WRST した後 CFG を 0x5555 に（[6] が立つはず）

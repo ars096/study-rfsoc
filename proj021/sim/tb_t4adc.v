@@ -103,12 +103,12 @@ module tb_t4adc;
         repeat (16) @(posedge clk);
         for (i = 0; i < 4; i = i + 1) begin
             // proj021 手順 2-1: 自己記述（INTERFACE 2.4）
-            axr(i, 20'h00000); if (rv !== 32'h0202_0201) begin $display("tb_t4adc: NG s45_core_%0d の IF_ID %08x", i, rv); ng = ng + 1; end
+            axr(i, 20'h00000); if (rv !== 32'h0202_0301) begin $display("tb_t4adc: NG s45_core_%0d の IF_ID %08x", i, rv); ng = ng + 1; end
             axr(i, 20'h00004); if (rv !== 32'h0021_0200) begin $display("tb_t4adc: NG s45_core_%0d の PROJ %08x", i, rv); ng = ng + 1; end
             axr(i, 20'h00008); if (rv !== 2) begin $display("tb_t4adc: NG s45_core_%0d の NSTREAM %0d", i, rv); ng = ng + 1; end
             axr(i, 20'h00018); if (rv !== i) begin $display("tb_t4adc: NG s45_core_%0d の CORE_PORT %08x", i, rv); ng = ng + 1; end
         end
-        axr(4, 20'h00); if (rv !== 32'h0202_0202) begin $display("tb_t4adc: NG time_core の IF_ID %08x", rv); ng = ng + 1; end
+        axr(4, 20'h00); if (rv !== 32'h0202_0302) begin $display("tb_t4adc: NG time_core の IF_ID %08x", rv); ng = ng + 1; end
         axr(4, 20'h5C); if (rv !== 32'h0021_0200) begin $display("tb_t4adc: NG time_core の PROJ %08x", rv); ng = ng + 1; end
         // ---- 1・2. 8 窓と TP 4 本を ARM して予約 ----
         sa = T + 3000;

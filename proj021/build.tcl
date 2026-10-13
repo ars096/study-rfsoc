@@ -1,5 +1,10 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # proj021 手順 2-1 — インターフェース v2 の流れのブロックと自己記述（INTERFACE.md の 2.〜3.、proj021/README の手順 2-1）
+# proj021 手順 2-5 — SAM45-Fine の FULL（spec_core）を生サンプルの流れ（raw_core、KIND 4 RAW）に替える（README 手順 2-5）:
+#   1. s45_core_0 を CONFIG.FULL 0・CONFIG.RAW 1 に（full_kind = raw）。lane_fft（FFT IP）は作らず、spec_core.v・dft16.v・tw_rom.v も足さない
+#   2. BIT_REV 2 → 3（s45_core_i・time_core_0・s45_ring_0）。資源の数えの FULL の行は RAW の行（g_raw.u_raw）に
+#   （full_kind = fft にすると 2-2d〜2-4 の形の FULL に戻る。BIT_REV は 3 のまま。PS は流れの KIND で見分ける）
+#
 #   1. コアのセルを s45_core_i（src/common/s45_core.v = win_core ＋ i = 0 だけ FULL の流れの spec_core）に。**spec_core_0 のセルは無い**。
 #      axis_sel4（full_sel）の出口 → s45_core_0/s_axis_full、選ぶのは s45_core_0 の full_sel（FULL の流れの SRC）
 #   2. CORE_PORT（ADC・タイル・スライス）を chans から、BIT_KIND 2・BIT_REV 2（2-2d。2-1〜2-2c は 1）・PROJ 0x0021_0200 を s45_core_i と time_core_0 に
@@ -355,7 +360,12 @@ if {$use_board} {
     puts "NOTE: src/board/ps_preset.tcl が無い。PS にプリセットを当てない検証ビルド（実機に使わない）。make ps-preset で作る"
 }
 
-add_files -norecurse [list ./src/common/spec_core.v ./src/common/tp_core.v ./src/common/cmul.v ./src/common/dft16.v ./src/common/tw_rom.v ./src/common/gb_adc.v ./src/common/gb_gate.v]
+# proj021 2-5: s45_core_0 の FULL の位置の中身。raw = raw_core（生サンプルの SNAP だけ）/ fft = spec_core（2-2d〜2-4）
+set full_kind raw
+if {$full_kind ni {raw fft}} { puts "ERROR: full_kind は raw か fft（$full_kind）"; exit 1 }
+puts "FULL の位置: $full_kind（[expr {$full_kind eq "raw" ? "raw_core、KIND 4 RAW" : "spec_core、KIND 1 FULL"}]）"
+add_files -norecurse [list ./src/common/tp_core.v ./src/common/cmul.v ./src/common/gb_adc.v ./src/common/gb_gate.v ./src/common/raw_core.v]
+if {$full_kind eq "fft"} { add_files -norecurse [list ./src/common/spec_core.v ./src/common/dft16.v ./src/common/tw_rom.v] }
 # proj014: 窓（win_core）。win_coef.vh は make coef の生成物（手で直さない）
 add_files -norecurse [list ./src/common/win_core.v ./src/common/pfb_core.v ./src/common/dft16f.v ./src/common/ddc_core.v ./src/common/hb2.v ./src/common/hb2s.v ./src/common/pair2.v \
                            ./src/common/nco_rom.v ./src/common/wspec_core.v ./src/sam45fine/pfb4_rom.v ./src/common/win_coef.vh ./src/common/axis_sel4.v]
@@ -366,6 +376,8 @@ set_property include_dirs [file normalize ./src/common] [get_filesets sources_1]
 set WIN_NW 2              ;# proj017: 1 ADC の窓の数（win_core の CONFIG.NW）。SAM45-Fine は 2（proj015・016 は 4）
 set win_range 65536       ;# proj021 2-2d: s45_core_i の AXI4-Lite の窓（16 bit 番地 = 64 KiB。INTERFACE 3.）。proj015〜2-2c は 1 MiB（20 bit、仮の読み窓）
 
+# proj021 2-5: lane_fft は FULL（full_kind = fft）のときだけ作る
+if {$full_kind eq "fft"} {
 # ------------------------------------------------------------------ FFT IP（lane_fft）
 # spec_core.v がレーンごとに 1 個（計 16 個）使う。**名前 lane_fft は RTL と対**。
 # 設定の意味（spec_core.v / sim/lane_fft_model.v の冒頭と対）:
@@ -479,6 +491,7 @@ if {$top eq ""} {
         dict for {n w} $have { puts "    $n ($w)" }
         exit 1
     }
+}
 }
 # ------------------------------------------------------------------ FFT IP（win_fft。proj014）
 # win_core の中の wspec_core が 1 個使う。**名前 win_fft は RTL（src/common/wspec_core.v）と sim/win_fft_model.v と対**。
@@ -928,7 +941,7 @@ set sel_m [BI full_sel [list "m_axis" "M_AXIS"] "full_sel の出力"]
 # proj016: 時刻（time_core_0）。BUILD_TAG = 土台 ＋ [20] 時刻のコア
 set tcore [create_bd_cell -type module -reference time_core time_core_0]
 set time_tag [expr {$build_tag_base | (1 << 20)}]
-foreach {k want} [list CONFIG.BUILD_TAG $time_tag CONFIG.BIT_KIND 2 CONFIG.BIT_REV 2 CONFIG.PROJ [expr {0x00210200}]] {
+foreach {k want} [list CONFIG.BUILD_TAG $time_tag CONFIG.BIT_KIND 2 CONFIG.BIT_REV 3 CONFIG.PROJ [expr {0x00210200}]] {
     set_property $k $want $tcore
     if {[get_property $k $tcore] != $want} { puts "ERROR: time_core_0 の $k が [get_property $k $tcore]（要求 $want）"; exit 1 }
 }
@@ -945,7 +958,7 @@ puts [format "time_core_0: BUILD_TAG = 0x%08x / 1 秒 = %d ビート" $time_tag 
 
 # proj021 手順 2-2a: リング（s45_ring_0、src/common/s45_ring.v）。入口 i = s45_core_i/m_axis_rec、書き手 → PS の S_AXI_HP0_FPD
 set rcore [create_bd_cell -type module -reference s45_ring s45_ring_0]
-foreach {k want} [list CONFIG.NIN $nch CONFIG.BIT_KIND 2 CONFIG.BIT_REV 2 CONFIG.PROJ [expr {0x00210200}]] {
+foreach {k want} [list CONFIG.NIN $nch CONFIG.BIT_KIND 2 CONFIG.BIT_REV 3 CONFIG.PROJ [expr {0x00210200}]] {
     set_property $k $want $rcore
     if {[get_property $k $rcore] != $want} { puts "ERROR: s45_ring_0 の $k が [get_property $k $rcore]（要求 $want）"; exit 1 }
 }
@@ -968,18 +981,23 @@ for {set i 0} {$i < $nch} {incr i} {
     set win_tag [expr {$build_tag_base | (1 << 22) | $i}]
     lassign [lindex $chans $i] cp_t cp_s
     set core_port [expr {$i | ($cp_t << 8) | ($cp_s << 12)}]
-    set full [expr {$i == 0 ? 1 : 0}]
-    set kv [list CONFIG.NW $WIN_NW CONFIG.BUILD_TAG $win_tag CONFIG.GB_K_RST $gb_k_rst CONFIG.CORE_PORT $core_port CONFIG.FULL $full \
-                 CONFIG.BIT_KIND 2 CONFIG.BIT_REV 2 CONFIG.PROJ [expr {0x00210200}]]
-    if {$full} { lappend kv CONFIG.FULL_FFT_CFG $fft_code CONFIG.FULL_BUILD_TAG $spec_build_tag }
+    set full [expr {$i == 0 ? 1 : 0}]                       ;# FULL の位置に流れを置くか（コア 0 だけ）
+    set f_fft [expr {$full && $full_kind eq "fft"}]
+    set f_raw [expr {$full && $full_kind eq "raw"}]
+    set kv [list CONFIG.NW $WIN_NW CONFIG.BUILD_TAG $win_tag CONFIG.GB_K_RST $gb_k_rst CONFIG.CORE_PORT $core_port CONFIG.FULL $f_fft CONFIG.RAW $f_raw \
+                 CONFIG.BIT_KIND 2 CONFIG.BIT_REV 3 CONFIG.PROJ [expr {0x00210200}]]
+    if {$f_fft} { lappend kv CONFIG.FULL_FFT_CFG $fft_code CONFIG.FULL_BUILD_TAG $spec_build_tag }
     foreach {k want} $kv {
         set_property $k $want $wcore
         if {[get_property $k $wcore] != $want} { puts "ERROR: s45_core_$i の $k が [get_property $k $wcore]（要求 $want）"; exit 1 }
     }
-    puts [format "s45_core_%d（%s）: NW = %d / BUILD_TAG = 0x%08x / GB_K_RST = %d / CORE_PORT = 0x%04x / FULL = %d" $i $lbl $WIN_NW $win_tag $gb_k_rst $core_port $full]
-    if {$full} {
+    puts [format "s45_core_%d（%s）: NW = %d / BUILD_TAG = 0x%08x / GB_K_RST = %d / CORE_PORT = 0x%04x / FULL = %d / RAW = %d" $i $lbl $WIN_NW $win_tag $gb_k_rst $core_port $f_fft $f_raw]
+    if {$f_raw} { puts [format "  RAW の流れ（s = %d）: 生サンプル 8192 個 / ダンプ（raw_core）" $WIN_NW] }
+    if {$f_fft} {
         puts [format "  FULL の流れ（s = %d）: FFT_CFG = 0x%02x / BUILD_TAG = 0x%08x（プリセット %s / 速度グレード -%s）" \
                 $WIN_NW $fft_code $spec_build_tag [expr {$has_preset ? "あり" : "なし"}] $grade]
+    }
+    if {$full} {
         set full_axis [BI s45_core_0 [list "s_axis_full" "S_AXIS_FULL"] "s45_core_0 の FULL の流れの入力"]
     }
     set win_axi($i)  [BI s45_core_$i [list "s_axi"  "S_AXI"]  "s45_core_$i の AXI4-Lite"]
@@ -1690,7 +1708,7 @@ set dsp_fft 0
 foreach c $ffts { incr dsp_fft [count_under $dsp_names $c] }
 puts ""
 puts "---- FFT IP の資源（FFT_OPT = $fft_opt）----"
-puts "  lane_fft の個数         = [llength $ffts]（期待 16 = s45_core_0 の FULL の流れの 16 レーン）"
+puts "  lane_fft の個数         = [llength $ffts]（期待 [expr {$full_kind eq "fft" ? "16 = s45_core_0 の FULL の流れの 16 レーン" : "0（2-5: FULL の位置は RAW）"}]）"
 if {[llength $ffts] > 0} {
     set c0 [lindex $ffts 0]
     report_utilization -cells $c0 -file $outdir/lane_fft_util.rpt
@@ -1699,12 +1717,24 @@ if {[llength $ffts] > 0} {
         if {[regexp {^\|\s*(CLB LUTs|CLB Registers|Block RAM Tile|DSPs)\s*\|} $line]} { puts "    [string trim $line]" }
     }
 }
-puts "  DSP48E2 lane_fft [llength $ffts] 個の合計 = $dsp_fft（予言 16 × 21 = 336）"
-puts "  DSP48E2 全体            = $dsp_all（予言 ≒ 2584 = win_core (272 ＋ 112 × 2 ＋ 24) × 4 ＋ FULL 504。proj020: wspec に PFB の積 8）"
-# proj021 手順 2-1: FULL の流れは s45_core_0 の中（generate の g_full の u_full）
+puts "  DSP48E2 lane_fft [llength $ffts] 個の合計 = $dsp_fft（予言 [expr {$full_kind eq "fft" ? "16 × 21 = 336" : "0"}]）"
+puts "  DSP48E2 全体            = $dsp_all（予言 [expr {$full_kind eq "fft" ? "≒ 2600 = (256 ＋ 120 × 2 ＋ 24) × 4 ＋ FULL 504" : "2096 = (256 ＋ 120 × 2 ＋ 24) × 4（2-5: FULL 無し）"}]）"
+# proj021 手順 2-1: FULL の流れは s45_core_0 の中（generate の g_full の u_full）。2-5: RAW は g_raw.u_raw
 set n 0
-foreach x $dsp_names { if {[string first "/s45_core_0/inst/g_full.u_full/" "/$x"] >= 0} { incr n } }
-puts "  DSP48E2 s45_core_0 の FULL = $n（予言 504。0 なら階層の名前が違う → utilization_hier.rpt）"
+set fhier [expr {$full_kind eq "fft" ? "g_full.u_full" : "g_raw.u_raw"}]
+foreach x $dsp_names { if {[string first "/s45_core_0/inst/$fhier/" "/$x"] >= 0} { incr n } }
+puts "  DSP48E2 s45_core_0 の $fhier = $n（予言 [expr {$full_kind eq "fft" ? "504。0 なら階層の名前が違う → utilization_hier.rpt" : "0"}]）"
+if {$full_kind eq "raw"} {
+    set c_raw [get_cells -quiet s45_core_0/inst/g_raw.u_raw]
+    if {$c_raw eq ""} { set c_raw [get_cells -quiet -hierarchical -filter {NAME =~ "*s45_core_0/inst/g_raw.u_raw"}] }
+    if {$c_raw ne ""} {
+        report_utilization -cells $c_raw -file $outdir/raw_core_util.rpt
+        puts "  s45_core_0 の RAW（raw_core）の資源（予言 RAMB36 8 前後・LUT 1,000〜3,000・FF 2,000〜4,000）:"
+        foreach line [split [exec cat $outdir/raw_core_util.rpt] \n] {
+            if {[regexp {^\|\s*(CLB LUTs|CLB Registers|Block RAM Tile|DSPs)\s*\|} $line]} { puts "    [string trim $line]" }
+        }
+    } else { puts "  WARNING: s45_core_0/inst/g_raw.u_raw のセルが見つからない（utilization_hier.rpt で見る）" }
+}
 # proj015: s45_core_i の DSP。4 個が同じでなければ、どこかの ch だけ最適化が違う。s45_core_0 は中身の段ごとにも
 # 予言（窓 1 つ）: 粗い PFB の共有 256（分岐の和 192・dft16f 64）＋ 窓ごとの実数化 8 × 4 / ddc 72 / wspec 30（FFT）/ tp 24
 for {set i 0} {$i < $nch} {incr i} {

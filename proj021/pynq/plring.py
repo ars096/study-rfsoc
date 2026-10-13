@@ -186,6 +186,25 @@ def streams_all(cores):
     return [s for c in cores for s in c.streams]
 
 
+class RawRun:
+    """proj021 2-5: RAW の流れ（KIND 4）を Spec の run と同じ呼び方で動かす。SRC を adc に WRST し、run は N_ACC・N_DUMP・REC_CTRL = ALL・RUN"""
+
+    def __init__(self, st, adc):
+        self.st = st
+        st.wr(SC.S_CTRL, 1 << 1)
+        st.wr(SC.S_SRC, adc)
+        st.wr(SC.S_CTRL, 1 << 12)                             # WRST
+        time.sleep(0.01)
+
+    def run(self, nacc, ndump, shift=0, snap=False):
+        st = self.st
+        st.wr(SC.S_CTRL, 1 << 1)
+        st.wr(SC.S_NACC, nacc); st.wr(SC.S_NDUMP, ndump); st.wr(SC.S_SHIFT, shift)
+        st.wr(SC.S_REC_CTRL, 1)                               # ALL（RAW は閉じたダンプごとに SNAP を 1 個）
+        st.wr(SC.S_CTRL, (1 << 8) | 1)                        # FLAGS を消して RUN
+        return st.rd(SC.S_SEQ)
+
+
 def setup(cores, period, shift_ddc, shift_full, ns):
     """全部の流れを止め、REC_CTRL = 0、DDC は IF 3000 MHz の窓（NS ns）、FULL は ADC_A。N_ACC はダンプ ≈ period s"""
     import window as WN
@@ -203,8 +222,12 @@ def setup(cores, period, shift_ddc, shift_full, ns):
             fb = st.rd(SC.S_FRAME_BEATS)
             nacc = max(1, int(round(period * 256e6 / fb))) if period > 0 else base // fb
             out.append((st, wn, nacc, shift_ddc))
-    fs = SC.full_stream(cores)
-    sp = S.open_full_stream(fs, 0)
+    if SC.has_full(cores):
+        fs = SC.full_stream(cores)
+        sp = S.open_full_stream(fs, 0)
+    else:                                                     # proj021 2-5: FULL の位置は RAW（生サンプルの SNAP だけ）
+        fs = SC.snap_stream(cores)
+        sp = RawRun(fs, 0)
     fb = fs.rd(SC.S_FRAME_BEATS)
     nacc = max(1, int(round(period * 256e6 / fb))) if period > 0 else base // fb
     out.append((fs, sp, nacc, shift_full))
@@ -279,6 +302,10 @@ def do_golden(cores, ring, a):
     for st, o, _, _ in ss:
         ddc = st.kind == SC.KIND_DDC
         st.wr(SC.S_CTRL, 1 << 1)
+        if st.kind == SC.KIND_RAW:                            # proj021 2-5: RAW はスペクトルが無い（golden の相手が無い）
+            st.wr(SC.S_REC_CTRL, 0)
+            log(f"{st.name}: 飛ばす（{SC.NO_FULL_MSG}）")
+            continue
         if not ddc and a.golden_shift_full is None:
             st.wr(SC.S_REC_CTRL, REC_ONE | REC_SNAP)          # SHIFT を決めるための 1 組（auto_shift と同じ式）
             o.run(1, 1, 0, snap=True)                          # 2-2d: run が REC_CTRL = ALL | SNAP を書く（N_DUMP 1 なので ONE | SNAP と同じ 1 組）

@@ -6,15 +6,16 @@
 //   - win_core（src/common/win_core.v）: コアの共通（2.4。ギアボックスの制御・TP・時刻の錨）＋ DDC の流れ s = 0..NW−1
 //   - FULL = 1 のときだけ spec_core（src/common/spec_core.v）: FULL の流れ s = NW。入力は s_axis_full（外の axis_sel4 が
 //     4 ADC から選んだもの）。選ぶのはこの流れの SRC（src_sel → full_sel の出口 → axis_sel4）
+//   - proj021 2-5: RAW = 1 のときは FULL の位置に raw_core（src/common/raw_core.v。KIND 4 = 生サンプルの SNAP だけ）。FULL と RAW は同時に立てない
 //   - AXI4-Lite の 1 → 2 の振り分け（下）
 //
 // ブロックデザインには module reference で `s45_core_i`（i = 0..3 = ADC_A..D）として置く。**PS はこの名前でコアを見つける**（2.3）。
 // 全部が DSP ドメイン（256 MHz）。
 //
 // ---- 番地（コアの 64 KiB。proj021 2-2d。手順 2-1〜2-2c は 1 MiB で、仮の読み窓 0x80000〜・0xC0000〜・0xE0000 があった）----
-//   0x4000 + 0x400·NW（FULL の流れのブロック）      → spec_core の 0x000–0x3FF（0x100〜 は FULL の TP のレジスタ）
+//   0x4000 + 0x400·NW（FULL の流れのブロック）      → spec_core の 0x000–0x3FF（0x100〜 は FULL の TP のレジスタ）。RAW = 1 では raw_core
 //   ほか                                            → win_core（番地はそのまま。win_core.v の冒頭）
-//   FULL = 0 のコアでは全部 win_core へ（FULL の範囲は win_core が 0 を返す）
+//   FULL = 0・RAW = 0 のコアでは全部 win_core へ（FULL の範囲は win_core が 0 を返す）
 //
 // ---- 振り分け ----
 // 取り引きを 1 つずつ（書きと読みのどちらか 1 つ、応答を返し終えるまで次を受けない）。上流の口・下流の口とも全部レジスタで
@@ -34,7 +35,7 @@ module s45_core #(
     parameter integer GB_K_RST      = 2,
     parameter integer G_L2          = 19,
     parameter integer BIT_KIND      = 2,
-    parameter integer BIT_REV       = 2,     // proj021 2-2d: 2（64 KiB の番地・仮の読み窓なし）。2-1〜2-2c は 1
+    parameter integer BIT_REV       = 3,     // proj021 2-5: 3（SAM45-Fine の FULL を RAW に）。2-2d〜2-4 は 2（64 KiB の番地・仮の読み窓なし）。2-1〜2-2c は 1
     parameter integer PROJ          = 2163200,   // = 0x0021_0200。**10 進で書く**（32'h で書くと Vivado が CONFIG.PROJ を読み返しで別の形にし、build.tcl の照合が落ちた。2026-10-09）
     parameter integer CORE_PORT     = 0,
     parameter integer BASE_BEATS    = 2621440,
@@ -44,7 +45,10 @@ module s45_core #(
     parameter integer FULL_BUILD_TAG     = 0,
     parameter integer FULL_N_ACC_DEFAULT = 50000,
     parameter integer FULL_SHIFT_DEFAULT = 4,
-    parameter integer FULL_STABLE_N      = 16384
+    parameter integer FULL_STABLE_N      = 16384,
+    // ---- proj021 2-5: 生サンプルの流れ（raw_core。FULL の位置・同じ入力）----
+    parameter integer RAW                = 0,
+    parameter integer RAW_N_ACC_DEFAULT  = 50000
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axis:s_axis_full:s_axi:m_axis_rec, ASSOCIATED_RESET aresetn:gb_dn_rstn" *)
@@ -114,7 +118,7 @@ module s45_core #(
     localparam [15:0] FBLK = 16'h4000 + 16'h0400 * NW;       // FULL の流れのブロック
 
     function automatic is_full(input [15:0] a);
-        is_full = (FULL != 0) && (a[15:10] == FBLK[15:10]);
+        is_full = (FULL != 0 || RAW != 0) && (a[15:10] == FBLK[15:10]);
     endfunction
 
     // ---- 上流の口 ----
@@ -178,7 +182,7 @@ module s45_core #(
     // ---- win_core（コアの共通・DDC の流れ）----
     win_core #(.NW(NW), .N_ACC_DEFAULT(N_ACC_DEFAULT), .SHIFT_DEFAULT(SHIFT_DEFAULT), .BUILD_TAG(BUILD_TAG), .TP(TP),
                .TPN_DEFAULT(TPN_DEFAULT), .GB_K_RST(GB_K_RST), .G_L2(G_L2), .BIT_KIND(BIT_KIND), .BIT_REV(BIT_REV),
-               .PROJ(PROJ), .CORE_PORT(CORE_PORT), .NFULL(FULL != 0 ? 1 : 0), .BASE_BEATS(BASE_BEATS)) u_win (
+               .PROJ(PROJ), .CORE_PORT(CORE_PORT), .NFULL((FULL != 0 || RAW != 0) ? 1 : 0), .BASE_BEATS(BASE_BEATS)) u_win (
         .aclk(aclk), .aresetn(rstn_l),
         .s_axis_tdata(s_axis_tdata), .s_axis_tvalid(s_axis_tvalid), .s_axis_tready(s_axis_tready),
         .s_axi_awaddr(q_addr), .s_axi_awprot(3'd0), .s_axi_awvalid(d_awvalid && !q_full), .s_axi_awready(w_awready),
@@ -194,12 +198,12 @@ module s45_core #(
     // ---- proj021 2-2a: レコード（win_core の DDC の流れ・spec_core の FULL の流れ）----
     wire [63:0]   wr_d, fr_d;
     wire          wr_v, wr_r, wr_l, wr_u, fr_v, fr_r, fr_l, fr_u;
-    wire [1:0]    f_drop;               // proj021 2-2d: [0] FULL の SPEC・SNAP / [1] FULL の TP のレコード
+    wire [1:0]    f_drop;               // proj021 2-2d: [0] FULL の SPEC・SNAP / [1] FULL の TP のレコード。2-5: RAW は [0] だけ
     wire [NW:0]   w_drop;               // proj021 2-2b: [NW] = TP のレコード
     integer di;
     reg   [5:0]   drop_sum;
     always @* begin
-        drop_sum = (FULL != 0) ? {5'd0, f_drop[0]} + {5'd0, f_drop[1]} : 6'd0;
+        drop_sum = {5'd0, f_drop[0]} + {5'd0, f_drop[1]};
         for (di = 0; di <= NW; di = di + 1) drop_sum = drop_sum + {5'd0, w_drop[di]};
     end
     // proj021 2-2d: 1 クロックに 4 本以上（DDC 2 ＋ FULL ＋ コアの TP ＋ FULL の TP）来ても数え落とさないよう、溜めて 1 クロック 3 までずつ出す
@@ -216,7 +220,7 @@ module s45_core #(
     end
     assign rec_drop = drop_q;
 
-    // ---- spec_core（FULL の流れ）----
+    // ---- spec_core（FULL の流れ）／ raw_core（RAW の流れ、2-5）----
     generate
         if (FULL != 0) begin : g_full
             spec_core #(.N_ACC_DEFAULT(FULL_N_ACC_DEFAULT), .SHIFT_DEFAULT(FULL_SHIFT_DEFAULT), .FFT_CFG(FULL_FFT_CFG),
@@ -233,6 +237,24 @@ module s45_core #(
                 .t_in(t_in), .go_in(go_in), .tev_in(tev_in), .src_sel(full_sel),
                 .m_axis_rec_tdata(fr_d), .m_axis_rec_tvalid(fr_v), .m_axis_rec_tready(fr_r), .m_axis_rec_tlast(fr_l),
                 .m_axis_rec_tuser(fr_u), .rec_drop(f_drop));
+            rec_arb #(.N(2)) u_rarb (.clk(aclk), .rst(rst),
+                .s_tdata({fr_d, wr_d}), .s_tvalid({fr_v, wr_v}), .s_tready({fr_r, wr_r}), .s_tlast({fr_l, wr_l}), .s_tuser({fr_u, wr_u}),
+                .m_tdata(m_axis_rec_tdata), .m_tvalid(m_axis_rec_tvalid), .m_tready(m_axis_rec_tready),
+                .m_tlast(m_axis_rec_tlast), .m_tuser(m_axis_rec_tuser));
+        end else if (RAW != 0) begin : g_raw
+            // proj021 2-5: 生サンプルの流れ（KIND 4）。gb_stat・adc_stat の見張りは持たない（DUMP_H の振り切れ・途切れは入力から自分で見る）
+            raw_core #(.N_ACC_DEFAULT(RAW_N_ACC_DEFAULT), .SID_S(NW), .REC_CORE(CORE_PORT % 16)) u_raw (
+                .aclk(aclk), .aresetn(rstn_l),
+                .s_axis_tdata(s_axis_full_tdata), .s_axis_tvalid(s_axis_full_tvalid), .s_axis_tready(s_axis_full_tready),
+                .s_axi_awaddr(f_addr), .s_axi_awprot(3'd0), .s_axi_awvalid(d_awvalid && q_full), .s_axi_awready(f_awready),
+                .s_axi_wdata(q_wdata), .s_axi_wstrb(q_wstrb), .s_axi_wvalid(d_awvalid && q_full), .s_axi_wready(f_wready),
+                .s_axi_bresp(), .s_axi_bvalid(f_bvalid), .s_axi_bready(d_bready && q_full),
+                .s_axi_araddr(f_addr), .s_axi_arprot(3'd0), .s_axi_arvalid(d_arvalid && q_full), .s_axi_arready(f_arready),
+                .s_axi_rdata(f_rdata), .s_axi_rresp(), .s_axi_rvalid(f_rvalid), .s_axi_rready(d_rready && q_full),
+                .t_in(t_in), .go_in(go_in), .tev_in(tev_in), .src_sel(full_sel),
+                .m_axis_rec_tdata(fr_d), .m_axis_rec_tvalid(fr_v), .m_axis_rec_tready(fr_r), .m_axis_rec_tlast(fr_l),
+                .m_axis_rec_tuser(fr_u), .rec_drop(f_drop[0]));
+            assign f_drop[1] = 1'b0;
             rec_arb #(.N(2)) u_rarb (.clk(aclk), .rst(rst),
                 .s_tdata({fr_d, wr_d}), .s_tvalid({fr_v, wr_v}), .s_tready({fr_r, wr_r}), .s_tlast({fr_l, wr_l}), .s_tuser({fr_u, wr_u}),
                 .m_tdata(m_axis_rec_tdata), .m_tvalid(m_axis_rec_tvalid), .m_tready(m_axis_rec_tready),

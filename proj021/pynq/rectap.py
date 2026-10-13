@@ -3,7 +3,8 @@
 """proj021 2-2d — PS の道具（window・spectrometer・timetest・fine…）のための「レコードでダンプを読む」口
 
 2-2d の bit（BIT_REV 2）には仮の読み窓（スペクトル・スナップショットを AXI4-Lite で読む道）が無い。スペクトル・スナップショット・
-FULL の TP の値は、PL が DDR に書くリング（s45_ring_0、INTERFACE 4.）のレコードだけで出る。この口は:
+FULL の TP の値は、PL が DDR に書くリング（s45_ring_0、INTERFACE 4.）のレコードだけで出る。2-5 の RAW の流れ（KIND 4）は SNAP のレコードだけ
+（`latest_snap()`）。この口は:
 
 - プロセスに 1 つのリング（plring.Ring）を開き、来たレコードを流れ（core, s）ごとに仕分けて持つ（`tap()`）
 - 流れの `run()` が RUN の前に REC_CTRL = ALL（| SNAP）を書く（`arm()`）。**ダンプが閉じるたびに PL がレコードを出す**ので、
@@ -116,6 +117,25 @@ class Tap:
                 have = sorted(sp)
                 raise TapError(f"流れ {key} の SEQ {want} のレコードが来ない（来た SPEC の SEQ {have[-4:]}、"
                                f"SNAP {sorted(sn)[-4:]}。RUN の前に REC_CTRL を ALL{' | SNAP' if with_snap else ''} にしたか）")
+            time.sleep(0.002)
+
+    def latest_snap(self, key, rd_seq, timeout=5.0, grace=0.3):
+        """proj021 2-5: SNAP のレコードだけを出す流れ（RAW）の今の SEQ のダンプ。(meta, SNAP の本体 u64)。
+        今の SEQ のレコードが grace 秒たっても来なければ、それより新しいダンプのレコードを timeout 秒まで待つ（latest と同じ）"""
+        t0 = time.time()
+        want = rd_seq()
+        while True:
+            self.drain()
+            sn = self.snap.get(key, {})
+            late = time.time() - t0 > grace
+            cand = [q for q in sn if q == want or (late and ((q - want) & 0xFFFFFFFF) < (1 << 31))]
+            if cand:
+                q = want if want in cand else min(cand, key=lambda x: (x - want) & 0xFFFFFFFF)
+                r = sn[q]
+                return hdr_meta(r[3]), r[4]
+            if time.time() - t0 > timeout:
+                raise TapError(f"流れ {key} の SEQ {want} の SNAP のレコードが来ない（来た SNAP の SEQ {sorted(sn)[-4:]}。"
+                               f"RUN の前に REC_CTRL を ALL にしたか）")
             time.sleep(0.002)
 
     def take_tp(self, key):

@@ -14,6 +14,7 @@ u: 本体・頭を tb の式で作り直して比べる。DROP_CNT = Σ(NREC −
    REC_CNT = 受けた数、捨てるべき（入口 1 の seq % 7 == 3）が来ていない
 core: 本体を peek.txt（tb が凍ったバンクを直に写したもの）と、頭を peek の DUMP_* と比べる
       proj021 2-2c: SNAP のレコード（type 4）は本体を S 行（スナップショットを直に写したもの）と、頭 w1..w6 を同じ SEQ の SPEC と比べる
+      proj021 2-5: log に「KIND2 = RAW」があれば、流れ 2 は RAW（SPEC が無く SNAP だけ）。頭 w1..w6 は H 行（AXI4-Lite の DUMP_*）と比べる
 """
 import sys, zlib, re
 
@@ -223,6 +224,8 @@ def main_core(d, flip):
         nok += 1
     # ---- proj021 2-2c: SNAP のレコード ----
     spec_w = {(c, s_, q): w for c, s_, q, w in recs}
+    raw2 = lg.get('KIND2') == 'RAW'
+    nraw_h = 0
     nsn_ok = 0
     sn_by = {}
     for core, s_, seq, w in snaps:
@@ -232,7 +235,15 @@ def main_core(d, flip):
         good = True
         if (w[7] & 0xFFFFFFFF) != exp_b:
             ng.append('SNAP の w7 %d（%d であるべき）%s' % (w[7] & 0xFFFFFFFF, exp_b, k)); good = False
-        if k not in spec_w:
+        if raw2 and s_ == 2:
+            if any(r[1] == 2 for r in recs):
+                ng.append('RAW の流れ 2 に SPEC のレコードがある'); good = False
+            if k in hh:
+                nraw_h += 1
+                for n in range(1, 7):
+                    if w[n] != hh[k][n - 1]:
+                        ng.append('RAW の SNAP の頭 w%d が AXI4-Lite の DUMP_* と違う（%s）: %016x / %016x' % (n, k, w[n], hh[k][n - 1])); good = False
+        elif k not in spec_w:
             ng.append('SNAP の組の SPEC が無い %s' % (k,)); good = False
         elif w[1:7] != spec_w[k][1:7]:
             ng.append('SNAP の頭 w1..w6 が組の SPEC と違う %s' % (k,)); good = False
@@ -246,8 +257,9 @@ def main_core(d, flip):
         nsn_ok += good
     m_ = re.search(r'^tb_ring: SNAP_AB = (\d+) (\d+) (\d+) (\d+)', open(d + '/log.txt').read(), re.M)
     sab = [int(x) for x in m_.groups()] if m_ else [0, 0, 0, 0]
-    print('check_ring core: SNAP のレコード %d（記憶と一致 %d）、流れごと %s、写せなかった面 %d'
-          % (len(snaps), nsn_ok, {k: len(v) for k, v in sorted(sn_by.items())}, nsinv))
+    print('check_ring core: SNAP のレコード %d（記憶と一致 %d）、流れごと %s、写せなかった面 %d%s'
+          % (len(snaps), nsn_ok, {k: len(v) for k, v in sorted(sn_by.items())}, nsinv,
+             '、RAW の頭を AXI4-Lite と照らした %d' % nraw_h if raw2 else ''))
     by, ngap, bad = gaps(recs)
     ng += bad
     late = sum(int(v) for kk, v in lg.items() if kk.startswith('REC_LATE'))
@@ -270,8 +282,10 @@ def main_core(d, flip):
             ng.append('取りこぼしがある（REC_LATE %d・DROP %d・飛び %d・TP の飛び %d・TP_REC_LATE %s）' % (late, drop, ngap, tp_gap, lg.get('TP_REC_LATE')))
         if len(by.get((0, 1), [])) != 1 or lg.get('ONE') != 'OK':
             ng.append('ONE の流れ 1 のレコードが %d 個（1 個であるべき）・REC_CTRL の戻り %s' % (len(by.get((0, 1), [])), lg.get('ONE')))
-        if len(by.get((0, 0), [])) < 3 or len(by.get((0, 2), [])) < 3:
+        if len(by.get((0, 0), [])) < 3 or len((sn_by if raw2 else by).get((0, 2), [])) < 3:
             ng.append('ALL の流れのレコードが少ない')
+        if raw2 and nraw_h < len(sn_by.get((0, 2), [])) - 3:
+            ng.append('RAW の頭を AXI4-Lite と照らせたレコードが少ない（%d / %d）' % (nraw_h, len(sn_by.get((0, 2), []))))
         if nh < len(recs) - 3:
             ng.append('頭を AXI4-Lite と照らせたレコードが少ない（%d / %d）' % (nh, len(recs)))
     elif want == 'snap':
@@ -280,7 +294,9 @@ def main_core(d, flip):
             ng.append('REC_LATE %s（流れ 1 の SNAP だけ 1 であるべき）' % lates)
         if drop != 1 or ngap != 0 or tp_gap != 0 or int(lg.get('TP_REC_LATE', '0')) != 0:
             ng.append('取りこぼし（DROP %d は 1 であるべき・飛び %d・TP の飛び %d）' % (drop, ngap, tp_gap))
-        for st_ in (0, 2):
+        if raw2 and len(sn_by.get((0, 2), [])) < 3:
+            ng.append('RAW の流れ 2 の SNAP が少ない（%d）' % len(sn_by.get((0, 2), [])))
+        for st_ in ((0,) if raw2 else (0, 2)):
             if len(by.get((0, st_), [])) < 3 or sorted(by.get((0, st_), [])) != sorted(sn_by.get((0, st_), [])):
                 ng.append('流れ %d の SPEC %d 個と SNAP %d 個が組にならない' % (st_, len(by.get((0, st_), [])), len(sn_by.get((0, st_), []))))
         if len(by.get((0, 1), [])) != 1 or sn_by.get((0, 1)) or lg.get('ONE') != 'OK':
