@@ -857,7 +857,7 @@ INTERFACE 5. の specd の仕事（束ね・時刻の補正・s45proto v2・LOAD
 | 2-3b | PL のダンプを BASE（10.24 ms）にし、specd が n_sum 個を束ねる（5.1）。START_AT を tint の倍数に | 同じ | **V2-a**（束ねた 4 個 = PL の 40.96 ms の 1 個、整数で） |
 | 2-3c | s45proto v2（float32・utc_ns = 実効の区間の始まり 5.2・頭に nch・n_sum・core・s・src） | 同じ | 受け側が v1・v2 の両方を読む。u64 の試験の形 = PL の値。**V2-b**（10.24 ms で 30 分。u64 のままでは 8 窓 × 32 KiB / 10.24 ms = 25.6 MB/s で、今の経路の予算 17.7 MB/s を越えるので float32 の後） |
 | 2-3d | LOAD と bits.json（5.） | 同じ | V2-d |
-| 2-2d | 仮の読み窓を外して 64 KiB に（SNAP_SEL・FULL の TP の置き場所も） | 変える | 2-3a〜c の回帰 |
+| 2-2d | 仮の読み窓を外して 64 KiB に（SNAP_SEL・FULL の TP の置き場所も）。設計は下の「手順 2-2d」 | 変える | P-0〜P-4・2-3a〜c の回帰 |
 
 ### 手順 2-3a — 取得の読み口をリングに（設計と予言、2026-10-11。コードを書く前）
 
@@ -1225,6 +1225,61 @@ acqboot のログで、取得が proj021 の道具（s45proto 版 2）を使い�
 
 **2-3d の判定**: S23d-1（PL なし 11 試験）・S23d-2（**V2-d**）・S23d-3（回帰）通過 → **2-3d 通過**。
 これで手順 2-3（a〜d）が全部通過。V2 の判定は V2-a〜e 通過、V2-g は 2-2a・2-3a の陽性対照で中身を確かめ済み、V2-f は FULL・DDC の全部の流れを 2-2d の後にまとめて回す
+
+## 手順 2-2d — 仮の読み窓を外して 64 KiB に（設計と予言、2026-10-13。コードを書く前）
+
+2-3 で specd がリングだけで動くようになったので、2-1 から残していた**約束の外の 3 つ**を外し、コアの番地を INTERFACE 3. の 64 KiB にする。
+2-2c で決めたとおり、PS の道具の書き換えとまとめて 1 手順（1 ビルド）にする。**窓・全帯域の中身（スペクトル・スナップショット・帳簿・時刻・TP の値）は変えない**。
+
+**外すもの**:
+- `0x80000 + 0x20000·s`（DDC の仮の読み窓: スペクトル 0x10000・スナップショット 0x08000）・`0xC0000`（FULL の仮の読み窓: TP のリング 0x2000・スナップショット 0x4000・スペクトル 0x8000、TP のレジスタ 0x1100）・`0xE0000`（仮の SNAP_SEL）
+- コアの AXI4-Lite の番地を 20 bit → **16 bit（64 KiB）**。s45_core の FULL の振り分けは流れのブロック（0x4000 + 0x400·NW）だけ。**「FULL = 1 は NW ≦ 2」の縛りも外れる**
+- rec_fr が読みの口を借りている間に AXI4-Lite の読みを待たせる道（fr_gnt と arready）は、口を取り合う相手が居なくなるので外す（読みの口は rec_fr だけのもの）
+
+**決めること**:
+1. **DDC のスナップショットを書く流れ**: SNAP の立った最も小さい s（2-2c と同じ）。どれも立っていなければ **s = 0**（今は SNAP_SEL）。書くだけで、レコードには出ない
+2. **FULL の TP の置き場所**: FULL の TP は「FULL の SRC の ADC の Σx²」で、コアの TP（4 ADC、レコード済み）と中身は同じだが、**区切りが FULL のフレームの格子に乗る**ので全帯域の Parseval（spectrometer の `--tp`）と F-5（fine）に要る。外さずに次の形にする:
+   - **レジスタ = FULL の流れのブロックの 0x100〜0x1FF**（種類に固有の範囲。FULL は今まで空き）に、コアの TP のレジスタ（0x100〜）と**同じ並び**（TP_N・NEFF・WP・F0・PARAM・STAT・TP_REC_CTRL…）
+   - **値 = TP のレコード（type 2）**。頭の s を **FULL の流れの番号**（SAM45-Fine では 2）にする（コアの TP は今どおり s = 0xFF）。core = コアの ADC（0）、中身・区切り（10 個ずつ）は 2-2b と同じ。既定は出さない（TP_REC_CTRL = 0）
+   - FULL の AXI4-Lite の TP のリング（512 個）は外す（1 KiB の流れのブロックに入らない）。**コアの TP の AXI4-Lite のリング（0x2000）は残す**（INTERFACE 4.6 の移行用。V2-e の比べに使う。外すのは別の手順）
+   - spec_core の中で SPEC・SNAP（rec_fr）と TP（tp_core）を rec_arb でレコード単位に束ね（win_core と同じ形）、s45_core の rec_arb（DDC と FULL）へ
+3. **ID**: コアの IF_ID の BIT_REV 1 → **2**（0x0202_0201。time_core 0x0202_0202、リング 0x0202_0203）。PROJ は 0x0021_0200 のまま（DSP の道は同じなので timebase の CAL・D(NS) の鍵を変えない）。CAPS は 7 のまま
+
+**PS（読みを全部レコードに）**:
+- **`pynq/rectap.py`（新）**: プロセスに 1 つのリング（plring.Ring）を開き、`grab(st, snap=False)`（REC_CTRL に ONE（| SNAP）を書き、次に閉じるダンプの SPEC（と SNAP）のレコードを返す。SNAP は 2-2c の手順どおり、走っている流れでは SNAP を立てて 1 ダンプ待ってから ONE | SNAP）と、`tp(st)`（FULL の TP のレコードを流す）。
+  plring の `do_golden`・`check_pair` の中身をここへ移す
+- `window.Win.read_dump`・`spectrometer.Spec.read_dump` の中を rectap に（**返す形は今と同じ**ので、呼ぶ側の P-1〜P-3・全帯域の golden はそのまま）。`Win.block`・`Spec.block`（AXI4-Lite で記憶を読む）は消す
+- spectrometer の `TpReader`（FULL の TP）と fine の F-5 は FULL の TP のレコードで、`Spec.rd/wr` の TP のレジスタは流れのブロック ＋ 0x100 で
+- timetest（T-2 のスナップショット・T-3 のスペクトル）・fine（スペクトル）は `read_dump` を通す。timetest の SNAP_SEL を書く行は消す（SNAP を立てる）
+- s45acq の `--read axi`（と specd の `--read`）・仮の SNAP の道を消す。s45acq は TP のレコードの s = 0xFF だけを TP として扱う（FULL の TP は使わない）
+- plring の `--compare`・`--snapcompare`（レコード = 仮の読み窓）は比べる相手が無くなるので消す。`--golden`・`--golden-shift`・`--soak`・`--tpcompare`（コアの TP）は残す
+- s45core: LEG_* を消し、番地の表を 64 KiB に。test_regmap を v2 の 64 KiB の表に
+
+**sim（読みを AXI4-Lite の仮の読み窓から、tb が受けたレコードに）**:
+- tb_top・tb_win4・tb_tsys・tb_spec_core: s45_core（または spec_core）の m_axis_rec を tb で受けてファイルに書き、check は今と同じ模型と比べる。
+  REC_CTRL は ALL（| SNAP）を RUN の前に書く。**比べるダンプは今と同じ**（N_DUMP で止まった後の最後のダンプ・t2 の k = 1 など。途中のダンプのレコードが REC_LATE で捨てられても、最後のダンプは上書きされないので必ず出る）
+- tb_spec_core の TP: FULL の TP のレコード（s = 2）の個 = 今の AXI4-Lite のリングで読んでいた個と同じ値（check の模型と比べる）
+- tb_regmap: 64 KiB の表。0x10000 以上は SmartConnect の外（tb では上位 bit を見ないので 0x00000 に重なる）、FULL の TP のレジスタが FULL のブロック ＋ 0x100
+- tb_ring: 「本体 = 凍ったバンク」の比べを、AXI4-Lite の読みから tb の階層参照（`u_win.u_ws` の記憶・spec_core の acc の記憶を直接）に替える。check_ring.py は変えない
+
+**予言**:
+1. sim: sim-top・sim-win4・sim-tsys・sim-spec-all・sim-ring（all・late・snap・snap-nochk・flip）が**今と同じ判定で**通る（中身の値は bit 単位で 2-2c と同じ）。sim-tprec・sim-ringu・sim-t-all は変えずに通る
+2. sim-regmap（64 KiB）と陽性対照 sim-regmap-p（番地を 1 つずらす）が今までどおり 通過・失敗
+3. 資源: DSP・BRAM・URAM は同じ（記憶は全部レコードの道で使う）。**LUT −1,000〜−3,000・FF −200〜−1,000**（仮の読み窓の読みの選び・20 bit の番地の比べ・SNAP_SEL・fr_gnt）。FULL の TP のレコードの道で LUT +300 前後
+4. 時間: 1b から残っていた仮の読み窓の経路（`ax_ch` → `rq_w`、`snap_sel` → `swd2`）が消える。**PE で閉じ、+0.02〜+0.06**（2-2c は +0.032）。既定の戦略は −0.02〜+0.02
+5. 実機:
+   - `s45core.py --list`: コア 4 個の IF_ID 0x0202_0201・番地の幅 64 KiB（.hwh）、流れの表は今と同じ
+   - P-0〜P-4（timetest・window・spectrometer の golden）が 2-1 と同じ数値で通る（読みがレコードに替わっただけ）。P-2 は 2-2c の `plring --golden` と同じ許容
+   - `spectrometer --tp`（全帯域の Parseval、FULL の TP のレコード）と fine の F-5（比 1）が proj020 と同じ
+   - specd（ring）で 10 分: 取りこぼし・説明のない欠け 0、`s45v2c.py`（組 400・不一致 0）・`s45v2a.py` が 2-3c と同じ。V2-e の `plring --tpcompare` も同じ
+
+**判定**:
+
+| 判定 | 中身 |
+|---|---|
+| S22d-1 | 予言 1・2（sim） |
+| S22d-2 | 予言 3・4（ビルド・`make worst-paths`・CDC は 2-2c と同じ件数） |
+| S22d-3 | 予言 5（実機） |
 
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
