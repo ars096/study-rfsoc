@@ -1743,7 +1743,7 @@ spec_core は SAM45-Wide・2G・512M の全帯域で使う共通部品として�
 
 - raw_core（`raw_core_util.rpt`）: LUT 1,270・FF 1,501・BRAM タイル 7.5・DSP 0。**FF は予言（2,000〜4,000）より少ない**（頭の待ちを 2 つ持つ見積もりが大きすぎた。実際は q_h 2 × 384 bit ＋ 送りの s_h 384 bit ほどで、合計には効かない）
 - lane_fft 0 個・s45_core_i/u_win の DSP 524 × 4 は 2-2d と同じ
-- 2-2d の比べの相手は build-PE（2-2d の既定の build の utilization は記録が無い。2-2d の既定と PE の差は LUT・FF で 0.1 % 未満）
+- 2-2d の比べの相手は build-PE（README に記録のある 2-2d の数字。戦略が違うので LUT・FF の差には配置の違いが少し入る）
 
 **S25-2（ビルド）は通過**（予言 2・3 とも範囲の中。raw_core の FF だけ予言の下）。
 
