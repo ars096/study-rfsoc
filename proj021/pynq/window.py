@@ -320,6 +320,10 @@ def main():
     if args.settle > 0:
         time.sleep(args.settle)
     wn = open_win(ol, args.allow_nopreset, args.allow_rev1)      # SG を触る前に、載っている .bit を確かめる
+    if args.w6:                                                  # proj021 2-5: FULL の無い bit では SG を触る前に止める
+        cores_, _ = SC.discover(ol)
+        if not SC.has_full(cores_):
+            log(f"ERROR: {SC.NO_FULL_MSG}。--w6（W-6・W-1b）は 2-4 までの bit で"); sys.exit(1)
     sg = None
     sg_state = None
     if args.tone is not None and not (args.sg or os.environ.get("RFSOC_SG")):
