@@ -1783,8 +1783,18 @@ SAM45-Fine の bit は FULL（spec_core）無しで、DSP 2,096・BRAM 233.5・L
 
 #### 最終形の図（2026-10-14）
 
-- ブロックデザイン: [`docs/block_design.svg`](docs/block_design.svg)（`cd docs && python3 block_design.py`）。proj020 の図から、s45_core_i・raw_core（流れ s = 2）・s45_ring_0（レコード → HP0）・smc の M05 time_core_0 / M06 s45_ring_0・番地（64 KiB）・資源（2-5 のビルド）を描き直した。M（ADC → コア）は proj020 の実測のまま（proj021 の bit は F-2 待ち）
-- フロアマップ: `make floorplan`（`build/floorplan/`）。FULL のあった 2-1 の build-PE と並べる: `python3 tools/floorplan.py build/floorplan build-2-1-PE/floorplan --title 2-5 --title 2-1-PE`
+**ブロックデザイン**（[`docs/block_design.svg`](docs/block_design.svg)、`cd docs && python3 block_design.py`）。proj020 の図から、s45_core_i・raw_core（流れ s = 2）・s45_ring_0（レコード → HP0）・smc の M05 time_core_0 / M06 s45_ring_0・番地（64 KiB）・資源（2-5 のビルド）を描き直した。M（ADC → コア）は proj020 の実測のまま（proj021 の bit は F-2 待ち）
+
+![proj021 最終形のブロックデザイン](docs/block_design.svg)
+
+**フロアマップ**（`make floorplan`、`build/` の routed dcp。図は `build/floorplan/floorplan_wo_arrow.png` を [`docs/floorplan_2-5.png`](docs/floorplan_2-5.png) に写した）
+
+![proj021 2-5 のフロアマップ](docs/floorplan_2-5.png)
+
+- 2-1-PE（FULL あり）と並べる: `python3 tools/floorplan.py build/floorplan build-2-1-PE/floorplan --title 2-5 --title 2-1-PE`（→ `build/floorplan/compare.png`）
+- **FULL（spec_core）が占めていた上半分（X0〜X4・Y5〜Y7）が空き、4 ADC のコアが全体に広がった**。2-1-PE は Y0〜Y7 の全部が埋まっていたが、2-5 は **Y0 の行がほぼ空**（SmartConnect と PS の近くを除く）で、Y1 も一部だけ
+- RAW（raw_core ＋ rec_arb）は `blocks.txt` の「ADC_A common/TP/AXI」に入る（プリミティブ 10,279。B〜D は 7,167〜7,176 → RAW の分 ≒ 3,100）。s45_ring_0 は「other」
+- setup の上位 20 本は slack +0.044〜+0.109 ns（2-1-PE は +0.003〜+0.027）。最悪の経路は ADC_C の PFB（X0〜X1・Y3）から X4 への横に長い経路で、PFB の共有と窓の配置が離れたもの（群 C ではない）
 
 #### ビルドと実機の手順（S25-2・S25-3）
 
