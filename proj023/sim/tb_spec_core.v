@@ -1,0 +1,364 @@
+// SPDX-License-Identifier: BSD-3-Clause
+//
+// tb_spec_core — spec_core を lane_fft のモデルと繋ぎ、AXI4-Lite から動かして結果を書き出す
+//
+// 入力:  $(OUT)/stim.hex        1 行 = 1 ビート（256 bit、下位が古いサンプル）。sim/check.py gen が作る
+// 出力:  $(OUT)/lanes.txt       レーン FFT の出力（frame k1 re0 im0 … re15 im15）。bit 単位の照合用
+//        $(OUT)/dump_<名前>.txt レジスタ・スナップショット・スペクトル
+// 判定は sim/check.py が行う（ここでは書き出すだけ）。
+//
+// 試験:
+//   t1  N_ACC = 1 / N_DUMP = 1   スナップショットの FFT とダンプが 1 対 1
+//   t2  N_ACC = 3 / N_DUMP = 2   2 つ目のダンプ（k = 1）を読む。3 フレームの和
+//   t3  N_ACC = 2 / N_DUMP = 0   止めるまで回し、途中で STOP。SEQ が止まること
+//   t4  SRST（D 7 / E 3）の後に N_ACC = 1（rev4）
+//   t5  GRST（書き込み側 16 / 読み出し側 32 クロック、ADJ 2）＋ 見張りの間に途切れを 1 回注入 → N_ACC = 1（rev6）。
+//       見張りがあれば IP に届かず FLAGS 0、見張りが無ければ（NO_GUARD）IP の数えがずれて 0x70
+//   t6  口が開いた後に途切れを 1 回注入 → N_ACC = 1（rev6。**陽性対照**: FLAGS 0x70、データの枠は正しいまま）
+// どの試験の後も FLAGS = 0 であること（check.py が見る）。
+
+`timescale 1ns / 1ps
+
+module tb_spec_core;
+    parameter integer NBEAT = 8 * 512;     // stim.hex の行数（ループして流す）
+
+    reg clk = 1'b0;
+    always #2 clk = ~clk;                  // 周期は何でもよい（すべて同期）
+    reg aresetn = 1'b0;
+
+    reg  [255:0] stim [0:NBEAT-1];
+    reg  [255:0] s_tdata;
+    reg          s_tvalid;
+    integer      sp;
+
+    reg  [15:0] awaddr, araddr;
+    reg         awvalid, wvalid, bready, arvalid, rready;
+    reg  [31:0] wdata;
+    wire        awready, wready, bvalid, arready, rvalid;
+    wire [1:0]  bresp, rresp;
+    wire [31:0] rdata;
+
+    // rev5: NO_GUARD なら起動の見張りを外す（STABLE_N = 0 = rev4 と同じ起動）。陰性対照
+`ifdef NO_GUARD
+    localparam integer TB_STABLE_N = 0;
+`else
+    localparam integer TB_STABLE_N = 16384;
+`endif
+    // rev6: ギアボックスの見張りの入力は定数（配線と読み出しの番地の確認）。gb_dn_rstn が 0 の間は入力を止める（ギアボックスの再起動の模型）
+    localparam [31:0] TB_GB_STAT  = 32'h8203_0145;
+    localparam [31:0] TB_ADC_STAT = 32'h8000_0000;
+    wire       gb_hold, gb_dn_rstn;
+    wire [1:0] gb_adj;
+    wire [5:0] gb_k;
+    // proj013: TPN_DEFAULT = 1（1 フレームごとに total power を 1 個）。スナップショットのフレームの Σx² と突き合わせる
+    spec_core #(.N_ACC_DEFAULT(50000), .SHIFT_DEFAULT(4), .STABLE_N(TB_STABLE_N), .TPN_DEFAULT(1)) dut (
+        .aclk(clk), .aresetn(aresetn),
+        .s_axis_tdata(s_tdata), .s_axis_tvalid(s_tvalid), .s_axis_tready(),
+        .gb_hold(gb_hold), .gb_adj(gb_adj), .gb_dn_rstn(gb_dn_rstn), .gb_k(gb_k),
+        .gb_stat(TB_GB_STAT), .adc_stat(TB_ADC_STAT),
+        .s_axi_awaddr(awaddr), .s_axi_awprot(3'd0), .s_axi_awvalid(awvalid), .s_axi_awready(awready),
+        .s_axi_wdata(wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(wvalid), .s_axi_wready(wready),
+        .s_axi_bresp(bresp), .s_axi_bvalid(bvalid), .s_axi_bready(bready),
+        .s_axi_araddr(araddr), .s_axi_arprot(3'd0), .s_axi_arvalid(arvalid), .s_axi_arready(arready),
+        .s_axi_rdata(rdata), .s_axi_rresp(rresp), .s_axi_rvalid(rvalid), .s_axi_rready(rready),
+        .m_axis_rec_tdata(rec_d), .m_axis_rec_tvalid(rec_v), .m_axis_rec_tready(1'b1), .m_axis_rec_tlast(rec_l), .m_axis_rec_tuser(rec_u),
+        .rec_drop()
+    );
+    // proj021 2-2d: スペクトル・スナップショット・TP の個はレコードで（仮の読み窓 0x2000・0x4000・0x8000 は無くなった）。s = SID_S = 2
+    wire [63:0] rec_d; wire rec_v, rec_l, rec_u;
+    rec_sink #(.TP_S(8'd2)) u_sink (.clk(clk), .tdata(rec_d), .tvalid(rec_v), .tlast(rec_l), .tuser(rec_u));
+
+    // ---- ADC の流し込み（リセット解除から途切れなく。ループする）----
+    // 実機のギアボックスと同じく **backpressure を見ない**。IP が受け始める前のビートは捨てられる。
+    // rev5: START_GAPS なら、リセット解除から 400 クロックの間だけ入力をところどころ途切れさせる（実機の起動の直後の
+    // ギアボックスの出口の模型）。途切れたクロックはデータを進めない（データの並びは途切れの前後で続いている）
+    integer cyc0;
+    reg     v_now;
+    always @(posedge clk) begin
+        if (!aresetn) begin
+            sp <= 0; s_tvalid <= 1'b0; s_tdata <= 256'd0; cyc0 = 0;
+        end else begin
+`ifdef START_GAPS
+            v_now = !(cyc0 < 400 && ((cyc0 % 37) == 5 || (cyc0 % 53) == 11));
+`else
+            v_now = 1'b1;
+`endif
+            if (!gb_dn_rstn) v_now = 1'b0;     // rev6: GRST の間はギアボックスの出口が止まる
+            cyc0 = cyc0 + 1;
+            s_tvalid <= v_now;
+            if (v_now) begin
+                s_tdata <= stim[sp];
+                sp      <= (sp + 1) % NBEAT;
+            end
+        end
+    end
+
+    // ---- レーン FFT の出力を記録（bit 単位の照合用）----
+    integer fl, lf, lp;
+    reg [47:0] ld;
+    always @(posedge clk) begin
+        if (aresetn && dut.ln_m_tvalid[0]) begin
+            // フレームの番号は spec_core の出力側の数え fout に、SRST の回数を 100000 倍して足したもの（rev4）。
+            // SRST で fout は 0 に戻るので、回ごとに別の番号にする。途中で切られたフレームは埋まらないので check.py が捨てる
+            $fwrite(fl, "%0d %0d", (dut.sr_n + dut.g_n) * 100000 + dut.fout, dut.ln_m_tuser[8:0]);
+            for (lp = 0; lp < 16; lp = lp + 1) begin
+                ld = dut.ln_m_tdata[48*lp +: 48];
+                $fwrite(fl, " %0d %0d", $signed(ld[23:0]), $signed(ld[47:24]));
+            end
+            $fwrite(fl, "\n");
+            if (dut.ln_m_tuser[8:0] == 9'd511) lf = lf + 1;
+        end
+    end
+
+    // ---- GRST の長さを測る（rev6）----
+    integer m_hold = 0, m_dsp = 0, m_adj = 0;
+    always @(posedge clk) begin
+        if (aresetn) begin
+            if (gb_hold) m_hold = m_hold + 1;
+            if (!gb_dn_rstn) m_dsp = m_dsp + 1;
+            m_adj = gb_adj;
+        end
+    end
+
+    // ---- AXI4-Lite ----
+    // proj021 手順 2-1: tb の中は旧番地のまま書き、ここで v2 の番地（spec_core の中の 16 bit。src/common/spec_core.v の冒頭）に直す
+    //   2-2d: total power のレジスタは流れのブロックの 0x100〜。リング・スナップショット・スペクトルの番地は無い（レコードで読む）
+    function [15:0] xs(input [15:0] a);
+        if (a[15:12] == 4'hF) xs = {4'd0, a[11:0]};                     // 2-2d: 0xFxxx = v2 の番地そのもの（REC_CTRL など、旧番地の無いもの）
+        else if (a[15:8] == 8'h01) xs = 16'h0100 + a[7:0];            // total power のレジスタ
+        else if (a[15:8] != 8'h00) begin xs = 16'h03FC; $display("tb_spec_core: NG 2-2d に無い番地 %04x（仮の読み窓）", a); end
+        else if (a[7:0] < 8'h20) xs = a;
+        else if (a[7:0] >= 8'h58 && a[7:0] <= 8'hB4) xs = a + 16'h01A8;   // 診断
+        else case (a[7:0])
+            8'h20: xs = 16'h070; 8'h24: xs = 16'h074; 8'h28: xs = 16'h078; 8'h2C: xs = 16'h07C; 8'h30: xs = 16'h03C;
+            8'h34: xs = 16'h048; 8'h38: xs = 16'h040; 8'h3C: xs = 16'h044; 8'h40: xs = 16'h04C; 8'h44: xs = 16'h260;
+            8'h48: xs = 16'h264; 8'h4C: xs = 16'h268; 8'h50: xs = 16'h068; 8'h54: xs = 16'h06C; 8'hC0: xs = 16'h02C;
+            8'hC4: xs = 16'h030; 8'hC8: xs = 16'h050; 8'hCC: xs = 16'h054; 8'hD0: xs = 16'h058; 8'hD4: xs = 16'h05C;
+            8'hD8: xs = 16'h060; 8'hDC: xs = 16'h064; 8'hE0: xs = 16'h038;
+            default: begin xs = 16'h03FC; $display("tb_spec_core: 旧番地の表に無いレジスタ %02x", a[7:0]); end
+        endcase
+    endfunction
+    task axi_wr(input [15:0] a, input [31:0] d);
+        begin
+            @(posedge clk);
+            awaddr <= xs(a); wdata <= d; awvalid <= 1'b1; wvalid <= 1'b1; bready <= 1'b1;
+            @(posedge clk);
+            while (!(awready && wready)) @(posedge clk);
+            awvalid <= 1'b0; wvalid <= 1'b0;
+            while (!bvalid) @(posedge clk);
+            @(posedge clk);
+            bready <= 1'b0;
+        end
+    endtask
+
+    task axi_rd(input [15:0] a, output [31:0] d);
+        begin
+            @(posedge clk);
+            araddr <= xs(a); arvalid <= 1'b1; rready <= 1'b1;
+            @(posedge clk);
+            while (!arready) @(posedge clk);
+            arvalid <= 1'b0;
+            while (!rvalid) @(posedge clk);
+            d = rdata;
+            @(posedge clk);
+            rready <= 1'b0;
+        end
+    endtask
+
+    reg [31:0] v, lo, hi, seq0;
+    reg [31:0] tp_wp, tp_k, tw0, tw1, tw2, tw3;   // proj013
+    integer i, fo, guard;
+    reg [8*64-1:0] path;
+
+    task wait_seq(input [31:0] target);
+        begin
+            guard = 0;
+            axi_rd(16'h001C, v);
+            while (v < target) begin
+                repeat (200) @(posedge clk);
+                axi_rd(16'h001C, v);
+                guard = guard + 1;
+                if (guard > 2000) begin
+                    $display("FAIL: SEQ が %0d に届かない（%0d のまま）", target, v);
+                    $finish;
+                end
+            end
+        end
+    endtask
+
+    // ---- 裏口（fast = 1 のダンプ用）----
+    // t1 だけは全部をレコードから出し（読み出しの経路の試験。2-2c までは AXI4-Lite）、t2 以降は凍っている面（rd_bank）のメモリを直接覗く。
+    // 裏口の値がレコードと同じ面・同じ番地を指していることは、毎回 16 か所をレコードとも照合する（bdcheck の行。2-2d）
+    reg [63:0]  bd_spec [0:4095];
+    reg [31:0]  bd_snap [0:4095];
+    reg [255:0] bd_beat;
+    integer q, bmis;
+`define BD(J) bd_spec[J*512 + q] = dut.rd_bank ? dut.g_bin[J].g_bank[1].mem[q] : dut.g_bin[J].g_bank[0].mem[q];
+    task bd_read;
+        begin
+            for (q = 0; q < 512; q = q + 1) begin
+                `BD(0) `BD(1) `BD(2) `BD(3) `BD(4) `BD(5) `BD(6) `BD(7)
+            end
+            for (q = 0; q < 4096; q = q + 1) begin
+                bd_beat = dut.snap_mem[{dut.rd_bank, q[11:3]}];
+                bd_snap[q] = bd_beat[32 * q[2:0] +: 32];
+            end
+        end
+    endtask
+`undef BD
+
+    task dump(input [8*16-1:0] name, input fast);
+        begin
+            $sformat(path, "%0s/dump_%0s.txt", `OUT, name);
+            fo = $fopen(path, "w");
+            for (i = 0; i < 46; i = i + 1) begin
+                axi_rd(i * 4, v);
+                $fwrite(fo, "reg %0d %0d\n", i * 4, v);
+            end
+            // ---- total power（proj013）: レジスタ 7 個と、最後の 32 個（スナップショットのフレームを含むはず）----
+            for (i = 0; i < 7; i = i + 1) begin
+                axi_rd(16'h0100 + i * 4, v);
+                $fwrite(fo, "tpreg %0d %0d\n", i * 4, v);
+            end
+            axi_rd(16'h0108, tp_wp);
+            // proj021 2-2d: 個は TP のレコード（K 16 個 / レコード）。TP_WP までの個がレコードで来るまで待つ（最長 16 フレーム ＋ α）
+            guard = 0;
+            while (u_sink.tp_end < tp_wp && guard < 40000) begin @(posedge clk); guard = guard + 1; end
+            if (u_sink.tp_end < tp_wp) $display("tb_spec_core: NG TP のレコードが TP_WP %0d まで来ない（%0d）", tp_wp, u_sink.tp_end);
+            for (i = 0; i < 32; i = i + 1) begin
+                if (tp_wp >= 32 - i) begin
+                    tp_k = tp_wp - 32 + i;
+                    {tw3, tw2, tw1, tw0} = u_sink.tp_m[tp_k % 1024];
+                    $fwrite(fo, "tpent %0d %0d %0d %0d %0d\n", tp_k, tw0, tw1, tw2, tw3);
+                end
+            end
+            // proj021 2-2d: このダンプの SPEC と SNAP のレコード（ALL | SNAP。途中のダンプは REC_LATE で捨てられても、最後のダンプは必ず出る）
+            axi_rd(16'h001C, v);
+            guard = 0;
+            while ((u_sink.spec_seq[2] !== v || u_sink.snap_seq[2] !== v) && guard < 40000) begin @(posedge clk); guard = guard + 1; end
+            if (u_sink.spec_seq[2] !== v || u_sink.snap_seq[2] !== v)
+                $display("tb_spec_core: NG SEQ %0d の SPEC・SNAP のレコードが来ない（%0d / %0d）", v, u_sink.spec_seq[2], u_sink.snap_seq[2]);
+            if (fast) begin
+                bd_read;
+                bmis = 0;
+                // 照合する 16 か所: 面の端・k2 の境目・中ほど
+                for (i = 0; i < 16; i = i + 1) begin
+                    q = (i == 0) ? 0 : (i == 1) ? 511 : (i == 2) ? 512 : (i == 3) ? 4095 : (i * 263) % 4096;
+                    if (u_sink.spec_m[4096 * 2 + q] !== bd_spec[q]) bmis = bmis + 1;
+                    if (u_sink.snap_m[4096 * 2 + q / 2][32 * (q % 2) +: 32] !== bd_snap[q]) bmis = bmis + 1;
+                end
+                $fwrite(fo, "bdcheck 32 %0d\n", bmis);
+                for (i = 0; i < 4096; i = i + 1) $fwrite(fo, "snap %0d %0d\n", i, bd_snap[i]);
+                for (i = 0; i < 4096; i = i + 1) $fwrite(fo, "spec %0d %0d %0d\n", i, bd_spec[i][63:32], bd_spec[i][31:0]);
+            end else begin
+                for (i = 0; i < 4096; i = i + 1)
+                    $fwrite(fo, "snap %0d %0d\n", i, u_sink.snap_m[4096 * 2 + i / 2][32 * (i % 2) +: 32]);
+                for (i = 0; i < 4096; i = i + 1)
+                    $fwrite(fo, "spec %0d %0d %0d\n", i, u_sink.spec_m[4096 * 2 + i][63:32], u_sink.spec_m[4096 * 2 + i][31:0]);
+            end
+            axi_rd(16'h001C, v);
+            $fwrite(fo, "seq_after %0d\n", v);
+            $fwrite(fo, "grst_meas %0d %0d %0d\n", m_hold, m_dsp, m_adj);
+            $fclose(fo);
+            $display("  wrote %0s", path);
+        end
+    endtask
+
+    initial begin
+        $readmemh({`OUT, "/stim.hex"}, stim);
+        fl = $fopen({`OUT, "/lanes.txt"}, "w");
+        lf = 0;
+        awvalid = 0; wvalid = 0; bready = 0; arvalid = 0; rready = 0;
+        awaddr = 0; araddr = 0; wdata = 0;
+        repeat (10) @(posedge clk);
+        aresetn = 1'b1;
+        // proj021 2-2d: TP_REC_CTRL = K 16・EN（FULL の TP のレコード）を最初の個より前に（1 回目は 3000 クロック後に書き、
+        //   START_GAPS の変種（sim-7-0-2）で最初の 5 個がレコードにならず、t1 の照合が x で落ちた）
+        axi_wr(16'h011C, 32'h1001);
+
+        // 流れ始めるまで待ち、立ち上がりの隙間で立ったフラグを消す
+        repeat (3000) @(posedge clk);
+        axi_rd(16'h0000, v);
+        $display("ID = %08h", v);
+        axi_wr(16'h0008, 32'h100);
+        axi_wr(16'h0014, `SHIFT);
+        axi_wr(16'hF084, 32'h5);          // proj021 2-2d: REC_CTRL = ALL | SNAP（ダンプごとに SPEC と SNAP のレコード）
+
+        // ---- t1 ----
+        $display("t1: N_ACC = 1 / N_DUMP = 1");
+        axi_rd(16'h001C, seq0);
+        axi_wr(16'h000C, 1);
+        axi_wr(16'h0010, 1);
+        axi_wr(16'h0008, 1);
+        wait_seq(seq0 + 1);
+        repeat (3000) @(posedge clk);     // 1 回で止まることを確かめるため少し待つ
+        dump("t1", 1'b0);          // 全部を AXI4-Lite で読む
+
+        // ---- t2 ----
+        $display("t2: N_ACC = 3 / N_DUMP = 2");
+        axi_rd(16'h001C, seq0);
+        axi_wr(16'h000C, 3);
+        axi_wr(16'h0010, 2);
+        axi_wr(16'h0008, 1);
+        wait_seq(seq0 + 2);
+        repeat (3000) @(posedge clk);
+        dump("t2", 1'b1);          // 以下は裏口（16 か所だけ AXI で照合）
+
+        // ---- t3 ----
+        $display("t3: N_ACC = 2 / N_DUMP = 0 → STOP");
+        axi_rd(16'h001C, seq0);
+        axi_wr(16'h000C, 2);
+        axi_wr(16'h0010, 0);
+        axi_wr(16'h0008, 1);
+        wait_seq(seq0 + 3);
+        axi_wr(16'h0008, 2);
+        repeat (6000) @(posedge clk);
+        dump("t3", 1'b1);
+
+        // ---- t4（rev4）: 起動のやり直しの後も同じように動く ----
+        $display("t4: SRST（D = 7 / E = 3）→ N_ACC = 1 / N_DUMP = 1");
+        axi_wr(16'h0070, 7);
+        axi_wr(16'h0074, 3);
+        axi_wr(16'h0008, 32'h400);
+        repeat (3000) @(posedge clk);
+        axi_rd(16'h001C, seq0);
+        axi_wr(16'h000C, 1);
+        axi_wr(16'h0010, 1);
+        axi_wr(16'h0008, 1);
+        wait_seq(seq0 + 1);
+        repeat (3000) @(posedge clk);
+        dump("t4", 1'b1);
+
+        // ---- t5（rev6）: GRST ＋ 見張りの間に途切れを 1 回注入 ----
+        $display("t5: GRST（16 / 32、ADJ 2）＋ 見張りの間（最初の valid から 100 クロック目）に注入 → N_ACC = 1");
+        m_hold = 0; m_dsp = 0;
+        axi_wr(16'h0090, (32 << 16) | 16);
+        axi_wr(16'h0094, 2);
+        axi_wr(16'h008C, 32'hC000_0000 | 100);   // [30]: 次の GRST の後から数える
+        axi_wr(16'h0008, 32'h800);
+        repeat (20000) @(posedge clk);            // 見張り（16384）が開くのを待つ
+        axi_rd(16'h001C, seq0);
+        axi_wr(16'h000C, 1);
+        axi_wr(16'h0010, 1);
+        axi_wr(16'h0008, 1);
+        wait_seq(seq0 + 1);
+        repeat (3000) @(posedge clk);
+        dump("t5", 1'b1);
+
+        // ---- t6（rev6）: 口が開いた後に途切れを 1 回注入（陽性対照）----
+        $display("t6: 走っている最中に注入 → N_ACC = 1");
+        axi_wr(16'h008C, 32'h8000_0000);
+        repeat (3000) @(posedge clk);
+        axi_rd(16'h001C, seq0);
+        axi_wr(16'h000C, 1);
+        axi_wr(16'h0010, 1);
+        axi_wr(16'h0008, 1);
+        wait_seq(seq0 + 1);
+        repeat (3000) @(posedge clk);
+        dump("t6", 1'b1);
+
+        $fclose(fl);
+        $display("done");
+        $finish;
+    end
+endmodule
