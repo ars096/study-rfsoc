@@ -1769,6 +1769,11 @@ spec_core は SAM45-Wide・2G・512M の全帯域で使う共通部品として�
 **2-5 の判定**: S25-1（sim）・S25-2（ビルド）・S25-3（実機、P-8 は配線の条件で保留）通過 → **2-5 通過**。
 SAM45-Fine の bit は FULL（spec_core）無しで、DSP 2,096・BRAM 233.5・LUT 39.7 % になり、生サンプル（F-2・specd の SNAP）は RAW の流れで取れる。
 
+#### 最終形の図（2026-10-14）
+
+- ブロックデザイン: [`docs/block_design.svg`](docs/block_design.svg)（`cd docs && python3 block_design.py`）。proj020 の図から、s45_core_i・raw_core（流れ s = 2）・s45_ring_0（レコード → HP0）・smc の M05 time_core_0 / M06 s45_ring_0・番地（64 KiB）・資源（2-5 のビルド）を描き直した。M（ADC → コア）は proj020 の実測のまま（proj021 の bit は F-2 待ち）
+- フロアマップ: `make floorplan`（`build/floorplan/`）。FULL のあった 2-1 の build-PE と並べる: `python3 tools/floorplan.py build/floorplan build-2-1-PE/floorplan --title 2-5 --title 2-1-PE`
+
 #### ビルドと実機の手順（S25-2・S25-3）
 
 ```bash
