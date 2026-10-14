@@ -773,7 +773,7 @@ class Acq:
         self.cal = getattr(opts, "tp_cal", None)    # TP の dBm の較正（s45cal、specd が起動時に読む）。bit の ID は open の後で照らす
         self.cal_msg = "較正ファイルが無い" if self.cal is None else "未確認"
         self.tp_last = [None] * 4                  # ADC ごとの直近の TP（σ_x²、最後に書き出した記録の平均）
-        self.tpj = [TpJump() for _ in range(4)]    # proj021 B2: TP の跳ねの見張り（tpjump.py。START で初めから）
+        self.tpj = [TpJump(phase=250 * i) for i in range(4)]    # proj021 B2: TP の跳ねの見張り（tpjump.py。START で初めから。B2b: σ の計算し直しを ADC ごとにずらす）
         self.tpj_on = not getattr(opts, "no_tp_jump", False)   # --no-tp-jump: 見張りを止める（1 周の重さの比べ）
         self._reset_counters()
 
@@ -1122,7 +1122,7 @@ class Acq:
             if t.count > self.TP_JUMP_EV_MAX:
                 continue
             utc = self.be.clock.utc_ns(ev["t_beat"], None, i)
-            self.event(dict(ev="TP_JUMP", adc=i, t_beat=ev["t_beat"], utc_ns=int(utc), n=ev["n"], db=ev["db"], sigma_db=ev["sigma_db"],
+            self.event(dict(ev="TP_JUMP", adc=i, t_beat=ev["t_beat"], utc_ns=int(utc), n=ev["n"], db=ev["db"], step_db=ev["step_db"], sigma_db=ev["sigma_db"],
                             ovr=ev["ovr"], **({"last": True} if t.count == self.TP_JUMP_EV_MAX else {})))
 
     def _loop_once(self):
