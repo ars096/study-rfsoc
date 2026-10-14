@@ -558,3 +558,9 @@ sim-all:
 	$(MAKE) --no-print-directory sim-spec-all
 	$(MAKE) --no-print-directory sim-win-all
 	$(MAKE) --no-print-directory sim-t-all
+
+# ---- proj023 手順 2a: SAM45-Wide の sim の模型の自己検査（RTL なし。1 秒かからない）----
+# 模型どうしの突き合わせ（wide_model.fixed_chain と bit 単位・浮動小数点と振幅）と陽性対照。成否は「結果: 全部通過」で読む
+.PHONY: model-wide
+model-wide:
+	$(PYTHON) sim/check_wide.py selftest

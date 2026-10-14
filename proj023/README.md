@@ -98,6 +98,7 @@ proj022 で模型と資源の見積もりまで設計したものを RTL にし�
 ## 予言（走らせる前に書く）
 
 - 手順 0: spec_core の sim（`make sim-spec-all`）は proj021-m0 のまま通る（2-5 で bit から外れたが、ファイルと試験台は変わっていない）→ **当たった**
+- 2a: `check_wide.py` の鎖は `wide_model.fixed_chain`（dft16 を別の書き方で書いた同じ式）と bit 単位で一致し、浮動小数点とは振幅の許容に入る → **当たった**
 - M-7: 束ねても半 ch は −3 dB のまま、ENBW は 1.01 程度、隣より外は良くなる → **当たった**（上の表）
 
 手順 2（RTL と単体の sim）の予言（2026-10-14、書く前。D-7 の後に書き直した）:
@@ -110,9 +111,9 @@ proj022 で模型と資源の見積もりまで設計したものを RTL にし�
 
 0. 複製と名前の付け替え。spec_core の sim が土台で通るか（2026-10-14 済み、全部通過）
 1. D-1〜D-7 を決める（2026-10-14 済み、上の「決めたこと」）。INTERFACE.md の変更を入れた（同じ日）
-2. wide_core の RTL と単体の sim（S-W1〜S-W3）。ID を D-5 に ← **次はここ**。中の順:
-   2a. `model/wide_model.py` から sim の模型（PFB の整数模型・32768 点の鎖の整数模型・束ね・stim）を切り出す（`sim/check_wide.py`）
-   2b. `wide_pfb.v`（PFB、係数は 4 ADC で 1 組の外の ROM から）＋ 単体の sim（A1）
+2. wide_core の RTL と単体の sim（S-W1〜S-W3）。ID を D-5 に。中の順:
+   2a. `model/wide_model.py` から sim の模型（PFB の整数模型・32768 点の鎖の整数模型・束ね・stim）を切り出す（`sim/check_wide.py`）（2026-10-14 済み）
+   2b. ← **次はここ** `wide_pfb.v`（PFB、係数は 4 ADC で 1 組の外の ROM から）＋ 単体の sim（A1）
    2c. `lane_fft_model.v` を 2048 点に、`wide_core.v`（ひねり係数・dft16・束ね・切り出しの積分器・帳簿）＋ 単体の sim（A2・B・C）
    2d. フレームの頭（D-2）・起動の口・4 ADC の共有（S-W3、陽性対照つき）
 3. build.tcl（窓を外し、wide_core × 4 ＋ RAW）・S-W4・ビルド（B-1）
@@ -123,6 +124,7 @@ proj022 で模型と資源の見積もりまで設計したものを RTL にし�
 - 2026-10-14: `git archive proj021-m0 proj021` から複製した。持ち込まなかったもの: proj021 の README・`docs/` の図（`block_design.py` だけ残した。手順 3 で描き直す）・`runs/`・`pynq/` の測定の結果（png・npz・jsonl・`lin_*`・`resp_*`・`r2*`・`rb*`・`v2*`・`ps2` の json）。足したもの: proj022 の `model/wide_model.py`・`tools/estimate.py`
 - 2026-10-14: 手順 1。spec_core（フレームの頭は入力の口が開いた時点で決まる）・wspec_core（F0 を格子に寄せる、proj017）・specd の始まり（WRST を格子で一斉）を読み、D-1〜D-5 を決めた。モードを ADC ごとにすると係数の共有が崩れることが分かり、D-6 を西村さんに確認した（ADC ごとに独立 → 2 組 × 2 ポート）
 - 2026-10-14: D-7。モードの作り方を相談し、レーン FFT の長さ切り替えをやめて 32768 点の固定長 ＋ ch の束ねにした。`model/bin_resp.py`（M-7）で束ねた ch の応答を出した。D-1・D-2・D-3・D-6 と見積もりを引き直し、INTERFACE.md の変更案を書いた
+- 2026-10-14: 手順 2a。`sim/check_wide.py`（stim・係数の ROM の語・PFB と鎖の整数模型・束ね・切り出しと積分・浮動小数点の参照・A1 の判定）と `make model-wide` を書いた
 - 2026-10-14: 名前の付け替えは「動く名前」だけ: build.tcl の `set proj`・Makefile の配線後の phys_opt の hwh のコピー・`tools/postroute_physopt.tcl` の bit の名前・`pynq/plring.py` と `pynq/spectrometer.py` の既定の bit。コメントの proj021 は経緯なので残した。ID（PROJ・BIT_KIND・BIT_REV）は D-5 のとおり手順 2 で
 
 ## 結果
@@ -141,11 +143,30 @@ proj022 で模型と資源の見積もりまで設計したものを RTL にし�
 - 走らせた場所: **Vivado サーバではなく、作業用のクラウドの環境**（Icarus Verilog 12.0・numpy 2.5.3・2 コアで 9 本並べて ≒ 17 分）。Vivado サーバの版で回し直す必要は、RTL を変える手順 2 で `make sim-all` を回すときに兼ねる
 - D-3 の材料: 今の spec_core の sim は、FFT IP の代わりの `sim/lane_fft_model.v` で **模型と bit 単位**（A）、numpy の浮動小数点とは振幅の許容（B）の 2 層で比べている。長さ切り替えの付いたレーン FFT でも同じ 2 層が取れるかが D-3 の中身
 
+### 手順 2a: sim の模型（`make model-wide` = `python3 sim/check_wide.py selftest`、2026-10-14）
+
+`sim/check_wide.py` を check.py（spec_core）の流儀で書いた。係数と原型は `wide_model.py` から読む（設計の唯一の正を 1 つに保つ）。**selftest は全部通過**（RTL なし、1 秒かからない）:
+
+| | 中身 | 結果 |
+|---|---|---|
+| 係数 | 131072 個・最大 \|c\| 78287（18 bit）。ROM の語（レーン p・番地 m に 4 タップ、t = 0 が下位）の並び | 通過 |
+| PFB | `wide_model` の式と bit 単位・履歴を与えた起動 = 続けて流した模型 | 通過 |
+| 鎖 | Z が `wide_model.fixed_chain`（dft16 を numpy の別の書き方で）と bit 単位（5 フレーム、最大 \|Z\| = 14,250,169 < 2^28） | 通過 |
+| B 層 | 整数の電力 vs 浮動小数点（量子化した係数の PFB ＋ 32768 点 FFT）、SHIFT 7: 差 / 許容の最大 0.44 | 通過 |
+| 束ね | B 1・2・4 で浮動小数点の束ねと一致（0.39〜0.44）。12287.5 の線が B 4 の区切りの両側に半分ずつ（比 1.01） | 通過 |
+| 切り出し・積分 | B 4・S0 0 / B 2・S0 0・4096 / B 1・S0 3000・12288（端） | 通過 |
+| 陽性対照 | ひねり係数の番地 +1（6471）・束ねの区切り +1（19287）・レーン 1 と 2 の取り違え（5935）で落ちる | 落ちた |
+| A1 の道具 | 模型から書いた pfbout.txt で通過、1 個だけ +1 した pfbout.txt で落ちる | 通過・落ちた |
+
+- **SHIFT**: この刺激（最後の ch に振幅 2000 の線）で SHIFT 6 は 18 bit に飽和する（6 個）。SHIFT 7 で飽和なし、SHIFT 4 は飽和の陽性の変種に使う
+- **B 層の盲点（大事）**: PFB の出口を 1 ビート巡回させても、フレームの区切りを 1 ビートずらしても、**定常な刺激では電力は許容の中**（0.42・0.46）。初めは「1 ビートずらし」を陽性対照に置いたが落ちなかった（巡回ずらしは位相しか変えない）。**フレームの区切りの誤りは振幅の比べでは見えず、A1（bit 単位）と C（フレームの頭の T の位相）でしか捕まらない**。selftest に「落ちないこと」として残し、陽性対照はレーンの取り違えに替えた
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
 - [x] INTERFACE.md の変更（D-7）を入れた（2.1・2.4・2.5・4.4・5.2・8. の 8）
-- [ ] 手順 2a: sim の模型を `wide_model.py` から切り出す
+- [x] 手順 2a: sim の模型（`sim/check_wide.py`、selftest 全部通過）
+- [ ] 手順 2b: `wide_pfb.v` と単体の sim（A1）
 
 ## 公開について
 
@@ -156,6 +177,7 @@ study-rfsoc は公開リポジトリ。commit・push の前に、公開前のス
 
 ```bash
 cd model && python3 bin_resp.py && cd ..   # M-7: 束ねた ch の応答
+make model-wide     # 手順 2a: sim の模型の自己検査（RTL なし）
 make sim-spec-all   # 手順 0: spec_core の sim（変種を同時に）。成否は build-sim-logs/*.log の「結果: 全部通過」
 ```
 
