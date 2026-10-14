@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //
-// cmul — 複素乗算 y = round(a · w / 2^16)。w は 18 bit 符号付き・2^16 = 1.0
+// cmul — 複素乗算 y = round(a · w / 2^SH)。w は 18 bit 符号付き・2^16 = 1.0。SH は既定 16（proj023: SAM45-Wide のひねり係数は SH 17 = 16 + D）
 //
 // レイテンシは **4 クロック固定**（valid を持たない。呼ぶ側が同じ段数の遅延線でタグを運ぶ）。
 //   1: 入力を受ける（DSP の A/B レジスタ）
 //   2: 4 つの積（M レジスタ）
 //   3: 和と差 + 丸めの定数 2^15（P レジスタ）
-//   4: 算術右シフト 16 で OW bit に切り詰める
+//   4: 算術右シフト SH で OW bit に切り詰める
 //
 // **|w| ≦ 1 なので |y| ≦ |a|。**成分の最大値は √2 倍になりうるので、OW は
 // 呼ぶ側で「成分 ≦ |a| の上限」から決めること（spec_core.v の冒頭に理由がある）。
@@ -16,7 +16,8 @@
 
 module cmul #(
     parameter integer AW = 24,
-    parameter integer OW = 25
+    parameter integer OW = 25,
+    parameter integer SH = 16      // proj023: 既定 16 のままなら今までと bit 単位で同じ
 )(
     input  wire                 clk,
     input  wire signed [AW-1:0] a_re,
@@ -42,10 +43,10 @@ module cmul #(
         m_ri <= ar * wi;
         m_ir <= ai * wr;
 
-        s_re <= m_rr - m_ii + (1 <<< 15);
-        s_im <= m_ri + m_ir + (1 <<< 15);
+        s_re <= m_rr - m_ii + (1 <<< (SH - 1));
+        s_im <= m_ri + m_ir + (1 <<< (SH - 1));
 
-        y_re <= s_re >>> 16;
-        y_im <= s_im >>> 16;
+        y_re <= s_re >>> SH;
+        y_im <= s_im >>> SH;
     end
 endmodule

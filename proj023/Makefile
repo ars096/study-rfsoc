@@ -587,3 +587,29 @@ sim-wpfb:
 # 係数 ROM の中身を作り直す（model/wide_model.py の原型を変えたときだけ。生成物もコミットする）
 wide-coef:
 	$(PYTHON) tools/gen_wide_coef.py > $(WPFB_COEF)
+
+# ---- proj023 手順 2c-1: wide_chain ＋ wide_tw_rom の単体の sim（判定 A2 の後半: ひねり係数〜束ね。iverilog で 1 本 20 秒ほど）----
+# IP の出口を模型で作って与え（lanes_in.txt）、束ねの出口を模型と bit 単位で比べる。変種は 名前:LB:SHIFT:定義:posctl
+#   wch-b1・b2・b4: 束ね B 1・2・4（SHIFT 7、飽和なし）/ wch-sat: B 4・SHIFT 4（強い線が飽和、束ごとの飽和の数を比べる）/
+#   wch-p: ROM の番地を 1 ずらす（tw_mis が立ち A2 が落ちるべき）/ wch-skew: 束ねの区切りを 1 ずらす（B 4。A2 が落ちるべき）
+# **成否は各ログの「結果: 全部通過」で読む**
+WCH_RTL := src/common/cmul.v src/common/dft16.v src/common/wide_tw_rom.v src/common/wide_chain.v sim/tb_wide_chain.v
+WCH_TW  := src/sam45wide/wide_tw.hex
+WCH_VARIANTS ?= wch-b1:0:7:: wch-b2:1:7:: wch-b4:2:7:: wch-sat:2:4:: wch-p:2:7:-DPOSCTL:posctl wch-skew:2:7:-DBIN_SKEW:posctl
+.PHONY: sim-wch wide-tw
+sim-wch:
+	@mkdir -p build-sim-logs
+	@for v in $(WCH_VARIANTS); do \
+	  nm=$$(echo "$$v" | cut -d: -f1); lb=$$(echo "$$v" | cut -d: -f2); sh=$$(echo "$$v" | cut -d: -f3); \
+	  def=$$(echo "$$v" | cut -d: -f4); pc=$$(echo "$$v" | cut -d: -f5); d=build-sim-$$nm; \
+	  ( mkdir -p $$d && $(PYTHON) sim/check_wide.py genchain $$d 4 && \
+	    $(IVERILOG) -g2005 $$def -DOUT=\"$$d\" -DTWF=\"$(WCH_TW)\" -DLB=$$lb -DSHIFT=$$sh -o $$d/tb $(WCH_RTL) && \
+	    $(VVP) -n $$d/tb && $(PYTHON) sim/check_wide.py chain $$d $$lb $$sh $$pc ) > build-sim-logs/sim-$$nm.log 2>&1 & \
+	done; wait
+	@for f in build-sim-logs/sim-wch*.log; do printf '%-36s %s\n' "$$f" "$$(grep '結果:' $$f || echo '結果の行が無い（途中で落ちた）')"; done
+	@fail=$$(grep -L '結果: 全部通過' build-sim-logs/sim-wch*.log); \
+	  if [ -n "$$fail" ]; then echo "FAIL: $$fail"; exit 1; else echo "sim-wch: 全部通過"; fi
+
+# ひねり係数 ROM の中身を作り直す（生成物もコミットする）
+wide-tw:
+	$(PYTHON) tools/gen_wide_tw.py > $(WCH_TW)

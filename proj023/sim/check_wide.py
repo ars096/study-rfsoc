@@ -5,6 +5,8 @@
     python3 sim/check_wide.py selftest            # 模型どうしの突き合わせと陽性対照（RTL なし。数十秒）
     python3 sim/check_wide.py gen OUT [NF]        # OUT/stim.hex（1 行 = 1 ビート、256 bit）・OUT/stim14.npy を作る
     python3 sim/check_wide.py pfb OUT [posctl]    # A1: OUT/pfbout.txt（wide_pfb の出口）を PFB の整数模型と bit 単位で（手順 2b）
+    python3 sim/check_wide.py genchain OUT [NF]   # OUT/lanes_in.txt（IP の出口を模型で）・stim14.npy（手順 2c-1）
+    python3 sim/check_wide.py chain OUT LB SHIFT [posctl]   # A2 の後半: OUT/chain_out.txt（wide_chain の束ねの出口）を模型と bit 単位で
 
 ---- 鎖（README の D-1・D-3、proj022 の M-4）----
   x 14 bit（ADC の 16 bit の上位 14）
@@ -378,12 +380,71 @@ def check_pfb(out, posctl=False):
     return J.ng
 
 
+# ---------------------------------------------------------------- A2 の後半（手順 2c-1）: wide_chain（ひねり係数〜束ね）
+def gen_chain(out, nf=4):
+    """lanes_in.txt: PFB の整数模型 → IP の行動模型（lanes_ip）の出口を 1 行 = 1 クロック「k1 re0 im0 … re15 im15」で"""
+    os.makedirs(out, exist_ok=True)
+    x = stim(nf)
+    y, _ = pfb_int(x)
+    with open(os.path.join(out, "lanes_in.txt"), "w") as f:
+        for r in range(nf):
+            Yr, Yi = lanes_ip(y[r])
+            for k1 in range(M):
+                f.write("%d %s\n" % (k1, " ".join("%d %d" % (Yr[p, k1], Yi[p, k1]) for p in range(P))))
+    np.save(os.path.join(out, "stim14.npy"), x)
+    print("wrote %s/lanes_in.txt（%d フレーム）" % (out, nf))
+
+
+def check_chain(out, lb, shift, posctl=False):
+    J = Judge()
+    B = 1 << lb
+    x = np.load(os.path.join(out, "stim14.npy"))
+    nf = len(x) // N
+    y, _ = pfb_int(x)
+    got = {}
+    with open(os.path.join(out, "chain_out.txt")) as f:
+        for line in f:
+            v = [int(t) for t in line.split()]
+            got.setdefault(v[0], {})[v[1]] = (v[2], v[3:11])
+    reg = {}
+    with open(os.path.join(out, "chainreg.txt")) as f:
+        reg = {k: int(v) for k, v in (line.split() for line in f if line.strip())}
+    J(sorted(got) == list(range(nf)) and all(len(got[r]) == M // B for r in got),
+      "束ね B %d: %d フレーム × %d 個の束（1 束 = 8 銀行）" % (B, len(got), M // B))
+    J(reg.get("tw_mis") == 0, "tw_mis = %s（ひねり係数の番地が自分の k1 と食い違わなかった）" % reg.get("tw_mis"))
+    nbad, nsat_bad, tot_sat = 0, 0, 0
+    for r in range(nf):
+        Yr, Yi = lanes_ip(y[r])
+        pw, _, (Zr, Zi) = chain_int(Yr, Yi, shift)
+        qs = ((Zr >> shift) > QMAX) | ((Zr >> shift) < QMIN) | ((Zi >> shift) > QMAX) | ((Zi >> shift) < QMIN)   # [k2, k1]
+        pb = bin_power(pw, B)
+        for jb, (st, vals) in got.get(r, {}).items():
+            for k2 in range(8):
+                if vals[k2] != int(pb[jb + (M // B) * k2]):
+                    nbad += 1
+            es = int(qs[:, jb * B:(jb + 1) * B].sum())
+            tot_sat += es
+            nsat_bad += (st != es)
+    J(nbad == 0, "A2: 束ねた電力が模型と bit 単位で一致（不一致 %d / %d）" % (nbad, nf * NCH // B))
+    J(nsat_bad == 0, "飽和の数が束ごとに模型と一致（不一致 %d 束、飽和の総数 %d）" % (nsat_bad, tot_sat))
+    if posctl:
+        ok = J.ng > 0
+        print("結果: 全部通過（陽性対照が落ちるべきところで落ちた）" if ok else "結果: NG（陽性対照が落ちなかった）")
+        return 0 if ok else 1
+    print("結果: 全部通過" if J.ng == 0 else "結果: NG %d 件" % J.ng)
+    return J.ng
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "selftest"
     if cmd == "selftest":
         sys.exit(1 if selftest() else 0)
     elif cmd == "gen":
         gen(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 8)
+    elif cmd == "genchain":
+        gen_chain(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 4)
+    elif cmd == "chain":
+        sys.exit(1 if check_chain(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), len(sys.argv) > 5 and sys.argv[5] == "posctl") else 0)
     elif cmd == "pfb":
         sys.exit(1 if check_pfb(sys.argv[2], len(sys.argv) > 3 and sys.argv[3] == "posctl") else 0)
     else:
