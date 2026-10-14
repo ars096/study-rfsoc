@@ -31,7 +31,7 @@
 | [F-2](F-2.md) | ADC → コアの遅れ（timebase.CAL） | ボード直 | P | 通過 |
 | [W-0](W-0.md) | 窓が流れる | ボード直 | N | 通過 |
 | [W-G](W-G.md) | 窓のスペクトル = numpy FFT | ボード直 | N | 通過（W 256） |
-| [W-1](W-1.md) | SG の CW の ch と周波数 | ボード直 | S | **未** |
+| [W-1](W-1.md) | SG の CW の ch と周波数 | ボード直 | S | 通過（2 回目） |
 | [P-5](P-5.md) | ch の応答 | specd | S | 通過 |
 | [P-8](P-8.md) | 線形性・窓の和 / TP | specd | N（＋ PM・ATT） | 通過（L-2 の B0 に注記） |
 | [V2-a](V2-a.md) | specd の束ね = PL の 40.96 ms | specd | N | 通過 |
