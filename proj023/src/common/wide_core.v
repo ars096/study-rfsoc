@@ -89,7 +89,7 @@ module wide_core #(
     input  wire          m_axis_rec_tready,
     output wire          m_axis_rec_tlast,
     output wire          m_axis_rec_tuser,
-    output wire          rec_drop,
+    output wire [1:0]    rec_drop,           // 流れ s が [s]（読み始めなかったダンプ）
     // sim の記録用
     output wire [16*64-1:0] dbg_ip_tdata,
     output wire [10:0]      dbg_ip_k1,
@@ -292,7 +292,7 @@ module wide_core #(
         .m_tdata(m_axis_rec_tdata), .m_tvalid(m_axis_rec_tvalid), .m_tready(m_axis_rec_tready),
         .m_tlast(m_axis_rec_tlast), .m_tuser(m_axis_rec_tuser),
         .w7hi({18'd0, c_s0_1, 18'd0, c_s0_0}));
-    assign rec_drop = |rec_drop_s;
+    assign rec_drop = rec_drop_s;
     reg [31:0] rec_late [0:1];
     always @(posedge aclk) begin
         if (rst) begin rec_late[0] <= 0; rec_late[1] <= 0; end

@@ -662,3 +662,26 @@ sim-wco:
 	@for f in build-sim-logs/sim-wco*.log; do printf '%-36s %s\n' "$$f" "$$(grep '結果:' $$f || echo '結果の行が無い（途中で落ちた）')"; done
 	@fail=$$(grep -L '結果: 全部通過' build-sim-logs/sim-wco*.log); \
 	  if [ -n "$$fail" ]; then echo "FAIL: $$fail"; exit 1; else echo "sim-wco: 全部通過"; fi
+
+# ---- proj023 手順 3: wide_s45_core（コアの共通 core_cmn ＋ wide_core ＋ RAW ＋ レコードの束ね）の sim ----
+# iverilog で 1 本 5 分ほど。変種は 名前:LB:S0_0:S0_1:SHIFT:定義:posctl（N_ACC 5・N_DUMP 2・格子 2^2 フレーム。RAW は N_ACC 20 フレーム × 2）
+#   ws45-b2: B 2、時刻の健全性をダンプ 1 にだけ / ws45-b4: B 4、出口をときどき止める /
+#   ws45-p: コアの FFT_N（0x80）の書きを wide_core に渡さない（陽性対照。束ねが既定のまま → FFT_N・頭・A2 が落ちるべき）
+WS45_RTL := src/common/wide_coef_rom.v src/common/wide_tw_rom.v src/common/wide_s45_core.v src/common/core_cmn.v src/common/tp_core.v \
+            src/common/raw_core.v src/common/rec_arb.v src/common/wide_core.v src/common/wide_spec.v src/common/wide_pfb.v src/common/wide_chain.v \
+            src/common/wide_acc.v src/common/cmul.v src/common/dft16.v src/common/rec_fr.v src/common/adc_ev.v sim/lane_fft_w_model.v sim/tb_wide_s45.v
+WS45_VARIANTS ?= ws45-b2:1:1000:4096:7:-DTEV: ws45-b4:2:0:0:7:-DSTALL: ws45-p:1:1000:4096:7:-DFFTN_POSCTL:posctl
+.PHONY: sim-ws45
+sim-ws45:
+	@mkdir -p build-sim-logs
+	@for v in $(WS45_VARIANTS); do \
+	  nm=$$(echo "$$v" | cut -d: -f1); lb=$$(echo "$$v" | cut -d: -f2); a=$$(echo "$$v" | cut -d: -f3); b=$$(echo "$$v" | cut -d: -f4); \
+	  sh=$$(echo "$$v" | cut -d: -f5); def=$$(echo "$$v" | cut -d: -f6); pc=$$(echo "$$v" | cut -d: -f7); d=build-sim-$$nm; \
+	  ( mkdir -p $$d && $(PYTHON) sim/check_wide.py gen $$d 6 && \
+	    $(IVERILOG) -g2005 $$def -DOUT=\"$$d\" -DCOEF=\"$(WPFB_COEF)\" -DTWF=\"$(WCH_TW)\" -DLB=$$lb -DS00=$$a -DS01=$$b -DSHIFT=$$sh \
+	      -DNACC=5 -DGF=2 -o $$d/tb $(WS45_RTL) && \
+	    $(VVP) -n $$d/tb && $(PYTHON) sim/check_wide.py s45 $$d $$pc ) > build-sim-logs/sim-$$nm.log 2>&1 & \
+	done; wait
+	@for f in build-sim-logs/sim-ws45*.log; do printf '%-36s %s\n' "$$f" "$$(grep '結果:' $$f || echo '結果の行が無い（途中で落ちた）')"; done
+	@fail=$$(grep -L '結果: 全部通過' build-sim-logs/sim-ws45*.log); \
+	  if [ -n "$$fail" ]; then echo "FAIL: $$fail"; exit 1; else echo "sim-ws45: 全部通過"; fi

@@ -8,6 +8,7 @@
     python3 sim/check_wide.py genchain OUT [NF]   # OUT/lanes_in.txt（IP の出口を模型で）・stim14.npy（手順 2c-1）
     python3 sim/check_wide.py chain OUT LB SHIFT [posctl]   # A2 の後半: OUT/chain_out.txt（wide_chain の束ねの出口）を模型と bit 単位で
     python3 sim/check_wide.py spec OUT [posctl]    # 手順 2c-2: wide_spec の A1'・A2・B・C（OUT/meta.txt・lanes.txt・dumps.txt）
+    python3 sim/check_wide.py s45 OUT [posctl]     # 手順 3: wide_s45_core（SPEC を core と同じに・RAW の SNAP・コアの共通の読み）
     python3 sim/check_wide.py core OUT [posctl]    # 手順 2c-3: wide_core の SPEC のレコード（頭の語・中身）とレジスタ（OUT/recs.txt・meta.txt・lanes.txt）
 
 ---- 鎖（README の D-1・D-3、proj022 の M-4）----
@@ -479,6 +480,11 @@ def judge_dumps(J, meta, stim14, lanes, dumps):
     s0 = [meta["c_s0_0"], meta["c_s0_1"]]
     en = [True, lb != 2]
     L = len(stim14)
+    if "LB_REQ" in meta:                                 # **期待は tb が書いた値から**（DUT が今効かせている値を期待にしない。手順 3 の陽性対照で分かった）
+        s0ok = all(meta["S0%d_REQ" % s] == s0[s] for s in (0, 1) if en[s] and meta["S0%d_REQ" % s] <= (NCH >> meta["LB_REQ"]) - SLICE)
+        J(lb == meta["LB_REQ"] and sh == meta["SHIFT_REQ"] and s0ok,
+          "設定が効いた: 束ね log2 B %d（書いた値 %d）・SHIFT %d（%d）・S0 %s（%s）"
+          % (lb, meta["LB_REQ"], sh, meta["SHIFT_REQ"], s0, [meta["S00_REQ"], meta["S01_REQ"]]))
 
     def frame_x(fa):
         n0 = KF + M * fa - T0
@@ -568,7 +574,7 @@ def check_spec(out, posctl=False):
 
 
 # ---------------------------------------------------------------- 手順 2c-3: wide_core（流れのブロック・レコード）
-def check_core(out, posctl=False):
+def check_core(out, posctl=False, s45=False):
     """recs.txt（SPEC のレコード）・meta.txt（レジスタの読み）・lanes.txt を読み、頭の各語とレジスタを照らし、中身を judge_dumps で"""
     J = Judge()
     meta, stim14, lanes = load_meta_lanes(out)
@@ -584,6 +590,17 @@ def check_core(out, posctl=False):
             else:
                 recs.append((cur, int(t[1])))
                 cur = []
+    if s45:                                              # 手順 3: レコードは TP・SPEC・SNAP が混ざる。SPEC だけを下で比べる
+        typ = [(r[0] >> 40) & 0xFF if r else -1 for r, u in recs]
+        snaps = [r for (r, u), t in zip(recs, typ) if t == 4]
+        J(len(snaps) == meta["NDUMP"] and all(u == 0 and ((r[0] >> 56) & 0xFF) == 2 and len(r) == 8 + 2048 for r, u in
+                                                ((r, u) for (r, u), t in zip(recs, typ) if t == 4)),
+          "RAW の SNAP のレコード %d 個（期待 %d、s = 2・8 ＋ 2048 語・tuser 0）。レコードの種類 %s" % (len(snaps), meta["NDUMP"], sorted(set(typ))))
+        recs = [ru for ru, t in zip(recs, typ) if t == 1]
+        J(meta["IF_ID"] == 0x02010101 and meta["PROJ"] == 0x00230100 and meta["NSTREAM"] == 3 and meta["CORE_PORT"] == 2
+          and meta["GB_STAT"] == 0x12345678 and meta["SID2"] == 0x02040200 and meta["NOBLK"] == 0,
+          "コアの共通: IF_ID 0x%08x（{2, BIT_KIND 1, BIT_REV 1, 1}）・PROJ 0x%08x・NSTREAM %d・CORE_PORT %d・GB_STAT・RAW の SID 0x%08x・空きの番地 %d"
+          % (meta["IF_ID"], meta["PROJ"], meta["NSTREAM"], meta["CORE_PORT"], meta["SID2"], meta["NOBLK"]))
     nexp = meta["NDUMP"] * (1 if lb == 2 else 2)
     J(len(recs) == nexp and all(len(r) == 8 + SLICE and u == 0 for r, u in recs),
       "レコード %d 個（期待 %d）、どれも 8 ＋ 4096 語・tuser 0" % (len(recs), nexp))
@@ -646,6 +663,8 @@ if __name__ == "__main__":
         sys.exit(1 if check_chain(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), len(sys.argv) > 5 and sys.argv[5] == "posctl") else 0)
     elif cmd == "core":
         sys.exit(1 if check_core(sys.argv[2], len(sys.argv) > 3 and sys.argv[3] == "posctl") else 0)
+    elif cmd == "s45":
+        sys.exit(1 if check_core(sys.argv[2], len(sys.argv) > 3 and sys.argv[3] == "posctl", s45=True) else 0)
     elif cmd == "spec":
         sys.exit(1 if check_spec(sys.argv[2], len(sys.argv) > 3 and sys.argv[3] == "posctl") else 0)
     elif cmd == "pfb":

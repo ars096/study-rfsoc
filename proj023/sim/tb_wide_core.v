@@ -52,7 +52,8 @@ module tb_wide_core;
     reg  [7:0]  fftn_wd = 8'd13;
     wire [31:0] fftn_rd;
     wire [63:0] rec_d;
-    wire        rec_v, rec_l, rec_u, rec_drop;
+    wire        rec_v, rec_l, rec_u;
+    wire [1:0]  rec_drop;
     reg         rec_r = 1'b1;
     wire [16*64-1:0] ip_d;
     wire [10:0] ip_k1;
@@ -114,7 +115,7 @@ module tb_wide_core;
     always @(posedge clk) rec_r <= ($random(sd) % 16) != 0;    // 16 クロックに 1 回くらい止める（4 に 1 回では N_ACC 5 のダンプ 2 本を出し切れず、rec_fr が正しく late にした。2c-3 の 1 回目）
 `endif
 
-    integer fm, nexp;
+    integer fm, nexp, wcnt;
     reg [63:0] fa_run;
     initial begin
         fl = $fopen({`OUT, "/lanes.txt"}, "w");
@@ -148,9 +149,11 @@ module tb_wide_core;
         @(posedge clk); tev <= 4'b0010;
         @(posedge clk); tev <= 4'd0;
 `endif
-        while (nrec < nexp) @(posedge clk);
+        wcnt = 0;                                        // 期待の数が来ないとき（陽性対照）は、ダンプが出揃うはずの時間 ＋ 余裕で打ち切る
+        while (nrec < nexp && wcnt < (`NACC * NDUMP + 40) * 2048) begin @(posedge clk); wcnt = wcnt + 1; end
         repeat (20) @(posedge clk);
         fm = $fopen({`OUT, "/meta.txt"}, "w");
+        $fwrite(fm, "LB_REQ %0d\nS00_REQ %0d\nS01_REQ %0d\nSHIFT_REQ %0d\n", `LB, `S00, `S01, `SHIFT);
         $fwrite(fm, "T0 %0d\nKF %0d\nLB %0d\nS00 %0d\nS01 %0d\nSHIFT %0d\nNACC %0d\nNDUMP %0d\nGF %0d\nf_first %0d\nfa_run %0d\nc_s0_0 %0d\nc_s0_1 %0d\n",
                 T0, KF, dut.c_lb, `S00, `S01, dut.c_shift, `NACC, NDUMP, `GF, dut.u_spec.f_first, fa_run, dut.c_s0_0, dut.c_s0_1);
         axr(11'h018); $fwrite(fm, "flags %0d\n", rv);

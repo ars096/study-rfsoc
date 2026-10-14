@@ -129,6 +129,7 @@ module tb_wide_spec;
         end
         repeat (10) @(posedge clk);
         fm = $fopen({`OUT, "/meta.txt"}, "w");
+        $fwrite(fm, "LB_REQ %0d\nS00_REQ %0d\nS01_REQ %0d\nSHIFT_REQ %0d\n", `LB, `S00, `S01, `SHIFT);
         $fwrite(fm, "T0 %0d\nKF %0d\nLB %0d\nS00 %0d\nS01 %0d\nSHIFT %0d\nNACC %0d\nNDUMP %0d\nGF %0d\nf_first %0d\nfa_run %0d\nflags %0d\nc_s0_0 %0d\nc_s0_1 %0d\nen %0d\n",
                 T0, KF, c_lb, `S00, `S01, c_shift, `NACC, NDUMP, `GF, dut.f_first, fa_run, flags, c_s0_0, c_s0_1, c_en);
         $fclose(fm); $fclose(fl); $fclose(fd);
