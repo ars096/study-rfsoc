@@ -37,7 +37,7 @@
 | [V2-a](V2-a.md) | specd の束ね = PL の 40.96 ms | specd | N | 通過 |
 | [V2-b](V2-b.md) | 10.24 ms で 30 分 | specd | N | 通過 |
 | [V2-c](V2-c.md) | W-G をレコードの道で | ボード直 | N | 通過 |
-| [V2-d](V2-d.md) | LOAD で bit を往復 | specd | N | **NG → specd を直して回し直し** |
+| [V2-d](V2-d.md) | LOAD で bit を往復 | specd | N | 通過（2 回目） |
 | [V2-e](V2-e.md) | TP のレコード = AXI4-Lite の TP のリング | ボード直 | N | 通過 |
 | [V2-f](V2-f.md) | 5.1 の見張り（DDC 8 本） | ボード直 | N | 通過 |
 | [V2-g](V2-g.md) | リングの溢れ・キャッシュ（陽性対照） | ボード直 | N | 通過 |

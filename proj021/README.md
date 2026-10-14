@@ -2038,7 +2038,7 @@ ID は今まで使ったもの（F-0・W-0・V2-a・P-5 など）をそのまま
 | V2-a | specd の束ね 4 個 = PL の 40.96 ms 1 個（整数で） | `s45v2a` | 通過 |
 | V2-b | 10.24 ms で 30 分: 欠け・CRC 0 | specrecv | 通過（2026-10-14、欠け 0。陽性対照 kgap 8・tdev 0） |
 | V2-c | W-G を REC_CTRL（ONE \| SNAP）で | `plring --golden` | 通過 |
-| V2-d | LOAD で proj020 ↔ proj021 を往復 | specctl LOAD | **未**（2-3d の bit） |
+| V2-d | LOAD で proj020 ↔ proj021 を往復 | specctl LOAD | 通過（2026-10-14、1 回目は specd の不具合 2 つで NG → 86fe33b で直して通過） |
 | V2-e | TP のレコード = AXI4-Lite の TP のリング | `plring --tpcompare` | 通過（2026-10-14、不一致 0） |
 | V2-f | 5.1 の見張り（DUMP_T − m·BASE 一定）を DDC 8 本で | `s45v2f` | 通過 |
 | V2-g | リングの溢れ・キャッシュの陽性対照、soak | `plring --soak`（`--pause`・`--no-inval`） | 通過（2026-10-14、陽性対照: 飛び 2,544 = DROP 2,544・古い行 1） |
@@ -2102,6 +2102,12 @@ B2b で変えた見張り（σ を 1 s に 1 回）のせいか、その時の�
 **直し（実装、2026-10-14）**: `specd.py`（`_watch_data` で `socket.timeout` は待ち続ける・STATUS は `r.get(k, "-")`）・`test_fake.sh`（`idle` を足す）
 - **test_fake `idle`: 直す前は NG**（specd のログ「切断（受け側が閉じた）」が繋いでから 10 s 後、SPEC 0）、**直した後は通過**（SPEC 160）。`all` の 13 試験とも通過
 - STATUS の `-` は PC では確かめていない（proj020 の取得が要る）。V2-d の回し直しで確かめる
+
+**V2-d の回し直し（2026-10-14、`v2d`、86fe33b の specd）: 通過**。予言どおり
+- specrecv は SEND ON の後、何も受けずに LOAD の 20.3 s を待って**切られなかった**（data_drop -）。受け 1 本で **SPEC 800**・版 {1: 570, 2: 608}・EVENT 6（LOAD 2）、CRC・欠け・説明のない欠け・dup・kgap・tdev・tp_gap 0、照合 通過
+- proj020 のとき: ID win_id 00200100・adc_id 0020a100・time_id 00207101、**STATUS が答えた**（`tp_jump=-`・pl_* は `-`）、time_ok=1、START n=50 → 8 窓 × 50・miss 0
+- proj021 に戻ったとき: ID 02030000・02020301・02020302、STATUS に tp_jump 0,0,0,0・pl_*、START の EVENT に proto 2・fmt f32・read ring、8 窓 × 50・miss 0、TP の anch_dev 0・gap 0
+- LOAD 20.3・20.4 s
 
 ## 検討事項（決定ではない）
 
