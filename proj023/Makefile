@@ -613,3 +613,29 @@ sim-wch:
 # ひねり係数 ROM の中身を作り直す（生成物もコミットする）
 wide-tw:
 	$(PYTHON) tools/gen_wide_tw.py > $(WCH_TW)
+
+# ---- proj023 手順 2c-2: wide_spec（PFB → IP の行動模型 → 鎖 → 束ね → 切り出しの積分器 → 帳簿）の sim（判定 A1'・A2・B・C）----
+# iverilog で 1 本 4〜5 分（IP の行動模型の倍精度 FFT と鎖が重い）。変種は 名前:LB:S0_0:S0_1:SHIFT:定義:posctl（N_ACC 5・N_DUMP 2・格子 2^2 フレーム）
+#   wsp-b1: B 1（512 MHz）、S0 100（銀行の途中から）・12288（上の端）/ wsp-b2: B 2（1 GHz）、S0 1000・4096（上の端）/
+#   wsp-b4: B 4（全帯域、流れ 1 は空）/ wsp-sat: B 4・SHIFT 4（飽和、DUMP_SAT を比べる）/
+#   wsp-pg: K_F を 1 ずらした DUT（D-2 のフレームの区切りの陽性対照。A1' が落ちるべき）/
+#   wsp-pa: B 1 で積分器の番地の上の bit を見ない（書き込みの衝突の陽性対照。flags[7] と A2 が落ちるべき）
+# **成否は各ログの「結果: 全部通過」で読む**。Vivado サーバで流すときは WSP_VARIANTS を全部（既定）、手元で急ぐときは 1 本ずつ
+WSP_RTL := src/common/wide_coef_rom.v src/common/wide_tw_rom.v src/common/wide_spec.v src/common/wide_pfb.v src/common/wide_chain.v \
+           src/common/wide_acc.v src/common/cmul.v src/common/dft16.v sim/lane_fft_w_model.v sim/tb_wide_spec.v
+WSP_VARIANTS ?= wsp-b1:0:100:12288:7:: wsp-b2:1:1000:4096:7:: wsp-b4:2:0:0:7:: wsp-sat:2:0:0:4:: \
+                wsp-pg:2:0:0:7:-DPOSCTL_GRID:posctl wsp-pa:0:100:12288:7:-DACC_POSCTL:posctl
+.PHONY: sim-wsp
+sim-wsp:
+	@mkdir -p build-sim-logs
+	@for v in $(WSP_VARIANTS); do \
+	  nm=$$(echo "$$v" | cut -d: -f1); lb=$$(echo "$$v" | cut -d: -f2); a=$$(echo "$$v" | cut -d: -f3); b=$$(echo "$$v" | cut -d: -f4); \
+	  sh=$$(echo "$$v" | cut -d: -f5); def=$$(echo "$$v" | cut -d: -f6); pc=$$(echo "$$v" | cut -d: -f7); d=build-sim-$$nm; \
+	  ( mkdir -p $$d && $(PYTHON) sim/check_wide.py gen $$d 6 && \
+	    $(IVERILOG) -g2005 $$def -DOUT=\"$$d\" -DCOEF=\"$(WPFB_COEF)\" -DTWF=\"$(WCH_TW)\" -DLB=$$lb -DS00=$$a -DS01=$$b -DSHIFT=$$sh \
+	      -DNACC=5 -DGF=2 -o $$d/tb $(WSP_RTL) && \
+	    $(VVP) -n $$d/tb && $(PYTHON) sim/check_wide.py spec $$d $$pc ) > build-sim-logs/sim-$$nm.log 2>&1 & \
+	done; wait
+	@for f in build-sim-logs/sim-wsp*.log; do printf '%-36s %s\n' "$$f" "$$(grep '結果:' $$f || echo '結果の行が無い（途中で落ちた）')"; done
+	@fail=$$(grep -L '結果: 全部通過' build-sim-logs/sim-wsp*.log); \
+	  if [ -n "$$fail" ]; then echo "FAIL: $$fail"; exit 1; else echo "sim-wsp: 全部通過"; fi

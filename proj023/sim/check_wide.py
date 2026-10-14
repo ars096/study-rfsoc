@@ -7,6 +7,7 @@
     python3 sim/check_wide.py pfb OUT [posctl]    # A1: OUT/pfbout.txt（wide_pfb の出口）を PFB の整数模型と bit 単位で（手順 2b）
     python3 sim/check_wide.py genchain OUT [NF]   # OUT/lanes_in.txt（IP の出口を模型で）・stim14.npy（手順 2c-1）
     python3 sim/check_wide.py chain OUT LB SHIFT [posctl]   # A2 の後半: OUT/chain_out.txt（wide_chain の束ねの出口）を模型と bit 単位で
+    python3 sim/check_wide.py spec OUT [posctl]    # 手順 2c-2: wide_spec の A1'・A2・B・C（OUT/meta.txt・lanes.txt・dumps.txt）
 
 ---- 鎖（README の D-1・D-3、proj022 の M-4）----
   x 14 bit（ADC の 16 bit の上位 14）
@@ -435,6 +436,115 @@ def check_chain(out, lb, shift, posctl=False):
     return J.ng
 
 
+# ---------------------------------------------------------------- 手順 2c-2: wide_spec（PFB → IP → 鎖 → 積分 → 帳簿）
+def check_spec(out, posctl=False):
+    """meta.txt・lanes.txt・dumps.txt を読み、A1'（IP の出口の区切り）・A2・B・C を判定する"""
+    J = Judge()
+    meta = {}
+    with open(os.path.join(out, "meta.txt")) as f:
+        for line in f:
+            k, v = line.split()
+            meta[k] = int(v)
+    T0, KF, lb, sh, nacc, ndump, gf = (meta[k] for k in ("T0", "KF", "LB", "SHIFT", "NACC", "NDUMP", "GF"))
+    B, ff, fa_run = 1 << lb, meta["f_first"], meta["fa_run"]
+    s0 = [meta["c_s0_0"], meta["c_s0_1"]]
+    en = [True, lb != 2]
+    stim14 = np.load(os.path.join(out, "stim14.npy"))
+    L = len(stim14)
+
+    def frame_x(fa):                                     # フレーム fa（T = KF + 2048·fa から）の 32768 サンプル
+        n0 = KF + M * fa - T0
+        idx = (P * n0 + np.arange(N)) % L
+        return stim14[idx]
+
+    # IP の出口（出口の通し番号 r = フレーム ff + r）
+    lanes = {}
+    with open(os.path.join(out, "lanes.txt")) as f:
+        for line in f:
+            v = line.split()
+            r, k1 = int(v[0]), int(v[1])
+            a = lanes.setdefault(r, (np.zeros((P, M), np.int64), np.zeros((P, M), np.int64), np.zeros(M, bool)))
+            vals = np.array(v[2:], dtype=np.int64)
+            a[0][:, k1] = vals[0::2]
+            a[1][:, k1] = vals[1::2]
+            a[2][k1] = True
+    lanes = {r: a for r, a in lanes.items() if a[2].all()}
+
+    # ダンプ
+    dumps = []
+    with open(os.path.join(out, "dumps.txt")) as f:
+        cur = None
+        for line in f:
+            t = line.split()
+            if t[0] == "dump":
+                cur = dict(zip(("s", "seq", "k", "f0", "n", "sat", "plane"), (int(x) for x in t[1:])), v=[])
+                dumps.append(cur)
+            else:
+                cur["v"].append(int(t[1]))
+
+    J(meta["flags"] == 0, "flags = %02x（係数・ひねり係数の見張り・途切れ・IP の事象・k1 の飛び・書き込みの衝突が無い）" % meta["flags"])
+    nexp = ndump * (2 if en[1] else 1)
+    J(len(dumps) == nexp and all(len(d["v"]) == SLICE for d in dumps), "ダンプ %d 個（期待 %d）× 4096 ch" % (len(dumps), nexp))
+
+    # C: 帳簿
+    F0 = ((fa_run >> gf) + 2) << gf
+    okc = True
+    for d in dumps:
+        okc &= d["f0"] == F0 + d["k"] * nacc and d["n"] == nacc and d["seq"] == d["k"] + 1 and d["plane"] == d["k"] % 2
+    J(okc, "C: DUMP_F0 = F0 ＋ k·N_ACC（F0 = %d = (⌊fa_run / 2^%d⌋ + 2)·2^%d、格子に乗る）・DUMP_N・SEQ・面" % (F0, gf, gf))
+    J(F0 % (1 << gf) == 0 and (KF + M * F0 - KF) % (M << gf) == 0,
+      "C: ダンプの区切りの T = K_F ＋ 2048·F0 は T ≡ K_F（mod 2048·2^%d）に乗る" % gf)
+
+    # 模型の PFB（ff から 0 の履歴）
+    nfr = max(d["f0"] + d["n"] for d in dumps) - ff + 1 if dumps else 0
+    xs = np.concatenate([frame_x(ff + r) for r in range(nfr)])
+    ymod, _ = pfb_int(xs)
+
+    # A1': 記録した IP の出口 = 模型の区切りで作った PFB → DFT（丸めの差 ±1 まで）。D-2 の区切り（T ≡ K_F）を IP の手前で確かめる
+    worst = 0
+    for r in sorted(lanes):
+        if r >= nfr:
+            continue
+        Yr, Yi = lanes_ip(ymod[r])
+        worst = max(worst, int(np.abs(lanes[r][0] - Yr).max()), int(np.abs(lanes[r][1] - Yi).max()))
+    J(len(lanes) > 0 and worst <= 1, "A1': IP の出口が、T ≡ K_F で区切った模型の PFB → DFT と ±1 で一致（最大の差 %d、%d フレーム）" % (worst, len(lanes)))
+
+    # A2・B・飽和
+    bad_a, worst_b, bad_sat, nsatch = 0, 0.0, 0, 0
+    for d in dumps:
+        s, f0, n = d["s"], d["f0"], d["n"]
+        acc = np.zeros(SLICE, dtype=object)
+        accf = np.zeros(SLICE)
+        smask = np.zeros(SLICE, bool)                    # 飽和した細かい ch を含む束ねた ch（B では比べない。値が浮動小数点と違って当たり前）
+        sat = 0
+        for f in range(f0, f0 + n):
+            r = f - ff
+            if r not in lanes:
+                bad_a += SLICE
+                continue
+            pw, ns, (Zr, Zi) = chain_int(lanes[r][0], lanes[r][1], sh)
+            sat += ns
+            qs = (((Zr >> sh) > QMAX) | ((Zr >> sh) < QMIN) | ((Zi >> sh) > QMAX) | ((Zi >> sh) < QMIN)).reshape(-1)
+            smask |= qs.reshape(-1, B).any(axis=1)[s0[s]:s0[s] + SLICE]
+            acc += bin_power(pw, B)[s0[s]:s0[s] + SLICE].astype(object)
+            accf += bin_power(float_power(xs, r, sh), B)[s0[s]:s0[s] + SLICE]
+        got = np.array(d["v"], dtype=object)
+        bad_a += int(np.sum(got != acc))
+        keep = ~smask
+        worst_b = max(worst_b, amp_compare(np.array(d["v"], dtype=np.float64)[keep], accf[keep], tol_lsb=4.0 * n, rel=2e-3))
+        nsatch += int(smask.sum())
+        bad_sat += (d["sat"] != sat)
+    J(bad_a == 0, "A2: ダンプが、記録した IP の出口から作った模型（鎖・束ね・切り出し・積分）と bit 単位で一致（不一致 %d）" % bad_a)
+    J(worst_b <= 1.0, "B: ダンプが刺激からの浮動小数点（PFB ＋ 32768 点 ＋ 束ね）と振幅で一致（差 / 許容 の最大 %.2f。飽和を含む ch %d 個は除いた）" % (worst_b, nsatch))
+    J(bad_sat == 0, "飽和の数（DUMP_SAT）が模型と一致（不一致 %d ダンプ）" % bad_sat)
+    if posctl:
+        ok = J.ng > 0
+        print("結果: 全部通過（陽性対照が落ちるべきところで落ちた）" if ok else "結果: NG（陽性対照が落ちなかった）")
+        return 0 if ok else 1
+    print("結果: 全部通過" if J.ng == 0 else "結果: NG %d 件" % J.ng)
+    return J.ng
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "selftest"
     if cmd == "selftest":
@@ -445,6 +555,8 @@ if __name__ == "__main__":
         gen_chain(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 4)
     elif cmd == "chain":
         sys.exit(1 if check_chain(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), len(sys.argv) > 5 and sys.argv[5] == "posctl") else 0)
+    elif cmd == "spec":
+        sys.exit(1 if check_spec(sys.argv[2], len(sys.argv) > 3 and sys.argv[3] == "posctl") else 0)
     elif cmd == "pfb":
         sys.exit(1 if check_pfb(sys.argv[2], len(sys.argv) > 3 and sys.argv[3] == "posctl") else 0)
     else:
