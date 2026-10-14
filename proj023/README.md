@@ -253,7 +253,7 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 | wco-p（陽性対照） | 語 7 の S0_CUR を入れない | 落ちた（頭の照合） |
 
 - **wco-b2 の 1 回目は落ちた**: 出口を 4 クロックに 1 回止めたら、流れ 1 の最初のレコードが tuser 1（捨て）・REC_LATE1 = 1 になった。出口の速さ 3/4 でレコード 1 個（4104 語）に ≒ 5,500 クロック、2 本で ≒ 11,000 クロックが、N_ACC 5（10,240 クロック）の間に出し切れないので、**rec_fr が正しく late にした**（凍った面がダンプ k + 2 の頭で上書きされる前に読み終わらない）。試験の負荷を 16 に 1 回に直した。本番の N_ACC 1280（2.6 M クロック）では起きない
-- rec_fr の W7HI は、既定 0 のとき語 7 が今までと同じ値（{0, 32768}）になる。**spec_core・win_core・raw_core のレコードの sim（sim-ring・sim-raw）を Vivado サーバで回し直して確かめる**
+- rec_fr の W7HI は、既定 0 のとき語 7 が今までと同じ値（{0, 32768}）になる。win_core・raw_core のレコードの sim（sim-ring・sim-raw）を Vivado サーバで回し直し、どちらも通過した（2026-10-14）
 
 ## 結論・次にやること
 
@@ -267,7 +267,7 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 - [x] `make sim-wch` も Vivado サーバで回し直した（2026-10-14）: 6 本とも全部通過、数字も作業用の環境と同じ（A2 不一致 0・飽和の総数 20・陽性対照の不一致 7,213 と 16,308）。**2a〜2c-2 の sim はすべて Vivado サーバで通った**
 - [x] 手順 2c-3: `wide_core.v`（流れのブロック × 2・FFT_N の口・ARM_*・DUMP_H・SPEC のレコード）と sim（4 本、作業用の環境で通過）
 - [x] Vivado サーバで `make sim-wco`（4 本）と `make sim-wsp`（wide_spec の出口を足した後の回帰、6 本）が全部通過（2026-10-14）
-- [ ] Vivado サーバで `make sim-ring sim-raw`（rec_fr に W7HI を足した後の既存のレコードの sim）
+- [x] Vivado サーバで `make sim-ring sim-raw`（rec_fr に W7HI を足した後の既存のレコードの sim）: sim-ring は総合 通過（all・late・snap ＋ 陽性対照 snap-nochk・flip）、sim-raw は通過（レコード 12 個・中身と頭の不一致 0）。**rec_fr の変更は既存のレコードを変えていない**（2026-10-14）
 - [ ] 手順 3: s45_core に wide_core を載せる・build.tcl・ビルド
 
 ## 公開について
