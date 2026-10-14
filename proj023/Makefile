@@ -564,3 +564,26 @@ sim-all:
 .PHONY: model-wide
 model-wide:
 	$(PYTHON) sim/check_wide.py selftest
+
+# ---- proj023 手順 2b: wide_pfb ＋ wide_coef_rom の単体の sim（判定 A1。iverilog で 1 本数秒）----
+# 3 本を並べる: 本番（A1 が通るべき）/ -p: ROM の番地を 1 ずらす（coef_mis が立ち A1 が落ちるべき）/
+# -nm: 起動の直後のマスクを外す（最初の 3 フレームが履歴のごみを拾い A1 が落ちるべき）。
+# **成否は make の終了状態ではなく、各ログの「結果: 全部通過」で読む**（陽性対照は「落ちるべきところで落ちた」で通過）
+WPFB_RTL := src/common/wide_coef_rom.v src/common/wide_pfb.v sim/tb_wide_pfb.v
+WPFB_COEF := src/sam45wide/wide_coef.hex
+.PHONY: sim-wpfb wide-coef
+sim-wpfb:
+	@mkdir -p build-sim-logs
+	@for v in "wpfb::" "wpfb-p:-DPOSCTL:posctl" "wpfb-nm:-DPFB_NOMASK:posctl"; do \
+	  nm=$${v%%:*}; r=$${v#*:}; def=$${r%%:*}; pc=$${r#*:}; d=build-sim-$$nm; \
+	  ( mkdir -p $$d && $(PYTHON) sim/check_wide.py gen $$d 6 && \
+	    $(IVERILOG) -g2005 $$def -DOUT=\"$$d\" -DCOEF=\"$(WPFB_COEF)\" -o $$d/tb $(WPFB_RTL) && \
+	    $(VVP) -n $$d/tb && $(PYTHON) sim/check_wide.py pfb $$d $$pc ) > build-sim-logs/sim-$$nm.log 2>&1 & \
+	done; wait
+	@for f in build-sim-logs/sim-wpfb*.log; do printf '%-36s %s\n' "$$f" "$$(grep '結果:' $$f || echo '結果の行が無い（途中で落ちた）')"; done
+	@fail=$$(grep -L '結果: 全部通過' build-sim-logs/sim-wpfb*.log); \
+	  if [ -n "$$fail" ]; then echo "FAIL: $$fail"; exit 1; else echo "sim-wpfb: 全部通過"; fi
+
+# 係数 ROM の中身を作り直す（model/wide_model.py の原型を変えたときだけ。生成物もコミットする）
+wide-coef:
+	$(PYTHON) tools/gen_wide_coef.py > $(WPFB_COEF)

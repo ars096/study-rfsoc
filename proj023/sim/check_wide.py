@@ -360,6 +360,13 @@ def check_pfb(out, posctl=False):
     ymod, ysat = pfb_int(x)
     nf = len(x) // N
     J(len(got) >= 4, "揃ったフレーム %d 個（4 個以上）" % len(got))
+    reg = {}
+    rp = os.path.join(out, "pfbreg.txt")
+    if os.path.exists(rp):
+        with open(rp) as f:
+            reg = {k: int(v) for k, v in (line.split() for line in f if line.strip())}
+        J(reg.get("coef_mis") == 0, "coef_mis = %s（係数の番地が自分の m と食い違わなかった）" % reg.get("coef_mis"))
+        J(reg.get("sat_cnt") == ysat, "sat_cnt = %s（模型の飽和 %d）" % (reg.get("sat_cnt"), ysat))
     mis = {r: int(np.sum(got[r] != ymod[r % nf])) for r in sorted(got) if r < nf}
     J(len(mis) > 0 and all(v == 0 for v in mis.values()),
       "A1: PFB の出口が模型と bit 単位で一致（不一致 %s）" % mis)
