@@ -35,7 +35,7 @@
 | [P-5](P-5.md) | ch の応答 | specd | S | 通過 |
 | [P-8](P-8.md) | 線形性・窓の和 / TP | specd | N（＋ PM・ATT） | 通過（L-2 の B0 に注記） |
 | [V2-a](V2-a.md) | specd の束ね = PL の 40.96 ms | specd | N | 通過 |
-| [V2-b](V2-b.md) | 10.24 ms で 30 分 | specd | N | **未** |
+| [V2-b](V2-b.md) | 10.24 ms で 30 分 | specd | N | 通過（陽性対照 未） |
 | [V2-c](V2-c.md) | W-G をレコードの道で | ボード直 | N | 通過 |
 | [V2-d](V2-d.md) | LOAD で bit を往復 | specd | N | **NG → specd を直して回し直し** |
 | [V2-e](V2-e.md) | TP のレコード = AXI4-Lite の TP のリング | ボード直 | N | 通過 |
