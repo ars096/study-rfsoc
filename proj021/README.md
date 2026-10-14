@@ -2117,6 +2117,16 @@ SG と分光計が同じ外部 10 MHz に乗っているので ppm はほぼ 0�
 - proj021 に戻ったとき: ID 02030000・02020301・02020302、STATUS に tp_jump 0,0,0,0・pl_*、START の EVENT に proto 2・fmt f32・read ring、8 窓 × 50・miss 0、TP の anch_dev 0・gap 0
 - LOAD 20.3・20.4 s
 
+### 移植元を決める（YATSUGATAKE の移植計画 M0 の前提、2026-10-14、書く前の設計）
+
+**決めること**: YATSUGATAKE に移す study-rfsoc の commit を 1 つに決め、その commit に対応する bit を「同一性の判定（M3）」の比べの相手として数で書き残す。
+
+- **bit**: 2-5 の `build/`（既定の戦略）の `proj021.bit`。ビルドに効くファイル（`src/`・`build.tcl`・`clocks/`・`Makefile`・`program.tcl`）の最後の変更は **02ce268**（2-5 の build.tcl の直し）で、その後の commit は PS・sim・文書だけ。
+  ボードに載っているもの（bits.json の proj021、LOAD の EVENT の sha256 `a99b7a96b14b51deb8738bed7bce203ca6c753f4eca5a24227da7193bf0814e8`）と、Vivado サーバの `build/proj021.bit` が同じことを sha256 で確かめる
+- **移植元の commit**: この節に値を書き込む commit（PS は 86fe33b の直しを含み、21 判定がこの PS で通った）。commit の番号は自分では書けないので、**注釈つきのタグ `proj021-m0`** を付けて指す（push はタグも）
+- **書き残す値**（M3 の表の順）: bit・hwh の sha256、資源（LUT・FF・DSP・BRAM・URAM）、WNS・WHS、`report_cdc` の分類ごとの件数、`.hwh` の IP と番地（s45_core_0〜3・time_core_0・s45_ring_0・RFDC など、`s45core --list` で見えるもの）
+- **sim の出力**（M3 の本命）は、移植の M2 で study-rfsoc の proj021 と YATSUGATAKE の両方で回して比べる（ここでは書かない。proj021 の sim の変種の一覧は各手順の sim の節）
+
 ## 検討事項（決定ではない）
 
 1. **製品の版を .bit に貼る場所**（2026-10-08 の相談の 2.）
