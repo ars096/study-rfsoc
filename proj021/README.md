@@ -2036,7 +2036,7 @@ ID は今まで使ったもの（F-0・W-0・V2-a・P-5 など）をそのまま
 | P-5 | ch の応答（半 ch −3 dB・−3 dB 幅 1 ch）。配線: SG だけ | `s45resp` | 通過 |
 | P-8 | 線形性（L-1・L-2）と窓の和 / TP。配線: ノイズソース・PATT・PM | `s45lin` | 通過（L-2 の B0 0.0206 dB を ATT 10〜20 で確かめ直す） |
 | V2-a | specd の束ね 4 個 = PL の 40.96 ms 1 個（整数で） | `s45v2a` | 通過 |
-| V2-b | 10.24 ms で 30 分: 欠け・CRC 0 | specrecv | 通過（2026-10-14、欠け 0。陽性対照は未） |
+| V2-b | 10.24 ms で 30 分: 欠け・CRC 0 | specrecv | 通過（2026-10-14、欠け 0。陽性対照 kgap 8・tdev 0） |
 | V2-c | W-G を REC_CTRL（ONE \| SNAP）で | `plring --golden` | 通過 |
 | V2-d | LOAD で proj020 ↔ proj021 を往復 | specctl LOAD | **未**（2-3d の bit） |
 | V2-e | TP のレコード = AXI4-Lite の TP のリング | `plring --tpcompare` | 通過（2026-10-14、不一致 0） |
@@ -2094,6 +2094,9 @@ B2b で変えた見張り（σ を 1 s に 1 回）のせいか、その時の�
 - STATUS（受けが終わってから ≒ 1 時間後に取った。RUN は ≒ 1.5 時間）: **miss・bdrop・r_bad・pl_drop・pl_crc・tp_lost・tp_rec_lost 0**、dumps 531,961 / 窓、loop_p99 16.3 ms・loop_max 25.7 ms・loop_slow 152,136 / 406,183 周（10.24 ms では越えるのが普通。2-3c の 15.4〜17.3 ms と同じ）・pl_peak 957,824 B
 - **drop 3,183,465 は受けが終わった後の分**: 受けが 1,800 s で抜けた（data_drop 05:07:52）後も RUN を続けたので、specd の溜まり（256 MiB）が満ちて古い記録から捨てた（決めたとおりの振る舞い。受けの間の欠けは 0）。STOP の遅れは手順の側
 - tp_jump 12,20,13,23（≒ 1.5 時間。PS-2 と同じ入力の山）
+- **陽性対照（`--posctl-ring-stall 8`、既定の tint 40.96 ms・束 4、40 s、86fe33b の specd）: 通過**。受け側 **kgap 8**（8 窓 × 1 回）・**tdev 0**・tp_gap 4・CRC 0・説明のない欠け 0（照合は kgap で「失敗」= 期待どおり）。
+  EVENT BDROP 16 = 8 窓 × 2（止まりの前の束 937: 持っていたのは 3 個（A1 は 2）、止まりの後の束 1106: 1 個）。STATUS: pl_drop 8,111・pl_peak 100 %（8 s の間に 32 MiB のリングが満ちた）・miss 5,409・tp_lost 27,020・loop_max 8,515 ms・bdrop 16・r_bad 0。
+  2-3b（BDROP 6、止まりの前だけ）より多いのは、止まりの後の最初の束も半端になった（再開がダンプの途中）ため。束の欠けは BDROP で説明され、出た束は全部 4 個ぶん（tdev 0）
 - 運転への読み: 0.5〜1 % の数 ms の山は、天体の観測ではスペクトルの積分に入る（TP_JUMP で印が付く）。起き方（何の山か）は分光計の外の話として、実験室の配線で追う
 
 **直し（実装、2026-10-14）**: `specd.py`（`_watch_data` で `socket.timeout` は待ち続ける・STATUS は `r.get(k, "-")`）・`test_fake.sh`（`idle` を足す）
