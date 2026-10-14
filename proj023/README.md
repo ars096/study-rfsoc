@@ -122,7 +122,7 @@ proj022 で模型と資源の見積もりまで設計したものを RTL にし�
    2c. `lane_fft_model.v` を 2048 点に、`wide_core.v`（ひねり係数・dft16・束ね・切り出しの積分器・帳簿）＋ 単体の sim（A2・B・C）。2 つに分ける:
        2c-1. `wide_chain.v`（ひねり係数 ＋ cmul・dft16・SHIFT と飽和・電力・束ね）と共有のひねり係数 ROM ＋ 単体の sim（A2 の後半）（2026-10-14 済み）
        2c-2. 積分器・切り出し・帳簿（`wide_acc.v`・`wide_spec.v`）、IP の行動模型を 2048 点に（`lane_fft_w_model.v`）、PFB → IP → 鎖 → 積分をつないだ sim（A1'・A2・B・C）（2026-10-14 済み。Vivado サーバで回し直して同じ結果）
-       2c-3. `wide_core.v`: wide_spec を AXI4-Lite の流れのブロック（INTERFACE 2.5 の SLICE）× 2・FFT_N の口・ARM_WRST / ARM_RUN・DUMP_H・SPEC のレコード（rec_fr）で包む（2026-10-14 済み、作業用の環境で）
+       2c-3. `wide_core.v`: wide_spec を AXI4-Lite の流れのブロック（INTERFACE 2.5 の SLICE）× 2・FFT_N の口・ARM_WRST / ARM_RUN・DUMP_H・SPEC のレコード（rec_fr）で包む（2026-10-14 済み。Vivado サーバでも通過）
    2d. フレームの頭（D-2）・起動の口・4 ADC の共有（S-W3、陽性対照つき）
 3. ← **次はここ** s45_core に wide_core を載せる（コアの共通・FFT_N の番地・RAW）・build.tcl（窓を外し、wide_core × 4 ＋ 共有の ROM 2 つ ＋ RAW）・S-W4・ビルド（B-1）
 4. 実機（H-1〜H-4）
@@ -232,7 +232,7 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 - 1 本 4 分ほど（IP の行動模型の倍精度 FFT と鎖が重い）。6 本を 2 コアで ≒ 17 分
 - 2c-2 で wide_spec の外に残したもの（2c-3 で wide_core に）: AXI4-Lite の流れのブロック（SLICE）とコアの FFT_N・SPEC のレコード（rec_fr）・TP（tp_core）・健全性（DUMP_H）・WRST / RUN の時刻の予約（ARM_*）
 
-### 手順 2c-3: wide_core（`make sim-wco`、2026-10-14。作業用の環境で。Vivado サーバでの回し直し待ち）
+### 手順 2c-3: wide_core（`make sim-wco`、2026-10-14。作業用の環境で書きながら回し、**Vivado サーバで回し直して同じ結果**）
 
 `src/common/wide_core.v`（SLICE の流れ 2 本、1 ADC）・`sim/tb_wide_core.v`・`check_wide.py core`。`rec_fr.v` に語 7 の上位（KIND に固有）を入れる口 W7HI を足した（既定 0 で今までと同じ）。`wide_spec.v` に診断の出口（pfb の飽和・have_first）を足した（合成に階層の参照を使わないため）。
 
@@ -266,7 +266,8 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 - [x] Vivado サーバで `make sim-wpfb sim-wsp` を回し直した（2026-10-14）: 9 本とも「結果」の行も数字も作業用の環境と同じ（A1 不一致 0・陽性対照の不一致 3,394〜23,716 と 32,768・32,755・32,594、wsp の flags・f_first 34・ダンプの数）
 - [x] `make sim-wch` も Vivado サーバで回し直した（2026-10-14）: 6 本とも全部通過、数字も作業用の環境と同じ（A2 不一致 0・飽和の総数 20・陽性対照の不一致 7,213 と 16,308）。**2a〜2c-2 の sim はすべて Vivado サーバで通った**
 - [x] 手順 2c-3: `wide_core.v`（流れのブロック × 2・FFT_N の口・ARM_*・DUMP_H・SPEC のレコード）と sim（4 本、作業用の環境で通過）
-- [ ] Vivado サーバで `make sim-wco sim-ring sim-raw`（wide_core と、rec_fr を変えた後の既存のレコードの sim）
+- [x] Vivado サーバで `make sim-wco`（4 本）と `make sim-wsp`（wide_spec の出口を足した後の回帰、6 本）が全部通過（2026-10-14）
+- [ ] Vivado サーバで `make sim-ring sim-raw`（rec_fr に W7HI を足した後の既存のレコードの sim）
 - [ ] 手順 3: s45_core に wide_core を載せる・build.tcl・ビルド
 
 ## 公開について
