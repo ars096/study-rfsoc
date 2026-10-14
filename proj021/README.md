@@ -2039,9 +2039,9 @@ ID は今まで使ったもの（F-0・W-0・V2-a・P-5 など）をそのまま
 | V2-b | 10.24 ms で 30 分: 欠け・CRC 0 | specrecv | **未**（2-3c の bit） |
 | V2-c | W-G を REC_CTRL（ONE \| SNAP）で | `plring --golden` | 通過 |
 | V2-d | LOAD で proj020 ↔ proj021 を往復 | specctl LOAD | **未**（2-3d の bit） |
-| V2-e | TP のレコード = AXI4-Lite の TP のリング | `plring --tpcompare` | **未**（2-2d の bit） |
+| V2-e | TP のレコード = AXI4-Lite の TP のリング | `plring --tpcompare` | 通過（2026-10-14、不一致 0） |
 | V2-f | 5.1 の見張り（DUMP_T − m·BASE 一定）を DDC 8 本で | `s45v2f` | 通過 |
-| V2-g | リングの溢れ・キャッシュの陽性対照、soak | `plring --soak`（`--pause`・`--no-inval`） | soak は通過、**陽性対照 2 つは未**（2-2a の bit） |
+| V2-g | リングの溢れ・キャッシュの陽性対照、soak | `plring --soak`（`--pause`・`--no-inval`） | 通過（2026-10-14、陽性対照: 飛び 2,544 = DROP 2,544・古い行 1） |
 | S（S-1〜S-4） | specd の SNAP（RAW の生サンプル） | `s45snap` | 通過 |
 | PS-1（新） | float32 の丸め・utc_ns の補正（INTERFACE 6.） | `s45v2c` | **未**（2-2d の bit） |
 | PS-2（新） | specd の 10 分の運転（欠け・CRC・1 周） | specrecv | 通過（**B2b の後の 10 分は未**。2 分で p99 11.5 ms） |

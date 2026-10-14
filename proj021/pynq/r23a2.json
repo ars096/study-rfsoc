@@ -1,0 +1,126 @@
+{
+ "summary": {
+  "spec": 36020,
+  "tp": 16192,
+  "event": 1,
+  "snap": 0,
+  "mb": 1150.9,
+  "crc_bad": 0,
+  "gaps": 0,
+  "declared": 0,
+  "unexplained": 0,
+  "seq_back": 0,
+  "dup": 0,
+  "kgap": 0,
+  "tdev": 0,
+  "tp_gap": 0,
+  "health": "0x10",
+  "sat": 0,
+  "flags": "0x0",
+  "last_seq": 52213
+ },
+ "events": [
+  {
+   "ev": "START",
+   "start_at": 3110600704,
+   "utc_ns": 1791698980239613898,
+   "n": 0,
+   "forced": false,
+   "version": "proj019-0.2",
+   "ids": {
+    "win": "02030000",
+    "adc": "02020101",
+    "time": "02020102",
+    "proj": "00210200",
+    "lmx_vco": "7864.32",
+    "lmx_pwr": "3",
+    "read": "axi"
+   },
+   "tint": 0.04096,
+   "cfg": 0,
+   "tp_cal": null,
+   "wins": [
+    {
+     "key": "A0",
+     "adc": 0,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4
+    },
+    {
+     "key": "A1",
+     "adc": 0,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4
+    },
+    {
+     "key": "B0",
+     "adc": 1,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4
+    },
+    {
+     "key": "B1",
+     "adc": 1,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4
+    },
+    {
+     "key": "C0",
+     "adc": 2,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4
+    },
+    {
+     "key": "C1",
+     "adc": 2,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4
+    },
+    {
+     "key": "D0",
+     "adc": 3,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4
+    },
+    {
+     "key": "D1",
+     "adc": 3,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4
+    }
+   ]
+  }
+ ]
+}

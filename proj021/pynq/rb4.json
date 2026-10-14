@@ -1,0 +1,291 @@
+{
+ "summary": {
+  "spec": 21448,
+  "tp": 10728,
+  "event": 10,
+  "snap": 0,
+  "mb": 350.8,
+  "crc_bad": 0,
+  "gaps": 0,
+  "declared": 0,
+  "unexplained": 0,
+  "seq_back": 0,
+  "dup": 0,
+  "kgap": 0,
+  "tdev": 0,
+  "tp_gap": 0,
+  "health": "0x0",
+  "sat": 0,
+  "flags": "0x0",
+  "last_seq": 586074,
+  "ver": {
+   "2": 32186
+  },
+  "f32_pairs": 0,
+  "f32_bad": 0,
+  "f32_maxulp": 0.0
+ },
+ "events": [
+  {
+   "ev": "START",
+   "start_at": 841912156160,
+   "utc_ns": 1791949314195055499,
+   "n": 0,
+   "forced": false,
+   "version": "proj019-0.2",
+   "proto": 2,
+   "fmt": "f32",
+   "ids": {
+    "win": "02030000",
+    "adc": "02020301",
+    "time": "02020302",
+    "proj": "00210200",
+    "lmx_vco": "7864.32",
+    "lmx_pwr": "3",
+    "read": "ring"
+   },
+   "tint": 0.04096,
+   "cfg": 0,
+   "tp_cal": null,
+   "wins": [
+    {
+     "key": "A0",
+     "adc": 0,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "A1",
+     "adc": 0,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 20
+    },
+    {
+     "key": "B0",
+     "adc": 1,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "B1",
+     "adc": 1,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 20
+    },
+    {
+     "key": "C0",
+     "adc": 2,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "C1",
+     "adc": 2,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 20
+    },
+    {
+     "key": "D0",
+     "adc": 3,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "D1",
+     "adc": 3,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 20
+    }
+   ]
+  },
+  {
+   "ev": "TP_JUMP",
+   "adc": 0,
+   "t_beat": 852055557070,
+   "utc_ns": 1791949353817715303,
+   "n": 506,
+   "db": -48.5804,
+   "sigma_db": 0.00323,
+   "ovr": false
+  },
+  {
+   "ev": "TP_JUMP",
+   "adc": 1,
+   "t_beat": 852055557070,
+   "utc_ns": 1791949353817715303,
+   "n": 506,
+   "db": -47.9546,
+   "sigma_db": 0.0032,
+   "ovr": false
+  },
+  {
+   "ev": "TP_JUMP",
+   "adc": 2,
+   "t_beat": 852055556755,
+   "utc_ns": 1791949353817714072,
+   "n": 506,
+   "db": -47.5205,
+   "sigma_db": 0.00299,
+   "ovr": false
+  },
+  {
+   "ev": "TP_JUMP",
+   "adc": 3,
+   "t_beat": 852055556755,
+   "utc_ns": 1791949353817714071,
+   "n": 506,
+   "db": -47.1371,
+   "sigma_db": 0.00293,
+   "ovr": false
+  },
+  {
+   "ev": "TP_JUMP",
+   "adc": 0,
+   "t_beat": 862346544078,
+   "utc_ns": 1791949394016883303,
+   "n": 529,
+   "db": -47.6797,
+   "sigma_db": 0.0031,
+   "ovr": false
+  },
+  {
+   "ev": "TP_JUMP",
+   "adc": 1,
+   "t_beat": 862346544078,
+   "utc_ns": 1791949394016883303,
+   "n": 529,
+   "db": -46.9814,
+   "sigma_db": 0.00305,
+   "ovr": false
+  },
+  {
+   "ev": "TP_JUMP",
+   "adc": 2,
+   "t_beat": 862346543763,
+   "utc_ns": 1791949394016882072,
+   "n": 529,
+   "db": -46.4644,
+   "sigma_db": 0.00304,
+   "ovr": false
+  },
+  {
+   "ev": "TP_JUMP",
+   "adc": 3,
+   "t_beat": 862346543763,
+   "utc_ns": 1791949394016882071,
+   "n": 529,
+   "db": -46.1366,
+   "sigma_db": 0.00311,
+   "ovr": false
+  },
+  {
+   "ev": "STOP",
+   "why": "命令",
+   "dumps": [
+    2681,
+    2681,
+    2681,
+    2681,
+    2681,
+    2681,
+    2681,
+    2681
+   ],
+   "miss": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "tp": [
+    107280,
+    107280,
+    107280,
+    107280
+   ],
+   "tp_info": [
+    {
+     "adc": 0,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 1,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 2,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 3,
+     "anch_dev": 0,
+     "gap": 0
+    }
+   ],
+   "err": null
+  }
+ ]
+}

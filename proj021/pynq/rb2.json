@@ -1,0 +1,412 @@
+{
+ "summary": {
+  "spec": 115536,
+  "tp": 57776,
+  "event": 6,
+  "snap": 0,
+  "mb": 1889.9,
+  "crc_bad": 0,
+  "gaps": 0,
+  "declared": 0,
+  "unexplained": 0,
+  "seq_back": 0,
+  "dup": 0,
+  "kgap": 0,
+  "tdev": 0,
+  "tp_gap": 0,
+  "health": "0x10",
+  "sat": 0,
+  "flags": "0x0",
+  "last_seq": 378244,
+  "ver": {
+   "2": 173318
+  },
+  "f32_pairs": 0,
+  "f32_bad": 0,
+  "f32_maxulp": 0.0
+ },
+ "events": [
+  {
+   "ev": "START",
+   "start_at": 347718287360,
+   "utc_ns": 1791947383750255499,
+   "n": 50,
+   "forced": false,
+   "version": "proj019-0.2",
+   "proto": 2,
+   "fmt": "f32",
+   "ids": {
+    "win": "02030000",
+    "adc": "02020301",
+    "time": "02020302",
+    "proj": "00210200",
+    "lmx_vco": "7864.32",
+    "lmx_pwr": "3",
+    "read": "ring"
+   },
+   "tint": 0.04096,
+   "cfg": 0,
+   "tp_cal": null,
+   "wins": [
+    {
+     "key": "A0",
+     "adc": 0,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "A1",
+     "adc": 0,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 20
+    },
+    {
+     "key": "B0",
+     "adc": 1,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "B1",
+     "adc": 1,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 20
+    },
+    {
+     "key": "C0",
+     "adc": 2,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "C1",
+     "adc": 2,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 20
+    },
+    {
+     "key": "D0",
+     "adc": 3,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "D1",
+     "adc": 3,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 20
+    }
+   ]
+  },
+  {
+   "ev": "STOP",
+   "why": "n に達した",
+   "dumps": [
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50,
+    50
+   ],
+   "miss": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "tp": [
+    2010,
+    2010,
+    2010,
+    2010
+   ],
+   "tp_info": [
+    {
+     "adc": 0,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 1,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 2,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 3,
+     "anch_dev": 0,
+     "gap": 0
+    }
+   ],
+   "err": null
+  },
+  {
+   "ev": "START",
+   "start_at": 351346360320,
+   "utc_ns": 1791947397922415499,
+   "n": 0,
+   "forced": false,
+   "version": "proj019-0.2",
+   "proto": 2,
+   "fmt": "f32",
+   "ids": {
+    "win": "02030000",
+    "adc": "02020301",
+    "time": "02020302",
+    "proj": "00210200",
+    "lmx_vco": "7864.32",
+    "lmx_pwr": "3",
+    "read": "ring"
+   },
+   "tint": 0.04096,
+   "cfg": 0,
+   "tp_cal": null,
+   "wins": [
+    {
+     "key": "A0",
+     "adc": 0,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "A1",
+     "adc": 0,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 20
+    },
+    {
+     "key": "B0",
+     "adc": 1,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "B1",
+     "adc": 1,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 20
+    },
+    {
+     "key": "C0",
+     "adc": 2,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "C1",
+     "adc": 2,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 20
+    },
+    {
+     "key": "D0",
+     "adc": 3,
+     "win": 0,
+     "if_mhz": 3000.0,
+     "ns": 1,
+     "shift": 9,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "D1",
+     "adc": 3,
+     "win": 1,
+     "if_mhz": 3000.0,
+     "ns": 6,
+     "shift": 9,
+     "nacc": 80,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 20
+    }
+   ]
+  },
+  {
+   "ev": "TP_JUMP",
+   "adc": 3,
+   "t_beat": 355859432083,
+   "utc_ns": 1791947415551602071,
+   "n": 1,
+   "db": 0.0323,
+   "sigma_db": 0.00525,
+   "ovr": true
+  },
+  {
+   "ev": "TP_JUMP",
+   "adc": 1,
+   "t_beat": 355864150990,
+   "utc_ns": 1791947415570035303,
+   "n": 1,
+   "db": 0.0326,
+   "sigma_db": 0.0051,
+   "ovr": true
+  },
+  {
+   "ev": "STOP",
+   "why": "命令",
+   "dumps": [
+    14392,
+    14392,
+    14392,
+    14392,
+    14392,
+    14392,
+    14392,
+    14392
+   ],
+   "miss": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "tp": [
+    575700,
+    575700,
+    575700,
+    575700
+   ],
+   "tp_info": [
+    {
+     "adc": 0,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 1,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 2,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 3,
+     "anch_dev": 0,
+     "gap": 0
+    }
+   ],
+   "err": null
+  }
+ ]
+}

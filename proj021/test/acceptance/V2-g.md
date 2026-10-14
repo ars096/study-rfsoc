@@ -14,4 +14,4 @@ python3 plring.py --clkin 0 --ref 10 --soak 20 --no-inval    # 陽性対照: キ
   - `--pause 3`: **SEQ の飛び = DROP_CNT > 0**、CRC の不一致 0
   - `--no-inval`: CRC の不一致（または古い行）> 0
 - **陽性対照**: 上の 2 つ（`--pause`・`--no-inval`）がこの判定の陽性対照
-- **記録**: soak は proj021 README「手順 2-5 → 実機（S25-3）」の `plring --soak 60` の行（2026-10-14 通過、PEAK 0.9 %）。**陽性対照 2 つは最終の bit で未**（2-2a の bit で通過、2026-10-10: 飛び 2,211 = DROP 2,211）
+- **記録**: soak は proj021 README「手順 2-5 → 実機（S25-3）」の `plring --soak 60` の行（2026-10-14 通過、PEAK 0.9 %）。**陽性対照 2 つも最終の bit で通過（2026-10-14）**: `--pause 3` で SEQ の飛び 2,544 = DROP_CNT 2,544・PEAK 100 %・CRC 0。`--no-inval` で古い行 1（頭の magic の不一致、0x0）。2-2a の bit では飛び 2,211 = DROP 2,211（2026-10-10）

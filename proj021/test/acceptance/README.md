@@ -38,9 +38,9 @@
 | [V2-b](V2-b.md) | 10.24 ms で 30 分 | specd | N | **未** |
 | [V2-c](V2-c.md) | W-G をレコードの道で | ボード直 | N | 通過 |
 | [V2-d](V2-d.md) | LOAD で bit を往復 | specd | N | **未** |
-| [V2-e](V2-e.md) | TP のレコード = AXI4-Lite の TP のリング | ボード直 | N | **未** |
+| [V2-e](V2-e.md) | TP のレコード = AXI4-Lite の TP のリング | ボード直 | N | 通過 |
 | [V2-f](V2-f.md) | 5.1 の見張り（DDC 8 本） | ボード直 | N | 通過 |
-| [V2-g](V2-g.md) | リングの溢れ・キャッシュ（陽性対照） | ボード直 | N | soak 通過・**陽性対照 未** |
+| [V2-g](V2-g.md) | リングの溢れ・キャッシュ（陽性対照） | ボード直 | N | 通過 |
 | [S](S.md) | specd の SNAP（RAW の生サンプル） | specd | N | 通過 |
 | [PS-1](PS-1.md) | float32 の丸め・utc_ns の補正 | specd | N | **未** |
 | [PS-2](PS-2.md) | specd の 10 分の運転 | specd | N | 通過（**B2b の後の 10 分は未**） |
