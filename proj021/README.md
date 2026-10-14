@@ -2127,6 +2127,24 @@ SG と分光計が同じ外部 10 MHz に乗っているので ppm はほぼ 0�
 - **書き残す値**（M3 の表の順）: bit・hwh の sha256、資源（LUT・FF・DSP・BRAM・URAM）、WNS・WHS、`report_cdc` の分類ごとの件数、`.hwh` の IP と番地（s45_core_0〜3・time_core_0・s45_ring_0・RFDC など、`s45core --list` で見えるもの）
 - **sim の出力**（M3 の本命）は、移植の M2 で study-rfsoc の proj021 と YATSUGATAKE の両方で回して比べる（ここでは書かない。proj021 の sim の変種の一覧は各手順の sim の節）
 
+**移植元（2026-10-14 に決めた）**: **study-rfsoc のタグ `proj021-m0`**（この表を書いた commit）。bit はビルドに効くファイルが 02ce268 のときの 2-5 の `build/`（既定の戦略）
+
+| 項目 | 値 |
+|---|---|
+| bit | `proj021.bit` 34,437,476 B・2026-10-14 00:40（JST）にビルド |
+| bit の sha256 | `a99b7a96b14b51deb8738bed7bce203ca6c753f4eca5a24227da7193bf0814e8`（Vivado サーバの `build/`・ボード・LOAD の EVENT の 3 つで同じ） |
+| hwh の sha256 | `613ba1aee43c0882d155b11c107a96054fbfbf0cf05411149543d687a294f54d`（Vivado サーバ・ボードで同じ） |
+| ID | BIT_KIND 2・BIT_REV 3・PROJ 0x0021_0200。IF_ID 0x0202_0301（コア 4）・0x0202_0302（time_core_0）・0x0202_0303（s45_ring_0）。CAPS 0x007 |
+| WNS / WHS（`-1`、既定の戦略） | **+0.044057 ns / +0.009766 ns** |
+| LUT | 168,982（39.73 %） |
+| FF | 256,455（30.15 %） |
+| DSP | 2,096（49.06 %） |
+| BRAM タイル | 233.5（21.62 %。RAMB36 113・RAMB18 241） |
+| URAM | 56（70.00 %） |
+| `report_cdc` | CDC-3 Info 105・CDC-6 Warning 5・CDC-15 Warning 3,137（ほかの分類 0。2-2a から同じ件数） |
+| ビルドに効くファイルの未コミットの変更 | なし（Vivado サーバの `git status`） |
+| 判定 | `test/acceptance/` の 21 判定とも、この bit と 86fe33b 以後の PS で通過 |
+
 ## 検討事項（決定ではない）
 
 1. **製品の版を .bit に貼る場所**（2026-10-08 の相談の 2.）
