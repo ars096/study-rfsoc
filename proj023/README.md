@@ -120,7 +120,7 @@ proj022 で模型と資源の見積もりまで設計したものを RTL にし�
    2b. `wide_pfb.v`（PFB、係数は 4 ADC で 1 組の外の ROM から）＋ 単体の sim（A1）（2026-10-14 済み）
    2c. `lane_fft_model.v` を 2048 点に、`wide_core.v`（ひねり係数・dft16・束ね・切り出しの積分器・帳簿）＋ 単体の sim（A2・B・C）。2 つに分ける:
        2c-1. `wide_chain.v`（ひねり係数 ＋ cmul・dft16・SHIFT と飽和・電力・束ね）と共有のひねり係数 ROM ＋ 単体の sim（A2 の後半）（2026-10-14 済み）
-       2c-2. 積分器・切り出し・帳簿（`wide_acc.v`・`wide_spec.v`）、IP の行動模型を 2048 点に（`lane_fft_w_model.v`）、PFB → IP → 鎖 → 積分をつないだ sim（A1'・A2・B・C）（2026-10-14 済み、作業用の環境で。Vivado サーバでの回し直し待ち）
+       2c-2. 積分器・切り出し・帳簿（`wide_acc.v`・`wide_spec.v`）、IP の行動模型を 2048 点に（`lane_fft_w_model.v`）、PFB → IP → 鎖 → 積分をつないだ sim（A1'・A2・B・C）（2026-10-14 済み。西村さんの環境で回し直して同じ結果）
        2c-3. ← **次はここ** `wide_core.v`: wide_spec を AXI4-Lite の流れのブロック（INTERFACE 2.5 の SLICE）・レコード（rec_fr）・TP・健全性（dstamp の DUMP_H）で包む
    2d. フレームの頭（D-2）・起動の口・4 ADC の共有（S-W3、陽性対照つき）
 3. build.tcl（窓を外し、wide_core × 4 ＋ RAW）・S-W4・ビルド（B-1）
@@ -203,7 +203,7 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 - ひねり係数 ROM も係数 ROM と同じく番地（k1_out）を返し、wide_chain が自分の k1 と比べて tw_mis を立てる
 - `cmul.v` の変更は既定 SH = 16 で今までと同じ式。**spec_core の sim（`make sim SIM_SHIFT=7`）が変更後も全部通過**（A: 模型とダンプが bit 単位で一致、不一致 0 / 4096 ch。作業用のクラウドの環境で）
 
-### 手順 2c-2: wide_spec（`make sim-wsp`、2026-10-14。作業用のクラウドの環境で。Vivado サーバでの回し直し待ち）
+### 手順 2c-2: wide_spec（`make sim-wsp`、2026-10-14。作業用のクラウドの環境で書きながら回し、**同じ日に西村さんの環境で回し直して同じ結果**）
 
 `src/common/wide_spec.v`（分光の本体、1 ADC。AXI・レコードは持たない）・`src/common/wide_acc.v`（切り出しの積分器）・`sim/lane_fft_w_model.v`（IP の行動模型、2048 点。spec_core の 512 点の模型は変えずに別のファイル）・`sim/tb_wide_spec.v`。
 
@@ -238,7 +238,8 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 - [x] 手順 2b: `wide_pfb.v`・係数 ROM と単体の sim（A1 通過、陽性対照 2 本は落ちた）
 - [x] 手順 2c-1: `wide_chain.v`・ひねり係数 ROM と単体の sim（A2 の後半、B 1・2・4 と飽和が通過、陽性対照 2 本は落ちた）
 - [x] 手順 2c-2: `wide_spec.v`・`wide_acc.v`・IP の行動模型 2048 点・つないだ sim（A1'・A2・B・C が B 1・2・4・飽和で通過、陽性対照 2 本は落ちた。作業用の環境で）
-- [ ] **Vivado サーバで `make sim-wpfb sim-wch sim-wsp` を回し直す**（2b〜2c-2 の sim は作業用の環境でしか回していない）
+- [x] 西村さんの環境で `make sim-wpfb sim-wsp` を回し直した（2026-10-14）: 9 本とも「結果」の行も数字も作業用の環境と同じ（A1 不一致 0・陽性対照の不一致 3,394〜23,716 と 32,768・32,755・32,594、wsp の flags・f_first 34・ダンプの数）
+- [ ] `make sim-wch` を西村さんの環境で回し直す（2026-10-14 のログに無かった）
 - [ ] 手順 2c-3: `wide_core.v`（AXI4-Lite の流れのブロック・FFT_N・レコード・TP・DUMP_H・ARM_*）
 
 ## 公開について
