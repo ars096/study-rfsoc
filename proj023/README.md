@@ -103,6 +103,7 @@ proj022 で模型と資源の見積もりまで設計したものを RTL にし�
 - 2b: `wide_pfb` は模型と bit 単位で一致する・起動の直後の 3 フレームも「0 の履歴」で一致する → **当たった**（最初の sim で）
 - 2c-1: `wide_chain` は束ね B 1・2・4 とも模型と bit 単位で一致する（dft16 は spec_core のまま、cmul の右シフトを 17 にするだけ）→ **当たった**（最初の sim で）
 - 2c-2: つないだ wide_spec は、IP の出口から先が模型と bit 単位で一致し、ダンプの区切りが T ≡ K_F の格子に乗る → **当たった**（最初の sim で。B の飽和の扱いだけ判定の側を直した）
+- 2c-3: wide_core のレコードは頭の語（DUMP_T = K_F ＋ 2048·DUMP_F0・語 4 の log2 B・語 7 の S0_CUR）も中身も合う → **当たった**（出口を 4 クロックに 1 回止めた変種だけ 1 回目に落ちたが、DUT は正しく late にしていた。試験の負荷の置き方の誤り）
 - M-7: 束ねても半 ch は −3 dB のまま、ENBW は 1.01 程度、隣より外は良くなる → **当たった**（上の表）
 
 手順 2（RTL と単体の sim）の予言（2026-10-14、書く前。D-7 の後に書き直した）:
@@ -121,9 +122,9 @@ proj022 で模型と資源の見積もりまで設計したものを RTL にし�
    2c. `lane_fft_model.v` を 2048 点に、`wide_core.v`（ひねり係数・dft16・束ね・切り出しの積分器・帳簿）＋ 単体の sim（A2・B・C）。2 つに分ける:
        2c-1. `wide_chain.v`（ひねり係数 ＋ cmul・dft16・SHIFT と飽和・電力・束ね）と共有のひねり係数 ROM ＋ 単体の sim（A2 の後半）（2026-10-14 済み）
        2c-2. 積分器・切り出し・帳簿（`wide_acc.v`・`wide_spec.v`）、IP の行動模型を 2048 点に（`lane_fft_w_model.v`）、PFB → IP → 鎖 → 積分をつないだ sim（A1'・A2・B・C）（2026-10-14 済み。Vivado サーバで回し直して同じ結果）
-       2c-3. ← **次はここ** `wide_core.v`: wide_spec を AXI4-Lite の流れのブロック（INTERFACE 2.5 の SLICE）・レコード（rec_fr）・TP・健全性（dstamp の DUMP_H）で包む
+       2c-3. `wide_core.v`: wide_spec を AXI4-Lite の流れのブロック（INTERFACE 2.5 の SLICE）× 2・FFT_N の口・ARM_WRST / ARM_RUN・DUMP_H・SPEC のレコード（rec_fr）で包む（2026-10-14 済み、作業用の環境で）
    2d. フレームの頭（D-2）・起動の口・4 ADC の共有（S-W3、陽性対照つき）
-3. build.tcl（窓を外し、wide_core × 4 ＋ RAW）・S-W4・ビルド（B-1）
+3. ← **次はここ** s45_core に wide_core を載せる（コアの共通・FFT_N の番地・RAW）・build.tcl（窓を外し、wide_core × 4 ＋ 共有の ROM 2 つ ＋ RAW）・S-W4・ビルド（B-1）
 4. 実機（H-1〜H-4）
 
 ## やったこと
@@ -135,6 +136,7 @@ proj022 で模型と資源の見積もりまで設計したものを RTL にし�
 - 2026-10-14: 手順 2b。`wide_pfb.v`・`wide_coef_rom.v`・係数の生成器と hex・`tb_wide_pfb.v`・`make sim-wpfb`（本番 ＋ 陽性対照 2 本）を書いた。係数を URAM から BRAM の ROM に移した（URAM は初期値を持てない）
 - 2026-10-14: 手順 2c-1。`wide_chain.v`・`wide_tw_rom.v`・ひねり係数の生成器と hex・`tb_wide_chain.v`・`make sim-wch`（4 本 ＋ 陽性対照 2 本）を書いた。`cmul.v` に SH を足した
 - 2026-10-14: 手順 2c-2。`wide_spec.v`・`wide_acc.v`・`lane_fft_w_model.v`・`tb_wide_spec.v`・`check_wide.py spec`・`make sim-wsp`（4 本 ＋ 陽性対照 2 本）を書いた。D-8（SHIFT はコアに 1 つ）
+- 2026-10-14: 手順 2c-3。`wide_core.v`・`tb_wide_core.v`・`check_wide.py core`（check_spec の判定を judge_dumps に分けた）・`make sim-wco`（3 本 ＋ 陽性対照 1 本）を書いた。rec_fr に W7HI、wide_spec に診断の出口
 - 2026-10-14: 名前の付け替えは「動く名前」だけ: build.tcl の `set proj`・Makefile の配線後の phys_opt の hwh のコピー・`tools/postroute_physopt.tcl` の bit の名前・`pynq/plring.py` と `pynq/spectrometer.py` の既定の bit。コメントの proj021 は経緯なので残した。ID（PROJ・BIT_KIND・BIT_REV）は D-5 のとおり手順 2 で
 
 ## 結果
@@ -230,6 +232,29 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 - 1 本 4 分ほど（IP の行動模型の倍精度 FFT と鎖が重い）。6 本を 2 コアで ≒ 17 分
 - 2c-2 で wide_spec の外に残したもの（2c-3 で wide_core に）: AXI4-Lite の流れのブロック（SLICE）とコアの FFT_N・SPEC のレコード（rec_fr）・TP（tp_core）・健全性（DUMP_H）・WRST / RUN の時刻の予約（ARM_*）
 
+### 手順 2c-3: wide_core（`make sim-wco`、2026-10-14。作業用の環境で。Vivado サーバでの回し直し待ち）
+
+`src/common/wide_core.v`（SLICE の流れ 2 本、1 ADC）・`sim/tb_wide_core.v`・`check_wide.py core`。`rec_fr.v` に語 7 の上位（KIND に固有）を入れる口 W7HI を足した（既定 0 で今までと同じ）。`wide_spec.v` に診断の出口（pfb の飽和・have_first）を足した（合成に階層の参照を使わないため）。
+
+**作り**:
+- **番地**: ここの 11 bit = 流れ 2 本のブロック（s45_core がコアの 0x4000 + 0x400·(SID_S + s) を渡す）。INTERFACE 2.5 の 0x00〜0x88 と SLICE の 0x100 S0・0x104 S0_CUR・0x108 S0_STEP、診断 0x200〜。コアの 0x80 FFT_N は口（fftn_we・fftn_wdata・fftn_rd）で受ける（番地は s45_core が見る、手順 3）
+- **WRST はコアに 1 つ**: どちらの流れの CTRL に書いても、両方の流れの RUN を止め、束ね（FFT_N から）・S0・SHIFT（流れ 0 の値、D-8）を取り込む。ARM_WRST・ARM_RUN は time_core の発火（go_in）で効く（spec_core と同じ）
+- **DUMP_H**: 入力の側でダンプの区間（フレーム F0 + k·N_ACC 〜）を数え、時刻の健全性（tev）・ADC の振り切れ・途切れを OR して 8 個の輪に置き、commit で読む。[15] H_OPEN。dstamp を使わなかったのは、F0 を格子に寄せる量（≦ 2·256 − 2 フレーム）が dstamp の 8 bit（≦ 254）に入らないため。DUMP_T は式（K_F ＋ 2048·DUMP_F0）なので測らない
+- **SPEC のレコード**: rec_fr（NS 2・SNAP なし・W7HI）。語 4 = {DUMP_H, src, 0, 0, SHIFT, log2 B, log2 N}、語 7 = {S0_CUR, 32768}（INTERFACE 4.4 の D-7 の改め）。空の流れ（B 4 の流れ 1）は REC_CTRL を書いてもレコードを出さない
+- **持たないもの**: TP（コアの共通の win_core に任せる）・SNAP（生のサンプルは RAW の流れ）
+
+**sim**: tb は PS がすることを AXI4-Lite で（FFT_N → S0・SHIFT・N_ACC・N_DUMP・CFG_ID・REC_CTRL = ALL → ARM_WRST → 発火 → ARM_RUN（流れ 0・1）→ 発火）。レコードを受け、終わったらレジスタを読む。判定（`check_wide.py core`）: レコードの頭の各語（magic・type・core・s・SEQ・DUMP_K・DUMP_F0・**DUMP_T = K_F ＋ 2048·DUMP_F0**・語 4・DUMP_H・語 7・DUMP_CFG・FLAGS）・中身（2c-2 と同じ A1'・A2・B・C）・レジスタ。
+
+| 変種 | 中身 | 結果 |
+|---|---|---|
+| wco-b1 | B 1、S0 100・12288。ダンプ 1 の入力の区間で tev[1] を 1 クロック立てる | **通過**: レコード 4 個、DUMP_H はダンプ 1 だけ 0x0002（流れ 0・1 とも）、A2 不一致 0・B 0.11、レジスタ |
+| wco-b2 | B 2、S0 1000・4096。出口の tready を 16 クロックに 1 回くらい落とす | **通過**（下の 1 回目を参照） |
+| wco-b4 | B 4。流れ 1 は空 | **通過**: レコード 2 個（流れ 1 は出ない）、NCH1 = 0・DUMP_CFG1 = 0 |
+| wco-p（陽性対照） | 語 7 の S0_CUR を入れない | 落ちた（頭の照合） |
+
+- **wco-b2 の 1 回目は落ちた**: 出口を 4 クロックに 1 回止めたら、流れ 1 の最初のレコードが tuser 1（捨て）・REC_LATE1 = 1 になった。出口の速さ 3/4 でレコード 1 個（4104 語）に ≒ 5,500 クロック、2 本で ≒ 11,000 クロックが、N_ACC 5（10,240 クロック）の間に出し切れないので、**rec_fr が正しく late にした**（凍った面がダンプ k + 2 の頭で上書きされる前に読み終わらない）。試験の負荷を 16 に 1 回に直した。本番の N_ACC 1280（2.6 M クロック）では起きない
+- rec_fr の W7HI は、既定 0 のとき語 7 が今までと同じ値（{0, 32768}）になる。**spec_core・win_core・raw_core のレコードの sim（sim-ring・sim-raw）を Vivado サーバで回し直して確かめる**
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -240,7 +265,9 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 - [x] 手順 2c-2: `wide_spec.v`・`wide_acc.v`・IP の行動模型 2048 点・つないだ sim（A1'・A2・B・C が B 1・2・4・飽和で通過、陽性対照 2 本は落ちた。作業用の環境で）
 - [x] Vivado サーバで `make sim-wpfb sim-wsp` を回し直した（2026-10-14）: 9 本とも「結果」の行も数字も作業用の環境と同じ（A1 不一致 0・陽性対照の不一致 3,394〜23,716 と 32,768・32,755・32,594、wsp の flags・f_first 34・ダンプの数）
 - [x] `make sim-wch` も Vivado サーバで回し直した（2026-10-14）: 6 本とも全部通過、数字も作業用の環境と同じ（A2 不一致 0・飽和の総数 20・陽性対照の不一致 7,213 と 16,308）。**2a〜2c-2 の sim はすべて Vivado サーバで通った**
-- [ ] 手順 2c-3: `wide_core.v`（AXI4-Lite の流れのブロック・FFT_N・レコード・TP・DUMP_H・ARM_*）
+- [x] 手順 2c-3: `wide_core.v`（流れのブロック × 2・FFT_N の口・ARM_*・DUMP_H・SPEC のレコード）と sim（4 本、作業用の環境で通過）
+- [ ] Vivado サーバで `make sim-wco sim-ring sim-raw`（wide_core と、rec_fr を変えた後の既存のレコードの sim）
+- [ ] 手順 3: s45_core に wide_core を載せる・build.tcl・ビルド
 
 ## 公開について
 
@@ -252,6 +279,7 @@ study-rfsoc は公開リポジトリ。commit・push の前に、公開前のス
 ```bash
 cd model && python3 bin_resp.py && cd ..   # M-7: 束ねた ch の応答
 make model-wide     # 手順 2a: sim の模型の自己検査（RTL なし）
+make sim-wco        # 手順 2c-3: wide_core のレコードとレジスタ（4 本、5 分ほど）
 make sim-wsp        # 手順 2c-2: wide_spec の A1'・A2・B・C（6 本、2 コアで 17 分ほど）
 make sim-wch        # 手順 2c-1: wide_chain の A2 の後半（6 本を並べて 1 分ほど）。make wide-tw でひねり係数 ROM を作り直す
 make sim-wpfb       # 手順 2b: wide_pfb の A1（本番 ＋ 陽性対照 2 本、数秒）。make wide-coef で係数 ROM を作り直す

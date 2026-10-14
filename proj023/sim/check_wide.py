@@ -8,6 +8,7 @@
     python3 sim/check_wide.py genchain OUT [NF]   # OUT/lanes_in.txt（IP の出口を模型で）・stim14.npy（手順 2c-1）
     python3 sim/check_wide.py chain OUT LB SHIFT [posctl]   # A2 の後半: OUT/chain_out.txt（wide_chain の束ねの出口）を模型と bit 単位で
     python3 sim/check_wide.py spec OUT [posctl]    # 手順 2c-2: wide_spec の A1'・A2・B・C（OUT/meta.txt・lanes.txt・dumps.txt）
+    python3 sim/check_wide.py core OUT [posctl]    # 手順 2c-3: wide_core の SPEC のレコード（頭の語・中身）とレジスタ（OUT/recs.txt・meta.txt・lanes.txt）
 
 ---- 鎖（README の D-1・D-3、proj022 の M-4）----
   x 14 bit（ADC の 16 bit の上位 14）
@@ -437,9 +438,8 @@ def check_chain(out, lb, shift, posctl=False):
 
 
 # ---------------------------------------------------------------- 手順 2c-2: wide_spec（PFB → IP → 鎖 → 積分 → 帳簿）
-def check_spec(out, posctl=False):
-    """meta.txt・lanes.txt・dumps.txt を読み、A1'（IP の出口の区切り）・A2・B・C を判定する"""
-    J = Judge()
+def load_meta_lanes(out):
+    """meta.txt・stim14.npy・lanes.txt を読む（check_spec・check_core で共通）"""
     meta = {}
     with open(os.path.join(out, "meta.txt")) as f:
         for line in f:
@@ -469,18 +469,21 @@ def check_spec(out, posctl=False):
             a[1][:, k1] = vals[1::2]
             a[2][k1] = True
     lanes = {r: a for r, a in lanes.items() if a[2].all()}
+    return meta, stim14, lanes
 
-    # ダンプ
-    dumps = []
-    with open(os.path.join(out, "dumps.txt")) as f:
-        cur = None
-        for line in f:
-            t = line.split()
-            if t[0] == "dump":
-                cur = dict(zip(("s", "seq", "k", "f0", "n", "sat", "plane"), (int(x) for x in t[1:])), v=[])
-                dumps.append(cur)
-            else:
-                cur["v"].append(int(t[1]))
+
+def judge_dumps(J, meta, stim14, lanes, dumps):
+    """A1'（IP の出口の区切り）・A2・B・C を判定する。dumps は dict（s・seq・k・f0・n・sat・plane（無ければ見ない）・v）の並び"""
+    T0, KF, lb, sh, nacc, ndump, gf = (meta[k] for k in ("T0", "KF", "LB", "SHIFT", "NACC", "NDUMP", "GF"))
+    B, ff, fa_run = 1 << lb, meta["f_first"], meta["fa_run"]
+    s0 = [meta["c_s0_0"], meta["c_s0_1"]]
+    en = [True, lb != 2]
+    L = len(stim14)
+
+    def frame_x(fa):
+        n0 = KF + M * fa - T0
+        idx = (P * n0 + np.arange(N)) % L
+        return stim14[idx]
 
     J(meta["flags"] == 0, "flags = %02x（係数・ひねり係数の見張り・途切れ・IP の事象・k1 の飛び・書き込みの衝突が無い）" % meta["flags"])
     nexp = ndump * (2 if en[1] else 1)
@@ -490,7 +493,7 @@ def check_spec(out, posctl=False):
     F0 = ((fa_run >> gf) + 2) << gf
     okc = True
     for d in dumps:
-        okc &= d["f0"] == F0 + d["k"] * nacc and d["n"] == nacc and d["seq"] == d["k"] + 1 and d["plane"] == d["k"] % 2
+        okc &= d["f0"] == F0 + d["k"] * nacc and d["n"] == nacc and d["seq"] == d["k"] + 1 and d.get("plane", d["k"] % 2) == d["k"] % 2
     J(okc, "C: DUMP_F0 = F0 ＋ k·N_ACC（F0 = %d = (⌊fa_run / 2^%d⌋ + 2)·2^%d、格子に乗る）・DUMP_N・SEQ・面" % (F0, gf, gf))
     J(F0 % (1 << gf) == 0 and (KF + M * F0 - KF) % (M << gf) == 0,
       "C: ダンプの区切りの T = K_F ＋ 2048·F0 は T ≡ K_F（mod 2048·2^%d）に乗る" % gf)
@@ -537,6 +540,92 @@ def check_spec(out, posctl=False):
     J(bad_a == 0, "A2: ダンプが、記録した IP の出口から作った模型（鎖・束ね・切り出し・積分）と bit 単位で一致（不一致 %d）" % bad_a)
     J(worst_b <= 1.0, "B: ダンプが刺激からの浮動小数点（PFB ＋ 32768 点 ＋ 束ね）と振幅で一致（差 / 許容 の最大 %.2f。飽和を含む ch %d 個は除いた）" % (worst_b, nsatch))
     J(bad_sat == 0, "飽和の数（DUMP_SAT）が模型と一致（不一致 %d ダンプ）" % bad_sat)
+
+
+def check_spec(out, posctl=False):
+    """meta.txt・lanes.txt・dumps.txt を読み、A1'（IP の出口の区切り）・A2・B・C を判定する"""
+    J = Judge()
+    meta, stim14, lanes = load_meta_lanes(out)
+    # ダンプ
+    dumps = []
+    with open(os.path.join(out, "dumps.txt")) as f:
+        cur = None
+        for line in f:
+            t = line.split()
+            if t[0] == "dump":
+                cur = dict(zip(("s", "seq", "k", "f0", "n", "sat", "plane"), (int(x) for x in t[1:])), v=[])
+                dumps.append(cur)
+            else:
+                cur["v"].append(int(t[1]))
+
+    judge_dumps(J, meta, stim14, lanes, dumps)
+    if posctl:
+        ok = J.ng > 0
+        print("結果: 全部通過（陽性対照が落ちるべきところで落ちた）" if ok else "結果: NG（陽性対照が落ちなかった）")
+        return 0 if ok else 1
+    print("結果: 全部通過" if J.ng == 0 else "結果: NG %d 件" % J.ng)
+    return J.ng
+
+
+# ---------------------------------------------------------------- 手順 2c-3: wide_core（流れのブロック・レコード）
+def check_core(out, posctl=False):
+    """recs.txt（SPEC のレコード）・meta.txt（レジスタの読み）・lanes.txt を読み、頭の各語とレジスタを照らし、中身を judge_dumps で"""
+    J = Judge()
+    meta, stim14, lanes = load_meta_lanes(out)
+    lb, KF = meta["LB"], meta["KF"]
+    B = 1 << lb
+    s0 = [meta["c_s0_0"], meta["c_s0_1"]]
+    recs, cur = [], []
+    with open(os.path.join(out, "recs.txt")) as f:
+        for line in f:
+            t = line.split()
+            if t[0] == "r":
+                cur.append(int(t[2], 16))
+            else:
+                recs.append((cur, int(t[1])))
+                cur = []
+    nexp = meta["NDUMP"] * (1 if lb == 2 else 2)
+    J(len(recs) == nexp and all(len(r) == 8 + SLICE and u == 0 for r, u in recs),
+      "レコード %d 個（期待 %d）、どれも 8 ＋ 4096 語・tuser 0" % (len(recs), nexp))
+    dumps, okh = [], True
+    msgs = []
+    for r, u in recs:
+        w = r[:8]
+        magic, ver, typ, core, s = w[0] & 0xFFFFFFFF, (w[0] >> 32) & 0xFF, (w[0] >> 40) & 0xFF, (w[0] >> 48) & 0xFF, (w[0] >> 56) & 0xFF
+        seq, k = w[1] & 0xFFFFFFFF, w[1] >> 32
+        f0, dt = w[2], w[3]
+        b = [(w[4] >> (8 * i)) & 0xFF for i in range(6)]
+        dh = w[4] >> 48
+        dn, dsat = w[5] & 0xFFFFFFFF, w[5] >> 32
+        dcfg, flg = w[6] & 0xFFFFFFFF, w[6] >> 32
+        nb, s0c = w[7] & 0xFFFFFFFF, w[7] >> 32
+        ok = (magic == 0x52353453 and ver == 1 and typ == 1 and core == 2 and s in (0, 1)
+              and dt == KF + 2048 * f0                                     # DUMP_T = K_F ＋ 2048·DUMP_F0（D-2）
+              and b[0] == 15 - lb and b[1] == lb and b[2] == meta["SHIFT"] and b[3] == 0 and b[4] == 0 and b[5] == 2
+              and dh == (2 if k == meta.get("TEV_K", -1) else 0) and nb == 32768 and s0c == s0[s] and dcfg == (0xC0F1 if s == 0 else 0xC0F2) and flg == 0)
+        if not ok and len(msgs) < 3:
+            msgs.append("s %d seq %d: magic %x ver %d type %d core %d DUMP_T %d（K_F + 2048·F0 = %d）w4 %s DUMP_H %x w7 %d/%d CFG %x FLAGS %x"
+                        % (s, seq, magic, ver, typ, core, dt, KF + 2048 * f0, b, dh, nb, s0c, dcfg, flg))
+        okh &= ok
+        dumps.append(dict(s=s, seq=seq, k=k, f0=f0, n=dn, sat=dsat, v=r[8:]))
+    J(okh, "頭: magic・rec_ver 1・type 1（SPEC）・core・s・DUMP_T = K_F + 2048·DUMP_F0・語 4（log2 N %d・log2 B %d・SHIFT・src）・DUMP_H（%s）・語 7 = {S0_CUR, 32768}・DUMP_CFG（流れごとの CFG_ID）・FLAGS 0%s"
+      % (15 - lb, lb, "ダンプ %d だけ [1]" % meta["TEV_K"] if "TEV_K" in meta else "0", "" if okh else "  " + " / ".join(msgs)))
+    meta["flags"] = meta.get("flags", 0)
+    judge_dumps(J, meta, stim14, lanes, dumps)
+    # レジスタ
+    F0 = ((meta["fa_run"] >> meta["GF"]) + 2) << meta["GF"]
+    regs_ok = (meta["SID0"] == 0x02020000 and meta["SID1"] == 0x02020100 and meta["PARAM0"] == ((64 << 16) | (15 - lb))
+               and meta["NCH0"] == 4096 and meta["NCH1"] == (0 if lb == 2 else 4096) and meta["FB"] == 2048
+               and meta["S0CUR0"] == s0[0] and meta["S0CUR1"] == s0[1] and meta["RUN_SHIFT"] == meta["SHIFT"]
+               and meta["SEQ0"] == meta["NDUMP"] and meta["DUMP_K0"] == meta["NDUMP"] - 1
+               and meta["DUMP_F0_0"] == F0 + (meta["NDUMP"] - 1) * meta["NACC"]
+               and (meta["DUMP_T0_HI"] << 32 | meta["DUMP_T0_LO"]) == KF + 2048 * meta["DUMP_F0_0"]
+               and meta["DUMP_H0"] == (2 if meta.get("TEV_K", -1) == meta["NDUMP"] - 1 else 0) and meta["DUMP_CFG0"] == 0xC0F1 and meta["DUMP_CFG1"] == (0 if lb == 2 else 0xC0F2)
+               and meta["WRST_CFG"] == 0xC0F1 and meta["RUN_F0_0"] == F0 and meta["REC_LATE0"] == 0 and meta["REC_LATE1"] == 0
+               and meta["FFTN"] == (15 << 16) | ((15 - lb) << 8) | (15 - lb))
+    J(regs_ok, "レジスタ: SID・PARAM・NCH（空の流れは 0）・FRAME_BEATS 2048・S0_CUR・RUN_SHIFT（流れ 0 の SHIFT）・SEQ・DUMP_K・DUMP_F0・DUMP_T・DUMP_H・DUMP_CFG・WRST_CFG・RUN_F0・REC_LATE 0・FFT_N {15, 書いた値, 今の値}")
+    if not regs_ok:
+        print("    " + " ".join("%s=%s" % (k, hex(v)) for k, v in meta.items() if k[0].isupper()))
     if posctl:
         ok = J.ng > 0
         print("結果: 全部通過（陽性対照が落ちるべきところで落ちた）" if ok else "結果: NG（陽性対照が落ちなかった）")
@@ -555,6 +644,8 @@ if __name__ == "__main__":
         gen_chain(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 4)
     elif cmd == "chain":
         sys.exit(1 if check_chain(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), len(sys.argv) > 5 and sys.argv[5] == "posctl") else 0)
+    elif cmd == "core":
+        sys.exit(1 if check_core(sys.argv[2], len(sys.argv) > 3 and sys.argv[3] == "posctl") else 0)
     elif cmd == "spec":
         sys.exit(1 if check_spec(sys.argv[2], len(sys.argv) > 3 and sys.argv[3] == "posctl") else 0)
     elif cmd == "pfb":

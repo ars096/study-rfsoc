@@ -39,7 +39,8 @@ module rec_fr #(
     parameter integer HOLD   = 8,          // seq が進んでからヘッダを取り込むまでの最小のクロック
     parameter integer DEPTH  = 32,         // 出口の FIFO（2 の冪）
     parameter integer SNAP   = 0,          // proj021 2-2c: 1 = SNAP の相を持つ
-    parameter integer NSN    = 4096        // スナップショットの語（u64）の数（DDC 4096・FULL 2048）
+    parameter integer NSN    = 4096,       // スナップショットの語（u64）の数（DDC 4096・FULL 2048）
+    parameter integer W7HI   = 0           // proj023: 1 = 語 7 の上位 32 bit（KIND に固有。SLICE = S0_CUR）を w7hi から取る。0 なら 0（今までと同じ）
 ) (
     input  wire              clk,
     input  wire              rst,
@@ -62,7 +63,8 @@ module rec_fr #(
     output wire              m_tvalid,
     input  wire              m_tready,
     output wire              m_tlast,
-    output wire              m_tuser
+    output wire              m_tuser,
+    input  wire [32*NS-1:0]  w7hi          // proj023: W7HI = 1 のときだけ使う（流れ s が [32s +: 32]）。W7HI = 0 なら繋がなくてよい
 );
     localparam integer NCH = 4096;
     localparam integer AW  = $clog2(DEPTH);
@@ -201,7 +203,7 @@ module rec_fr #(
                         n_iss <= 13'd0; n_cap <= 13'd0; n_out <= 14'd0;
                         ph <= 1'b0; rd_snap <= 1'b0; chk <= 1'b1; np <= NCH; out_last <= 14'd8 + NCH - 1;
                         want_sn <= (SNAP != 0) && rec_snap[rd_s];
-                        hl <= {64'd32768,
+                        hl <= {(W7HI != 0) ? w7hi[32*rd_s +: 32] : 32'd0, 32'd32768,
                                hdr[384*rd_s +: 384],
                                {SB + {6'd0, rd_s}, CORE, TYPE_SPEC, REC_VER, MAGIC}};
                     end

@@ -639,3 +639,26 @@ sim-wsp:
 	@for f in build-sim-logs/sim-wsp*.log; do printf '%-36s %s\n' "$$f" "$$(grep '結果:' $$f || echo '結果の行が無い（途中で落ちた）')"; done
 	@fail=$$(grep -L '結果: 全部通過' build-sim-logs/sim-wsp*.log); \
 	  if [ -n "$$fail" ]; then echo "FAIL: $$fail"; exit 1; else echo "sim-wsp: 全部通過"; fi
+
+# ---- proj023 手順 2c-3: wide_core（流れのブロック × 2・FFT_N・ARM_WRST / ARM_RUN・DUMP_H・SPEC のレコード）の sim ----
+# iverilog で 1 本 5 分ほど。変種は 名前:LB:S0_0:S0_1:SHIFT:定義:posctl（N_ACC 5・N_DUMP 2・格子 2^2 フレーム）
+#   wco-b1: B 1、S0 100・12288、時刻の健全性をダンプ 1 にだけ立てる（DUMP_H）/ wco-b2: B 2、出口をときどき止める（rec_fr の FIFO）/
+#   wco-b4: B 4（流れ 1 は空: NCH 0・レコードを出さない）/ wco-p: 語 7 の S0_CUR を入れない（陽性対照。頭の照合が落ちるべき）
+WCO_RTL := src/common/wide_coef_rom.v src/common/wide_tw_rom.v src/common/wide_core.v src/common/wide_spec.v src/common/wide_pfb.v \
+           src/common/wide_chain.v src/common/wide_acc.v src/common/cmul.v src/common/dft16.v src/common/rec_fr.v src/common/adc_ev.v \
+           sim/lane_fft_w_model.v sim/tb_wide_core.v
+WCO_VARIANTS ?= wco-b1:0:100:12288:7:-DTEV: wco-b2:1:1000:4096:7:-DSTALL: wco-b4:2:0:0:7:: wco-p:1:1000:4096:7:-DW7_POSCTL:posctl
+.PHONY: sim-wco
+sim-wco:
+	@mkdir -p build-sim-logs
+	@for v in $(WCO_VARIANTS); do \
+	  nm=$$(echo "$$v" | cut -d: -f1); lb=$$(echo "$$v" | cut -d: -f2); a=$$(echo "$$v" | cut -d: -f3); b=$$(echo "$$v" | cut -d: -f4); \
+	  sh=$$(echo "$$v" | cut -d: -f5); def=$$(echo "$$v" | cut -d: -f6); pc=$$(echo "$$v" | cut -d: -f7); d=build-sim-$$nm; \
+	  ( mkdir -p $$d && $(PYTHON) sim/check_wide.py gen $$d 6 && \
+	    $(IVERILOG) -g2005 $$def -DOUT=\"$$d\" -DCOEF=\"$(WPFB_COEF)\" -DTWF=\"$(WCH_TW)\" -DLB=$$lb -DS00=$$a -DS01=$$b -DSHIFT=$$sh \
+	      -DNACC=5 -DGF=2 -o $$d/tb $(WCO_RTL) && \
+	    $(VVP) -n $$d/tb && $(PYTHON) sim/check_wide.py core $$d $$pc ) > build-sim-logs/sim-$$nm.log 2>&1 & \
+	done; wait
+	@for f in build-sim-logs/sim-wco*.log; do printf '%-36s %s\n' "$$f" "$$(grep '結果:' $$f || echo '結果の行が無い（途中で落ちた）')"; done
+	@fail=$$(grep -L '結果: 全部通過' build-sim-logs/sim-wco*.log); \
+	  if [ -n "$$fail" ]; then echo "FAIL: $$fail"; exit 1; else echo "sim-wco: 全部通過"; fi

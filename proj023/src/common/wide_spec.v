@@ -80,6 +80,9 @@ module wide_spec #(
     input  wire              rd_s,
     input  wire [11:0]       rd_i,
     output wire [63:0]       rd_d,
+    // 診断
+    output wire [15:0]       dbg_pfb_sat,
+    output wire              dbg_have_first,
     // sim の記録用（IP の出口）
     output wire [16*64-1:0]  dbg_ip_tdata,
     output wire [10:0]       dbg_ip_k1,
@@ -148,6 +151,8 @@ module wide_spec #(
         end
     endgenerate
     assign dbg_ip_tdata = ln_m_tdata;
+    assign dbg_pfb_sat    = pfb_sat;
+    assign dbg_have_first = have_first;
     assign dbg_ip_k1    = ln_m_tuser[10:0];
     assign dbg_ip_v     = ln_m_tvalid[0];
 

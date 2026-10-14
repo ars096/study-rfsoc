@@ -72,6 +72,7 @@ module tb_wide_spec;
         .commit(commit), .seq0(seq0), .seq1(seq1), .dk0(dk0), .dk1(dk1), .df0_0(df0_0), .df0_1(df0_1),
         .dn0(dn0), .dn1(dn1), .dsat0(dsat0), .dsat1(dsat1), .rd_plane(rd_plane),
         .rd_s(rd_s), .rd_i(rd_i), .rd_d(rd_d),
+        .dbg_pfb_sat(), .dbg_have_first(),
         .dbg_ip_tdata(ip_d), .dbg_ip_k1(ip_k1), .dbg_ip_v(ip_v));
 
     // ---- IP の出口を記録（frame は出口の通し番号）----
