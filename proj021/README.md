@@ -2034,7 +2034,7 @@ ID は今まで使ったもの（F-0・W-0・V2-a・P-5 など）をそのまま
 | W-G | 窓のスペクトル = スナップショットの numpy FFT | `window --golden` | 通過（W 256。W 8 は 2-2d） |
 | W-1 | SG の CW が予言の ch・SG の周波数との差（ppm） | `window --tone` | **未**（2-2d まで `--w6` と一緒に回していた） |
 | P-5 | ch の応答（半 ch −3 dB・−3 dB 幅 1 ch）。配線: SG だけ | `s45resp` | 通過 |
-| P-8 | 線形性（L-1・L-2）と窓の和 / TP。配線: ノイズソース・PATT・PM | `s45lin` | 通過 |
+| P-8 | 線形性（L-1・L-2）と窓の和 / TP。配線: ノイズソース・PATT・PM | `s45lin` | 通過（L-2 の B0 0.0206 dB を ATT 10〜20 で確かめ直す） |
 | V2-a | specd の束ね 4 個 = PL の 40.96 ms 1 個（整数で） | `s45v2a` | 通過 |
 | V2-b | 10.24 ms で 30 分: 欠け・CRC 0 | specrecv | **未**（2-3c の bit） |
 | V2-c | W-G を REC_CTRL（ONE \| SNAP）で | `plring --golden` | 通過 |
@@ -2044,12 +2044,12 @@ ID は今まで使ったもの（F-0・W-0・V2-a・P-5 など）をそのまま
 | V2-g | リングの溢れ・キャッシュの陽性対照、soak | `plring --soak`（`--pause`・`--no-inval`） | soak は通過、**陽性対照 2 つは未**（2-2a の bit） |
 | S（S-1〜S-4） | specd の SNAP（RAW の生サンプル） | `s45snap` | 通過 |
 | PS-1（新） | float32 の丸め・utc_ns の補正（INTERFACE 6.） | `s45v2c` | **未**（2-2d の bit） |
-| PS-2（新） | specd の 10 分の運転（欠け・CRC・1 周） | specrecv | 通過（B2b の後の p99 は 2 分） |
+| PS-2（新） | specd の 10 分の運転（欠け・CRC・1 周） | specrecv | 通過（**B2b の後の 10 分は未**。2 分で p99 11.5 ms） |
 | PS-3（新） | TP の跳ねの見張り（TP_JUMP・step_db） | specrecv ＋ PATT | 通過 |
 
 **やめた判定**（FULL を外したので SAM45-Fine では回せない）: W-6・W-1b・全帯域の golden・F-5・`spectrometer --tp`。SAM45-Wide など全帯域のある bit の判定として残す（INTERFACE 8. の 8 と同じ扱い）。
 
-**この後**: 未の 6 つ（W-1・V2-b・V2-d・V2-e・V2-g の陽性対照・PS-1）を最終の bit で回す。配線は今の P-8 の配線（ノイズソース → PATT 13 dB → 分配器 → 4 ADC）で、W-1 だけ SG を足す
+**この後**: 未の 7 つ（W-1・V2-b・V2-d・V2-e・V2-g の陽性対照・PS-1・B2b の後の PS-2）を最終の bit で回す。配線は今の P-8 の配線（ノイズソース → PATT 13 dB → 分配器 → 4 ADC）で、W-1 だけ SG を足す
 
 ## 検討事項（決定ではない）
 
