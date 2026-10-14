@@ -473,7 +473,8 @@ TP のレコード（type 2）:
 8. spec_core（FULL）の F0 を時刻の格子に寄せる（proj017 の「次に」から持ち越し。5.1 の見張りと束ねに要る）。
    proj021 の V2-f で、FULL の r（DUMP_T − m·BASE）は 1 回の RUN の中では一定だが Overlay・SRST ごとに変わる（742・517・948）ことを実測。
    **SAM45-Fine では要らなくなった**（proj021 2-5 で FULL を RAW に替えた。RAW は束ねない）。**spec_core を使う全帯域の bit（SAM45-Wide など）で扱う**
-9. WIN_DELAY_BEATS・WIN_FIRST_Z_BEATS を PFB 入りの RTL（proj020 以降）で出し直す（今の値は proj017 の矩形の sim）
+9. ~~WIN_DELAY_BEATS・WIN_FIRST_Z_BEATS を PFB 入りの RTL（proj020 以降）で出し直す~~ → **出し直した（proj021、2026-10-14）: 値は変わらない**。窓の PFB は wspec の中（z の後）にあり、sim-wdelay が測る z までの遅れ D(NS)・最初の z の遅れ F(NS) は NS 1〜8 とも proj017 の値と小数 2 桁まで同じ。
+   PFB の重心のずれ 1.5·L(NS) は 5.2 の D_eff として PS が足す（proj021 2-3c）
 10. **1 ボードあたりのネットワークの予算**（2026-10-08 の相談。方針の案で、まだ決めていない）: 最終的には複数の RFSoC ボードを 1 台のダウンロード PC で受けるので、**1 ボード 100〜200 Mbps（12.5〜25 MB/s）**が目安かもしれない。4.5 の予算（1 GbE の実測の 70 %）より 1 桁近く小さく、float32 でも BITS.md の dt 10.24 ms の 6 本はネットワークでは 10.24 ms で送れない:
 
     | bit | float32（BITS.md の dt） | 200 Mbps（25 MB/s）に入る最小のネットワークの tint（そのときの MB/s） | 100 Mbps（12.5 MB/s） |

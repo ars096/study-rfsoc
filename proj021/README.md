@@ -2000,7 +2000,7 @@ INTERFACE 9. の判定 **V2-a〜g は全部通過**。PS の道具は全部レ�
 | A1 | ~~P-5~~（s45resp の回帰） | **済み（2026-10-14、2-5 の bit で通過）** | — |
 | A2 | ~~F-2~~（ADC → コアの遅れの較正） | **済み（2026-10-14、146.0〜147.5 ns を timebase.CAL に）** | — |
 | A3 | ~~INTERFACE 8. の 8~~（FULL の F0 を時刻の格子に寄せる） | **閉じた（2026-10-14）**: 2-5 で SAM45-Fine の FULL を外したので要らない。INTERFACE 8. の 8 に「SAM45-Wide など spec_core を使う全帯域の bit で扱う」と書いた | — |
-| A4 | INTERFACE 8. の 9（sim-wdelay を PFB 入りの RTL で出し直す） | 実機では F(NS) が proj017 の値のまま（V2-f）。D(NS) の側と sim での確かめが残り | sim だけ |
+| A4 | ~~INTERFACE 8. の 9~~（sim-wdelay を今の RTL で出し直す） | **済み（2026-10-14）**: 2-5 の RTL（pfb_core・ddc_core。2-2a の ddc の丸めの移動・c_ns の複製を含む）で `make sim-wdelay` を回し、**D(NS)・F(NS)・X(NS) が NS 1〜8 とも timebase の表（proj017 の sim）と小数 2 桁まで同じ**（D 57.56〜2781.10、F 72〜5344、X 14.44〜2562.90）。V2-f の実機（r − G = F(NS) ＋ 66）とも合う。窓の PFB（T = 4）は wspec の中（z の後）なので D・F は変わらず、その重心のずれ 1.5·L(NS) は INTERFACE 5.2 のとおり PS が引く（2-3c で確かめた） | — |
 
 **B. 採用済みでまだ手を付けていない機能**
 
@@ -2027,7 +2027,7 @@ INTERFACE 9. の判定 **V2-a〜g は全部通過**。PS の道具は全部レ�
 | D3 | 公開前スキャンの手順書・業務ログ（持ち越し） |
 | D4 | **済み（2026-10-14）**。PATT を 3 dB に戻した |
 
-**進める順の案**（2026-10-14 に更新）: A4（sim だけ）→ B2（specd だけ）→ 判定を `test/acceptance/` の書き方に → 移植元の commit を決める（この bit の sha256・資源・WNS を書き残す）
+**進める順の案**（2026-10-14 に更新）: B2（specd だけ）→ 判定を `test/acceptance/` の書き方に → 移植元の commit を決める（この bit の sha256・資源・WNS を書き残す）
 
 ### 別に進める（手順 0 から）
 
