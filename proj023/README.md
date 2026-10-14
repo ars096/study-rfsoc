@@ -105,6 +105,7 @@ proj022 で模型と資源の見積もりまで設計したものを RTL にし�
 - 2c-2: つないだ wide_spec は、IP の出口から先が模型と bit 単位で一致し、ダンプの区切りが T ≡ K_F の格子に乗る → **当たった**（最初の sim で。B の飽和の扱いだけ判定の側を直した）
 - 2c-3: wide_core のレコードは頭の語（DUMP_T = K_F ＋ 2048·DUMP_F0・語 4 の log2 B・語 7 の S0_CUR）も中身も合う → **当たった**（出口を 4 クロックに 1 回止めた変種だけ 1 回目に落ちたが、DUT は正しく late にしていた。試験の負荷の置き方の誤り）
 - 3a: コアの共通を win_core から抜いても、番地と意味はそのまま（IF_ID・NSTREAM・CORE_PORT・GB_STAT・FFT_N）→ **当たった**（PROJ の 10 進の値を 1 回書き違え、sim の読みで捕まえた）
+- 3b（ビルド、走らせる前）: build.tcl はブロックデザインの照合（結線・在ってはいけない番地の出口・ROM のラッパ・OOC のログ）で止まらずに合成まで行く。資源は DSP 2,656（62 %）・BRAM ≒ 784（73 %）・URAM ≒ 40（50 %）・LUT ≒ 252k（59 %）。lane_fft_w 1 個は DSP 27・LUT ≒ 3,190・BRAM 8。共有の ROM は RAMB36 換算で係数 64・ひねり係数 32（ひねり係数はレーン 0 の定数の列が削られて少し減りうる）。**タイミングは既定の戦略で閉じない見込みが半分くらい**。落ちるなら最悪経路は共有の ROM の出口（係数 1,152 bit・ひねり係数 576 bit）からコア 1〜3 への長い配線
 - M-7: 束ねても半 ch は −3 dB のまま、ENBW は 1.01 程度、隣より外は良くなる → **当たった**（上の表）
 
 手順 2（RTL と単体の sim）の予言（2026-10-14、書く前。D-7 の後に書き直した）:
@@ -127,7 +128,7 @@ proj022 で模型と資源の見積もりまで設計したものを RTL にし�
    2d. フレームの頭（D-2）・起動の口・4 ADC の共有（S-W3、陽性対照つき）
 3. ビルドまで。2 つに分ける:
    3a. コアの RTL: `core_cmn.v`（win_core からコアの共通だけを抜く・FFT_N 0x80）・`wide_s45_core.v`（core_cmn ＋ wide_core ＋ RAW ＋ レコードの束ね）＋ sim（2026-10-14 済み、作業用の環境で）
-   3b. ← **次はここ** build.tcl（窓と win_fft を外し、lane_fft_w（2048 点固定）・wide_s45_core × 4・共有の ROM 2 つ・ID を D-5 に）・S-W4・ビルド（B-1）
+   3b. build.tcl（窓と win_fft を外し、lane_fft_w（2048 点固定）・wide_s45_core × 4・共有の ROM 2 つ・ID を D-5 に）（2026-10-14 書いた）← **次はここ** Vivado サーバでビルド（B-1）
 4. 実機（H-1〜H-4）
 
 ## やったこと
@@ -141,6 +142,7 @@ proj022 で模型と資源の見積もりまで設計したものを RTL にし�
 - 2026-10-14: 手順 2c-2。`wide_spec.v`・`wide_acc.v`・`lane_fft_w_model.v`・`tb_wide_spec.v`・`check_wide.py spec`・`make sim-wsp`（4 本 ＋ 陽性対照 2 本）を書いた。D-8（SHIFT はコアに 1 つ）
 - 2026-10-14: 手順 2c-3。`wide_core.v`・`tb_wide_core.v`・`check_wide.py core`（check_spec の判定を judge_dumps に分けた）・`make sim-wco`（3 本 ＋ 陽性対照 1 本）を書いた。rec_fr に W7HI、wide_spec に診断の出口
 - 2026-10-14: 手順 3a。`core_cmn.v`・`wide_s45_core.v`・`tb_wide_s45.v`・`check_wide.py s45`・`make sim-ws45`。wide_core の rec_drop を流れごとの 2 bit に。判定の期待を tb の書いた値から取るように直した（陽性対照で分かった）
+- 2026-10-14: 手順 3b。build.tcl を Wide に（下の「手順 3b」）
 - 2026-10-14: 名前の付け替えは「動く名前」だけ: build.tcl の `set proj`・Makefile の配線後の phys_opt の hwh のコピー・`tools/postroute_physopt.tcl` の bit の名前・`pynq/plring.py` と `pynq/spectrometer.py` の既定の bit。コメントの proj021 は経緯なので残した。ID（PROJ・BIT_KIND・BIT_REV）は D-5 のとおり手順 2 で
 
 ## 結果
@@ -279,6 +281,27 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 - **陽性対照が 1 回目に落ちなかった（判定の側の誤り）**: FFT_N を渡さないと wide_core は既定の B 4 で回るが、判定が「期待の束ね」を **DUT が今効かせている値**（tb が meta に書いた c_lb）から取っていたので、B 4 として全部つじつまが合った。**期待は tb が書いた値（`LB`・`S00`・`S01`・`SHIFT`）から取る**ように tb（wide_spec・wide_core・wide_s45 の 3 本）と判定（judge_dumps の「設定が効いた」）を直した。直した判定で 3 本とも見直し、b2・b4 は通過、p は「束ね log2 B 2（書いた値 1）」で落ちた。**2c-2・2c-3 の sim も同じ穴を持っていた**（どれも書いた値と効いた値が同じだったので結果は変わらない見込みだが、Vivado サーバで回し直して確かめる）
 - 陽性対照で期待の数のレコードが来ないとき、tb が時間切れ（1.8 ms の sim 時刻、≒ 40 分）まで待っていた。ダンプが出揃うはずの時間 ＋ 40 フレームで打ち切るようにした（wide_core・wide_s45 の tb）
 
+### 手順 3b: build.tcl（2026-10-14 書いた。ビルド待ち）
+
+**変えたところ**（build.tcl の冒頭にも書いた）:
+- コアのセル `s45_core_i` の中身を `wide_s45_core` に（module reference。セルの名前はそのまま）。窓（win_core・pfb_core・ddc_core・wspec_core・hb2・nco_rom・pfb4_rom・win_coef.vh）・`s45_core.v`・`win_fft` を外した。CONFIG は BUILD_TAG・GB_K_RST・CORE_PORT・RAW（コア 0 だけ 1）・K_F 0・ST_N 16384・GF_L2 8・ID（D-5）を明示して読み返す
+- FFT IP は `lane_fft_w`（fft_cfg.tcl の fft_req を 2048 点・入力 15 bit で）。読み返しの output_width は 27、ポートの照合は m_axis_data_tdata 64 bit（27 bit を 32 bit の欄 × 2）。realtime の「在ってはいけない tready」の照合はそのまま
+- **共有の ROM 2 つ**: `wide_coef_rom_0`・`wide_tw_rom_0`（module reference、DSP のクロック）。番地は s45_core_0 の coef_addr・coef_addr_v・tw_addr、出口（coef・m_out・tw・k1_out）を 4 コアへ。照合の表（shared_nets）で張り、同じ表で照らす
+- time_core_0・s45_ring_0・s45_core_i の ID を D-5（BIT_KIND 1・BIT_REV 1・PROJ 0x0023_0100）。**time_core.v・s45_ring.v の既定値は proj021 のまま**（build.tcl が与えて読み返す。PS の照合と timebase の CAL の鍵は手順 4 で）
+- full_sel（axis_sel4）は RAW の入力の選びとして残した。wide_s45_core には full_gb_stat・full_adc_stat が無い（raw_core は使わない）ので、その縛り（32 bit の定数）と full_sel の出口の結線を外した
+
+**ROM の中身（$readmemh）が「動いているように見える失敗」にならないように**（読めないと ROM は 0 になり、BRAM が消えるだけでビルドは通る）:
+1. ブロックデザインの前に hex の形を見る（2048 行・1 行 288 / 144 桁の 16 進）
+2. hex は **絶対パスで** CONFIG.COEF_FILE・TW_FILE に与える（OOC の合成は run のディレクトリで走るので、既定の相対の名前は届かない）。generate_target の後で、生成されたラッパに `.COEF_FILE("<絶対パス>")` が書かれたかを見る（在るべき側。引用符が抜けると別の名前として扱われる）
+3. OOC の合成のログに `Synth 8-4445`（$readmem のファイルが開けない）が無いこと。ROM の run が 2 個あること
+4. 配置配線の後、2 つの ROM の BRAM が予言（64・32）の半分以上あること（合否。0 なら中身が 0）
+
+**照合を足したところ**（net_check.rpt）: s45_core_1〜3 の coef_addr・coef_addr_v・tw_addr が**どこにもつながっていない**こと（在ってはいけない側）、4 個のセルの VLNV が `module_ref:wide_s45_core`、ROM のクロックが DSP のクロックのネット。陽性対照 (e) つながっている s45_core_0/coef_addr を「つながっていない」と言わない・(f) 無いピンを「つながっていない」と言わない
+
+**資源の数え**: lane_fft_w の個数（期待 64）と 1 個ぶん（初めての実測。予言 DSP 27・LUT ≒ 3,190・BRAM 8）、コアごとの DSP（予言 664 = レーン FFT 432 ＋ PFB 64 ＋ 鎖 144 ＋ TP 24）、コア 0 の段ごと、RAW と ROM 2 つの資源（`*_util.rpt`）
+
+Vivado を走らせる前に作業用の環境でできたのは、Tcl の構文（コマンドの完結）と、足した照合の部品（hex の形・ラッパの正規表現・ログの拾い）の単体の確かめ（陽性対照つき）まで。BD の API（module reference の文字列の CONFIG・VLNV）は走らせて初めて分かる
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -294,7 +317,8 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 - [x] Vivado サーバで `make sim-ring sim-raw`（rec_fr に W7HI を足した後の既存のレコードの sim）: sim-ring は総合 通過（all・late・snap ＋ 陽性対照 snap-nochk・flip）、sim-raw は通過（レコード 12 個・中身と頭の不一致 0）。**rec_fr の変更は既存のレコードを変えていない**（2026-10-14）
 - [x] 手順 3a: `core_cmn.v`・`wide_s45_core.v` と sim（作業用の環境で通過・陽性対照は落ちた）
 - [ ] Vivado サーバで `make sim-ws45 sim-wco sim-wsp`（判定を「書いた値を期待にする」に直した後の回し直し）
-- [ ] 手順 3b: build.tcl・ビルド
+- [x] 手順 3b: build.tcl（上の「手順 3b」）
+- [ ] Vivado サーバでビルド（B-1）: `make`（-1）。資源と WNS を予言と並べる
 
 ## 公開について
 
@@ -306,6 +330,7 @@ study-rfsoc は公開リポジトリ。commit・push の前に、公開前のス
 ```bash
 cd model && python3 bin_resp.py && cd ..   # M-7: 束ねた ch の応答
 make model-wide     # 手順 2a: sim の模型の自己検査（RTL なし）
+make                # 手順 3b: ビルド（-1、build/）。成否は vivado.log の末尾と「TIMING (確定)」
 make sim-ws45       # 手順 3a: wide_s45_core（3 本、5 分ほど。陽性対照は 10 分ほど）
 make sim-wco        # 手順 2c-3: wide_core のレコードとレジスタ（4 本、5 分ほど）
 make sim-wsp        # 手順 2c-2: wide_spec の A1'・A2・B・C（6 本、2 コアで 17 分ほど）

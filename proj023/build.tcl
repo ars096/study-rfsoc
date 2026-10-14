@@ -1,4 +1,17 @@
 # SPDX-License-Identifier: BSD-3-Clause
+# proj023 手順 3b — SAM45-Wide（proj023/README の手順 3b・D-1〜D-7）:
+#   1. コアのセル s45_core_i を module reference の wide_s45_core に（core_cmn ＋ wide_core（SLICE × 2）＋ コア 0 だけ RAW）。
+#      **窓（win_core・pfb_core・ddc_core・wspec_core …）と win_fft は外した**。セルの名前は今までどおり（PS はこの名前でコアを見つける）
+#   2. FFT IP は lane_fft_w（2048 点固定・入力 15 bit・unscaled → 出力 27 bit）× 16 / コア。設定は src/sam45fine/fft_cfg.tcl の fft_req（FFT_OPT）
+#   3. 共有の ROM 2 つ（D-6）: wide_coef_rom_0（PFB の係数）・wide_tw_rom_0（ひねり係数）。**番地は s45_core_0 が出し、出口を 4 コアへ配る**。
+#      s45_core_1〜3 の番地の出口はどこにもつながない（照合の「在ってはいけない」側で見る）。
+#      中身は src/sam45wide/*.hex を **絶対パスで** CONFIG に与える（OOC の合成は run のディレクトリで走るので相対パスは届かない）。
+#      $readmemh が読めないと ROM は 0 になり、BRAM が消えるだけでビルドは通る → 合成のログと配置後の BRAM の数で止める
+#   4. ID は D-5: BIT_KIND 1・BIT_REV 1・PROJ 0x0023_0100（s45_core_i・time_core_0・s45_ring_0）
+#   5. full_sel（axis_sel4）は RAW の入力の選びとして残す。wide_s45_core に full_gb_stat・full_adc_stat は無い（raw_core は使わない）ので縛りも外した
+#   6. 資源の数え: lane_fft_w 64 個・コアごと・段ごと（u_pfb・鎖・TP）・共有の ROM
+#
+# （以下は proj021 の記録）
 # proj021 手順 2-1 — インターフェース v2 の流れのブロックと自己記述（INTERFACE.md の 2.〜3.、proj021/README の手順 2-1）
 # proj021 手順 2-5 — SAM45-Fine の FULL（spec_core）を生サンプルの流れ（raw_core、KIND 4 RAW）に替える（README 手順 2-5）:
 #   1. s45_core_0 を CONFIG.FULL 0・CONFIG.RAW 1 に（full_kind = raw）。lane_fft（FFT IP）は作らず、spec_core.v・dft16.v・tw_rom.v も足さない
@@ -194,12 +207,29 @@ set fabric_mhz [format %.3f [expr {$fs_gsps * 1000.0 / $spw_adc}]]
 set dsp_mhz    [format %.3f [expr {$fs_gsps * 1000.0 / $spw}]]
 set fs_mhz     [format %.3f [expr {$fs_gsps * 1000.0}]]
 
-# ---- 分光計（spec_core.v と対）----
-# 8192 点 = 16 レーン × 512 点。出力 4096 ch・0.5 MHz、1 フレーム 2.000 µs
-set fft_lane_n  512
-set fft_in_w    14        ;# IP の入力（ADC の有効 14 bit）
-set fft_out_w   24        ;# unscaled の出力 = 14 + log2(512) + 1。**spec_core.v の YW と一致すること**
-set spec_range  65536     ;# spec_core の AXI4-Lite の窓（16 bit 番地）
+# ---- 分光計（wide_spec.v と対。proj023）----
+# 32768 点 = 16 レーン × 2048 点（固定長、D-7）。細かい ch 0.125 MHz、1 フレーム 8.000 µs（2048 ビート）。束ね B = 1 / 2 / 4 は電力の後
+set fft_mod     lane_fft_w ;# **名前は RTL（wide_spec.v）と sim/lane_fft_w_model.v と対**
+set fft_lane_n  2048
+set fft_in_w    15        ;# IP の入力（wide_pfb の出口 y、15 bit）
+set fft_out_w   27        ;# unscaled の出力 = 15 + log2(2048) + 1。RTL は 32 bit の欄の下位 26 bit を読む（|Y| < 2^25、README 2c）
+# フレームの頭（D-2）と起動の見張り。**RTL の既定と同じ値を明示して読み返す**（sim は GF_L2 2 で回している）
+set wide_kf     0         ;# T ≡ K_F（mod 2048）がフレームの頭
+set wide_st_n   16384     ;# 起動の見張り（ビート）
+set wide_gf_l2  8         ;# F0 の格子 = 2^8 フレーム（M = G / 2048 = 256）
+set wide_coef_hex [file normalize ./src/sam45wide/wide_coef.hex]
+set wide_tw_hex   [file normalize ./src/sam45wide/wide_tw.hex]
+# 生成物の形を先に見る（行数 2048・1 行の桁数 = 1152 / 4・576 / 4）。古い・切れた hex をここで止める
+foreach {h ncol} [list $wide_coef_hex 288 $wide_tw_hex 144] {
+    if {![file exists $h]} { puts "ERROR: $h が無い（make wide-coef / make wide-tw で作る）"; exit 1 }
+    set fh [open $h r]; set lines [split [string trim [read $fh]] "\n"]; close $fh
+    set bad 0
+    foreach l $lines { if {[string length $l] != $ncol || ![string is xdigit -strict $l]} { incr bad } }   ;# Tcl の正規表現の {n} は 255 まで
+    if {[llength $lines] != 2048 || $bad != 0} {
+        puts "ERROR: $h の形が違う（[llength $lines] 行、うち $ncol 桁の 16 進でない行 $bad）"
+        exit 1
+    }
+}
 
 puts "PART      : $part"
 puts "OUTDIR    : $outdir"
@@ -212,7 +242,8 @@ foreach ch $chans {
 }
 puts "fs        : $fs_mhz MSPS （RFDC $fabric_mhz MHz × $spw_adc → DSP $dsp_mhz MHz × $spw sample/word）"
 puts "GEARBOX   : $spw_adc → $gb_mid → $spw サンプル（×$gb_up / ÷$gb_dn）"
-puts "SPEC      : 8192 点 = 16 × $fft_lane_n / 4096 ch × [expr {$fs_gsps * 1000.0 / 8192}] MHz / 1 フレーム [expr {8192 / $fs_gsps / 1000.0}] us"
+puts "SPEC      : 32768 点 = 16 × $fft_lane_n / 細かい ch [expr {$fs_gsps * 1000.0 / 32768}] MHz / 1 フレーム [expr {32768 / $fs_gsps / 1000.0}] us / SLICE 4096 ch × 2 / コア（束ね B 1・2・4）"
+puts "WIDE      : K_F = $wide_kf / ST_N = $wide_st_n / GF_L2 = $wide_gf_l2"
 
 set projdir $outdir/vivado
 set jobs 8
@@ -360,25 +391,21 @@ if {$use_board} {
     puts "NOTE: src/board/ps_preset.tcl が無い。PS にプリセットを当てない検証ビルド（実機に使わない）。make ps-preset で作る"
 }
 
-# proj021 2-5: s45_core_0 の FULL の位置の中身。raw = raw_core（生サンプルの SNAP だけ）/ fft = spec_core（2-2d〜2-4）
-set full_kind raw
-if {$full_kind ni {raw fft}} { puts "ERROR: full_kind は raw か fft（$full_kind）"; exit 1 }
-puts "FULL の位置: $full_kind（[expr {$full_kind eq "raw" ? "raw_core、KIND 4 RAW" : "spec_core、KIND 1 FULL"}]）"
-add_files -norecurse [list ./src/common/tp_core.v ./src/common/cmul.v ./src/common/gb_adc.v ./src/common/gb_gate.v ./src/common/raw_core.v]
-if {$full_kind eq "fft"} { add_files -norecurse [list ./src/common/spec_core.v ./src/common/dft16.v ./src/common/tw_rom.v] }
-# proj014: 窓（win_core）。win_coef.vh は make coef の生成物（手で直さない）
-add_files -norecurse [list ./src/common/win_core.v ./src/common/pfb_core.v ./src/common/dft16f.v ./src/common/ddc_core.v ./src/common/hb2.v ./src/common/hb2s.v ./src/common/pair2.v \
-                           ./src/common/nco_rom.v ./src/common/wspec_core.v ./src/sam45fine/pfb4_rom.v ./src/common/win_coef.vh ./src/common/axis_sel4.v]
-# proj016: 時刻・健全性
-add_files -norecurse [list ./src/common/time_core.v ./src/common/dstamp.v ./src/common/adc_ev.v ./src/common/s45_core.v ./src/common/rec_fr.v ./src/common/rec_arb.v ./src/common/s45_ring.v]
-set_property file_type {Verilog Header} [get_files win_coef.vh]
-set_property include_dirs [file normalize ./src/common] [get_filesets sources_1]
-set WIN_NW 2              ;# proj017: 1 ADC の窓の数（win_core の CONFIG.NW）。SAM45-Fine は 2（proj015・016 は 4）
-set win_range 65536       ;# proj021 2-2d: s45_core_i の AXI4-Lite の窓（16 bit 番地 = 64 KiB。INTERFACE 3.）。proj015〜2-2c は 1 MiB（20 bit、仮の読み窓）
+# proj023 3b: コア（wide_s45_core）とその中身。窓（win_core 一式）・spec_core は足さない。FULL の位置は RAW（コア 0）だけ
+add_files -norecurse [list ./src/common/wide_s45_core.v ./src/common/core_cmn.v ./src/common/wide_core.v ./src/common/wide_spec.v \
+                           ./src/common/wide_pfb.v ./src/common/wide_chain.v ./src/common/wide_acc.v ./src/common/cmul.v ./src/common/dft16.v \
+                           ./src/common/wide_coef_rom.v ./src/common/wide_tw_rom.v ./src/common/raw_core.v ./src/common/tp_core.v \
+                           ./src/common/rec_fr.v ./src/common/rec_arb.v ./src/common/adc_ev.v]
+# proj016〜: 時刻・リング・ギアボックスの見張り・RAW の入力の選び
+add_files -norecurse [list ./src/common/time_core.v ./src/common/s45_ring.v ./src/common/gb_adc.v ./src/common/gb_gate.v ./src/common/axis_sel4.v]
+# ROM の中身（$readmemh）。プロジェクトにも載せておく（CONFIG には絶対パスを与える。上の wide_coef_hex）
+add_files -norecurse [list $wide_coef_hex $wide_tw_hex]
+set_property file_type {Memory File} [get_files [list $wide_coef_hex $wide_tw_hex]]
+set win_range 65536       ;# s45_core_i の AXI4-Lite の窓（16 bit 番地 = 64 KiB。INTERFACE 3.）
 
-# proj021 2-5: lane_fft は FULL（full_kind = fft）のときだけ作る
-if {$full_kind eq "fft"} {
-# ------------------------------------------------------------------ FFT IP（lane_fft）
+# ------------------------------------------------------------------ FFT IP（lane_fft_w。proj023）
+# wide_spec.v がレーンごとに 1 個（コアごと 16 個、計 64 個）使う。2048 点固定・入力 15 bit・unscaled（出力 27 bit）。
+# 以下の説明の「lane_fft・512 点・入力 14 bit・spec_core.v」は proj011〜021 のもの。照合の形はそのまま、名前と幅を $fft_mod に替えた
 # spec_core.v がレーンごとに 1 個（計 16 個）使う。**名前 lane_fft は RTL と対**。
 # 設定の意味（spec_core.v / sim/lane_fft_model.v の冒頭と対）:
 #   512 点・pipelined streaming・固定小数点・入力 14 bit・**unscaled**（出力 24 bit、飽和も丸めの
@@ -388,8 +415,8 @@ if {$full_kind eq "fft"} {
 #   出力側の tready は IP に無い）
 #   乗算器・バタフライは FFT_OPT で選ぶ（src/sam45fine/fft_cfg.tcl）
 # CONFIG の名前は版で変わりうるので、1 つずつ投げて **読み返しで判定する**（proj003 の流儀）。
-create_ip -name xfft -vendor xilinx.com -library ip -module_name lane_fft
-set xfft [get_ips lane_fft]
+create_ip -name xfft -vendor xilinx.com -library ip -module_name $fft_mod
+set xfft [get_ips $fft_mod]
 set xfft_req [fft_req $fft_throttle $fft_cmul $fft_bfly $fft_lane_n $fft_in_w $dsp_mhz]
 set known [list_property $xfft]
 foreach {k v fatal} $xfft_req {
@@ -435,11 +462,11 @@ set want_ports [dict create \
     aclk 1 aresetn 1 \
     s_axis_config_tdata 8 s_axis_config_tvalid 1 s_axis_config_tready 1 \
     s_axis_data_tdata 32 s_axis_data_tvalid 1 s_axis_data_tready 1 s_axis_data_tlast 1 \
-    m_axis_data_tdata 48 m_axis_data_tuser 16 m_axis_data_tvalid 1 m_axis_data_tlast 1 \
+    m_axis_data_tdata 64 m_axis_data_tuser 16 m_axis_data_tvalid 1 m_axis_data_tlast 1 \
     event_frame_started 1 event_tlast_unexpected 1 event_tlast_missing 1 event_data_in_channel_halt 1 ]
 set top ""
-foreach f [get_files -quiet -of_objects [get_files lane_fft.xci]] {
-    if {[string match "*/synth/lane_fft.vhd" $f]} { set top $f }
+foreach f [get_files -quiet -of_objects [get_files ${fft_mod}.xci]] {
+    if {[string match "*/synth/${fft_mod}.vhd" $f]} { set top $f }
 }
 if {$top eq ""} {
     puts "WARNING: IP のトップ（synth/lane_fft.vhd）が見つからない。ポートの照合を飛ばす"
@@ -449,13 +476,13 @@ if {$top eq ""} {
     # そちらは設定に依らず**全部のポート**（aclken・m_axis_data_tready・m_axis_status_* …）を持つ。
     # ファイル全体を読むと「在るか」は component 側で必ず通り、「在ってはいけないか」は必ず落ちる
     # （2026-09-24、proj011 の初回ビルドで realtime の IP に m_axis_data_tready が「在る」と誤判定した）。
-    if {![regexp -nocase -indices {\mentity\s+lane_fft\s+is\M} $txt ent_a]} {
-        puts "ERROR: $top に entity lane_fft の宣言が見つからない"
+    if {![regexp -nocase -indices "\\mentity\\s+${fft_mod}\\s+is\\M" $txt ent_a]} {
+        puts "ERROR: $top に entity $fft_mod の宣言が見つからない"
         exit 1
     }
     set a0 [lindex $ent_a 1]
-    if {![regexp -nocase -indices -start $a0 {\mend\s+(entity\s+)?lane_fft\s*;} $txt ent_b]} {
-        puts "ERROR: $top の entity lane_fft の終わりが見つからない"
+    if {![regexp -nocase -indices -start $a0 "\\mend\\s+(entity\\s+)?${fft_mod}\\s*;" $txt ent_b]} {
+        puts "ERROR: $top の entity $fft_mod の終わりが見つからない"
         exit 1
     }
     set ent_txt [string range $txt $a0 [lindex $ent_b 0]]
@@ -467,7 +494,7 @@ if {$top eq ""} {
     }
     set ng 0
     puts ""
-    puts "---- FFT IP のポート（entity lane_fft の宣言から [dict size $have] 本）----"
+    puts "---- FFT IP のポート（entity $fft_mod の宣言から [dict size $have] 本）----"
     dict for {n w} $want_ports {
         if {![dict exists $have $n]} {
             puts [format "  %-30s 無い" $n]; incr ng
@@ -487,59 +514,13 @@ if {$top eq ""} {
         }
     }
     if {$ng > 0} {
-        puts "ERROR: FFT IP のポートが spec_core.v の前提と $ng 件合わない。entity lane_fft にあるポート:"
+        puts "ERROR: FFT IP のポートが wide_spec.v の前提と $ng 件合わない。entity $fft_mod にあるポート:"
         dict for {n w} $have { puts "    $n ($w)" }
         exit 1
     }
 }
-}
-# ------------------------------------------------------------------ FFT IP（win_fft。proj014）
-# win_core の中の wspec_core が 1 個使う。**名前 win_fft は RTL（src/common/wspec_core.v）と sim/win_fft_model.v と対**。
-# 設定は tools/ip_survey.tcl の win4096_res_lut と同じ（survey: DSP 30・LUT 4.0k・BRAM 15 / 個）。
-# 出力 31 bit（= 18 + 12 + 1）を wspec_core.v の YW が前提にしている。読み返して確かめる
-create_ip -name xfft -vendor xilinx.com -library ip -module_name win_fft
-set wfft [get_ips win_fft]
-set wfft_req [list \
-    CONFIG.transform_length                       4096                   1 \
-    CONFIG.implementation_options                 pipelined_streaming_io 1 \
-    CONFIG.data_format                            fixed_point            1 \
-    CONFIG.input_width                            18                     1 \
-    CONFIG.scaling_options                        unscaled               1 \
-    CONFIG.output_ordering                        natural_order          1 \
-    CONFIG.xk_index                               true                   1 \
-    CONFIG.throttle_scheme                        realtime               1 \
-    CONFIG.aresetn                                true                   1 \
-    CONFIG.run_time_configurable_transform_length false                  1 \
-    CONFIG.cyclic_prefix_insertion                false                  1 \
-    CONFIG.channels                               1                      1 \
-    CONFIG.complex_mult_type                      use_mults_resources    1 \
-    CONFIG.butterfly_type                         use_luts               1 \
-    CONFIG.target_clock_frequency                 [expr {int($dsp_mhz)}] 0 \
-    CONFIG.phase_factor_width                     18                     0 \
-    CONFIG.rounding_modes                         convergent_rounding    0 \
-    CONFIG.ovflo                                  false                  0 ]
-set known [list_property $wfft]
-foreach {k v fatal} $wfft_req {
-    if {[lsearch -exact $known $k] < 0} { lappend ::cfg_fail [list $k $v "この IP に存在しない名前" $fatal]; continue }
-    if {[catch {set_property $k $v $wfft} msg]} { lappend ::cfg_fail [list $k $v [string map {"\n" " "} $msg] $fatal] }
-}
-dump_ip_params $wfft $outdir/win_fft_params.rpt
-cfg_report "win_fft の設定（win_fft_params.rpt に全 CONFIG）"
-set ng 0
-foreach {k v fatal} $wfft_req {
-    set got ""
-    catch {set got [get_property $k $wfft]}
-    set ok [expr {[string equal -nocase $got $v]}]
-    puts [format "  win_fft %-40s = %-24s %s" $k $got [expr {$ok ? "OK" : ($fatal ? "違う（要求 $v）" : "（任意）要求 $v")}]]
-    if {!$ok && $fatal} { incr ng }
-}
-set ow ""
-catch {set ow [get_property CONFIG.output_width $wfft]}
-puts [format "  win_fft %-40s = %s（期待 31）" CONFIG.output_width $ow]
-if {$ow ne "" && $ow != 31} { incr ng }
-if {$ng > 0} { puts "ERROR: win_fft の設定が $ng 件、要求どおりになっていない（win_fft_params.rpt）"; exit 1 }
-generate_target {instantiation_template synthesis simulation} $wfft
 
+# proj023 3b: win_fft（窓の FFT）は外した（D-4）
 update_compile_order -fileset sources_1
 
 # ------------------------------------------------------------------ block design
@@ -929,7 +910,6 @@ set rdc_w [expr {[get_property LEFT $rdc] - [get_property RIGHT $rdc] + 1}]
 
 # proj015: 全帯域は 1 本だけ（axis_sel4 で 4 ADC から選ぶ）。proj021 手順 2-1: spec_core_0 のセルは無くし、
 #   s45_core_0 の中の FULL の流れ（CONFIG.FULL = 1、src/common/s45_core.v）にした。入力は s45_core_0 の s_axis_full、選ぶのはその流れの SRC
-set spec_build_tag [expr {$build_tag_base | (1 << 21)}]
 set fsel [create_bd_cell -type module -reference axis_sel4 full_sel]
 set_property CONFIG.DW $beat_bits $fsel
 if {[get_property CONFIG.DW $fsel] != $beat_bits} { puts "ERROR: full_sel の DW が要求と違う"; exit 1 }
@@ -941,7 +921,7 @@ set sel_m [BI full_sel [list "m_axis" "M_AXIS"] "full_sel の出力"]
 # proj016: 時刻（time_core_0）。BUILD_TAG = 土台 ＋ [20] 時刻のコア
 set tcore [create_bd_cell -type module -reference time_core time_core_0]
 set time_tag [expr {$build_tag_base | (1 << 20)}]
-foreach {k want} [list CONFIG.BUILD_TAG $time_tag CONFIG.BIT_KIND 2 CONFIG.BIT_REV 3 CONFIG.PROJ [expr {0x00210200}]] {
+foreach {k want} [list CONFIG.BUILD_TAG $time_tag CONFIG.BIT_KIND 1 CONFIG.BIT_REV 1 CONFIG.PROJ [expr {0x00230100}]] {   ;# proj023: D-5
     set_property $k $want $tcore
     if {[get_property $k $tcore] != $want} { puts "ERROR: time_core_0 の $k が [get_property $k $tcore]（要求 $want）"; exit 1 }
 }
@@ -958,7 +938,7 @@ puts [format "time_core_0: BUILD_TAG = 0x%08x / 1 秒 = %d ビート" $time_tag 
 
 # proj021 手順 2-2a: リング（s45_ring_0、src/common/s45_ring.v）。入口 i = s45_core_i/m_axis_rec、書き手 → PS の S_AXI_HP0_FPD
 set rcore [create_bd_cell -type module -reference s45_ring s45_ring_0]
-foreach {k want} [list CONFIG.NIN $nch CONFIG.BIT_KIND 2 CONFIG.BIT_REV 3 CONFIG.PROJ [expr {0x00210200}]] {
+foreach {k want} [list CONFIG.NIN $nch CONFIG.BIT_KIND 1 CONFIG.BIT_REV 1 CONFIG.PROJ [expr {0x00230100}]] {   ;# proj023: D-5
     set_property $k $want $rcore
     if {[get_property $k $rcore] != $want} { puts "ERROR: s45_ring_0 の $k が [get_property $k $rcore]（要求 $want）"; exit 1 }
 }
@@ -977,28 +957,23 @@ for {set i 0} {$i < $nch} {incr i} {
     # proj015: 窓のコア（ch ごと、NW = 4）
     # proj021 手順 2-1: コア s45_core_i（src/common/s45_core.v = win_core ＋ i = 0 だけ FULL の流れ）。**PS はこの名前でコアを見つける**
     #   CORE_PORT = [3:0] ADC の番号（SMA のラベル）/ [11:8] タイル / [15:12] スライス（chans。VERSIONS.md の実測）
-    set wcore [create_bd_cell -type module -reference s45_core s45_core_$i]
+    # proj023 3b: 中身は wide_s45_core（core_cmn ＋ wide_core ＋ コア 0 だけ RAW）。**セルの名前は s45_core_i のまま**
+    set wcore [create_bd_cell -type module -reference wide_s45_core s45_core_$i]
     set win_tag [expr {$build_tag_base | (1 << 22) | $i}]
     lassign [lindex $chans $i] cp_t cp_s
     set core_port [expr {$i | ($cp_t << 8) | ($cp_s << 12)}]
-    set full [expr {$i == 0 ? 1 : 0}]                       ;# FULL の位置に流れを置くか（コア 0 だけ）
-    set f_fft [expr {$full && $full_kind eq "fft"}]
-    set f_raw [expr {$full && $full_kind eq "raw"}]
-    set kv [list CONFIG.NW $WIN_NW CONFIG.BUILD_TAG $win_tag CONFIG.GB_K_RST $gb_k_rst CONFIG.CORE_PORT $core_port CONFIG.FULL $f_fft CONFIG.RAW $f_raw \
-                 CONFIG.BIT_KIND 2 CONFIG.BIT_REV 3 CONFIG.PROJ [expr {0x00210200}]]
-    if {$f_fft} { lappend kv CONFIG.FULL_FFT_CFG $fft_code CONFIG.FULL_BUILD_TAG $spec_build_tag }
+    set f_raw [expr {$i == 0 ? 1 : 0}]                      ;# RAW の流れ（s = 2）を置くか（コア 0 だけ）
+    set kv [list CONFIG.BUILD_TAG $win_tag CONFIG.GB_K_RST $gb_k_rst CONFIG.CORE_PORT $core_port CONFIG.RAW $f_raw \
+                 CONFIG.K_F $wide_kf CONFIG.ST_N $wide_st_n CONFIG.GF_L2 $wide_gf_l2 \
+                 CONFIG.BIT_KIND 1 CONFIG.BIT_REV 1 CONFIG.PROJ [expr {0x00230100}]]
     foreach {k want} $kv {
         set_property $k $want $wcore
         if {[get_property $k $wcore] != $want} { puts "ERROR: s45_core_$i の $k が [get_property $k $wcore]（要求 $want）"; exit 1 }
     }
-    puts [format "s45_core_%d（%s）: NW = %d / BUILD_TAG = 0x%08x / GB_K_RST = %d / CORE_PORT = 0x%04x / FULL = %d / RAW = %d" $i $lbl $WIN_NW $win_tag $gb_k_rst $core_port $f_fft $f_raw]
-    if {$f_raw} { puts [format "  RAW の流れ（s = %d）: 生サンプル 8192 個 / ダンプ（raw_core）" $WIN_NW] }
-    if {$f_fft} {
-        puts [format "  FULL の流れ（s = %d）: FFT_CFG = 0x%02x / BUILD_TAG = 0x%08x（プリセット %s / 速度グレード -%s）" \
-                $WIN_NW $fft_code $spec_build_tag [expr {$has_preset ? "あり" : "なし"}] $grade]
-    }
-    if {$full} {
-        set full_axis [BI s45_core_0 [list "s_axis_full" "S_AXIS_FULL"] "s45_core_0 の FULL の流れの入力"]
+    puts [format "s45_core_%d（%s）: wide_s45_core / BUILD_TAG = 0x%08x / GB_K_RST = %d / CORE_PORT = 0x%04x / RAW = %d" $i $lbl $win_tag $gb_k_rst $core_port $f_raw]
+    if {$f_raw} {
+        puts "  RAW の流れ（s = 2）: 生サンプル / ダンプ（raw_core）。入力は full_sel（4 ADC から選ぶ）"
+        set full_axis [BI s45_core_0 [list "s_axis_full" "S_AXIS_FULL"] "s45_core_0 の RAW の流れの入力"]
     }
     set win_axi($i)  [BI s45_core_$i [list "s_axi"  "S_AXI"]  "s45_core_$i の AXI4-Lite"]
     set win_axis($i) [BI s45_core_$i [list "s_axis" "S_AXIS"] "s45_core_$i の AXI4-Stream 入力"]
@@ -1022,6 +997,21 @@ for {set i 0} {$i < $nch} {incr i} {
     }
 }
 cfg_report "gb_bc_*（axis_broadcaster）"
+
+# proj023 3b: 共有の ROM（D-6）。番地は s45_core_0、出口は 4 コアへ（下の shared_nets）
+foreach {cell mod par hex} [list wide_coef_rom_0 wide_coef_rom CONFIG.COEF_FILE $wide_coef_hex wide_tw_rom_0 wide_tw_rom CONFIG.TW_FILE $wide_tw_hex] {
+    set c [create_bd_cell -type module -reference $mod $cell]
+    # 文字列の CONFIG に引用符が要るかは版で違いうるので、素のままと引用符つきを順に試し、読み返しで判定する。
+    # **生成されたラッパに .$par("<絶対パス>") が書かれたかは generate_target の後で見る**（下の「ROM のラッパ」）
+    set got ""
+    foreach v [list $hex "\"$hex\""] {
+        if {[catch {set_property $par $v $c}]} continue
+        set got [string trim [get_property $par $c] {"}]
+        if {$got eq $hex} break
+    }
+    if {$got ne $hex} { puts "ERROR: $cell の $par が '$got'（要求 $hex）"; exit 1 }
+    puts "ROM        : $cell（$mod）$par = $hex"
+}
 
 puts [format "gb_adc_*: DW = %d / gb_gate_*: DW = %d・CW = %d（axis_rd_data_count の幅）" \
         [expr {$spw_adc * 16}] [expr {$gb_mid * 16}] $rdc_w]
@@ -1116,7 +1106,7 @@ for {set i 0} {$i < $nch} {incr i} {
     lappend adc_dom gb_up_$i/aclk gb_fifo_$i/s_axis_aclk gb_adc_$i/aclk
     lappend dsp_dom gb_fifo_$i/m_axis_aclk gb_dn_$i/aclk gb_gate_$i/aclk s45_core_$i/aclk gb_bc_$i/aclk
 }
-lappend dsp_dom full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk
+lappend dsp_dom full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk wide_coef_rom_0/clk wide_tw_rom_0/clk
 nc $ps_clk0 time_core_0/ctrl_aclk
 foreach p $adc_dom { nc $adc_fabric $p }
 foreach p $dsp_dom { nc $dsp_fabric $p }
@@ -1162,7 +1152,7 @@ for {set i 0} {$i < $nch} {incr i} {
 }
 # proj021 手順 2-2a: FULL = 0 のコア（s45_core_1〜）の FULL の入口を定数 0 で縛る（CRITICAL WARNING BD 41-759 を消す。RTL では使っていない入口）
 #   幅ごとに 1 個の xlconstant を全部のコアで共有する。照合は下の shared_nets の表で一緒に見る
-foreach {nm w} {full_tie_1b 1 full_tie_32b 32 full_tie_256b 256} {
+foreach {nm w} {full_tie_1b 1 full_tie_256b 256} {   ;# proj023: 32 bit（full_gb_stat・full_adc_stat）は wide_s45_core に無い
     set c [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant $nm]
     set_property -dict [list CONFIG.CONST_WIDTH $w CONFIG.CONST_VAL 0] $c
     if {[get_property CONFIG.CONST_WIDTH $c] != $w || [get_property CONFIG.CONST_VAL $c] != 0} { puts "ERROR: $nm の CONST_WIDTH・CONST_VAL が要求と違う"; exit 1 }
@@ -1173,11 +1163,8 @@ proc shared_nets {} {
     return [list \
         full_tie_1b/dout               [tie_list s_axis_full_tvalid] \
         full_tie_256b/dout             [tie_list s_axis_full_tdata] \
-        full_tie_32b/dout              [concat [tie_list full_gb_stat] [tie_list full_adc_stat]] \
         rst_dsp/peripheral_aresetn     full_sel/aresetn \
         s45_core_0/full_sel            full_sel/sel \
-        full_sel/gb_stat_o             s45_core_0/full_gb_stat \
-        full_sel/adc_stat_o            s45_core_0/full_adc_stat \
         rst_dsp/peripheral_aresetn     time_core_0/aresetn \
         rst_dsp/peripheral_aresetn     s45_ring_0/aresetn \
         rst_ctrl/peripheral_aresetn    time_core_0/ctrl_aresetn \
@@ -1185,6 +1172,13 @@ proc shared_nets {} {
         time_core_0/go_out             [lmap i [lseq $::nch] {list s45_core_${i}/go_in}] \
         time_core_0/ev_out             [lmap i [lseq $::nch] {list s45_core_${i}/tev_in}] \
         {*}[concat {*}[lmap i [lseq $::nch] {list s45_core_${i}/rec_drop [list s45_ring_0/rec_drop${i}]}]] \
+        s45_core_0/coef_addr           wide_coef_rom_0/addr \
+        s45_core_0/coef_addr_v         wide_coef_rom_0/addr_v \
+        wide_coef_rom_0/coef           [lmap i [lseq $::nch] {list s45_core_${i}/coef_in}] \
+        wide_coef_rom_0/m_out          [lmap i [lseq $::nch] {list s45_core_${i}/coef_m}] \
+        s45_core_0/tw_addr             wide_tw_rom_0/addr \
+        wide_tw_rom_0/tw               [lmap i [lseq $::nch] {list s45_core_${i}/tw_in}] \
+        wide_tw_rom_0/k1_out           [lmap i [lseq $::nch] {list s45_core_${i}/tw_k1}] \
     ]
 }
 proc lseq {n} { set r {}; for {set i 0} {$i < $n} {incr i} { lappend r $i }; return $r }
@@ -1318,13 +1312,29 @@ foreach {a b} $sh_intf {
     lappend nc_log [format "ch * %-3s intf %s -> %s" $tag [norm_pin $a] [norm_pin $b]]
     foreach pr $probs { lappend nc_log "        $pr"; incr nc_ng }
 }
-set probs [net_check 0 pin $dsp_fabric [list full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk] 1]
-lappend nc_log [format "ch * %-3s pin  %s -> full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk" [expr {[llength $probs] ? "NG" : "OK"}] [norm_pin $dsp_fabric]]
+set probs [net_check 0 pin $dsp_fabric [list full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk wide_coef_rom_0/clk wide_tw_rom_0/clk] 1]
+lappend nc_log [format "ch * %-3s pin  %s -> full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk wide_coef_rom_0/clk wide_tw_rom_0/clk" [expr {[llength $probs] ? "NG" : "OK"}] [norm_pin $dsp_fabric]]
 foreach pr $probs { lappend nc_log "        $pr"; incr nc_ng }
 # proj021 手順 2-1: spec_core_0 のセルは無い（FULL の流れは s45_core_0 の中。ギアボックスの gb_* は s45_core_i が握る）
 set tag [expr {[llength [get_bd_cells -quiet spec_core_*]] == 0 ? "OK" : "NG"}]
 lappend nc_log [format "ch * %-3s spec_core_* のセルが無い" $tag]
 if {$tag eq "NG"} { incr nc_ng }
+# proj023 3b: 共有の ROM の番地は s45_core_0 だけが出す。**s45_core_1〜 の番地の出口はどこにもつながっていない**（在ってはいけない側）
+proc pin_unconnected {p} { return [expr {[llength [get_bd_pins -quiet $p]] == 1 && [llength [get_bd_nets -quiet -of_objects [get_bd_pins -quiet $p]]] == 0}] }
+for {set i 1} {$i < $nch} {incr i} {
+    foreach pn {coef_addr coef_addr_v tw_addr} {
+        set tag [expr {[pin_unconnected s45_core_$i/$pn] ? "OK" : "NG"}]
+        lappend nc_log [format "ch %d %-3s s45_core_%d/%s がどこにもつながっていない（ROM の番地はコア 0 だけ）" $i $tag $i $pn]
+        if {$tag eq "NG"} { incr nc_ng }
+    }
+}
+# 4 個のセルの中身が wide_s45_core であること（窓の s45_core が残っていない）
+for {set i 0} {$i < $nch} {incr i} {
+    set v [get_property VLNV [get_bd_cells s45_core_$i]]
+    set tag [expr {[string match "*:module_ref:wide_s45_core:*" $v] ? "OK" : "NG"}]
+    lappend nc_log [format "ch %d %-3s s45_core_%d の中身 = %s（期待 wide_s45_core）" $i $tag $i $v]
+    if {$tag eq "NG"} { incr nc_ng }
+}
 # rev2: タイルのリセットが別のネット（別のフロップ）であること。**在ってはいけない側**
 foreach t $adc_tiles {
     set peers [peer_names [get_bd_pins -quiet rfdc/m${t}_axis_aresetn] pin]
@@ -1361,6 +1371,13 @@ set pcd [net_check 0 pin time_core_0/go_out [list s45_core_0/t_in] 1]
 if {[llength $pcc] == 0} { set pc_ok 0; lappend nc_log "陽性対照 (c) が通ってしまった（時刻のネットの照合が壊れている）" }
 if {[llength $pcd] == 0} { set pc_ok 0; lappend nc_log "陽性対照 (d) が通ってしまった（時刻のネットの照合が壊れている）" }
 lappend nc_log "陽性対照: (c) [llength $pcc] 件・(d) [llength $pcd] 件で落ちた（どちらも 1 件以上が期待）"
+# proj023 3b: 「つながっていない」の照合の陽性対照 (e): つながっている s45_core_0/coef_addr に当てると「つながっていない」と言わないこと。
+#   (f): 在りもしないピンにも「つながっていない」と言わないこと（名前を間違えた照合が黙って通らない）
+set pce [pin_unconnected s45_core_0/coef_addr]
+set pcf [pin_unconnected s45_core_1/coef_addr_no_such_pin]
+if {$pce} { set pc_ok 0; lappend nc_log "陽性対照 (e) が通ってしまった（つながっているピンを「つながっていない」と言った）" }
+if {$pcf} { set pc_ok 0; lappend nc_log "陽性対照 (f) が通ってしまった（無いピンを「つながっていない」と言った）" }
+lappend nc_log "陽性対照: (e) [expr {$pce ? "通った（NG）" : "落ちた"}]・(f) [expr {$pcf ? "通った（NG）" : "落ちた"}]（どちらも落ちるのが期待）"
 set fh [open $outdir/net_check.rpt w]
 foreach l $nc_log { puts $fh $l }
 close $fh
@@ -1574,9 +1591,26 @@ proc ooc_wait {names} { foreach n $names { catch {wait_on_run [get_runs $n]} } }
 # OOC の run は launch_runs synth_1 のときに作られる。先に回すため、ここで作っておく（f2d8de4 では作っていなかったので空のまま素通りした）
 generate_target all [get_files $bd_file]
 create_ip_run [get_files $bd_file]
+# proj023 3b: 共有の ROM のラッパに hex の絶対パスが文字列として書かれたか（**在るべき側**。引用符が抜けると合成で落ちるか、別の名前を探して 0 の ROM になる）
+foreach {inst par hex} [list wide_coef_rom_0 COEF_FILE $wide_coef_hex wide_tw_rom_0 TW_FILE $wide_tw_hex] {
+    set vs {}
+    catch {set vs [split [exec find $projdir -path "*${bd_name}_${inst}_0*" -name "*.v"] "\n"]}
+    set hit ""
+    foreach f $vs {
+        set fh [open $f r]; set t [read $fh]; close $fh
+        set hre [regsub -all {[][{}()*+?.\\^$|]} $hex {\\&}]
+        if {[regexp "\\.${par}\\s*\\(\\s*\"$hre\"\\s*\\)" $t]} { set hit $f; break }
+    }
+    if {$hit eq ""} {
+        puts "ERROR: $inst のラッパに .${par}(\"$hex\") が無い。探したファイル:"
+        foreach f $vs { puts "  $f" }
+        exit 1
+    }
+    puts "ROM のラッパ: $inst .$par = \"$hex\"（[file tail $hit]）"
+}
 # FFT の IP（xfft・win_fft）も OOC で合成されるので、同じく先に回す
-# proj021 2-5: lane_fft（$xfft）は full_kind = fft のときだけ作る
-foreach ip [expr {$full_kind eq "fft" ? [list $xfft $wfft] : [list $wfft]}] {
+# proj023 3b: FFT の IP は lane_fft_w（$xfft）だけ
+foreach ip [list $xfft] {
     if {[catch {
         set xf [get_files -quiet [get_property IP_FILE $ip]]
         if {$xf ne "" && [llength [get_runs -quiet ${ip}_synth_1]] == 0} { create_ip_run $xf }
@@ -1604,6 +1638,21 @@ for {set try 1} {$try <= 2} {incr try} {
 set bad [ooc_bad $ooc_names]
 if {[llength $bad] > 0} { puts "ERROR: 回し直しても OOC の合成が通らない: $bad"; exit 1 }
 puts "OOC 合成   : [llength $ooc_names] 個すべて完了"
+# proj023 3b: $readmemh が読めないと ROM が 0 になり、BRAM が消えるだけで合成は通る。**OOC のログで先に止める**
+set rm_ng 0
+set rm_seen 0
+foreach n $ooc_names {
+    if {![string match "*wide_coef_rom*" $n] && ![string match "*wide_tw_rom*" $n]} continue
+    incr rm_seen
+    set lf [file join [ooc_dir $n] runme.log]
+    set fh [open $lf r]; set t [read $fh]; close $fh
+    foreach line [split $t "\n"] {
+        if {[regexp -nocase {Synth 8-4445|could not open .*readmem|readmem.*(not found|cannot|could not)} $line]} { puts "  $n: $line"; incr rm_ng }
+    }
+}
+puts "ROM の中身 : OOC の run [expr {$rm_seen}] 個のログに \$readmemh の失敗 $rm_ng 行"
+if {$rm_seen != 2} { puts "ERROR: wide_coef_rom・wide_tw_rom の OOC の run が 2 個でない（$rm_seen）。run の名前: $ooc_names"; exit 1 }
+if {$rm_ng > 0} { puts "ERROR: ROM の中身（hex）を合成が読めていない"; exit 1 }
 
 # ---- 合成〜実装〜ビットストリーム ----
 launch_runs impl_1 -to_step write_bitstream -jobs $jobs
@@ -1628,6 +1677,18 @@ foreach {pname want} {pps_trig AH13 pps_comp AJ13} {
     set io  [get_property IOSTANDARD  $prt]
     puts [format "  %-10s %-6s %s" $pname $got $io]
     if {$got ne $want} { puts "ERROR: $pname の配置が $got。期待 $want（RefMan A6 / Appendix A）"; exit 1 }
+}
+# ---- proj023 3b: 共有の ROM が BRAM として残っているか（合否。**中身が 0 なら ROM は消えて BRAM が 0 になる**）----
+# 予言: 係数 2048 × 1152 bit → RAMB36（512 × 72）× 64、ひねり係数 2048 × 576 bit → × 32（レーン 0 の定数の列が削られて少し減りうる）
+puts ""
+puts "---- 共有の ROM の BRAM ----"
+foreach {cell pred} {wide_coef_rom_0 64 wide_tw_rom_0 32} {
+    set n36 0; set n18 0
+    foreach x [get_cells -quiet -hierarchical -filter {REF_NAME =~ RAMB36*}] { if {[string first "/$cell/" "/$x"] >= 0} { incr n36 } }
+    foreach x [get_cells -quiet -hierarchical -filter {REF_NAME =~ RAMB18*}] { if {[string first "/$cell/" "/$x"] >= 0} { incr n18 } }
+    set eq [expr {$n36 + $n18 / 2.0}]
+    puts [format "  %-16s RAMB36 %d・RAMB18 %d（RAMB36 換算 %.1f、予言 %d）" $cell $n36 $n18 $eq $pred]
+    if {$eq < $pred / 2.0} { puts "ERROR: $cell の BRAM が予言の半分に届かない。ROM の中身（\$readmemh）が効いていない疑い"; exit 1 }
 }
 report_timing_summary -file $outdir/timing.rpt
 report_utilization    -file $outdir/utilization.rpt
@@ -1679,7 +1740,7 @@ if {$n_async == 0} {
 }
 
 # ---- BRAM と DSP の使用量 ----
-# README の予言（BRAM36 と DSP の見積もり）と突き合わせる。**4ch に広げるときの基準になる。**
+# README の予言（BRAM36 と DSP の見積もり）と突き合わせる。proj023 の見込み: DSP 2,656・BRAM ≒ 784・URAM ≒ 40・LUT ≒ 252k・FF ≒ 489k（README の見積もり ＋ 2b の ROM の移し替え）
 puts ""
 puts "---- ブロック RAM / DSP ----"
 foreach line [split [exec cat $outdir/utilization.rpt] \n] {
@@ -1692,10 +1753,9 @@ foreach line [split [exec cat $outdir/utilization.rpt] \n] {
 # 階層ごと（lane_fft 16 個・spec_core の残り）に分けて残す
 report_utilization -hierarchical -hierarchical_depth 4 -file $outdir/utilization_hier.rpt
 
-# ---- lane_fft 1 個ぶん・16 個の合計・それ以外 ----
-# **make survey（IP 単体の OOC 合成）の数字と突き合わせる。**配置配線後なので、
-# 単体の値と違えば最適化が階層をまたいだということ（それ自体が記録に値する）
-set ffts [lsort [get_cells -quiet -hierarchical -filter {ORIG_REF_NAME == lane_fft || REF_NAME == lane_fft}]]
+# ---- lane_fft_w 1 個ぶん・64 個の合計・コアごと・段ごと（proj023 3b）----
+# **make survey（IP 単体の OOC 合成）の数字と突き合わせる。**固定長・入力 15 bit は survey していないので、ここが初めての実測
+set ffts [lsort [get_cells -quiet -hierarchical -filter "ORIG_REF_NAME == $fft_mod || REF_NAME == $fft_mod"]]
 # **名前に [0] が入るので -filter の =~ は使わない**（glob の文字クラスとして読まれ、何にも当たらない）。
 # DSP の名前を一度集め、先頭一致で数える
 set dsp_names [get_property NAME [get_cells -quiet -hierarchical -filter {REF_NAME == DSP48E2}]]
@@ -1705,54 +1765,52 @@ proc count_under {names c} {
     foreach x $names { if {[string first "$c/" $x] == 0} { incr n } }
     return $n
 }
+proc count_in {names pat} {
+    set n 0
+    foreach x $names { if {[string first $pat "/$x"] >= 0} { incr n } }
+    return $n
+}
 set dsp_fft 0
 foreach c $ffts { incr dsp_fft [count_under $dsp_names $c] }
 puts ""
-puts "---- FFT IP の資源（FFT_OPT = $fft_opt）----"
-puts "  lane_fft の個数         = [llength $ffts]（期待 [expr {$full_kind eq "fft" ? "16 = s45_core_0 の FULL の流れの 16 レーン" : "0（2-5: FULL の位置は RAW）"}]）"
+puts "---- FFT IP の資源（$fft_mod、FFT_OPT = $fft_opt）----"
+puts "  $fft_mod の個数         = [llength $ffts]（期待 [expr {16 * $nch}] = 16 レーン × $nch コア）"
 if {[llength $ffts] > 0} {
     set c0 [lindex $ffts 0]
     report_utilization -cells $c0 -file $outdir/lane_fft_util.rpt
-    puts "  DSP48E2 1 個あたり      = [count_under $dsp_names $c0]（$c0）"
+    puts "  DSP48E2 1 個あたり      = [count_under $dsp_names $c0]（$c0。予言 27）"
+    puts "    予言（proj022 の S-1 から固定長の差を引いた見込み）: LUT ≒ 3,190・BRAM 8"
     foreach line [split [exec cat $outdir/lane_fft_util.rpt] \n] {
         if {[regexp {^\|\s*(CLB LUTs|CLB Registers|Block RAM Tile|DSPs)\s*\|} $line]} { puts "    [string trim $line]" }
     }
 }
-puts "  DSP48E2 lane_fft [llength $ffts] 個の合計 = $dsp_fft（予言 [expr {$full_kind eq "fft" ? "16 × 21 = 336" : "0"}]）"
-puts "  DSP48E2 全体            = $dsp_all（予言 [expr {$full_kind eq "fft" ? "≒ 2600 = (256 ＋ 120 × 2 ＋ 24) × 4 ＋ FULL 504" : "2096 = (256 ＋ 120 × 2 ＋ 24) × 4（2-5: FULL 無し）"}]）"
-# proj021 手順 2-1: FULL の流れは s45_core_0 の中（generate の g_full の u_full）。2-5: RAW は g_raw.u_raw
-set n 0
-set fhier [expr {$full_kind eq "fft" ? "g_full.u_full" : "g_raw.u_raw"}]
-foreach x $dsp_names { if {[string first "/s45_core_0/inst/$fhier/" "/$x"] >= 0} { incr n } }
-puts "  DSP48E2 s45_core_0 の $fhier = $n（予言 [expr {$full_kind eq "fft" ? "504。0 なら階層の名前が違う → utilization_hier.rpt" : "0"}]）"
-if {$full_kind eq "raw"} {
-    set c_raw [get_cells -quiet s45_core_0/inst/g_raw.u_raw]
-    if {$c_raw eq ""} { set c_raw [get_cells -quiet -hierarchical -filter {NAME =~ "*s45_core_0/inst/g_raw.u_raw"}] }
-    if {$c_raw ne ""} {
-        report_utilization -cells $c_raw -file $outdir/raw_core_util.rpt
-        puts "  s45_core_0 の RAW（raw_core）の資源（予言 RAMB36 8 前後・LUT 1,000〜3,000・FF 2,000〜4,000）:"
-        foreach line [split [exec cat $outdir/raw_core_util.rpt] \n] {
-            if {[regexp {^\|\s*(CLB LUTs|CLB Registers|Block RAM Tile|DSPs)\s*\|} $line]} { puts "    [string trim $line]" }
-        }
-    } else { puts "  WARNING: s45_core_0/inst/g_raw.u_raw のセルが見つからない（utilization_hier.rpt で見る）" }
-}
-# proj015: s45_core_i の DSP。4 個が同じでなければ、どこかの ch だけ最適化が違う。s45_core_0 は中身の段ごとにも
-# 予言（窓 1 つ）: 粗い PFB の共有 256（分岐の和 192・dft16f 64）＋ 窓ごとの実数化 8 × 4 / ddc 72 / wspec 30（FFT）/ tp 24
+puts "  DSP48E2 $fft_mod [llength $ffts] 個の合計 = $dsp_fft（予言 [expr {16 * $nch}] × 27 = [expr {16 * $nch * 27}]）"
+puts "  DSP48E2 全体            = $dsp_all（予言 2656 = 664 × 4: レーン FFT 432 ＋ PFB 64 ＋ 鎖 144 ＋ TP 24）"
+# コアごと。4 個が同じでなければ、どこかのコアだけ最適化が違う（コア 0 は RAW を持つが RAW は DSP を使わない）
 for {set i 0} {$i < $nch} {incr i} {
-    set n 0
-    foreach x $dsp_names { if {[string first "/s45_core_${i}/inst/u_win/" "/$x"] >= 0} { incr n } }
-    puts [format "  DSP48E2 s45_core_%d/u_win（%s） = %d（予言 %d = 256 ＋ (8 ＋ 72 ＋ 40) × %d ＋ 24）" $i [lindex $ch_labels $i] $n [expr {256 + 120 * $WIN_NW + 24}] $WIN_NW]
+    puts [format "  DSP48E2 s45_core_%d（%s） = %d（予言 664）" $i [lindex $ch_labels $i] [count_in $dsp_names "/s45_core_${i}/inst/"]]
 }
-foreach {sub pred} {u_pfb 272 g_w[0].u_ddc 72 g_w[0].u_ws 40 g_tp.u_tp 24} {
-    set pat "/s45_core_0/inst/u_win/$sub/"
-    set n 0
-    foreach x $dsp_names { if {[string first $pat "/$x"] >= 0} { incr n } }
-    puts [format "  DSP48E2 s45_core_0/%-14s = %d（予言 %d）" $sub $n $pred]
+# コア 0 の段ごと（階層の名前は wide_s45_core.v・wide_core.v・wide_spec.v・core_cmn.v の generate / インスタンス名）
+foreach {sub pred} {u_wide/u_spec/u_pfb 64 u_wide/u_spec/g_lane 432 u_wide/u_spec/u_chain 144 u_wide/u_spec/u_acc 0 u_cmn/g_tp.u_tp 24 g_raw.u_raw 0} {
+    set n [count_in $dsp_names "/s45_core_0/inst/$sub"]
+    puts [format "  DSP48E2 s45_core_0/%-24s = %d（予言 %d）" $sub $n $pred]
+}
+# コア 0 の RAW（raw_core）と共有の ROM の資源
+foreach {c f what} {s45_core_0/inst/g_raw.u_raw raw_core_util.rpt "s45_core_0 の RAW（予言 RAMB36 8 前後・LUT 1,000〜3,000）" \
+                    wide_coef_rom_0 coef_rom_util.rpt "係数 ROM（予言 RAMB36 64）" wide_tw_rom_0 tw_rom_util.rpt "ひねり係数 ROM（予言 RAMB36 32）"} {
+    set cc [get_cells -quiet $c]
+    if {$cc eq ""} { set cc [get_cells -quiet -hierarchical -filter "NAME =~ *$c"] }
+    if {$cc eq ""} { puts "  WARNING: $c のセルが見つからない（utilization_hier.rpt で見る）"; continue }
+    report_utilization -cells [lindex $cc 0] -file $outdir/$f
+    puts "  $what:"
+    foreach line [split [exec cat $outdir/$f] \n] {
+        if {[regexp {^\|\s*(CLB LUTs|CLB Registers|Block RAM Tile|DSPs)\s*\|} $line]} { puts "    [string trim $line]" }
+    }
 }
 # 全体の LUT・FF・URAM を utilization.rpt から（vivado.log の上の表は BRAM・DSP だけなので）
 if {![catch {set fh [open $outdir/utilization.rpt r]; set ut [read $fh]; close $fh}]} {
     foreach line [split $ut "\n"] {
-        if {[regexp {^\|\s*(CLB LUTs|CLB Registers|URAM)\*?\s*\|} $line]} { puts "  全体: [string trim $line]" }
+        if {[regexp {^\|\s*(CLB LUTs|CLB Registers|URAM|Block RAM Tile)\*?\s*\|} $line]} { puts "  全体: [string trim $line]" }
     }
 }
 
