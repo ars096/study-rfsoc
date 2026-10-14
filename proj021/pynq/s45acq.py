@@ -24,6 +24,7 @@ import numpy as np
 
 import s45cal
 import s45proto as P
+from tpjump import TpJump
 
 BEATS_PER_SEC = 256_000_000
 G_BEATS = 1 << 19                          # 時刻の格子 2.048 ms（BITS.md）
@@ -718,6 +719,9 @@ class FakeBackend:
             e = t.buf[t.n]
             e["t_beat"] = self.tp_next[i] * TP_N
             e["sum"] = 3_000_000_000 + self.tp_next[i]; e["nfr"] = TP_N; e["flags"] = TPF_RUN if self.tp_next[i] == 0 else 0
+            pj = getattr(self.o, "posctl_tp_jump", 0)
+            if pj and self.tp_next[i] and self.tp_next[i] % pj == 0:
+                e["sum"] = int(e["sum"]) * 105 // 100            # 陽性対照（B2）: この個だけ +0.21 dB
             t.n += 1; t.total += 1
             self.tp_next[i] += 1
         return t
@@ -769,6 +773,7 @@ class Acq:
         self.cal = getattr(opts, "tp_cal", None)    # TP の dBm の較正（s45cal、specd が起動時に読む）。bit の ID は open の後で照らす
         self.cal_msg = "較正ファイルが無い" if self.cal is None else "未確認"
         self.tp_last = [None] * 4                  # ADC ごとの直近の TP（σ_x²、最後に書き出した記録の平均）
+        self.tpj = [TpJump() for _ in range(4)]    # proj021 B2: TP の跳ねの見張り（tpjump.py。START で初めから）
         self._reset_counters()
 
     def log(self, *a):
@@ -941,6 +946,8 @@ class Acq:
             if at_beat < self.be.now_beat() + BEATS_PER_SEC:
                 return dict(ok=False, code="ARG", msg="at= は今から 1 秒以上後に")
         self._reset_counters()
+        for t in self.tpj:
+            t.reset()                              # B2: スキャンの状態（CFG_ID）は RUN ごとなので、R の段差は RUN の境で除ける
         self.state = self.ARMED
         try:
             sa = self.be.start(self.st, at_beat, force)
@@ -1015,7 +1022,7 @@ class Acq:
         return dict(state=self.state, time_ok=self.be.clock.ok, time_err=self.be.clock.err, start_at=self.start_at,
                     dumps=min(self.n_dump) if self.n_dump else 0, dumps_each=self.n_dump, miss=sum(self.n_miss), kgap=sum(self.kgap),
                     tp=[t.total for t in tps], tp_lost=sum(t.lost + t.overflow for t in tps), tp_bad=sum(t.bad_seq + t.bad_flag + t.bad_nfr for t in tps),
-                    tp_ovr=sum(t.n_ovr for t in tps), health=self.h_or, flags=self.fl_or, sat=self.sat,
+                    tp_ovr=sum(t.n_ovr for t in tps), tp_jump=[t.count for t in self.tpj], health=self.h_or, flags=self.fl_or, sat=self.sat,
                     loop_max_ms=round(self.loop_max * 1e3, 2), loop_p99_ms=p99, loops=self.n_loop,
                     loop_max_at=self.loop_max_at, loop_slow=self.loop_slow,
                     pl_dumps=sum(self.pl_dumps), bdrop=sum(b.drop for b in self.bund if b is not None),
@@ -1088,6 +1095,10 @@ class Acq:
         e = t.buf[:n].copy()
         self.tp_last[i] = float(np.mean(e["sum"].astype(np.float64) / (e["nfr"].astype(np.float64) * 8192.0)))
         e["t_beat"] = self.be.tp_time(i, e["t_beat"].astype(np.int64))      # フレームの番号 → ビート
+        evs = self.tpj[i].feed(e["t_beat"], e["sum"].astype(np.float64) / (e["nfr"].astype(np.float64) * 8192.0), e["flags"])
+        if final:
+            evs += self.tpj[i].finish()
+        self._tp_jump(i, evs)
         if self.be.clock.ok:
             e["utc_ns"] = self.be.clock.utc_ns_arr(e["t_beat"], i)
         else:
@@ -1098,6 +1109,17 @@ class Acq:
         b = e.tobytes()
         pad = b"\0" * (P.pad8(len(hd) + len(b)) - len(hd) - len(b))
         self._put(P.T_TP, [hd, b + pad], P.crc32(hd, b + pad))
+
+    TP_JUMP_EV_MAX = 100                           # B2: EVENT は ADC ごとに RUN あたりこれまで（STATUS の tp_jump は全部数える）
+
+    def _tp_jump(self, i, evs):
+        for ev in evs:
+            t = self.tpj[i]
+            if t.count > self.TP_JUMP_EV_MAX:
+                continue
+            utc = self.be.clock.utc_ns(ev["t_beat"], None, i)
+            self.event(dict(ev="TP_JUMP", adc=i, t_beat=ev["t_beat"], utc_ns=int(utc), n=ev["n"], db=ev["db"], sigma_db=ev["sigma_db"],
+                            ovr=ev["ovr"], **({"last": True} if t.count == self.TP_JUMP_EV_MAX else {})))
 
     def _loop_once(self):
         ts = time.perf_counter()

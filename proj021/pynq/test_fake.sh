@@ -135,8 +135,30 @@ t_load() {    # proj021 2-3d: LOAD で proj020 の道具（s45proto v1）↔ pro
     "SPEC $s（期待 320）・説明のない欠け $u・送り直しとみなした記録 $d・EVENT LOAD $ev・版 $v・bad は元に戻る"
 }
 
+t_tpjump() {  # proj021 B2: TP の跳ねの見張り。tpjump の単体試験 ＋ 偽物の TP の 500 個ごとに +0.21 dB → STATUS の tp_jump・EVENT TP_JUMP = 入れた数。入れなければ 0
+  echo "== tpjump（B2）"
+  python3 test_tpjump.py > "$OUT/tpjump.unit.log"; local u=$?
+  tail -1 "$OUT/tpjump.unit.log"
+  srv tpjump --posctl-tp-jump 500
+  ctl "START n=100" "SEND ON" > /dev/null
+  rcv --seconds 7 --json "$OUT/tpjump.json" > "$OUT/tpjump.recv.log"
+  local st=$(ctl STATUS)
+  stop_srv
+  local tj=$(echo "$st" | tr ' ' '\n' | grep '^tp_jump=' | cut -d= -f2) tp=$(echo "$st" | tr ' ' '\n' | grep '^tp=' | cut -d= -f2)
+  local want=$(python3 -c "print(','.join(str((int(x) - 1) // 500) for x in '$tp'.split(',')))")
+  local nev=$(grep -c '"ev": "TP_JUMP"' "$OUT/tpjump.recv.log")
+  local wsum=$(python3 -c "print(sum(int(x) for x in '$want'.split(',')))")
+  srv tpjump0
+  ctl "START n=50" "SEND ON" > /dev/null
+  rcv --seconds 5 --json "$OUT/tpjump0.json" > "$OUT/tpjump0.recv.log"
+  local tj0=$(ctl STATUS | tr ' ' '\n' | grep '^tp_jump=' | cut -d= -f2)
+  stop_srv
+  judge $([ $u = 0 ] && [ "$tj" = "$want" ] && [ "$nev" = "$wsum" ] && [ "$tj0" = "0,0,0,0" ] && echo 1) \
+    "単体 $([ $u = 0 ] && echo 通過 || echo 失敗)・tp_jump $tj（期待 $want、TP $tp）・EVENT TP_JUMP $nev（期待 $wsum）・入れないとき $tj0"
+}
+
 case "${1:-all}" in
-  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1; t_load ;;
+  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1; t_load; t_tpjump ;;
   *) "t_$1" ;;
 esac
 if [ $NG = 0 ]; then echo "test_fake: 全部通過"; else echo "test_fake: NG $NG 件"; exit 1; fi

@@ -270,7 +270,7 @@ class Server:
         if cmd == "STATUS":
             r = self.acq_cmd(dict(op="status"))
             def f(r):
-                d = {k: r[k] for k in ("state", "time_ok", "start_at", "dumps", "miss", "kgap", "tp", "tp_lost", "tp_bad", "tp_ovr", "tp_dbfs", "tp_dbm",
+                d = {k: r[k] for k in ("state", "time_ok", "start_at", "dumps", "miss", "kgap", "tp", "tp_lost", "tp_bad", "tp_ovr", "tp_jump", "tp_dbfs", "tp_dbm",
                                        "sat", "loop_max_ms", "loop_p99_ms", "seq", "drop", "forced")}
                 d["health"] = f"{r['health']:#06x}"
                 d["flags"] = f"{r['flags']:#05x}"
@@ -623,12 +623,13 @@ def main():
                    help="proj021 2-3a: PL からの読み口（ring = PL が書くリングのレコード。2-2d で axi = 仮の読み窓の道は外した）")
     p.add_argument("--ring-mib", type=int, default=32, help="PL が書くリングの大きさ [MiB]（--read ring）")
     p.add_argument("--posctl-ring-stall", type=float, default=0.0, help="陽性対照: RUN の 100 周目にこの秒数リングを読まない")
+    p.add_argument("--posctl-tp-jump", type=int, default=0, help="陽性対照（B2）: 偽物の TP のこの倍数の個を ×1.05（+0.21 dB）にする")
     a = p.parse_args()
     a.cpu = None if a.cpu < 0 else a.cpu
     if a.cpu is not None and a.cpu >= os.cpu_count():
         a.cpu = os.cpu_count() - 1
-    if a.posctl_corrupt or a.posctl_gap or a.fake_stall:
-        log(f"注意: 陽性対照の変種で動いている（corrupt {a.posctl_corrupt}・gap {a.posctl_gap}・fake_stall {a.fake_stall}）")
+    if a.posctl_corrupt or a.posctl_gap or a.fake_stall or a.posctl_tp_jump:
+        log(f"注意: 陽性対照の変種で動いている（corrupt {a.posctl_corrupt}・gap {a.posctl_gap}・fake_stall {a.fake_stall}・tp_jump {a.posctl_tp_jump}）")
     def _on_sig(signum, _frm):
         log(f"信号 {signal.Signals(signum).name} を受けた")
         raise KeyboardInterrupt

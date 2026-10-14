@@ -1903,6 +1903,13 @@ python3 specrecv.py --host $B --out /tmp/r25.s45 --seconds 600 --json r25.json  
 4. 実機の陽性対照（PATT 3 → 4 dB）: 4 ADC とも跳ね 1 回、db ≒ −1.0、ovr なし。その後は出ない
 5. specd の 1 周の p99 が 2-5 の 10 分（10.3 ms）から +1 ms 以内
 
+#### 実装と PC での試験（2026-10-14）
+
+- `pynq/tpjump.py`（新）・`s45acq.py`（Acq に ADC ごとの TpJump、START で reset、`_flush_tp` で区切りごとに feed・STOP で finish、EVENT `TP_JUMP`・STATUS `tp_jump`、偽物の `--posctl-tp-jump`）・`specd.py`（`--posctl-tp-jump`・STATUS に `tp_jump`）・`test_tpjump.py`（新）・`test_fake.sh tpjump`
+- **test_tpjump（予言 1）: 全部通過**。(a) 1 dB / 60 s の傾き 0 (b) +0.05 dB × 3 個 × 10 本 → 10 回・n 3・db 0.050〜0.056 (c) +0.005 dB → 0 (d) −1 dB の段差 → 1 回・db −1.009・n 520 (e) 揺らぎだけ 60 万個 → 誤検出 0 (f) 振り切れの印 → ovr (g) 一定の TP → 0。陽性対照（k = 1）→ 401 回
+- **test_fake tpjump（予言 2）: 通過**。TP 4,001 個 / ADC に 500 個ごとに +0.21 dB → `tp_jump` 8,8,8,8・EVENT TP_JUMP 32（期待どおり）、入れないとき 0,0,0,0。`test_fake.sh all` の 12 試験とも通過（ほかの試験は変わらない）
+- 1 回目は STATUS に `tp_jump` が出なかった（specd が STATUS に載せる鍵を一覧で持っている。足した）
+
 ## 判定の書き方（`test/acceptance/` に移せる形）
 
 判定 1 つにつき、次の 6 項目を書く。**環境に依る値（ホスト名・IP アドレス・パス）は書かない**（公開を前提にする）。
