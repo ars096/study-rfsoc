@@ -300,6 +300,8 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 
 **資源の数え**: lane_fft_w の個数（期待 64）と 1 個ぶん（初めての実測。予言 DSP 27・LUT ≒ 3,190・BRAM 8）、コアごとの DSP（予言 664 = レーン FFT 432 ＋ PFB 64 ＋ 鎖 144 ＋ TP 24）、コア 0 の段ごと、RAW と ROM 2 つの資源（`*_util.rpt`）
 
+**1 回目のビルド（2026-10-14、Vivado サーバ）**: ブロックデザインまでは全部通った（lane_fft_w の CONFIG 18 項目とポート 17 本・在ってはいけない tready、s45_core_0〜3 の CONFIG の読み返し、ROM の CONFIG とラッパの `.COEF_FILE("…")`・`.TW_FILE("…")`、結線の照合 132 行・問題 0・陽性対照 (a)〜(f)、窓の番地 64 KiB × 4）。output_width は IP の CONFIG に無く読めなかったが、ポート幅（m_axis_data_tdata 64）の照合で代わりに確かめた。**OOC の合成で止まった**: lane_fft_w は合成を終えて dcp を書いた後、終わり際に Vivado が tcmalloc の abort（Abnormal program termination (6)）で落ち、それに依る s45_core_0〜3 の run が始まらないまま、build.tcl が「落ちた印が無い」で止めた（runme.log が無い run を想定していなかった）。**直したこと**: 落ちた run に依って始まらなかった run（runme.log が無い）も回し直す。ただし落ちた run が 1 つも無いのに始まらない run だけが残ったら止める（作業用の環境で 3 通りの組み合わせを確かめた）
+
 Vivado を走らせる前に作業用の環境でできたのは、Tcl の構文（コマンドの完結）と、足した照合の部品（hex の形・ラッパの正規表現・ログの拾い）の単体の確かめ（陽性対照つき）まで。BD の API（module reference の文字列の CONFIG・VLNV）は走らせて初めて分かる
 
 ## 結論・次にやること

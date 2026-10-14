@@ -1585,6 +1585,7 @@ proc ooc_crashed {n} {
     #   本当の RTL の誤りなら回し直しても同じ ERROR で失敗し、2 回で止まる
     return [regexp {Abnormal program termination|segfault in } $t]
 }
+proc ooc_unstarted {n} { return [expr {![file exists [file join [ooc_dir $n] runme.log]]}] }
 proc ooc_bad {names} { lmap n $names { expr {[ooc_state $n] eq "bad" ? $n : [continue]} } }
 proc ooc_wait {names} { foreach n $names { catch {wait_on_run [get_runs $n]} } }
 
@@ -1625,10 +1626,18 @@ for {set try 1} {$try <= 2} {incr try} {
     set bad [ooc_bad $ooc_names]
     if {[llength $bad] == 0} break
     foreach n $bad {
-        if {![ooc_crashed $n]} {
+        # proj023 3b: 落ちた run に依る run（lane_fft_w → s45_core_i）は始まらず、runme.log が無い。これも回し直す
+        #   （2026-10-14: lane_fft_w が合成を終えて dcp を書いた後、終わり際に tcmalloc の abort（Abnormal program termination (6)）で落ち、
+        #   s45_core_0〜3 が始まらないまま「落ちた印が無い」で止まった）
+        if {![ooc_crashed $n] && ![ooc_unstarted $n]} {
             puts "ERROR: OOC の合成 $n が失敗（Vivado が落ちた印が無い。[ooc_dir $n]/runme.log を見る）"
             exit 1
         }
+        puts "  $n: [expr {[ooc_crashed $n] ? "Vivado が落ちた" : "始まっていない（依る run が落ちた）"}]"
+    }
+    if {[llength [lmap n $bad {expr {[ooc_crashed $n] ? $n : [continue]}}]] == 0} {
+        puts "ERROR: 始まっていない run だけが残った（落ちた run が無いのに始まらない）: $bad"
+        exit 1
     }
     puts "NOTE: OOC の合成で Vivado が落ちた run を回し直す（$try 回目）: $bad"
     foreach n $bad { reset_run [get_runs $n] }
