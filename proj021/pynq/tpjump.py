@@ -33,11 +33,15 @@ class TpJump:
         self.sigma_db = None
 
     def _push(self, d):
-        for v in d:                    # 40 個ずつなので素直に
-            self.hist[self.ph] = v
-            self.ph = (self.ph + 1) % self.win
-            if self.nh < self.win:
-                self.nh += 1
+        n = len(d)
+        if n >= self.win:
+            self.hist[:] = d[-self.win:]
+            self.ph, self.nh = 0, self.win
+            return
+        idx = (self.ph + np.arange(n)) % self.win
+        self.hist[idx] = d
+        self.ph = (self.ph + n) % self.win
+        self.nh = min(self.win, self.nh + n)
 
     def feed(self, t_beat, power, flags=None):
         p = np.asarray(power, dtype=np.float64)
@@ -55,6 +59,14 @@ class TpJump:
             self.sigma_db = sig
             dev = d - med
             hit = np.abs(dev) > self.k * sig
+            if not hit.any():                  # ふだんはここだけ（Python の 1 個ずつの回しを避ける）
+                if self.open is not None:
+                    self.quiet += n
+                    if self.quiet >= self.gap:
+                        out.append(self._close())
+                self._push(d)
+                self.i += n
+                return out
             for j in range(n):
                 if hit[j]:
                     if self.open is None:

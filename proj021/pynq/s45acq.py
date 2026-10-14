@@ -774,6 +774,7 @@ class Acq:
         self.cal_msg = "較正ファイルが無い" if self.cal is None else "未確認"
         self.tp_last = [None] * 4                  # ADC ごとの直近の TP（σ_x²、最後に書き出した記録の平均）
         self.tpj = [TpJump() for _ in range(4)]    # proj021 B2: TP の跳ねの見張り（tpjump.py。START で初めから）
+        self.tpj_on = not getattr(opts, "no_tp_jump", False)   # --no-tp-jump: 見張りを止める（1 周の重さの比べ）
         self._reset_counters()
 
     def log(self, *a):
@@ -1091,14 +1092,17 @@ class Acq:
         t = self.be.tps[i]
         n = t.n
         if n == 0 or (n < TP_FLUSH and not final):
+            if final and n == 0 and self.tpj_on:
+                self._tp_jump(i, self.tpj[i].finish())     # B2: 最後の区切りで開いたままの跳ねも閉じる（溜まりが空でも）
             return
         e = t.buf[:n].copy()
         self.tp_last[i] = float(np.mean(e["sum"].astype(np.float64) / (e["nfr"].astype(np.float64) * 8192.0)))
         e["t_beat"] = self.be.tp_time(i, e["t_beat"].astype(np.int64))      # フレームの番号 → ビート
-        evs = self.tpj[i].feed(e["t_beat"], e["sum"].astype(np.float64) / (e["nfr"].astype(np.float64) * 8192.0), e["flags"])
-        if final:
-            evs += self.tpj[i].finish()
-        self._tp_jump(i, evs)
+        if self.tpj_on:
+            evs = self.tpj[i].feed(e["t_beat"], e["sum"].astype(np.float64) / (e["nfr"].astype(np.float64) * 8192.0), e["flags"])
+            if final:
+                evs += self.tpj[i].finish()
+            self._tp_jump(i, evs)
         if self.be.clock.ok:
             e["utc_ns"] = self.be.clock.utc_ns_arr(e["t_beat"], i)
         else:
