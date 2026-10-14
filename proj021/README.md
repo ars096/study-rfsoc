@@ -1794,7 +1794,7 @@ SAM45-Fine の bit は FULL（spec_core）無しで、DSP 2,096・BRAM 233.5・L
 - 2-1-PE（FULL あり）と並べる: `python3 tools/floorplan.py build/floorplan build-2-1-PE/floorplan --title 2-5 --title 2-1-PE`（→ `build/floorplan/compare.png`）
 - **FULL（spec_core）が占めていた上半分（X0〜X4・Y5〜Y7）が空き、4 ADC のコアが全体に広がった**。2-1-PE は Y0〜Y7 の全部が埋まっていたが、2-5 は **Y0 の行がほぼ空**（SmartConnect と PS の近くを除く）で、Y1 も一部だけ
 - RAW（raw_core ＋ rec_arb）は `blocks.txt` の「ADC_A common/TP/AXI」に入る（プリミティブ 10,279。B〜D は 7,167〜7,176 → RAW の分 ≒ 3,100）。s45_ring_0 は「other」
-- setup の上位 20 本は slack +0.044〜+0.109 ns（2-1-PE は +0.003〜+0.027）。最悪の経路は ADC_C の PFB（X0〜X1・Y3）から X4 への横に長い経路で、PFB の共有と窓の配置が離れたもの（群 C ではない）
+- setup の上位 20 本は slack +0.044〜+0.109 ns（2-1-PE は +0.003〜+0.027）。**17 本が s45_core_1（ADC_B）の中**: 窓 0 の wspec の中（X4Y4 → X1Y2、9 本）と u_win の中（X5Y3 → X0〜X1Y3 の横に長い経路、8 本）。ADC_B の窓は空いた所へ広がり（`blocks.txt` の幅 x: win0 2,408・win1 2,784、他の ADC は 1,000〜1,960）、コアの中で遠い経路ができた。残りは s45_core_0 の u_pfb・s45_core_2・s45_core_0 → g_raw.u_raw が 1 本ずつ。群 C（gb_fifo → gb_gate）は上位に無い
 
 #### ビルドと実機の手順（S25-2・S25-3）
 
