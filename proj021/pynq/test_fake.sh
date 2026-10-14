@@ -157,8 +157,21 @@ t_tpjump() {  # proj021 B2: TP の跳ねの見張り。tpjump の単体試験 �
     "単体 $([ $u = 0 ] && echo 通過 || echo 失敗)・tp_jump $tj（期待 $want、TP $tp）・EVENT TP_JUMP $nev（期待 $wsum）・入れないとき $tj0"
 }
 
+t_idle() {    # proj021: 何も受けていない受けを 15 s 置いても specd が切らない（ACK の待ちの時間切れで切っていた。V2-d の NG）
+  echo "== idle"; srv idle
+  ctl "SEND ON" > /dev/null
+  rcv --seconds 25 --json "$OUT/idle.json" > "$OUT/idle.recv.log" &
+  local rp=$!
+  sleep 15
+  ctl "START n=20" > /dev/null
+  wait $rp
+  local s=$(js "$OUT/idle.json" spec) drop=$(ctl STATUS | tr ' ' '\n' | grep '^data_drop=' | cut -d= -f2)
+  stop_srv
+  judge $([ "$s" = 160 ] && grep -q "照合: 通過" "$OUT/idle.recv.log" && echo 1 || echo 0) "15 s 待った後の START n=20: SPEC $s（期待 160）・data_drop $drop"
+}
+
 case "${1:-all}" in
-  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1; t_load; t_tpjump ;;
+  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1; t_load; t_tpjump; t_idle ;;
   *) "t_$1" ;;
 esac
 if [ $NG = 0 ]; then echo "test_fake: 全部通過"; else echo "test_fake: NG $NG 件"; exit 1; fi

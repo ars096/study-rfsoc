@@ -270,7 +270,8 @@ class Server:
         if cmd == "STATUS":
             r = self.acq_cmd(dict(op="status"))
             def f(r):
-                d = {k: r[k] for k in ("state", "time_ok", "start_at", "dumps", "miss", "kgap", "tp", "tp_lost", "tp_bad", "tp_ovr", "tp_jump", "tp_dbfs", "tp_dbm",
+                # proj021: 取得が返さない鍵（proj020 を LOAD したときの tp_jump など）は「-」。V2-d で KeyError になった
+                d = {k: r.get(k, "-") for k in ("state", "time_ok", "start_at", "dumps", "miss", "kgap", "tp", "tp_lost", "tp_bad", "tp_ovr", "tp_jump", "tp_dbfs", "tp_dbm",
                                        "sat", "loop_max_ms", "loop_p99_ms", "seq", "drop", "forced")}
                 d["health"] = f"{r['health']:#06x}"
                 d["flags"] = f"{r['flags']:#05x}"
@@ -469,7 +470,14 @@ class Server:
         rest = b""
         try:
             while True:
-                b = s.recv(4096)
+                try:
+                    b = s.recv(4096)
+                except socket.timeout:
+                    # proj021: ソケットの時間切れ（--send-timeout、送りのため）は ACK の待ちにも効く。何も受けていない受けは
+                    # ACK を返さないので、時間切れで切ると静かな受けが 10 s で切られる（V2-d: LOAD の 20 s の間に切られた）→ 待ち続ける
+                    if self.dsock is not s:
+                        break
+                    continue
                 if not b:
                     break
                 rest += b
