@@ -372,6 +372,14 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
   4. 作業用の環境で yosys の `check`（wide_s45_core ＋ 中身、FFT は黒箱）を回すと、ドライバの無いネットは s_axi_arready の 1 本だけだった（ほかの警告は for の変数を always の間で使い回している 3 つで、合成の意味は変わらない）
 - ビルドはやり直し（6 回目）。手順 3 の B-1 は 5 回目で合格としていたが、**その .bit は PS からコアを読めない**ので無効。教訓: B-1 の合格に「自作のセルの合成の警告（ドライバの無いネット）」を含めていなかった
 
+### 手順 4b: 実機の 2 回目・3 回目（2026-10-16、ビルド 7 回目の .bit）
+
+- 2 回目: `wide.py --list` が s45core の表で `TypeError: 'int' object is not callable`。`Core.slice()`（SLICE の流れ）が CORE_PORT のスライスの番号 `self.slice`（int）に上書きされていた → `slices()` に改名。**コアの照合（IF_ID・PROJ・NSTREAM・SID・CORE_PORT）は通っていた**（arready の直しが実機で効いた）
+- 3 回目: `--list` は期待どおり（IF_ID 0x02010101・PROJ 0x00230100・time_core 0x02010102・NSTREAM 3/2/2/2・CAPS 3・BASE_BEATS 2621440・BUILD 0x50c0000i・SID・NCH 4096・FRAME_BEATS 2048・PARAM 0x0040000f・NFFT_MIN_MAX 0x0f0d・S0_CUR 0/4096、RAW の流れも）。雑音の 7 本（B 1・2・4 の混在）は**結果: 全部通過**（FFT_N・S0_CUR・NCH・PARAM が書いた値、レコードの頭・SEQ 1〜3・CRC・DUMP_N・REC_LATE・DROP）。IF の範囲も式どおり（A0 3584.125〜4096.000・B0 3072.188〜4095.938・C0 2048.312〜4095.812 MHz）。3 つの B で同じ IF ≒ 2080.8〜2080.9 MHz に最大の ch が出た（A1 B 1・B1 B 2・C0 B 4。ch の幅 0.125・0.25・0.5 MHz の中で揃う）
+- **ただし FLAGS が立っている**: A・B のコアは 0x10（[4] IP の TLAST 事象）、C・D は 0x12（[4] ＋ [1] tw_mis）。RUN で消した後もダンプごとに立つので、**起動の後ずっと続いている**。tw_mis は「コア 0 の IP の出口の k1 と自分の k1 が違う」で、**タイル 226（A・B）と 224（C・D）で IP の枠の位相が違う**ことを示す。proj011 の TLAST 事象（起動の直後の入力の途切れを realtime の IP が待たずに進み、IP の数えがずれる。対策は起動の見張り = 今の ST_N）と同じ型か、別の型かを切り分ける
+- `--list` の FLAGS の注: FFT_N の「書いた」欄が起動の直後は 13（r_fftn の既定）で「効いている」15（B 1）と食い違う。RTL の既定値の不揃い（次に RTL を触るとき 15 にそろえる）
+- 足したもの: `wide.py` が表の後に**起動の見張り**を出す（各コアの FLAGS を Overlay の後そのまま読み、消して 0.5 s 後にもう一度。go・have_first・FIN − FOUT も）
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）

@@ -232,6 +232,34 @@ def check_recs(key, recs, b, s0, nacc, ndump):
     return ng
 
 
+FLAG_NAMES = ("coef_mis", "tw_mis", "口の後の途切れ", "16 レーンの不揃い", "IP の TLAST 事象", "IP が受けない", "k1 の飛び", "書き込みの衝突")
+
+
+def flag_str(v):
+    return f"{v:#04x}" + ("（" + "・".join(n for i, n in enumerate(FLAG_NAMES) if v >> i & 1) + "）" if v else "")
+
+
+def diag(cores, wait=0.5):
+    """起動の後の見張り（FLAGS は粘着。**Overlay から今までに立ったもの**）→ 消して wait 秒後にもう一度（立ち続けるもの）。
+    あわせて口（go）・最初のフレーム・FIN − FOUT（入力と出口のフレームの差。一定のはず）"""
+    out = []
+    for c in cores:
+        st = slices(c)[0]
+        f0 = st.rd(SC.S_FLAGS)
+        gh = st.rd(0x204)
+        fin = st.rd(SC.S_FIN); fout = st.rd(SC.S_FOUT)
+        out.append([c, f0, gh, (fin - fout) & 0xFFFFFFFF])
+    for c in cores:
+        slices(c)[0].wr(SC.S_CTRL, CTRL_FCLR)
+    time.sleep(wait)
+    for o in out:
+        o.append(slices(o[0])[0].rd(SC.S_FLAGS))
+    log("起動の見張り（FLAGS: Overlay から今まで → 消して %.1f s 後）" % wait)
+    for c, f0, gh, d, f1 in out:
+        log(f"  {c.adc_name}: {flag_str(f0)} → {flag_str(f1)} / go {gh >> 1 & 1}・have_first {gh & 1} / FIN − FOUT {d}")
+    return out
+
+
 def open_board(a):
     import spectrometer as S
     S.setup_clocks(a.clkin, a.ref)
@@ -416,6 +444,7 @@ def main():
     except SC.S45Error as e:
         log(f"ERROR: {e}"); sys.exit(1)
     log(SC.table(cores, tmm))
+    diag(cores)                                               # 起動の見張りは Overlay の直後に読む（RUN の FCLR で消える前に）
     rc = 0
     allst = [st for c in cores for st in c.streams]
     try:
