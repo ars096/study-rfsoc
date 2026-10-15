@@ -1683,8 +1683,22 @@ if {$rm_seen != 2} { puts "ERROR: wide_coef_rom・wide_tw_rom の OOC の run �
 if {$rm_ng > 0} { puts "ERROR: ROM の中身（hex）を合成が読めていない"; exit 1 }
 
 # ---- 合成〜実装〜ビットストリーム ----
+# proj023 4b: synth_1・impl_1 でも Vivado が落ちる（2026-10-15 のビルド 6 回目: impl_1 が始まってすぐ segfault、
+#   Abnormal program termination (11)）。**落ちた印のある run だけ**を 2 回まで回し直す（OOC と同じ方針。印の無い失敗は止める）。
+#   wait_on_run は失敗した run で Tcl のエラーを投げてスクリプトごと止まるので、catch で受ける
 launch_runs impl_1 -to_step write_bitstream -jobs $jobs
-wait_on_run impl_1
+catch {wait_on_run impl_1}
+for {set try 1} {$try <= 2 && [get_property PROGRESS [get_runs impl_1]] ne "100%"} {incr try} {
+    set redo ""
+    foreach n {synth_1 impl_1} {
+        if {[ooc_crashed $n]} { set redo $n; break }
+    }
+    if {$redo eq ""} { break }
+    puts "NOTE: $redo で Vivado が落ちた。回し直す（$try 回目）"
+    reset_run [get_runs $redo]
+    launch_runs impl_1 -to_step write_bitstream -jobs $jobs
+    catch {wait_on_run impl_1}
+}
 if {[get_property PROGRESS [get_runs impl_1]] ne "100%"} {
     puts "ERROR: impl_1 が完走していない。$projdir の run ログを見る"
     exit 1

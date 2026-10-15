@@ -396,7 +396,9 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
 - [x] ビルド 5 回目: WNS +0.034 ns（1 段は FF として残ったが、ROM → コア 3 の 1 回の飛びが 3.2 ns）
 - [x] 余裕の取り方: **このまま手順 4 へ**（2026-10-15、西村さんが決めた）。5 回目の .bit（WNS +0.034 ns）で実機に進む。余裕の手当て（係数の配りを 2 段に割る、または係数 ROM を 2 つに）は次に RTL を触るときにまとめて
 - [x] 手順 4a: PS 側の道具（wide.py・s45core・timebase・gbboot。上の「手順 4a」）
-- [ ] arready を直したビルド（6 回目）と Vivado サーバでの `make sim-ws45 sim-wco`
+- [x] Vivado サーバで `make sim-ws45 sim-wco`（arready を直した後）: 7 本とも全部通過（陽性対照 2 本は落ちた）
+- [x] ビルド 6 回目: OOC までは通った（ドライバの照合 17 個の run で 0 行・ROM の中身 0 行・結線 132 行）が、**impl_1 が始まってすぐ Vivado が落ちた**（segfault、Abnormal program termination (11)）。build.tcl に synth_1・impl_1 の回し直し（落ちた印のある run だけ、2 回まで。wait_on_run の Tcl のエラーは catch で受ける）を足した
+- [ ] ビルド 7 回目
 - [ ] 手順 4b: 実機で wide.py（--list・雑音・H-2・H-4）。F-2 → H-3。H-1 の掃引の道具
 
 ## 公開について
