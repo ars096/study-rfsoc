@@ -398,7 +398,7 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
 - [x] 手順 4a: PS 側の道具（wide.py・s45core・timebase・gbboot。上の「手順 4a」）
 - [x] Vivado サーバで `make sim-ws45 sim-wco`（arready を直した後）: 7 本とも全部通過（陽性対照 2 本は落ちた）
 - [x] ビルド 6 回目: OOC までは通った（ドライバの照合 17 個の run で 0 行・ROM の中身 0 行・結線 132 行）が、**impl_1 が始まってすぐ Vivado が落ちた**（segfault、Abnormal program termination (11)）。build.tcl に synth_1・impl_1 の回し直し（落ちた印のある run だけ、2 回まで。wait_on_run の Tcl のエラーは catch で受ける）を足した
-- [ ] ビルド 7 回目
+- [x] ビルド 7 回目（2026-10-16）: **閉じた。WNS +0.029 ns・WHS +0.010 ns**。回し直しは起きなかった。ドライバの照合 0 行・ROM の中身 0 行・結線 132 行・coef_q 1,152・tw_q 576・DSP 2,720・LUT 253,842・FF 492,223。最悪経路は s45_core_3 の wide_pfb の DSP の出口 → 次の段（u_pfb/s2_reg → y_i_1_psdsp、DSP の中 3 段）で、**ROM の配線は最悪経路から外れた**（4〜5 回目の ROM → コア の形が消えた）。この .bit で手順 4b（実機）へ
 - [ ] 手順 4b: 実機で wide.py（--list・雑音・H-2・H-4）。F-2 → H-3。H-1 の掃引の道具
 
 ## 公開について
