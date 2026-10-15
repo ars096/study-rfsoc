@@ -342,6 +342,24 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 
 Vivado を走らせる前に作業用の環境でできたのは、Tcl の構文（コマンドの完結）と、足した照合の部品（hex の形・ラッパの正規表現・ログの拾い）の単体の確かめ（陽性対照つき）まで。BD の API（module reference の文字列の CONFIG・VLNV）は走らせて初めて分かる
 
+### 手順 4a: PS 側の道具（2026-10-15 書いた。実機はまだ）
+
+proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW）向けなので、Wide の SLICE を動かす道具を足し、ID の照合を D-5 にした:
+- **`pynq/wide.py`（新）**: コアごとの束ね B（`--mode A=1,B=2,…`、コアの FFT_N = 15 − log2 B）と流れの S0（`--s0 A0=0,A1=4096,…`）を書いて WRST、SLICE の流れを RUN し、**リング（s45_ring_0）のレコードだけ**で集める。ch → IF は**レコードの頭**（語 4 の log2 NFFT・log2 B、語 7 の S0）から INTERFACE 2.1 の式（ゾーン 2: IF = fs − (S0 + i + (B − 1)/(2B))·fs / N）で作る。照らすもの: FFT_N・S0_CUR・NCH・PARAM が書いた値になったか（効いたか）、レコードの頭が書いた値か、SEQ の連続、CRC・尾、DUMP_N = N_ACC、REC_LATE・DROP_CNT が増えない。**期待は道具が書いた値**（3a の陽性対照の教訓）
+  - `--tone-ch KEY:i`（H-2）: ch i の中心に CW → 最大の ch が i か。ch i と i + 1 の**境目**に CW → 両側の電力比が ±(0.1 ch ぶん) 以内か。束ねた ch は上が平らなので中心の CW では 1/4 ch のずれが見えにくいが、**境目の電力比は 0.1 ch のずれで 4.8（B 1）・10.4（B 2）・28.7 dB（B 4）動く**（model/wide_model の量子化した係数から。傾き 46.9・93.9・188.2 dB / ch でずれを見積もる）。(B − 1)/(2B) を落とすと 1/4・3/8 ch で 14〜58 dB になり、確実に落ちる。`--sg` があれば SG を設定・読み返す（sg.py）
+  - `--switch K`（H-4）: 4 コアの B を 1 → 2 → 4 とコアごとにずらして K 回切り替え、毎回のレコードの頭がその回の設定か
+  - `--selftest`: 式（IF ↔ ch の往復、束ねた ch の中心 = 細かい ch の平均、頭の読み）と陽性対照（(B − 1)/(2B) を落とした式が 1/4・3/8 ch ずれる）。ボード無しで**全部通過**。作業用の環境で、コアとリングの振る舞いを真似た模型で `capture`・`do_switch` を回し、**FFT_N の書きが効かない陽性対照**（1 コアだけ）で「FFT_N・S0_CUR・NCH・PARAM・頭の log2 N / log2 B / S0」が全部 NG になることを確かめた
+- `s45core.py`: 既定を Wide に（BIT_KIND 1・BIT_REV の下限 1・PROJ 0x0023_0100）、SLICE の定数（コアの FFT_N 0x80・流れの S0 0x100・S0_CUR 0x104・S0_STEP 0x108）と `Core.slice()`、表に FFT_N と S0_CUR。Fine の bit を読むときは `discover(ol, bit_kind=2, bit_rev_min=2)`
+- `timebase.py`: time_core の IF_ID に 0x0201_0102、CAL に PROJ 0x0023_0100 を**未較正**で（別の Overlay・別の配置なので proj021 の値は持ち込まない。H-3 の前に F-2 で測る）
+- `gbboot.py`: コアの ID に 0x0201_0101
+- まだしていないもの: specd・s45acq・s45proto（観測の道、SLICE の流れの設定と IF の軸）、H-1 の掃引の道具（s45resp の型）、F-2
+
+**実機の手順（案）**: ボードに `build/proj023.bit`・`.hwh` と `pynq/*.py` を送り、
+1. `wide.py --list`（自己記述: IF_ID 0x02010101・PROJ 0x00230100・NSTREAM 3/2/2/2・FFT_N 13・S0_CUR 0/4096）と `gbboot.py`（ギアボックスの起動）
+2. `wide.py --mode A=1,B=2,C=4,D=1 --s0 A0=0,A1=12288,B0=0,B1=4096,D1=6000 --nacc 1250 --ndump 3`（雑音で 7 本のレコードと IF の軸。結果: 全部通過）
+3. H-2: `wide.py --mode A=1 --tone-ch A0:1234 --sg …` を `--mode A=2`・`A=4` でも（同じ ch の番号で 3 回）
+4. H-4: `wide.py --switch 30`
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -365,7 +383,8 @@ Vivado を走らせる前に作業用の環境でできたのは、Tcl の構文
 - [x] ビルド 4 回目: WNS +0.024 ns（1 段が DSP の A レジスタに吸われ、効かなかった）→ dont_touch
 - [x] ビルド 5 回目: WNS +0.034 ns（1 段は FF として残ったが、ROM → コア 3 の 1 回の飛びが 3.2 ns）
 - [x] 余裕の取り方: **このまま手順 4 へ**（2026-10-15、西村さんが決めた）。5 回目の .bit（WNS +0.034 ns）で実機に進む。余裕の手当て（係数の配りを 2 段に割る、または係数 ROM を 2 つに）は次に RTL を触るときにまとめて
-- [ ] 手順 4: PS 側の準備（ID の照合を D-5 に・Wide のコアのレジスタ・レコードの読み）と H-1〜H-4
+- [x] 手順 4a: PS 側の道具（wide.py・s45core・timebase・gbboot。上の「手順 4a」）
+- [ ] 手順 4b: 実機で wide.py（--list・雑音・H-2・H-4）。F-2 → H-3。H-1 の掃引の道具
 
 ## 公開について
 

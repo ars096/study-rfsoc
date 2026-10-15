@@ -28,7 +28,7 @@ sys.path.insert(0, HERE)
 #   どちらの .bit かは .hwh の IP の名前で決める（LAYOUT）
 LAYOUT = {
     "win_core": dict(base=0x80000, r_id=0x00, r_gb_k=0x1C, r_gb_stat=0x24, r_adc_stat=0x28, id=None),
-    "s45_core": dict(base=0x00000, r_id=0x00, r_gb_k=0x2C, r_gb_stat=0x34, r_adc_stat=0x38, id=(0x0202_0101, 0x0202_0201, 0x0202_0301)),   # proj021 2-2d: BIT_REV 2。2-5: 3
+    "s45_core": dict(base=0x00000, r_id=0x00, r_gb_k=0x2C, r_gb_stat=0x34, r_adc_stat=0x38, id=(0x0202_0101, 0x0202_0201, 0x0202_0301, 0x0201_0101)),   # proj021 2-2d: BIT_REV 2。2-5: 3。proj023 Wide: 0x0201_0101
 }
 LABELS = ["ADC_A", "ADC_B", "ADC_C", "ADC_D"]
 

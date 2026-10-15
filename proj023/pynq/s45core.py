@@ -14,6 +14,10 @@ PS は .hwh の IP の名前（`s45_core_0`〜`3`・`time_core_0`）でコアを
   2-1〜2-2c の bit（BIT_REV 1）にあった仮の 3 つ（0x80000〜 の読み窓・0xC0000〜・0xE0000 の SNAP_SEL）は、この道具からは使わない
 
 proj021 2-5（BIT_REV 3）: SAM45-Fine のコア 0 の流れ 2 は FULL（spec_core）から **RAW（KIND 4、raw_core）**に替わった。
+proj023 手順 4（SAM45-Wide: BIT_KIND 1・BIT_REV 1・PROJ 0x0023_0100）: コアは wide_s45_core。流れ s = 0・1 が SLICE（KIND 2）、
+コア 0 だけ s = 2 が RAW。表にコアの 0x80 FFT_N と流れの S0_CUR を出す。SLICE を動かす道具は wide.py。
+discover() の既定の BIT_KIND・BIT_REV の下限を Wide に替えた（Fine の bit を読むときは bit_kind=2, bit_rev_min=2 を渡す）
+
 RAW は生サンプルの SNAP のレコードだけを出す（スペクトル・FULL の TP は無い）。`snap_stream()` が RAW か FULL の流れを返す
 （生サンプルを取る道具はこれを使う）。`full_stream()` は FULL が無い bit では FullMissing を投げる（全帯域のスペクトルを使う道具が止まる）
 """
@@ -26,21 +30,24 @@ CORE_KIND_ADC, CORE_KIND_TIME, CORE_KIND_RING = 1, 2, 3
 KIND_FULL, KIND_SLICE, KIND_DDC, KIND_RAW = 1, 2, 3, 4
 KIND_NAMES = {KIND_FULL: "FULL", KIND_SLICE: "SLICE", KIND_DDC: "DDC", KIND_RAW: "RAW"}
 ADC_NAMES = ("ADC_A", "ADC_B", "ADC_C", "ADC_D")
-PROJ_EXPECT = 0x0021_0200        # この README の手順 2-1 の .bit（追跡のため。照合には使わない）
-BIT_REV_MIN = 2                  # proj021 2-2d: 仮の読み窓の無い 64 KiB の番地（道具は記憶をレコードでしか読まない）
-BIT_KIND_EXPECT = 2              # SAM45-Fine
+PROJ_EXPECT = 0x0023_0100        # proj023 の .bit（追跡のため。照合には使わない）。proj021 は 0x0021_0200
+BIT_REV_MIN = 1                  # proj023: Wide の最初の版が 1（proj021 の Fine は 2 以上: 2-2d の仮の読み窓の無い 64 KiB の番地）
+BIT_KIND_EXPECT = 1              # SAM45-Wide（proj023）。proj021 は 2 = SAM45-Fine
 
 # ---- コアの共通（INTERFACE 2.4。0x20〜 は表 A を +0x10）----
 C_IF_ID, C_PROJ, C_NSTREAM, C_CAPS, C_BASE_BEATS, C_BUILD, C_CORE_PORT = 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18
 C_TP_CTRL, C_TFIN_LO, C_TFIN_HI, C_GB_K = 0x20, 0x24, 0x28, 0x2C
 C_GB_STAT, C_ADC_STAT, C_ANCH_F, C_ANCH_T, C_ANCH_ST, C_TP_RUN_T, C_OVR, C_GAP = 0x34, 0x38, 0x3C, 0x44, 0x4C, 0x50, 0x58, 0x5C
 TP_REG, TP_RING = 0x100, 0x2000
+C_FFT_N = 0x80                   # proj023: SLICE の流れを持つコアだけ（INTERFACE 2.4）。R: [7:0] 効いている log2 N・[15:8] 書いた値・[23:16] log2 N_PHYS
 # ---- 流れのブロック（INTERFACE 2.5）----
 BLK, BLK_STRIDE = 0x4000, 0x400
 S_SID, S_PARAM, S_CTRL, S_NACC, S_NDUMP, S_SHIFT, S_FLAGS, S_SEQ = 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x1C
 S_NCH, S_FRAME_BEATS, S_SRC, S_CFG, S_RUN_CFG, S_WRST_CFG, S_RUN_SHIFT = 0x20, 0x24, 0x28, 0x2C, 0x30, 0x34, 0x38
 S_DUMP_K, S_DUMP_F0, S_DUMP_N, S_DUMP_SAT, S_DUMP_T, S_DUMP_H, S_DUMP_CFG = 0x3C, 0x40, 0x48, 0x4C, 0x50, 0x58, 0x5C
 S_RUN_T, S_RUN_F0, S_FIN, S_FOUT, S_NFFT_MIN_MAX, S_REC_CTRL, S_REC_LATE = 0x60, 0x68, 0x70, 0x78, 0x80, 0x84, 0x88
+# SLICE に固有（proj023、INTERFACE 2.5）
+S_S0, S_S0_CUR, S_S0_STEP = 0x100, 0x104, 0x108
 # DDC に固有
 S_WK, S_WDPHI, S_WNS, S_WCUR, S_WCUR_DPHI, S_WSTART, S_NS_MIN_MAX, S_WRST_T = 0x100, 0x104, 0x108, 0x10C, 0x110, 0x114, 0x118, 0x11C
 # 診断（約束の外）
@@ -86,6 +93,8 @@ class Stream:
             return f"{self.core.adc_name}{self.s}"
         if self.kind == KIND_RAW:
             return f"RAW {self.core.adc_name}{self.s}"
+        if self.kind == KIND_SLICE:
+            return f"SLICE {self.core.adc_name}{self.s}"
         return f"{KIND_NAMES.get(self.kind, '?')}（{self.core.name} の s {self.s}）"
 
     def rd(self, a):
@@ -134,6 +143,9 @@ class Core:
 
     def raw(self):
         return [s for s in self.streams if s.kind == KIND_RAW]
+
+    def slice(self):
+        return [s for s in self.streams if s.kind == KIND_SLICE]
 
 
 def discover(ol, bit_kind=BIT_KIND_EXPECT, ncore=4, bit_rev_min=BIT_REV_MIN):
@@ -210,18 +222,22 @@ def table(cores, tmm=None):
     out.append("コア          ADC    タイル スライス IF_ID       NSTREAM CAPS  BASE_BEATS BUILD")
     for c in cores:
         out.append(f"{c.name:<13} {c.adc_name:<6} {c.tile:>6} {c.slice:>8} {c.if_id:#010x} {c.nstream:>7} {c.caps:#05x} {c.base_beats:>10} {c.build:#010x}")
-    out.append("流れ                 KIND  s  SID         NCH   FRAME_BEATS SRC         PARAM       NFFT_MIN_MAX")
+    if any(c.slice() for c in cores):
+        out.append("FFT_N（効いている log2 N・書いた・物理）: " + " / ".join(
+            f"{c.adc_name} {c.rd(C_FFT_N) & 0xFF}・{c.rd(C_FFT_N) >> 8 & 0xFF}・{c.rd(C_FFT_N) >> 16 & 0xFF}" for c in cores))
+    out.append("流れ                 KIND  s  SID         NCH   FRAME_BEATS SRC         PARAM       NFFT_MIN_MAX S0_CUR")
     for c in cores:
         for s in c.streams:
             out.append(f"{s.name:<20} {KIND_NAMES[s.kind]:<5} {s.s:>2} {s.sid:#010x} {s.rd(S_NCH):>5} {s.rd(S_FRAME_BEATS):>11} "
-                       f"{s.rd(S_SRC):#010x} {s.rd(S_PARAM):#010x} {s.rd(S_NFFT_MIN_MAX):#06x}")
+                       f"{s.rd(S_SRC):#010x} {s.rd(S_PARAM):#010x} {s.rd(S_NFFT_MIN_MAX):#06x}"
+                       f"{(' ' + str(s.rd(S_S0_CUR))) if s.kind == KIND_SLICE else ''}")
     return "\n".join(out)
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--list", action="store_true", help="自己記述の表を出す")
-    p.add_argument("--bitfile", default="proj021.bit")
+    p.add_argument("--bitfile", default="proj023.bit")
     p.add_argument("--no-load", action="store_true", help="Overlay を download=False で（載っている .bit をそのまま読む）")
     p.add_argument("--clkin", default="stock")
     p.add_argument("--ref", type=float, default=10.0)

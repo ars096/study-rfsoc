@@ -39,6 +39,10 @@ NS_NUM, NS_DEN = 125, 32          # 1 ビート = 125/32 ns（厳密）
 #   **T-2（閉ループ）で測れるのは差 M = adc_to_core − pps_det（＋ 2 本のケーブルの差）の 1 つだけ**なので、M を adc_to_core_ns に入れ、
 #   pps_det_ns = 0 とする（式の上では引く量は M で同じ）。
 CAL = {
+    # proj023（SAM45-Wide、PROJ 0x0023_0100）: ギアボックス・time_core の RTL は proj021 2-5 と同じだが、別の Overlay・別の配置なので
+    #   proj021 の値は持ち込まない（proj017 → 020 → 021 と同じ方針）。H-3 の前に F-2（RAW の流れ = コア 0 の s 2）で測る
+    0x0023_0100: dict(pps_det_ns=0.0, adc_to_core_ns=None, bound_ns=50,
+                      source="proj023: 未較正（F-2 で測る。見込みは proj021 2-5 の 146〜148 ns）"),
     # proj021 手順 2-1: 鍵を time_core の PROJ（0x5C）に替えた（ID の 0x00 は IF_ID = bit の種類と版だけになった）。
     #   ギアボックス・time_core の RTL は 1b と同じ。1b も未較正なので、F-2 で測るまで未較正のまま（1b の値が出たら持ち込める）
     #   2-5（BIT_REV 3）の bit で F-2 を測った（2026-10-14）。鍵は PROJ なので 2-1〜2-4 の bit にも当たるが、それらは 2-5 で置き換えた
@@ -115,7 +119,8 @@ def pps_is_consistent(d_count, d_stamp, tol=2):
 class TimeCore:
     """time_core_0 のレジスタ（src/common/time_core.v の冒頭の表）。mmio は pynq.MMIO か、read(off) / write(off, v) を持つもの。"""
     ID = 0x0202_0302              # proj021 2-5: IF_ID（IF_VER 2・BIT_KIND 2 = SAM45-Fine・BIT_REV 3・CORE_KIND 2）。2-2d〜2-4 は 0x0202_0202、2-1〜2-2c は 0x0202_0102、旧 0x0021_7101
-    IDS = (0x0202_0102, 0x0202_0202, 0x0202_0302)   # BIT_REV 1（2-1〜2-2c）・2（2-2d〜2-4）・3（2-5〜）。time_core の中身は同じ
+    IDS = (0x0202_0102, 0x0202_0202, 0x0202_0302,   # BIT_REV 1（2-1〜2-2c）・2（2-2d〜2-4）・3（2-5〜）。time_core の中身は同じ
+           0x0201_0102)                              # proj023: SAM45-Wide（BIT_KIND 1・BIT_REV 1）
     PROJ = 0x0021_0200            # 0x5C。CAL の鍵
     CTRL_ARM, CTRL_CANCEL, CTRL_ASET, CTRL_ACLR, CTRL_NCLR = 1, 2, 8, 16, 256
 
