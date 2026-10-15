@@ -31,7 +31,8 @@ module wide_chain #(
     parameter integer ZW = 29,
     parameter integer QW = 18,
     parameter integer PW = 37,
-    parameter integer BW = 39
+    parameter integer BW = 39,
+    parameter integer TW_EARLY = 0   // proj023 3b: 1 = tw_addr を 1 クロック早く（S0 の前、IP の出口の y_k1 そのもの）出す。ROM と鎖の間に 1 段（wide_spec の tw_q）を足すとき
 )(
     input  wire              clk,
     input  wire              rst,
@@ -63,7 +64,7 @@ module wide_chain #(
             for (ti = 1; ti <= S_P; ti = ti + 1) tag[ti] <= tag[ti-1];
         end
     end
-    assign tw_addr = tag[0][10:0];
+    assign tw_addr = (TW_EARLY != 0) ? y_k1 : tag[0][10:0];   // TW_EARLY = 1 なら ROM 2 ＋ 外の 1 段 = 3 クロックで S2 に届く
 
     // ---- S0 → S2 ----
     reg [16*YW-1:0] yr0, yi0, yr1, yi1, yr2, yi2;

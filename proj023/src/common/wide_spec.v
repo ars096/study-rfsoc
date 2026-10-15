@@ -114,14 +114,25 @@ module wide_spec #(
 
     // ---- PFB ----
     wire              p_v = v_loc && go;
-    assign coef_addr   = m_now;
-    assign coef_addr_v = p_v;
+    // ---- 共有の ROM の配り（proj023 3b、ビルド 3 回目の最悪経路 +0.025 ns: 係数 ROM の出口 → コア 3 の PFB の DSP、配線 2.94 ns）----
+    // ROM の出口と PFB・鎖の間に**コアごとに 1 段**（coef_q・tw_q）を足し、そのぶん番地を 1 クロック早く出す。
+    // 係数の番地 m は T だけで決まる（m = (T − K_F) mod 2048）ので、1 クロック先の m は t_in（受ける前の T）から作れる。
+    // ひねり係数の番地は IP の出口の y_k1 そのもの（wide_chain の TW_EARLY = 1）。どちらも PFB・鎖に届く時刻は前と同じで、
+    // 食い違えば coef_mis・tw_mis が立ち、A 層の sim が落ちる
+    wire [63:0] tn = t_in - K_F;
+    assign coef_addr   = tn[10:0];
+    assign coef_addr_v = s_tvalid && go;          // ROM の v_out は使っていない（番地の照合は coef_m で）
+    reg [1151:0] coef_q;
+    reg [10:0]   coef_m_q;
+    reg [575:0]  tw_q;
+    reg [10:0]   tw_k1_q;
+    always @(posedge clk) begin coef_q <= coef_in; coef_m_q <= coef_m; tw_q <= tw_in; tw_k1_q <= tw_k1; end
     wire [16*15-1:0]  y;
     wire              y_v, y_first, coef_mis;
     wire [10:0]       y_m;
     wire [1:0]        y_fr;
     wire [15:0]       pfb_sat;
-    wide_pfb u_pfb (.clk(clk), .rst(rst), .s_tdata(d_loc), .s_tvalid(p_v), .s_m(m_now), .coef(coef_in), .coef_m(coef_m),
+    wide_pfb u_pfb (.clk(clk), .rst(rst), .s_tdata(d_loc), .s_tvalid(p_v), .s_m(m_now), .coef(coef_q), .coef_m(coef_m_q),
                     .y(y), .y_v(y_v), .y_m(y_m), .y_first(y_first), .y_fr(y_fr), .sat_cnt(pfb_sat), .coef_mis(coef_mis));
     // PFB に入った最初のフレームの番号（wide_pfb は rst の後 m = 0 のビートから始める）
     reg          have_first;
@@ -168,8 +179,8 @@ module wide_spec #(
     wire            pb_v, tw_mis;
     wire [10:0]     pb_jb;
     wire [5:0]      pb_sat;
-    wide_chain u_chain (.clk(clk), .rst(rst), .y_re(yr), .y_im(yi), .y_k1(ln_m_tuser[10:0]), .y_v(ln_m_tvalid[0]),
-                        .tw_addr(tw_addr), .tw(tw_in), .tw_k1(tw_k1), .shift(c_shift), .lb(c_lb),
+    wide_chain #(.TW_EARLY(1)) u_chain (.clk(clk), .rst(rst), .y_re(yr), .y_im(yi), .y_k1(ln_m_tuser[10:0]), .y_v(ln_m_tvalid[0]),
+                        .tw_addr(tw_addr), .tw(tw_q), .tw_k1(tw_k1_q), .shift(c_shift), .lb(c_lb),
                         .pb(pb), .pb_v(pb_v), .pb_jb(pb_jb), .pb_sat(pb_sat), .tw_mis(tw_mis));
 
     // ---- WRST: 設定を取り込み、RUN を止める ----
