@@ -1816,6 +1816,14 @@ foreach {c f what} {s45_core_0/inst/g_raw.u_raw raw_core_util.rpt "s45_core_0 �
         if {[regexp {^\|\s*(CLB LUTs|CLB Registers|Block RAM Tile|DSPs)\s*\|} $line]} { puts "    [string trim $line]" }
     }
 }
+# proj023 3b: 共有の ROM の配りの 1 段（wide_spec の coef_q・tw_q）がファブリックの FF として残っているか（DSP の A レジスタに吸われると 0）
+set ff_names [get_property NAME [get_cells -quiet -hierarchical -filter {REF_NAME =~ FD*}]]
+foreach {nm pred} {coef_q_reg 1152 tw_q_reg 576} {
+    for {set i 0} {$i < $nch} {incr i} {
+        set n [count_in $ff_names "/s45_core_${i}/inst/u_wide/u_spec/$nm"]
+        puts [format "  FF s45_core_%d の %-10s = %d（予言 %d、0 なら DSP に吸われた）" $i $nm $n $pred]
+    }
+}
 # 全体の LUT・FF・URAM を utilization.rpt から（vivado.log の上の表は BRAM・DSP だけなので）
 if {![catch {set fh [open $outdir/utilization.rpt r]; set ut [read $fh]; close $fh}]} {
     foreach line [split $ut "\n"] {

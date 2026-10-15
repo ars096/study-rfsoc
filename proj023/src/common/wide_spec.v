@@ -122,10 +122,12 @@ module wide_spec #(
     wire [63:0] tn = t_in - K_F;
     assign coef_addr   = tn[10:0];
     assign coef_addr_v = s_tvalid && go;          // ROM の v_out は使っていない（番地の照合は coef_m で）
-    reg [1151:0] coef_q;
-    reg [10:0]   coef_m_q;
-    reg [575:0]  tw_q;
-    reg [10:0]   tw_k1_q;
+    // **DONT_TOUCH**: 付けないと合成がこの 1 段を PFB の DSP の A 入力のレジスタ（AREG = 2）に吸い込み、ROM → DSP の配線が
+    // そのまま残った（ビルド 4 回目: 最悪経路が ROM の出口 → コア 2 の u_pfb/s2_reg の A、+0.024 ns で 3 回目と同じ形、FF も増えなかった）
+    (* dont_touch = "true" *) reg [1151:0] coef_q;
+    (* dont_touch = "true" *) reg [10:0]   coef_m_q;
+    (* dont_touch = "true" *) reg [575:0]  tw_q;
+    (* dont_touch = "true" *) reg [10:0]   tw_k1_q;
     always @(posedge clk) begin coef_q <= coef_in; coef_m_q <= coef_m; tw_q <= tw_in; tw_k1_q <= tw_k1; end
     wire [16*15-1:0]  y;
     wire              y_v, y_first, coef_mis;
