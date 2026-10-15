@@ -328,7 +328,7 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 - 係数の番地: m は T だけで決まる（m = (T − K_F) mod 2048）ので、受ける前の t_in から 1 クロック先の m を作る（`coef_addr = (t_in − K_F)[10:0]`）
 - ひねり係数の番地: wide_chain に TW_EARLY（既定 0 = 今までどおり、sim-wch はこのまま）。wide_spec は 1 にして、IP の出口の y_k1 そのものを番地にする
 - PFB・鎖に係数が届く時刻は前と同じ。食い違えば各コアの coef_mis・tw_mis が立つ
-- sim（作業用の環境）: sim-wch 6 本・sim-wsp 6 本・sim-wco 4 本・sim-ws45 3 本が全部通過（陽性対照は落ちた）。**陽性対照（手で 1 回）**: 1 段を足したまま番地を前の時刻（m_now・TW_EARLY 0）に戻すと、flags = 03（coef_mis・tw_mis）・A1' の差 6,001・A2 の不一致 14,722・B 2,885 倍で落ちた（`build-sim-wsp-pcrom`、Makefile には足していない）
+- sim（作業用の環境）: sim-wch 6 本・sim-wsp 6 本・sim-wco 4 本・sim-ws45 3 本が全部通過（陽性対照は落ちた）。**Vivado サーバでも同じく 19 本が通過**。**陽性対照（手で 1 回）**: 1 段を足したまま番地を前の時刻（m_now・TW_EARLY 0）に戻すと、flags = 03（coef_mis・tw_mis）・A1' の差 6,001・A2 の不一致 14,722・B 2,885 倍で落ちた（`build-sim-wsp-pcrom`、Makefile には足していない）
 - 予言（4 回目のビルド）: 最悪経路から ROM の配線が消え、WNS は +0.05〜+0.2 ns。FF は 1,152 + 576 + 22 ≒ 1,750 × 4 ≒ 7,000 増える
 
 Vivado を走らせる前に作業用の環境でできたのは、Tcl の構文（コマンドの完結）と、足した照合の部品（hex の形・ラッパの正規表現・ログの拾い）の単体の確かめ（陽性対照つき）まで。BD の API（module reference の文字列の CONFIG・VLNV）は走らせて初めて分かる
@@ -352,7 +352,8 @@ Vivado を走らせる前に作業用の環境でできたのは、Tcl の構文
 - [x] ビルド 2 回目（B-1）: 通ったが WNS −0.561 ns（wide_spec の帳簿の論理 14 段）。資源は予言の範囲（上の表）
 - [x] wide_spec の pre_* の後のビルド（3 回目）: **WNS +0.025 ns で閉じた（B-1）**。最悪経路は共有の係数 ROM → コア 3 の PFB の配線
 - [x] 共有の ROM の配りに 1 段（wide_spec の coef_q・tw_q、番地を 1 クロック早く）。sim 19 本が通過（作業用の環境）
-- [ ] ビルド 4 回目と、Vivado サーバでの `make sim-wch sim-wsp sim-wco sim-ws45`
+- [x] Vivado サーバで `make sim-wch sim-wsp sim-wco sim-ws45`（ROM の 1 段の後、2026-10-15）: 19 本とも全部通過（陽性対照 5 本は落ちるべきところで落ちた）
+- [ ] ビルド 4 回目
 
 ## 公開について
 
