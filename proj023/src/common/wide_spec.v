@@ -199,21 +199,42 @@ module wide_spec #(
     reg [1:0]    d_act, d_first, d_last, d_pl, d_new, d_stop;
     reg [31:0]   d_k [0:1], d_i [0:1];
     integer s;
+    // ---- フレームの頭の判定の加算・比較を前もってレジスタに置く（proj023 3b。spec_core rev2 と同じ手当て）----
+    // 1 回目のビルドの最悪経路（−0.561 ns、論理 14 段）は fs の 1 クロックに「fo + 1 → run_f0 との比較 → cur_k + 1 == run_nd →
+    // d_i の選択 → d_i == run_n − 1 → t_last → l_* の CE」を直列に通していた。**入力（fo・have_fo・f_first・cur_k・cur_i・run_n・run_nd・
+    // run_f0）は fs・cmd_run・rst でしか変わらない**ので、変わった次のクロックには pre_* が追いつく。fs と fs の間は 1 フレーム
+    // （2048 クロック）ある。cmd_run の直後の 1 クロックだけは pre_hit が古い run_f0 と比べた値になりうるので、cmd_run で 0 にする
+    // （新しい run_f0 は fa の格子の 2 つ先で、出口の fo_now と一致することはない）。**振る舞いは前と bit 単位で同じ**（sim-wsp・wco・ws45 で確かめる）
+    reg [1:0]  pre_hit, pre_end, pre_ip1_is0, pre_nxt_last, pre_zero_last;
+    reg [31:0] pre_kp1 [0:1], pre_ip1 [0:1];
+    always @(posedge clk) begin
+        for (s = 0; s < 2; s = s + 1) begin
+            pre_kp1[s]       <= cur_k[s] + 32'd1;
+            pre_end[s]       <= (run_nd[s] != 32'd0) && (cur_k[s] + 32'd1 == run_nd[s]);
+            pre_ip1[s]       <= cur_i[s] + 32'd1;
+            pre_ip1_is0[s]   <= (cur_i[s] == 32'hFFFF_FFFF);
+            pre_nxt_last[s]  <= (cur_i[s] + 32'd1 == run_n[s] - 32'd1);
+            pre_zero_last[s] <= (run_n[s] == 32'd1);
+            if (rst || cmd_run[s]) pre_hit[s] <= 1'b0;
+            else                   pre_hit[s] <= (fo_now == run_f0[s]);
+        end
+    end
+    // fs での判定。幅のある演算は pre_* に追い出したので、ここは選択だけ
     always @* begin
         for (s = 0; s < 2; s = s + 1) begin
             d_act[s] = 1'b0; d_new[s] = 1'b0; d_stop[s] = 1'b0;
-            d_k[s] = cur_k[s]; d_i[s] = cur_i[s] + 32'd1;
-            if (st_sched[s] && fo_now == run_f0[s]) begin
-                d_act[s] = 1'b1; d_new[s] = 1'b1; d_k[s] = 32'd0; d_i[s] = 32'd0;
+            d_k[s] = cur_k[s]; d_i[s] = pre_ip1[s];
+            d_first[s] = pre_ip1_is0[s]; d_last[s] = pre_nxt_last[s];
+            if (st_sched[s] && pre_hit[s]) begin
+                d_act[s] = 1'b1; d_new[s] = 1'b1; d_k[s] = 32'd0; d_i[s] = 32'd0; d_first[s] = 1'b1; d_last[s] = pre_zero_last[s];
             end else if (st_acc[s]) begin
                 if (cur_last[s]) begin
-                    if (run_nd[s] != 32'd0 && cur_k[s] + 32'd1 == run_nd[s]) d_stop[s] = 1'b1;
-                    else begin d_act[s] = 1'b1; d_k[s] = cur_k[s] + 32'd1; d_i[s] = 32'd0; end
+                    if (pre_end[s]) d_stop[s] = 1'b1;
+                    else begin d_act[s] = 1'b1; d_k[s] = pre_kp1[s]; d_i[s] = 32'd0; d_first[s] = 1'b1; d_last[s] = pre_zero_last[s]; end
                 end else d_act[s] = 1'b1;
             end
-            d_first[s] = (d_i[s] == 32'd0);
-            d_last[s]  = d_act[s] && (d_i[s] == run_n[s] - 32'd1);
-            d_pl[s]    = d_k[s][0];
+            d_last[s] = d_act[s] && d_last[s];
+            d_pl[s]   = d_k[s][0];
         end
     end
     wire [1:0] t_act   = fs ? d_act   : cur_act;

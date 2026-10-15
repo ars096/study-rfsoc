@@ -1843,6 +1843,45 @@ foreach {kind label} {setup "setup（周期）" hold "hold（保持）"} {
     if {$n == 0} { puts "  （経路なし）" }
 }
 
+# ---- proj023 3b: 負の setup 経路の塊（始点 → 終点のセルの階層）----
+# 1 回目のビルドは 2,251 本が負だったが、診断は最悪 5 本しか出さず、配置後の dcp を開き直す worst_paths は Vivado が落ちた。
+# **開いている設計のまま**、負の経路を始点・終点の階層（コアの番号と添字を * に）で束ねて数える
+if {[get_property STATS.WNS [get_runs impl_1]] < 0} {
+    proc hier_key {pin} {
+        set parts [split [string trimleft $pin /] /]
+        set h [join [lrange $parts 0 end-2] /]
+        regsub -all {s45_core_\d+} $h {s45_core_*} h
+        regsub -all {\[\d+\]} $h {[*]} h
+        return $h
+    }
+    set grp [dict create]
+    set nneg 0
+    foreach pth [get_timing_paths -quiet -max_paths 5000 -nworst 1 -setup -slack_lesser_than 0] {
+        incr nneg
+        set k "[hier_key [get_property STARTPOINT_PIN $pth]] → [hier_key [get_property ENDPOINT_PIN $pth]]"
+        set sl [get_property SLACK $pth]
+        if {[dict exists $grp $k]} {
+            lassign [dict get $grp $k] n w
+            dict set grp $k [list [expr {$n + 1}] [expr {min($w, $sl)}]]
+        } else { dict set grp $k [list 1 $sl] }
+    }
+    puts ""
+    puts "---- 負の setup 経路の塊（$nneg 本、上限 5000。始点 → 終点の階層、本数の多い順に 20）----"
+    set rows {}
+    dict for {k v} $grp { lappend rows [list $k {*}$v] }
+    set fh [open $outdir/neg_paths_groups.rpt w]
+    set i 0
+    foreach r [lsort -integer -decreasing -index 1 $rows] {
+        lassign $r k n w
+        set line [format "  %5d 本  最悪 %7.3f  %s" $n $w $k]
+        puts $fh $line
+        if {[incr i] <= 20} { puts $line }
+    }
+    close $fh
+    puts "  全部: $outdir/neg_paths_groups.rpt（[dict size $grp] 塊）"
+    report_timing -max_paths 20 -nworst 1 -slack_lesser_than 0 -file $outdir/neg_paths_top20.rpt
+}
+
 # ---- 宣言していないクロックに経路が残っていないか ----
 # timing.xdc が非同期と宣言しているのは clk_pl_0 / RFADC2_CLK 系 / clk_out2 の 3 群だけ。
 # proj006 以降 **clk_adc0 をどこにも繋いでいない**ので、RFADC0_CLK には
