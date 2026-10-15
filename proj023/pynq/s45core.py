@@ -144,7 +144,8 @@ class Core:
     def raw(self):
         return [s for s in self.streams if s.kind == KIND_RAW]
 
-    def slice(self):
+    def slices(self):
+        # （名前を slice にすると、CORE_PORT のスライスの番号 self.slice（int）に上書きされる。2026-10-16 の実機の 2 回目で踏んだ）
         return [s for s in self.streams if s.kind == KIND_SLICE]
 
 
@@ -222,7 +223,7 @@ def table(cores, tmm=None):
     out.append("コア          ADC    タイル スライス IF_ID       NSTREAM CAPS  BASE_BEATS BUILD")
     for c in cores:
         out.append(f"{c.name:<13} {c.adc_name:<6} {c.tile:>6} {c.slice:>8} {c.if_id:#010x} {c.nstream:>7} {c.caps:#05x} {c.base_beats:>10} {c.build:#010x}")
-    if any(c.slice() for c in cores):
+    if any(c.slices() for c in cores):
         out.append("FFT_N（効いている log2 N・書いた・物理）: " + " / ".join(
             f"{c.adc_name} {c.rd(C_FFT_N) & 0xFF}・{c.rd(C_FFT_N) >> 8 & 0xFF}・{c.rd(C_FFT_N) >> 16 & 0xFF}" for c in cores))
     out.append("流れ                 KIND  s  SID         NCH   FRAME_BEATS SRC         PARAM       NFFT_MIN_MAX S0_CUR")
