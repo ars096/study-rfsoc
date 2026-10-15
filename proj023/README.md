@@ -317,7 +317,7 @@ IP（レーン FFT）を通さず、**IP の出口を模型で作って与える
 
 - **最悪経路は予言が外れた**: s45_core_1 の wide_spec の `fo_reg` → fo_now（fo + 1）→ run_f0 との比較 → cur_k + 1 == run_nd → d_i の選択 → d_i == run_n − 1 → t_last → `l_sat_reg` の CE。論理 14 段（CARRY8 7 段）、配線 62 %。**proj011 rev2 で spec_core を直したのと同じ型**（fs の 1 クロックに 32 bit の加算・比較を直列に通す）を、wide_spec に写したときに持ち込んでいた。上位 5 本は −0.55〜−0.56 で全部 DSP のクロックの中。ROM の配線は上位に出ていない
 - 2,251 本の内訳を見るため `make worst-paths WP_THR=0` を回したが、配置後の dcp を開くところで Vivado が落ちた（segfault）。**build.tcl の診断に「負の経路の塊」**（始点 → 終点の階層、コアの番号と添字を * に束ねた本数と最悪値。`neg_paths_groups.rpt`・`neg_paths_top20.rpt`）を足し、次のビルドから開いた設計のまま数える
-- **直したこと**: wide_spec の fs の判定の加算・比較を前もってレジスタに置いた（pre_hit・pre_end・pre_kp1・pre_ip1・pre_ip1_is0・pre_nxt_last・pre_zero_last。spec_core rev2 と同じ手当て）。入力は fs・cmd_run・rst でしか変わらず、fs の間は 2,048 クロックあるので、fs で読む pre_* は必ず新しい。cmd_run の直後の 1 クロックだけ pre_hit を 0 にする（新しい run_f0 は fa の格子の 2 つ先で fo_now と一致しない）。**sim-wsp（6 本）・sim-wco（4 本）・sim-ws45（3 本）が作業用の環境で全部通過**（陽性対照 4 本は落ちた）
+- **直したこと**: wide_spec の fs の判定の加算・比較を前もってレジスタに置いた（pre_hit・pre_end・pre_kp1・pre_ip1・pre_ip1_is0・pre_nxt_last・pre_zero_last。spec_core rev2 と同じ手当て）。入力は fs・cmd_run・rst でしか変わらず、fs の間は 2,048 クロックあるので、fs で読む pre_* は必ず新しい。cmd_run の直後の 1 クロックだけ pre_hit を 0 にする（新しい run_f0 は fa の格子の 2 つ先で fo_now と一致しない）。**sim-wsp（6 本）・sim-wco（4 本）・sim-ws45（3 本）が作業用の環境と Vivado サーバの両方で全部通過**（陽性対照 4 本は落ちた。2026-10-15）
 - 予言（3 回目のビルドの前に書く）: この型の経路は消え、WNS は −0.2〜+0.1 ns に上がる。残る負の経路があれば、塊の表で PFB（DSP が予言より 16 多い）か wide_acc（積分器の番地・書きの許可）のどちらかに出る
 
 Vivado を走らせる前に作業用の環境でできたのは、Tcl の構文（コマンドの完結）と、足した照合の部品（hex の形・ラッパの正規表現・ログの拾い）の単体の確かめ（陽性対照つき）まで。BD の API（module reference の文字列の CONFIG・VLNV）は走らせて初めて分かる
