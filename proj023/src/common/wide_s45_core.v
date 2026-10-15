@@ -115,6 +115,9 @@ module wide_s45_core #(
     wire take_w = (st == S_IDLE) && s_axi_awvalid && s_axi_wvalid;
     wire take_r = (st == S_IDLE) && s_axi_arvalid && !take_w;
     assign s_axi_awready = take_w;
+    // **ビルド 5 回目の .bit に無かった**（実機で NSTREAM が IF_ID の値に読めた。2026-10-15）。iverilog の tb は arready の z を
+    //   「準備よし」と読んで通っていた。Vivado は Synth 8-3848（ドライバの無いネット）を警告していた → build.tcl で止める
+    assign s_axi_arready = take_r;
     assign s_axi_wready  = take_w;
     assign s_axi_bresp   = 2'b00;
     assign s_axi_rresp   = 2'b00;

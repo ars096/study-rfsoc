@@ -77,21 +77,22 @@ module tb_wide_s45;
     assign ip_k1 = dut.u_wide.dbg_ip_k1;
     assign ip_v = dut.u_wide.dbg_ip_v;
 
+    // 手渡しは `!== 1'b1` で待つ（`!x` だと z・x を「準備よし」と読んで通る。ビルド 5 回目の arready の駆動漏れを sim が見逃した）
     task axw(input [15:0] a, input [31:0] v);
         begin
             @(posedge clk); awaddr <= a; wdata <= v; awvalid <= 1'b1; wvalid <= 1'b1;
-            @(posedge clk); while (!awready) @(posedge clk);
+            @(posedge clk); while (awready !== 1'b1) @(posedge clk);
             awvalid <= 1'b0; wvalid <= 1'b0;
-            @(posedge clk); while (!bvalid) @(posedge clk);
+            @(posedge clk); while (bvalid !== 1'b1) @(posedge clk);
         end
     endtask
     reg [31:0] rv;
     task axr(input [15:0] a);
         begin
             @(posedge clk); araddr <= a; arvalid <= 1'b1;
-            @(posedge clk); while (!arready) @(posedge clk);
+            @(posedge clk); while (arready !== 1'b1) @(posedge clk);
             arvalid <= 1'b0;
-            @(posedge clk); while (!rvalid) @(posedge clk);
+            @(posedge clk); while (rvalid !== 1'b1) @(posedge clk);
             rv = rdata;
         end
     endtask

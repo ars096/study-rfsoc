@@ -360,6 +360,18 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
 3. H-2: `wide.py --mode A=1 --tone-ch A0:1234 --sg …` を `--mode A=2`・`A=4` でも（同じ ch の番号で 3 回）
 4. H-4: `wide.py --switch 30`
 
+### 手順 4b: 実機の 1 回目（2026-10-15）と arready の駆動漏れ
+
+`wide.py --list` が `ERROR: s45_core_0 の NSTREAM 33620225` で止まった（33620225 = 0x02010101 = IF_ID の値。IF_ID の照合は通った）。
+- **原因: wide_s45_core.v で `s_axi_arready` を駆動し忘れていた**（s45_core.v から上流の口を写したとき、`assign s_axi_arready = take_r;` の 1 行を落とした）。読みの手渡しが成り立たず、PS には別の読みの値が返った
+- **sim が見逃した理由**: tb の手渡しの待ちが `while (!arready)` で、駆動の無い arready（z）は `!z = x` → while は回らず「準備よし」と読んで進んでいた。**Vivado は OOC の合成のログで Synth 8-3848（Net s_axi_arready … does not have driver）を 4 コアぶん警告していた**が、build.tcl は拾っていなかった
+- **直したこと**:
+  1. wide_s45_core.v に `assign s_axi_arready = take_r;`
+  2. tb_wide_s45・tb_wide_core の手渡しの待ちを `!== 1'b1` に（z・x を「準備よし」と読まない）。**陽性対照**（作業用の環境）: 直す前の wide_s45_core.v で tb_wide_s45 を回すと、最初の読み（IF_ID）で止まり meta が空のまま（判定は結果の行を出さずに落ちる）。直した後は ws45-b2 が全部通過
+  3. build.tcl: 自作のセルの OOC の run（17 個）のログに **Synth 8-3848 が 1 行でもあれば止める**（Xilinx の IP の run は対象外: rfdc 24・PS 5・smartconnect 1 行が出ていて、どれも IP の中の使わない口）。**陽性対照**: ビルド 5 回目の run のログに当てると、4 コアの s_axi_arready の 4 行を拾って ERROR で止まった（Vivado サーバの tclsh で、照合の部分だけを回した）
+  4. 作業用の環境で yosys の `check`（wide_s45_core ＋ 中身、FFT は黒箱）を回すと、ドライバの無いネットは s_axi_arready の 1 本だけだった（ほかの警告は for の変数を always の間で使い回している 3 つで、合成の意味は変わらない）
+- ビルドはやり直し（6 回目）。手順 3 の B-1 は 5 回目で合格としていたが、**その .bit は PS からコアを読めない**ので無効。教訓: B-1 の合格に「自作のセルの合成の警告（ドライバの無いネット）」を含めていなかった
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -384,6 +396,7 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
 - [x] ビルド 5 回目: WNS +0.034 ns（1 段は FF として残ったが、ROM → コア 3 の 1 回の飛びが 3.2 ns）
 - [x] 余裕の取り方: **このまま手順 4 へ**（2026-10-15、西村さんが決めた）。5 回目の .bit（WNS +0.034 ns）で実機に進む。余裕の手当て（係数の配りを 2 段に割る、または係数 ROM を 2 つに）は次に RTL を触るときにまとめて
 - [x] 手順 4a: PS 側の道具（wide.py・s45core・timebase・gbboot。上の「手順 4a」）
+- [ ] arready を直したビルド（6 回目）と Vivado サーバでの `make sim-ws45 sim-wco`
 - [ ] 手順 4b: 実機で wide.py（--list・雑音・H-2・H-4）。F-2 → H-3。H-1 の掃引の道具
 
 ## 公開について

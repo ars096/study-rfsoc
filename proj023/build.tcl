@@ -1660,6 +1660,25 @@ foreach n $ooc_names {
     }
 }
 puts "ROM の中身 : OOC の run [expr {$rm_seen}] 個のログに \$readmemh の失敗 $rm_ng 行"
+# proj023 4a: **ドライバの無いネット（Synth 8-3848）で止める**。ビルド 5 回目の .bit は wide_s45_core の s_axi_arready が
+#   どこからも駆動されず（RTL の書き漏れ）、実機で NSTREAM が IF_ID の値に読めた。Vivado は OOC のログで警告していたが、
+#   iverilog の tb は arready の z を「準備よし」と読んで通っていた。自作のセル（module reference）の run だけを見る
+set nd_ng 0
+#   （Xilinx の IP の run は対象外: ビルド 5 回目で rfdc 24・PS 5・smartconnect 1 行が出ていて、どれも IP の中の使わない口）
+set nd_seen 0
+foreach n $ooc_names {
+    if {![regexp {^system_(s45_core|wide_coef_rom|wide_tw_rom|time_core|s45_ring|gb_adc|gb_gate|full_sel)_} $n]} continue
+    incr nd_seen
+    set lf [file join [ooc_dir $n] runme.log]
+    if {![file exists $lf]} continue
+    set fh [open $lf r]; set t [read $fh]; close $fh
+    foreach line [split $t "\n"] {
+        if {[string match "*Synth 8-3848*" $line]} { puts "  $n: $line"; incr nd_ng }
+    }
+}
+puts "ドライバ   : 自作のセルの OOC の run $nd_seen 個のログに Synth 8-3848（ドライバの無いネット）$nd_ng 行"
+if {$nd_seen < 4 + 2 + 1 + 1 + 4 + 4 + 1} { puts "ERROR: 自作のセルの OOC の run が $nd_seen 個（期待 17。run の名前が変わった？ $ooc_names）"; exit 1 }
+if {$nd_ng > 0} { puts "ERROR: ドライバの無いネットがある（RTL の書き漏れ）"; exit 1 }
 if {$rm_seen != 2} { puts "ERROR: wide_coef_rom・wide_tw_rom の OOC の run が 2 個でない（$rm_seen）。run の名前: $ooc_names"; exit 1 }
 if {$rm_ng > 0} { puts "ERROR: ROM の中身（hex）を合成が読めていない"; exit 1 }
 

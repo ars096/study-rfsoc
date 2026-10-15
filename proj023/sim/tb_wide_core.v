@@ -75,18 +75,18 @@ module tb_wide_core;
     task axw(input [10:0] a, input [31:0] v);
         begin
             @(posedge clk); awaddr <= a; wdata <= v; awvalid <= 1'b1; wvalid <= 1'b1;
-            @(posedge clk); while (!awready) @(posedge clk);
+            @(posedge clk); while (awready !== 1'b1) @(posedge clk);
             awvalid <= 1'b0; wvalid <= 1'b0;
-            @(posedge clk); while (!bvalid) @(posedge clk);
+            @(posedge clk); while (bvalid !== 1'b1) @(posedge clk);
         end
     endtask
     reg [31:0] rv;
     task axr(input [10:0] a);
         begin
             @(posedge clk); araddr <= a; arvalid <= 1'b1;
-            @(posedge clk); while (!arready) @(posedge clk);
+            @(posedge clk); while (arready !== 1'b1) @(posedge clk);
             arvalid <= 1'b0;
-            @(posedge clk); while (!rvalid) @(posedge clk);
+            @(posedge clk); while (rvalid !== 1'b1) @(posedge clk);
             rv = rdata;
         end
     endtask
