@@ -417,7 +417,7 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
 - [x] ビルド 7 回目（2026-10-16）: **閉じた。WNS +0.029 ns・WHS +0.010 ns**。回し直しは起きなかった。ドライバの照合 0 行・ROM の中身 0 行・結線 132 行・coef_q 1,152・tw_q 576・DSP 2,720・LUT 253,842・FF 492,223。最悪経路は s45_core_3 の wide_pfb の DSP の出口 → 次の段（u_pfb/s2_reg → y_i_1_psdsp、DSP の中 3 段）で、**ROM の配線は最悪経路から外れた**（4〜5 回目の ROM → コア の形が消えた）。この .bit で手順 4b（実機）へ
 - [x] sim（Vivado サーバ、b604fe8）: sim-wsp 7 本（wsp-rdy を含む）・sim-wco 4 本・sim-ws45 3 本、全部通過
 - [x] ビルド 8 回目（2026-10-16、b604fe8、既定の戦略）: **閉じなかった。WNS −0.008 ns・WHS +0.005 ns、負の経路 3 本だけ**。−0.008 は s45_core_2 の rstn_q2 → lane_fft_w の bit 反転 RAM の ENBWREN（power_opt の cooolgate の LUT 1 段、配線 3.15 ns）、−0.005 は u_chain/u_dft → g_pw の DSP、−0.001 は u_chain → u_acc。どれも 7 回目まで +0.03 前後だった所の揺らぎで、形の違う新しい経路は無い。資源は 7 回目と同じ（DSP 2,720・coef_q 1,152・tw_q 576）。**この .bit は実機に使わない**
-- [ ] 9 回目: RTL はそのまま、実装の戦略だけ変える（proj015・proj021 で閉じた手）。`make IMPL=Performance_Explore`（build-PE/）と `make IMPL=Performance_ExplorePostRoutePhysOpt`（build-PEPRPO/）を並べる。**予言: どちらかが WNS 0 以上で閉じる**。閉じなければ リセットをレーンごとに 1 段受ける（FFT の aresetn の配線を短くする）と ROM の余裕の直しを一緒に入れる
+- [x] 9 回目（2026-10-16、b604fe8、RTL は 8 回目と同じ）: **PE・PEPRPO とも閉じた。WNS +0.008 ns・WHS +0.010 ns**（予言どおり）。2 本の上位 5 経路は同じ値で、PEPRPO の配線後の phys_opt は負が無いので実質働いていない。結線 132 行・問題 0・coef_q 1,152・tw_q 576・LUT 253,490。**実機には build-PE/ を使う**。余裕は 8 ps しかないので、次に RTL を触るときはリセットのレーンごとの受けと ROM の余裕の直しを一緒に入れる
 - [ ] 手順 4b: 実機で wide.py（--list の起動の見張りが 0x00・雑音・H-2・H-4）。F-2 → H-3。H-1 の掃引の道具
 
 ## 公開について
