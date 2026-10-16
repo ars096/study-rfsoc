@@ -429,7 +429,7 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
 - [x] 9 回目（2026-10-16、b604fe8、RTL は 8 回目と同じ）: **PE・PEPRPO とも閉じた。WNS +0.008 ns・WHS +0.010 ns**（予言どおり）。2 本の上位 5 経路は同じ値で、PEPRPO の配線後の phys_opt は負が無いので実質働いていない。結線 132 行・問題 0・coef_q 1,152・tw_q 576・LUT 253,490。**実機には build-PE/ を使う**。余裕は 8 ps しかないので、次に RTL を触るときはリセットのレーンごとの受けと ROM の余裕の直しを一緒に入れる
 - [x] 実機 5 回目（build-PE/）: 起動の見張りが 4 回目と同じ 0x30 → 0x10 / 0x12。IP は流し始めてから tready を下げる（proj011・proj014 と同じ）→ IP の手前の待ち行列で tready を守る・レーンごとのリセット。sim-wsp に wsp-stl・wsp-stlp
 - [x] Vivado サーバで sim（0dee749）: sim-wsp 9 本（wsp-stl・wsp-stlp を含む）・sim-wco 4 本・sim-ws45 3 本、全部通過（陽性対照 5 本は落ちるべきところで落ちた）
-- [ ] ビルド 10 回目（`IMPL=Performance_Explore`、build-PE/）
+- [x] ビルド 10 回目（2026-10-16、9589032、`IMPL=Performance_Explore`、build-PE/）: **閉じた。WNS +0.040 ns・WHS +0.010 ns**（9 回目の +0.008 から戻った）。結線 132 行・問題 0・DSP 2,720・tw_q 576・coef_q 1,152（コア 1 は 1,185、phys_opt の複製）・LUT 255,207（待ち行列の SRL のぶん +1,700）
 - [ ] 手順 4b: 実機で wide.py（--list の起動の見張りが 0x00・待たされた 1・待ち行列 2・雑音・H-2・H-4）。F-2 → H-3。H-1 の掃引の道具
 
 ## 公開について
