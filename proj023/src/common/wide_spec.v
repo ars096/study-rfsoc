@@ -101,12 +101,19 @@ module wide_spec #(
     assign fa_now = tk[11 +: FW];
 
     // ---- 起動の見張り（spec_core の rev5 の型）----
+    // proj023 4b: **IP の 16 レーンの s_axis_data_tready も見る**。実機（ビルド 7 回目）では全コアで起動の後に
+    //   「IP が受けない」（y_v の間に tready が 1 でない）が立ち、以後 TLAST 事象が立ち続け、タイル 224 のコアは tw_mis
+    //   （IP の出口の k1 の位相がコア 0 と違う）。realtime の IP が受けなかったビートは失われ、IP のフレームの枠が m からずれる。
+    //   口は「入力が続き、かつ 16 レーンとも受けられる」状態が ST_N クロック続いてから開ける。
+    //   設定（config）は口が開く前だけ出す（口の後に設定を受けると、IP がフレームの頭で tready を落とすかもしれないので）
+    wire [NL-1:0] ln_s_tready;
+    wire          ip_ready = &ln_s_tready;
     reg [15:0] st_run;
     always @(posedge clk) begin
         if (rst) begin
             go <= (ST_N == 0); st_run <= 16'd0;
         end else if (!go) begin
-            if (v_loc) begin
+            if (v_loc && ip_ready) begin
                 if (st_run == ST_N - 1) go <= 1'b1; else st_run <= st_run + 16'd1;
             end else st_run <= 16'd0;
         end
@@ -145,7 +152,7 @@ module wide_spec #(
     end
 
     // ---- レーン FFT（IP）× 16 ----
-    wire [NL-1:0]    ln_s_tready, ln_m_tvalid, ln_m_tlast, ln_ev_fs, ln_ev_unexp, ln_ev_miss, ln_ev_halt;
+    wire [NL-1:0]    ln_m_tvalid, ln_m_tlast, ln_ev_fs, ln_ev_unexp, ln_ev_miss, ln_ev_halt;
     wire [NL*64-1:0] ln_m_tdata;
     wire [NL*16-1:0] ln_m_tuser;
     genvar p;
@@ -154,7 +161,7 @@ module wide_spec #(
             wire signed [14:0] yp = y[15*p +: 15];
             lane_fft_w u_fft (
                 .aclk(clk), .aresetn(~rst),
-                .s_axis_config_tdata(8'h01), .s_axis_config_tvalid(1'b1), .s_axis_config_tready(),
+                .s_axis_config_tdata(8'h01), .s_axis_config_tvalid(!go), .s_axis_config_tready(),   // 設定は口が開く前だけ
                 .s_axis_data_tdata({16'h0000, yp[14], yp}), .s_axis_data_tvalid(y_v), .s_axis_data_tready(ln_s_tready[p]),
                 .s_axis_data_tlast(y_m == 11'd2047),
                 .m_axis_data_tdata(ln_m_tdata[64*p +: 64]), .m_axis_data_tuser(ln_m_tuser[16*p +: 16]),

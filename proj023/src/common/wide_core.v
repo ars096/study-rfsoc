@@ -128,7 +128,7 @@ module wide_core #(
         cmd_stop <= 2'b00; cmd_fclr <= 1'b0;
         if (go_loc) begin arm_run <= 2'b00; arm_wrst <= 1'b0; end
         if (rst) begin
-            s_axi_bvalid <= 1'b0; arm_run <= 2'b00; arm_wrst <= 1'b0; r_fftn <= 8'd13;
+            s_axi_bvalid <= 1'b0; arm_run <= 2'b00; arm_wrst <= 1'b0; r_fftn <= 8'd15;   // proj023 4b: 既定を 15（B 1）に。13 だと --list の「書いた」が 13 で「効いている」15 と食い違い、FFT_N を書かずに WRST すると B 4 になった
             for (s = 0; s < 2; s = s + 1) begin
                 r_nacc[s] <= N_ACC_DEFAULT; r_ndump[s] <= 32'd0; r_cfg[s] <= 32'd0; r_shift[s] <= SHIFT_DEFAULT;
                 r_s0[s] <= (s == 0) ? 14'd0 : 14'd4096; r_rec[s] <= 3'd0;

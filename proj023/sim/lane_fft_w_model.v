@@ -61,6 +61,11 @@ module lane_fft_w #(
     localparam integer SKEW = 0;
 `endif
 
+`ifdef FFT_READY_DELAY
+    localparam integer RD = `FFT_READY_DELAY;   // proj023 4b: リセットの後に tready を上げるまでのクロック（実機の「IP が受けない」の模型。陽性対照）
+`else
+    localparam integer RD = READY_DELAY;
+`endif
     reg signed [15:0] xin [0:M-1];
     integer cnt, rdy_cnt, started;
     integer slip;               // rev5: 入力の途切れ 1 クロックごとに、TLAST の検査の数えだけが 1 進む（realtime の IP の振る舞いの模型）
@@ -121,7 +126,7 @@ module lane_fft_w #(
             m_axis_data_tuser  <= 16'd0;
         end else begin
             // ---- 入力 ----
-            if (rdy_cnt < READY_DELAY) rdy_cnt = rdy_cnt + 1;
+            if (rdy_cnt < RD) rdy_cnt = rdy_cnt + 1;
             else                       s_axis_data_tready <= 1'b1;
             if (s_axis_data_tvalid && s_axis_data_tready) begin
                 started = 1;

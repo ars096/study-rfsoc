@@ -380,6 +380,14 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
 - `--list` の FLAGS の注: FFT_N の「書いた」欄が起動の直後は 13（r_fftn の既定）で「効いている」15（B 1）と食い違う。RTL の既定値の不揃い（次に RTL を触るとき 15 にそろえる）
 - 足したもの: `wide.py` が表の後に**起動の見張り**を出す（各コアの FLAGS を Overlay の後そのまま読み、消して 0.5 s 後にもう一度。go・have_first・FIN − FOUT も）
 
+**4 回目（起動の見張りを足した wide.py、2026-10-16）**: 4 コアとも **Overlay の後に 0x30（TLAST 事象・IP が受けない）**（C・D は ＋ tw_mis で 0x32）、消して 0.5 s 後は 0x10 / 0x12（TLAST 事象と tw_mis は続く、「IP が受けない」は起動の時だけ）。go 1・have_first 1・FIN − FOUT 1（フレームの数えは揃っている）
+- **診断**: 口（go）が開き PFB が y を出し始めたとき、**IP の 16 レーンのどれかがまだ s_axis_data_tready を上げていなかった**。realtime の IP は受けなかったビートを失い、IP のフレームの枠が m（T ≡ K_F の格子）からずれる → TLAST 事象が立ち続け、IP の出口の k1 の位相がコアごとにずれる（タイルで違う → tw_mis）。proj011 の spec_core は入力の数えを「IP が受けたビート」（in_acc = vin && tready）で進めていたので、この型では枠がずれなかった。wide_spec は m を T で決める（D-2）ので、IP が受けないビートがあると枠がずれる。行動模型は tready をリセットの 5 クロック後に上げるので、sim では起きなかった
+- **直したこと（RTL）**:
+  1. wide_spec の口: 「入力が続き、**かつ 16 レーンとも tready = 1**」が ST_N クロック続いてから開ける
+  2. IP の設定（config tvalid）を**口が開く前だけ**出す（今までは常に 1。口の後に設定を受けた IP がフレームの頭で tready を落とすことを避ける）
+  3. wide_core の FFT_N の既定 13 → 15（B 1。`--list` の「書いた」13・「効いている」15 の食い違いと、FFT_N を書かずに WRST すると B 4 になることを直す）
+- **sim の模型と陽性対照**: 行動模型に `FFT_READY_DELAY`（リセットから tready を上げるまでのクロック）を足し、`make sim-wsp` に **wsp-rdy**（B 2、tready を 5000 クロック上げない）を足した。**直す前の wide_spec で wsp-rdy を回すと flags = 0x30・A1' の差 3,641,632・B 1,612 倍で落ち、実機と同じ flags の形になった**。直した後は wsp-rdy を含む sim-wsp 7 本が全部通過（作業用の環境）
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -407,7 +415,8 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
 - [x] Vivado サーバで `make sim-ws45 sim-wco`（arready を直した後）: 7 本とも全部通過（陽性対照 2 本は落ちた）
 - [x] ビルド 6 回目: OOC までは通った（ドライバの照合 17 個の run で 0 行・ROM の中身 0 行・結線 132 行）が、**impl_1 が始まってすぐ Vivado が落ちた**（segfault、Abnormal program termination (11)）。build.tcl に synth_1・impl_1 の回し直し（落ちた印のある run だけ、2 回まで。wait_on_run の Tcl のエラーは catch で受ける）を足した
 - [x] ビルド 7 回目（2026-10-16）: **閉じた。WNS +0.029 ns・WHS +0.010 ns**。回し直しは起きなかった。ドライバの照合 0 行・ROM の中身 0 行・結線 132 行・coef_q 1,152・tw_q 576・DSP 2,720・LUT 253,842・FF 492,223。最悪経路は s45_core_3 の wide_pfb の DSP の出口 → 次の段（u_pfb/s2_reg → y_i_1_psdsp、DSP の中 3 段）で、**ROM の配線は最悪経路から外れた**（4〜5 回目の ROM → コア の形が消えた）。この .bit で手順 4b（実機）へ
-- [ ] 手順 4b: 実機で wide.py（--list・雑音・H-2・H-4）。F-2 → H-3。H-1 の掃引の道具
+- [ ] IP の tready を待つ口・設定は口の前だけ・FFT_N の既定 15 のビルド（8 回目）と sim（sim-wsp 7 本・sim-wco・sim-ws45）
+- [ ] 手順 4b: 実機で wide.py（--list の起動の見張りが 0x00・雑音・H-2・H-4）。F-2 → H-3。H-1 の掃引の道具
 
 ## 公開について
 
