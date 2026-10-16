@@ -232,7 +232,7 @@ def check_recs(key, recs, b, s0, nacc, ndump):
     return ng
 
 
-FLAG_NAMES = ("coef_mis", "tw_mis", "口の後の途切れ", "16 レーンの不揃い", "IP の TLAST 事象", "IP が受けない", "k1 の飛び", "書き込みの衝突")
+FLAG_NAMES = ("coef_mis", "tw_mis", "口の後の途切れ", "16 レーンの不揃い", "IP の TLAST 事象", "待ち行列のあふれ・tready の不揃い", "k1 の飛び", "書き込みの衝突")
 
 
 def flag_str(v):
@@ -254,9 +254,10 @@ def diag(cores, wait=0.5):
     time.sleep(wait)
     for o in out:
         o.append(slices(o[0])[0].rd(SC.S_FLAGS))
-    log("起動の見張り（FLAGS: Overlay から今まで → 消して %.1f s 後）" % wait)
+    log("起動の見張り（FLAGS: Overlay から今まで → 消して %.1f s 後）。IP に待たされたクロック数と待ち行列の語数（待ち行列 = 1 + 待たされた数）" % wait)
     for c, f0, gh, d, f1 in out:
-        log(f"  {c.adc_name}: {flag_str(f0)} → {flag_str(f1)} / go {gh >> 1 & 1}・have_first {gh & 1} / FIN − FOUT {d}")
+        log(f"  {c.adc_name}: {flag_str(f0)} → {flag_str(f1)} / go {gh >> 1 & 1}・have_first {gh & 1} / FIN − FOUT {d}"
+            f" / 待たされた {gh >> 24 & 0xFF}・待ち行列 {gh >> 16 & 0x3F}")
     return out
 
 

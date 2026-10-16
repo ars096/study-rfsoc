@@ -388,6 +388,15 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
   3. wide_core の FFT_N の既定 13 → 15（B 1。`--list` の「書いた」13・「効いている」15 の食い違いと、FFT_N を書かずに WRST すると B 4 になることを直す）
 - **sim の模型と陽性対照**: 行動模型に `FFT_READY_DELAY`（リセットから tready を上げるまでのクロック）を足し、`make sim-wsp` に **wsp-rdy**（B 2、tready を 5000 クロック上げない）を足した。**直す前の wide_spec で wsp-rdy を回すと flags = 0x30・A1' の差 3,641,632・B 1,612 倍で落ち、実機と同じ flags の形になった**。直した後は wsp-rdy を含む sim-wsp 7 本が全部通過（作業用の環境）
 
+**5 回目（ビルド 9 回目 build-PE/ の .bit、2026-10-16）**: **4 回目と同じ**。Overlay の後 0x30 / 0x32 → 消して 0.5 s 後 0x10 / 0x12、go 1・have_first 1・FIN − FOUT 0〜1。`--list` の表・FFT_N 15・15・15 は期待どおり
+- **4 回目の診断は半分外れ**: 口は tready が 16384 クロック続いてから開いたのに「IP が受けない」が立った → **IP は口の後、流し始めてから tready を下げている**。これは過去の実機で見ている: proj011 の FLAGS[3]「realtime の IP が最初の入力の近くで一度 tready を下げる」、proj014 の WS_STALL = 1（起動のどこかで 1 回だけ 1 クロック）。proj014 は wspec_core が tready を守って直し、proj011 の spec_core は入力の数えを IP が受けたビートで進めていた。**wide_spec は D-2 で m を T から決め、tready を守っていなかった**（4 回目の直しは「待つ」だけで「守る」になっていなかった）
+- **直したこと（RTL）**:
+  1. wide_spec の PFB の出口と IP の間に**待ち行列**（SRL、深さ 32、{TLAST, 16 レーンの y}）。16 レーンに同じビートを出し、**16 レーンとも受けたときだけ進める**。ビートは落ちない。待たされた数だけ IP の出口が遅れるが、ひねり係数は IP の出口の k1 で引き、出口のフレームは IP の TLAST・k1 で数えるので食い違わない（4 コアで待たされた数が違えば tw_mis が立つので見える）
+  2. FLAGS[5] の意味を「待ち行列のあふれ、または 16 レーンの tready の不揃い」に変えた（待たされること自体は異常ではない）。**0x204 に {待たされたクロック数[31:24]・待ち行列の語数[21:16]}** を足し、wide.py の起動の見張りが出す
+  3. レーンごとに IP のリセットを 1 段受ける（dont_touch。ビルド 8 回目の最悪経路 rstn_q2 → IP の BRAM の ENBWREN の手当て）。ROM の余裕は 7 回目以降は最悪経路から外れているので触らない
+- **sim の模型と陽性対照**: 行動模型に `FFT_STALL_AT`（受けたビートが通算 n 個になった次のクロックだけ tready を 0）。`make sim-wsp` に **wsp-stl**（B 2、7 ビート目の後に 1 クロック）と **wsp-stlp**（同じ模型で待ち行列を外した DUT、`-DIPQ_POSCTL`）を足した。**wsp-stlp は flags = 0x30・A1' の差 3,075,445・B 12.78 倍で落ち、実機と同じ形**。wsp-stl は通過（待たされた 1 クロック・待ち行列 2 語）。wsp-b1・wsp-rdy も通過（待たされた 0・待ち行列 1 語）。レーンごとのリセットを入れた後の sim-wsp 9 本・sim-wco 4 本・sim-ws45 3 本が全部通過（作業用の環境）
+- **予言（実機 6 回目）**: 起動の見張りは 4 コアとも Overlay の後から 0x00、**待たされた 1・待ち行列 2 語**（4 コアで同じ。違えば tw_mis が立つ）
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -418,7 +427,9 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
 - [x] sim（Vivado サーバ、b604fe8）: sim-wsp 7 本（wsp-rdy を含む）・sim-wco 4 本・sim-ws45 3 本、全部通過
 - [x] ビルド 8 回目（2026-10-16、b604fe8、既定の戦略）: **閉じなかった。WNS −0.008 ns・WHS +0.005 ns、負の経路 3 本だけ**。−0.008 は s45_core_2 の rstn_q2 → lane_fft_w の bit 反転 RAM の ENBWREN（power_opt の cooolgate の LUT 1 段、配線 3.15 ns）、−0.005 は u_chain/u_dft → g_pw の DSP、−0.001 は u_chain → u_acc。どれも 7 回目まで +0.03 前後だった所の揺らぎで、形の違う新しい経路は無い。資源は 7 回目と同じ（DSP 2,720・coef_q 1,152・tw_q 576）。**この .bit は実機に使わない**
 - [x] 9 回目（2026-10-16、b604fe8、RTL は 8 回目と同じ）: **PE・PEPRPO とも閉じた。WNS +0.008 ns・WHS +0.010 ns**（予言どおり）。2 本の上位 5 経路は同じ値で、PEPRPO の配線後の phys_opt は負が無いので実質働いていない。結線 132 行・問題 0・coef_q 1,152・tw_q 576・LUT 253,490。**実機には build-PE/ を使う**。余裕は 8 ps しかないので、次に RTL を触るときはリセットのレーンごとの受けと ROM の余裕の直しを一緒に入れる
-- [ ] 手順 4b: 実機で wide.py（--list の起動の見張りが 0x00・雑音・H-2・H-4）。F-2 → H-3。H-1 の掃引の道具
+- [x] 実機 5 回目（build-PE/）: 起動の見張りが 4 回目と同じ 0x30 → 0x10 / 0x12。IP は流し始めてから tready を下げる（proj011・proj014 と同じ）→ IP の手前の待ち行列で tready を守る・レーンごとのリセット。sim-wsp に wsp-stl・wsp-stlp
+- [ ] Vivado サーバで sim（sim-wsp 9 本・sim-wco・sim-ws45）とビルド 10 回目（`IMPL=Performance_Explore`、build-PE/）
+- [ ] 手順 4b: 実機で wide.py（--list の起動の見張りが 0x00・待たされた 1・待ち行列 2・雑音・H-2・H-4）。F-2 → H-3。H-1 の掃引の道具
 
 ## 公開について
 
@@ -433,7 +444,7 @@ make model-wide     # 手順 2a: sim の模型の自己検査（RTL なし）
 make                # 手順 3b: ビルド（-1、build/）。成否は vivado.log の末尾と「TIMING (確定)」
 make sim-ws45       # 手順 3a: wide_s45_core（3 本、5 分ほど。陽性対照は 10 分ほど）
 make sim-wco        # 手順 2c-3: wide_core のレコードとレジスタ（4 本、5 分ほど）
-make sim-wsp        # 手順 2c-2: wide_spec の A1'・A2・B・C（6 本、2 コアで 17 分ほど）
+make sim-wsp        # 手順 2c-2: wide_spec の A1'・A2・B・C（9 本、2 コアで 25 分ほど）
 make sim-wch        # 手順 2c-1: wide_chain の A2 の後半（6 本を並べて 1 分ほど）。make wide-tw でひねり係数 ROM を作り直す
 make sim-wpfb       # 手順 2b: wide_pfb の A1（本番 ＋ 陽性対照 2 本、数秒）。make wide-coef で係数 ROM を作り直す
 make sim-spec-all   # 手順 0: spec_core の sim（変種を同時に）。成否は build-sim-logs/*.log の「結果: 全部通過」

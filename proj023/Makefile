@@ -622,18 +622,22 @@ wide-tw:
 #   wsp-pa: B 1 で積分器の番地の上の bit を見ない（書き込みの衝突の陽性対照。flags[7] と A2 が落ちるべき）
 #   wsp-rdy: B 2、IP の行動模型の tready をリセットから 5000 クロック上げない（実機の「IP が受けない」の模型。口が tready を待つので通るべき。
 #            proj023 4b の前の RTL では flags[5]・[4] と A1' が落ちた）
+#   wsp-stl: B 2、IP の行動模型が受けたビート 7 個目の後に tready を 1 クロック下げる（実機 5 回目の「最初の入力の近くで 1 回待たせる」の模型。
+#            IP の手前の待ち行列が吸うので通るべき）/ wsp-stlp: 同じ模型で待ち行列を外した DUT（-DIPQ_POSCTL。陽性対照。flags[5]・[4] と A1' が落ちるべき）
+#   定義を 2 つ以上渡すときは __ でつなぐ（空白の代わり）
 # **成否は各ログの「結果: 全部通過」で読む**。Vivado サーバで流すときは WSP_VARIANTS を全部（既定）、手元で急ぐときは 1 本ずつ
 WSP_RTL := src/common/wide_coef_rom.v src/common/wide_tw_rom.v src/common/wide_spec.v src/common/wide_pfb.v src/common/wide_chain.v \
            src/common/wide_acc.v src/common/cmul.v src/common/dft16.v sim/lane_fft_w_model.v sim/tb_wide_spec.v
 WSP_VARIANTS ?= wsp-b1:0:100:12288:7:: wsp-b2:1:1000:4096:7:: wsp-b4:2:0:0:7:: wsp-sat:2:0:0:4:: \
                 wsp-pg:2:0:0:7:-DPOSCTL_GRID:posctl wsp-pa:0:100:12288:7:-DACC_POSCTL:posctl \
-                wsp-rdy:1:1000:4096:7:-DFFT_READY_DELAY=5000:
+                wsp-rdy:1:1000:4096:7:-DFFT_READY_DELAY=5000: wsp-stl:1:1000:4096:7:-DFFT_STALL_AT=7: \
+                wsp-stlp:1:1000:4096:7:-DFFT_STALL_AT=7__-DIPQ_POSCTL:posctl
 .PHONY: sim-wsp
 sim-wsp:
 	@mkdir -p build-sim-logs
 	@for v in $(WSP_VARIANTS); do \
 	  nm=$$(echo "$$v" | cut -d: -f1); lb=$$(echo "$$v" | cut -d: -f2); a=$$(echo "$$v" | cut -d: -f3); b=$$(echo "$$v" | cut -d: -f4); \
-	  sh=$$(echo "$$v" | cut -d: -f5); def=$$(echo "$$v" | cut -d: -f6); pc=$$(echo "$$v" | cut -d: -f7); d=build-sim-$$nm; \
+	  sh=$$(echo "$$v" | cut -d: -f5); def=$$(echo "$$v" | cut -d: -f6 | sed "s/__/ /g"); pc=$$(echo "$$v" | cut -d: -f7); d=build-sim-$$nm; \
 	  ( mkdir -p $$d && $(PYTHON) sim/check_wide.py gen $$d 6 && \
 	    $(IVERILOG) -g2005 $$def -DOUT=\"$$d\" -DCOEF=\"$(WPFB_COEF)\" -DTWF=\"$(WCH_TW)\" -DLB=$$lb -DS00=$$a -DS01=$$b -DSHIFT=$$sh \
 	      -DNACC=5 -DGF=2 -o $$d/tb $(WSP_RTL) && \

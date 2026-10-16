@@ -68,6 +68,7 @@ module lane_fft_w #(
 `endif
     reg signed [15:0] xin [0:M-1];
     integer cnt, rdy_cnt, started;
+    integer n_acc, stall_st;    // 受けたビートの通算・FFT_STALL_AT の状態（0 まだ / 1 下げている / 2 済み）
     integer slip;               // rev5: 入力の途切れ 1 クロックごとに、TLAST の検査の数えだけが 1 進む（realtime の IP の振る舞いの模型）
     integer q_re [0:QF*M-1];
     integer q_im [0:QF*M-1];
@@ -118,7 +119,7 @@ module lane_fft_w #(
         event_data_in_channel_halt <= 1'b0;
         ev_fs_r                    <= 1'b0;
         if (!aresetn) begin
-            cnt = 0; rdy_cnt = 0; started = 0; q_w = 0; q_r = 0; lat_cnt = 0; slip = 0;
+            cnt = 0; rdy_cnt = 0; started = 0; n_acc = 0; stall_st = 0; q_w = 0; q_r = 0; lat_cnt = 0; slip = 0;
             s_axis_data_tready <= 1'b0;
             m_axis_data_tvalid <= 1'b0;
             m_axis_data_tlast  <= 1'b0;
@@ -127,9 +128,10 @@ module lane_fft_w #(
         end else begin
             // ---- 入力 ----
             if (rdy_cnt < RD) rdy_cnt = rdy_cnt + 1;
-            else                       s_axis_data_tready <= 1'b1;
+            else if (stall_st != 1)    s_axis_data_tready <= 1'b1;
             if (s_axis_data_tvalid && s_axis_data_tready) begin
                 started = 1;
+                n_acc = n_acc + 1;
                 xin[cnt] = s_axis_data_tdata[15:0];
                 if (cnt == 0) ev_fs_r <= 1'b1;
                 // 検査は (cnt + SKEW) mod M で行う。**枠（cnt）は変えない** — 実機の見立てと同じ形
@@ -145,6 +147,12 @@ module lane_fft_w #(
                 event_data_in_channel_halt <= 1'b1;
                 slip = slip + 1;         // 実機の realtime の IP: 待たずに進み、制御側の数えだけがずれる（データの枠はずれない）
             end
+`ifdef FFT_STALL_AT
+            // proj023 4b 実機 5 回目: realtime の IP は最初の入力の近くで 1 回 tready を下げる（proj011・proj014 の実機）。
+            // 受けたビートが通算 FFT_STALL_AT 個になった次のクロックだけ tready を 0 にする（陽性対照: 待ち行列の無い RTL は 0x30 で落ちる）
+            if (stall_st == 1) begin s_axis_data_tready <= 1'b1; stall_st = 2; end
+            else if (stall_st == 0 && n_acc == `FFT_STALL_AT) begin s_axis_data_tready <= 1'b0; stall_st = 1; end
+`endif
             // ---- 出力（最初のフレームが揃ってから LAT 待つ）----
             if (q_w > 0 && lat_cnt < LAT) lat_cnt = lat_cnt + 1;
             if (lat_cnt >= LAT && q_r < q_w) begin

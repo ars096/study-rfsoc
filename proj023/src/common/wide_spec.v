@@ -23,7 +23,9 @@
 //
 // ---- 異常フラグ（粘着。flags_clr で消す）----
 //   [0] coef_mis（係数の番地の食い違い）/ [1] tw_mis / [2] 口を開けた後に入力が途切れた / [3] IP の 16 レーンの valid・k1 が揃わない /
-//   [4] IP の TLAST の事象 / [5] IP の口が受けなかった / [6] 出口の k1 の飛び / [7] 積分器の書き込みの衝突（wr_coll）
+//   [4] IP の TLAST の事象 / [5] IP の手前の待ち行列のあふれか、16 レーンの tready の不揃い（どちらもビートが落ちるかずれる）/
+//   [6] 出口の k1 の飛び / [7] 積分器の書き込みの衝突（wr_coll）
+//   （proj023 4b 実機 5 回目から [5] の意味を変えた。IP が待たせること自体は待ち行列が吸うので異常ではない。回数は dbg_ipq）
 
 `timescale 1ns / 1ps
 
@@ -83,6 +85,7 @@ module wide_spec #(
     // 診断
     output wire [15:0]       dbg_pfb_sat,
     output wire              dbg_have_first,
+    output wire [15:0]       dbg_ipq,          // {待たされたクロック数（8 bit で飽和）, 2'b0, 待ち行列の語数}
     // sim の記録用（IP の出口）
     output wire [16*64-1:0]  dbg_ip_tdata,
     output wire [10:0]       dbg_ip_k1,
@@ -143,6 +146,45 @@ module wide_spec #(
     wire [15:0]       pfb_sat;
     wide_pfb u_pfb (.clk(clk), .rst(rst), .s_tdata(d_loc), .s_tvalid(p_v), .s_m(m_now), .coef(coef_q), .coef_m(coef_m_q),
                     .y(y), .y_v(y_v), .y_m(y_m), .y_first(y_first), .y_fr(y_fr), .sat_cnt(pfb_sat), .coef_mis(coef_mis));
+    // ---- IP の手前の待ち行列（proj023 4b、実機 5 回目）----
+    // realtime の IP は**最初の入力の近くで 1 回 tready を下げる**（proj011 の FLAGS[3]・proj014 の WS_STALL = 1 で見た実機の振る舞い。
+    // proj014 は wspec_core が tready を守って直した）。口の前で tready を待っても避けられなかった（ビルド 9 回目の実機で起動の見張りが
+    // 0x30 → 0x10 / 0x12 のまま。受けなかったビートは失われ、IP のフレームの枠が m から 1 つずれ、TLAST 事象が立ち続ける）。
+    // PFB の出口を SRL の待ち行列（深さ QD）で受け、16 レーンに同じビート（データ・TLAST）を出し、**16 レーンとも受けたときだけ進める**。
+    // ビートは落ちない。待たされたクロック数だけ IP の出口が遅れるが、ひねり係数は IP の出口の k1 で引き、出口のフレームは IP の TLAST
+    // と k1 で数えるので食い違わない。4 コアで待たされた数が違えば IP の出口の k1 の位相がコア 0 と違い、tw_mis が立つ（見える）
+    localparam integer QD = 32;
+    reg  [15*NL:0] q_sr [0:QD-1];        // {TLAST, y}
+    reg  [5:0]     q_n;                  // 語数 0..QD
+    reg  [7:0]     q_stall;
+    wire           q_v   = (q_n != 6'd0);
+    wire           q_pop = q_v && ip_ready;
+    wire [4:0]     q_idx = q_n[4:0] - 5'd1; // 1..32 → 0..31（q_n = 0 のときは q_v = 0 で使わない）
+`ifdef IPQ_POSCTL
+    // 陽性対照（sim 専用）: 待ち行列を通さず PFB の出口をそのまま IP へ（実機 5 回目までの形）。IP が待たせると 0x30 で落ちるべき
+    wire [15*NL:0] q_out = {y_m == 11'd2047, y};
+    wire           q_vin = y_v;
+`else
+    wire [15*NL:0] q_out = q_sr[q_idx];
+    wire           q_vin = q_v;
+`endif
+    wire           q_ovf = (q_n == QD) && y_v && !q_pop;
+    integer qi;
+    always @(posedge clk) begin
+        if (y_v) begin
+            q_sr[0] <= {y_m == 11'd2047, y};
+            for (qi = 1; qi < QD; qi = qi + 1) q_sr[qi] <= q_sr[qi - 1];
+        end
+    end
+    always @(posedge clk) begin
+        if (rst) begin q_n <= 6'd0; q_stall <= 8'd0; end
+        else begin
+            if (!q_ovf) q_n <= q_n + {5'd0, y_v} - {5'd0, q_pop};
+            if (q_v && !ip_ready && q_stall != 8'hFF) q_stall <= q_stall + 8'd1;
+        end
+    end
+    assign dbg_ipq = {q_stall, 2'b00, q_n};
+
     // PFB に入った最初のフレームの番号（wide_pfb は rst の後 m = 0 のビートから始める）
     reg          have_first;
     reg [FW-1:0] f_first;
@@ -158,12 +200,16 @@ module wide_spec #(
     genvar p;
     generate
         for (p = 0; p < NL; p = p + 1) begin : g_lane
-            wire signed [14:0] yp = y[15*p +: 15];
+            wire signed [14:0] yp = q_out[15*p +: 15];
+            // レーンごとにリセットを 1 段受ける（ビルド 8 回目の最悪経路 −0.008 ns: コアのリセット rstn_q2 → IP の bit 反転 RAM の
+            // ENBWREN、配線 3.15 ns。IP の中の BRAM の許可に効くので、レーンの近くに置けるフロップから配る）
+            (* dont_touch = "true" *) reg ln_rstn = 1'b0;
+            always @(posedge clk) ln_rstn <= ~rst;
             lane_fft_w u_fft (
-                .aclk(clk), .aresetn(~rst),
+                .aclk(clk), .aresetn(ln_rstn),
                 .s_axis_config_tdata(8'h01), .s_axis_config_tvalid(!go), .s_axis_config_tready(),   // 設定は口が開く前だけ
-                .s_axis_data_tdata({16'h0000, yp[14], yp}), .s_axis_data_tvalid(y_v), .s_axis_data_tready(ln_s_tready[p]),
-                .s_axis_data_tlast(y_m == 11'd2047),
+                .s_axis_data_tdata({16'h0000, yp[14], yp}), .s_axis_data_tvalid(q_vin), .s_axis_data_tready(ln_s_tready[p]),
+                .s_axis_data_tlast(q_out[15*NL]),
                 .m_axis_data_tdata(ln_m_tdata[64*p +: 64]), .m_axis_data_tuser(ln_m_tuser[16*p +: 16]),
                 .m_axis_data_tvalid(ln_m_tvalid[p]), .m_axis_data_tlast(ln_m_tlast[p]),
                 .event_frame_started(ln_ev_fs[p]), .event_tlast_unexpected(ln_ev_unexp[p]),
@@ -343,7 +389,11 @@ module wide_spec #(
     end
     wire [7:0] f_now = {wr_coll,
                         k1_seen && ln_m_tvalid[0] && ln_m_tuser[10:0] != k1_exp,
-                        y_v && (ln_s_tready != {NL{1'b1}}),
+                        q_ovf || (q_vin && ln_s_tready != {NL{1'b0}} && ln_s_tready != {NL{1'b1}})
+`ifdef IPQ_POSCTL
+                        || (q_vin && !ip_ready)    // 待ち行列が無いので、待たされたらビートが落ちる
+`endif
+                        ,
                         |(ln_ev_unexp | ln_ev_miss),
                         f_lane,
                         go && !v_loc,

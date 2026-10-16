@@ -17,7 +17,7 @@
 //   0x50·54 DUMP_T（= K_F ＋ 2048·DUMP_F0）/ 0x58 DUMP_H / 0x5C DUMP_CFG / 0x60·64 RUN_T / 0x68·6C RUN_F0 / 0x70·74 FIN / 0x78·7C FOUT /
 //   0x80 NFFT_MIN_MAX {0, 0, 15, 13} / 0x84 REC_CTRL / 0x88 REC_LATE /
 //   0x100 S0（書いた値、次の WRST で効く）/ 0x104 S0_CUR / 0x108 S0_STEP 1 /
-//   0x200 診断: {pfb の飽和の数}・0x204 {go, have_first}・0x208 BUILD_TAG
+//   0x200 診断: {pfb の飽和の数}・0x204 {IP に待たされたクロック数[31:24], 待ち行列の語数[21:16], go, have_first}・0x208 BUILD_TAG
 //   CTRL の書き: [0] RUN / [1] STOP / [2] ARM_RUN / [3] 予約の取り消し / [8] FLAGS を消す / [12] WRST / [13] ARM_WRST。
 //   **WRST はどちらの流れに書いてもコアの WRST**（両方の流れの RUN を止め、束ね・S0・SHIFT を取り込む。INTERFACE 2.5）。
 //   CTRL の読み: [0] 積分中 / [1] 開始待ち / [3] 口が開いた（go）/ [5] ARM_RUN 中 / [6] ARM_WRST 中
@@ -174,6 +174,7 @@ module wide_core #(
     wire [63:0]   rd_d;
     wire [15:0]   pfb_sat;
     wire          have_first;
+    wire [15:0]   ipq;
     wire [1:0]    rec_drop_s;
     wire [1:0]    w_lb = 2'd3 - r_fftn[1:0];             // log2 N 13・14・15 → LB 2・1・0（r_fftn は 13..15 だけ）
     wide_spec #(.K_F(K_F), .ST_N(ST_N), .SHIFT_DEFAULT(SHIFT_DEFAULT), .FW(FW), .GF_L2(GF_L2)) u_spec (
@@ -188,7 +189,7 @@ module wide_core #(
         .commit(commit), .seq0(seq0), .seq1(seq1), .dk0(dk0), .dk1(dk1), .df0_0(df0_0), .df0_1(df0_1),
         .dn0(dn0), .dn1(dn1), .dsat0(dsat0), .dsat1(dsat1), .rd_plane(rd_plane),
         .rd_s(fr_rs2[0]), .rd_i(fr_ch), .rd_d(rd_d),
-        .dbg_pfb_sat(pfb_sat), .dbg_have_first(have_first),
+        .dbg_pfb_sat(pfb_sat), .dbg_have_first(have_first), .dbg_ipq(ipq),
         .dbg_ip_tdata(dbg_ip_tdata), .dbg_ip_k1(dbg_ip_k1), .dbg_ip_v(dbg_ip_v));
     assign fftn_rd = {8'd0, 8'd15, r_fftn, 8'd15 - {6'd0, c_lb}};
 
@@ -354,7 +355,7 @@ module wide_core #(
             8'h41: reg_rd = {18'd0, s0c_s};
             8'h42: reg_rd = 32'd1;
             8'h80: reg_rd = {16'd0, pfb_sat};
-            8'h81: reg_rd = {30'd0, go, have_first};
+            8'h81: reg_rd = {ipq, 14'd0, go, have_first};   // proj023 4b: [31:24] IP に待たされたクロック数・[21:16] 待ち行列の語数
             8'h82: reg_rd = BUILD_TAG;
             default: reg_rd = 32'd0;
         endcase
