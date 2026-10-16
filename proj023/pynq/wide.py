@@ -247,17 +247,22 @@ def diag(cores, wait=0.5):
         st = slices(c)[0]
         f0 = st.rd(SC.S_FLAGS)
         gh = st.rd(0x204)
+        ph = st.rd(0x20C); sa = st.rd(0x210)
         fin = st.rd(SC.S_FIN); fout = st.rd(SC.S_FOUT)
-        out.append([c, f0, gh, (fin - fout) & 0xFFFFFFFF])
+        out.append([c, f0, gh, (fin - fout) & 0xFFFFFFFF, ph, sa])
     for c in cores:
         slices(c)[0].wr(SC.S_CTRL, CTRL_FCLR)
     time.sleep(wait)
     for o in out:
         o.append(slices(o[0])[0].rd(SC.S_FLAGS))
+        o.append(slices(o[0])[0].rd(0x20C))
     log("起動の見張り（FLAGS: Overlay から今まで → 消して %.1f s 後）。IP に待たされたクロック数と待ち行列の語数（待ち行列 = 1 + 待たされた数）" % wait)
-    for c, f0, gh, d, f1 in out:
+    for c, f0, gh, d, ph, sa, f1, ph1 in out:
+        pin, pout = ph >> 16 & 0x7FF, ph & 0x7FF
         log(f"  {c.adc_name}: {flag_str(f0)} → {flag_str(f1)} / go {gh >> 1 & 1}・have_first {gh & 1} / FIN − FOUT {d}"
             f" / 待たされた {gh >> 24 & 0xFF}・待ち行列 {gh >> 16 & 0x3F}")
+        log(f"         IP の位相（m）: 入口 {pin}・出口 {pout}（0.5 s 後 {ph1 & 0x7FF}）・遅れ {(pout - pin) % 2048}"
+            f" / 最初に受けてから待たされるまで {sa} クロック")
     return out
 
 

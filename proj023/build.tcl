@@ -3,8 +3,11 @@
 #   1. コアのセル s45_core_i を module reference の wide_s45_core に（core_cmn ＋ wide_core（SLICE × 2）＋ コア 0 だけ RAW）。
 #      **窓（win_core・pfb_core・ddc_core・wspec_core …）と win_fft は外した**。セルの名前は今までどおり（PS はこの名前でコアを見つける）
 #   2. FFT IP は lane_fft_w（2048 点固定・入力 15 bit・unscaled → 出力 27 bit）× 16 / コア。設定は src/sam45fine/fft_cfg.tcl の fft_req（FFT_OPT）
-#   3. 共有の ROM 2 つ（D-6）: wide_coef_rom_0（PFB の係数）・wide_tw_rom_0（ひねり係数）。**番地は s45_core_0 が出し、出口を 4 コアへ配る**。
-#      s45_core_1〜3 の番地の出口はどこにもつながない（照合の「在ってはいけない」側で見る）。
+#   3. 共有の係数 ROM（D-6）: wide_coef_rom_0（PFB の係数）。**番地は s45_core_0 が出し、出口を 4 コアへ配る**。
+#      s45_core_1〜3 の係数の番地の出口はどこにもつながない（照合の「在ってはいけない」側で見る）。
+#      ひねり係数 ROM は **コアごと**（wide_tw_rom_i、番地は s45_core_i の tw_addr）。proj023 4b 実機 6 回目: 共有の ROM はコア 0 の
+#      IP の出口の k1 で引くが、タイル 224 のコア（C・D）は IP の出口の k1 の位相がコア 0 と違い、tw_mis が立ち続けた。
+#      IP の出口の位相はコアの間で揃う保証が無い（係数は T で引くので共有のまま）
 #      中身は src/sam45wide/*.hex を **絶対パスで** CONFIG に与える（OOC の合成は run のディレクトリで走るので相対パスは届かない）。
 #      $readmemh が読めないと ROM は 0 になり、BRAM が消えるだけでビルドは通る → 合成のログと配置後の BRAM の数で止める
 #   4. ID は D-5: BIT_KIND 1・BIT_REV 1・PROJ 0x0023_0100（s45_core_i・time_core_0・s45_ring_0）
@@ -998,8 +1001,11 @@ for {set i 0} {$i < $nch} {incr i} {
 }
 cfg_report "gb_bc_*（axis_broadcaster）"
 
-# proj023 3b: 共有の ROM（D-6）。番地は s45_core_0、出口は 4 コアへ（下の shared_nets）
-foreach {cell mod par hex} [list wide_coef_rom_0 wide_coef_rom CONFIG.COEF_FILE $wide_coef_hex wide_tw_rom_0 wide_tw_rom CONFIG.TW_FILE $wide_tw_hex] {
+# proj023 3b: 共有の係数 ROM（D-6）。番地は s45_core_0、出口は 4 コアへ（下の shared_nets）
+# proj023 4b: ひねり係数 ROM はコアごと（wide_tw_rom_i。下の ch_nets）
+set rom_list [list wide_coef_rom_0 wide_coef_rom CONFIG.COEF_FILE $wide_coef_hex]
+for {set i 0} {$i < $nch} {incr i} { lappend rom_list wide_tw_rom_$i wide_tw_rom CONFIG.TW_FILE $wide_tw_hex }
+foreach {cell mod par hex} $rom_list {
     set c [create_bd_cell -type module -reference $mod $cell]
     # 文字列の CONFIG に引用符が要るかは版で違いうるので、素のままと引用符つきを順に試し、読み返しで判定する。
     # **生成されたラッパに .$par("<絶対パス>") が書かれたかは generate_target の後で見る**（下の「ROM のラッパ」）
@@ -1104,9 +1110,9 @@ foreach t $adc_tiles { lappend adc_dom rfdc/m${t}_axis_aclk }
 set dsp_dom [list rst_dsp/slowest_sync_clk smc_ctrl/aclk1]
 for {set i 0} {$i < $nch} {incr i} {
     lappend adc_dom gb_up_$i/aclk gb_fifo_$i/s_axis_aclk gb_adc_$i/aclk
-    lappend dsp_dom gb_fifo_$i/m_axis_aclk gb_dn_$i/aclk gb_gate_$i/aclk s45_core_$i/aclk gb_bc_$i/aclk
+    lappend dsp_dom gb_fifo_$i/m_axis_aclk gb_dn_$i/aclk gb_gate_$i/aclk s45_core_$i/aclk gb_bc_$i/aclk wide_tw_rom_$i/clk
 }
-lappend dsp_dom full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk wide_coef_rom_0/clk wide_tw_rom_0/clk
+lappend dsp_dom full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk wide_coef_rom_0/clk
 nc $ps_clk0 time_core_0/ctrl_aclk
 foreach p $adc_dom { nc $adc_fabric $p }
 foreach p $dsp_dom { nc $dsp_fabric $p }
@@ -1145,6 +1151,9 @@ proc ch_nets {i} {
         gb_gate_$i/gb_stat             [list s45_core_$i/gb_stat full_sel/gb_stat$i] \
         gb_adc_$i/adc_out              gb_gate_$i/adc_in \
         gb_gate_$i/adc_stat            [list s45_core_$i/adc_stat full_sel/adc_stat$i] \
+        s45_core_$i/tw_addr            wide_tw_rom_$i/addr \
+        wide_tw_rom_$i/tw              s45_core_$i/tw_in \
+        wide_tw_rom_$i/k1_out          s45_core_$i/tw_k1 \
     ]
 }
 for {set i 0} {$i < $nch} {incr i} {
@@ -1176,9 +1185,6 @@ proc shared_nets {} {
         s45_core_0/coef_addr_v         wide_coef_rom_0/addr_v \
         wide_coef_rom_0/coef           [lmap i [lseq $::nch] {list s45_core_${i}/coef_in}] \
         wide_coef_rom_0/m_out          [lmap i [lseq $::nch] {list s45_core_${i}/coef_m}] \
-        s45_core_0/tw_addr             wide_tw_rom_0/addr \
-        wide_tw_rom_0/tw               [lmap i [lseq $::nch] {list s45_core_${i}/tw_in}] \
-        wide_tw_rom_0/k1_out           [lmap i [lseq $::nch] {list s45_core_${i}/tw_k1}] \
     ]
 }
 proc lseq {n} { set r {}; for {set i 0} {$i < $n} {incr i} { lappend r $i }; return $r }
@@ -1270,7 +1276,7 @@ proc net_check {i kind a expects shared} {
     }
     if {!$shared} {
         foreach p $peers {
-            if {[regexp {^(gb_adc|gb_up|gb_fifo|gb_gate|gb_dn|gb_bc|s45_core)_(\d+)/} $p -> cell j] && $j != $i} {
+            if {[regexp {^(gb_adc|gb_up|gb_fifo|gb_gate|gb_dn|gb_bc|s45_core|wide_tw_rom)_(\d+)/} $p -> cell j] && $j != $i} {
                 lappend probs "ch $i のネットに ch $j のピン $p が載っている（[norm_pin $obj] のネット）"
             }
         }
@@ -1287,7 +1293,7 @@ for {set i 0} {$i < $nch} {incr i} {
     }
     # クロックと ADC 側のリセット（共有。載っているべきネットに載っているか）
     lappend rows pin $adc_fabric [list gb_up_$i/aclk gb_fifo_$i/s_axis_aclk gb_adc_$i/aclk] 1
-    lappend rows pin $dsp_fabric [list gb_fifo_$i/m_axis_aclk gb_dn_$i/aclk gb_gate_$i/aclk s45_core_$i/aclk gb_bc_$i/aclk] 1
+    lappend rows pin $dsp_fabric [list gb_fifo_$i/m_axis_aclk gb_dn_$i/aclk gb_gate_$i/aclk s45_core_$i/aclk gb_bc_$i/aclk wide_tw_rom_$i/clk] 1
     # rev2: ADC 側のリセットは ch のタイルのビットから（そのタイルの m*_axis_aresetn と同じネット）
     lappend rows pin $rst_out($ch_tile($i)) [list gb_adc_$i/aresetn rfdc/m$ch_tile($i)_axis_aresetn] 1
     # データ経路と AXI（インタフェースのネット）
@@ -1312,8 +1318,8 @@ foreach {a b} $sh_intf {
     lappend nc_log [format "ch * %-3s intf %s -> %s" $tag [norm_pin $a] [norm_pin $b]]
     foreach pr $probs { lappend nc_log "        $pr"; incr nc_ng }
 }
-set probs [net_check 0 pin $dsp_fabric [list full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk wide_coef_rom_0/clk wide_tw_rom_0/clk] 1]
-lappend nc_log [format "ch * %-3s pin  %s -> full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk wide_coef_rom_0/clk wide_tw_rom_0/clk" [expr {[llength $probs] ? "NG" : "OK"}] [norm_pin $dsp_fabric]]
+set probs [net_check 0 pin $dsp_fabric [list full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk wide_coef_rom_0/clk] 1]
+lappend nc_log [format "ch * %-3s pin  %s -> full_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk wide_coef_rom_0/clk" [expr {[llength $probs] ? "NG" : "OK"}] [norm_pin $dsp_fabric]]
 foreach pr $probs { lappend nc_log "        $pr"; incr nc_ng }
 # proj021 手順 2-1: spec_core_0 のセルは無い（FULL の流れは s45_core_0 の中。ギアボックスの gb_* は s45_core_i が握る）
 set tag [expr {[llength [get_bd_cells -quiet spec_core_*]] == 0 ? "OK" : "NG"}]
@@ -1322,9 +1328,9 @@ if {$tag eq "NG"} { incr nc_ng }
 # proj023 3b: 共有の ROM の番地は s45_core_0 だけが出す。**s45_core_1〜 の番地の出口はどこにもつながっていない**（在ってはいけない側）
 proc pin_unconnected {p} { return [expr {[llength [get_bd_pins -quiet $p]] == 1 && [llength [get_bd_nets -quiet -of_objects [get_bd_pins -quiet $p]]] == 0}] }
 for {set i 1} {$i < $nch} {incr i} {
-    foreach pn {coef_addr coef_addr_v tw_addr} {
+    foreach pn {coef_addr coef_addr_v} {
         set tag [expr {[pin_unconnected s45_core_$i/$pn] ? "OK" : "NG"}]
-        lappend nc_log [format "ch %d %-3s s45_core_%d/%s がどこにもつながっていない（ROM の番地はコア 0 だけ）" $i $tag $i $pn]
+        lappend nc_log [format "ch %d %-3s s45_core_%d/%s がどこにもつながっていない（係数 ROM の番地はコア 0 だけ）" $i $tag $i $pn]
         if {$tag eq "NG"} { incr nc_ng }
     }
 }
@@ -1378,6 +1384,13 @@ set pcf [pin_unconnected s45_core_1/coef_addr_no_such_pin]
 if {$pce} { set pc_ok 0; lappend nc_log "陽性対照 (e) が通ってしまった（つながっているピンを「つながっていない」と言った）" }
 if {$pcf} { set pc_ok 0; lappend nc_log "陽性対照 (f) が通ってしまった（無いピンを「つながっていない」と言った）" }
 lappend nc_log "陽性対照: (e) [expr {$pce ? "通った（NG）" : "落ちた"}]・(f) [expr {$pcf ? "通った（NG）" : "落ちた"}]（どちらも落ちるのが期待）"
+# proj023 4b: (g) コア 0 のひねり係数 ROM のネットを ch 1 として照らす（(2) が wide_tw_rom_0 と s45_core_0 を「他の ch」と言うべき。
+#   照合の正規表現に wide_tw_rom が入っていないと黙って通る）
+if {$nch > 1} {
+    set pcg [lsearch -all -inline [net_check 1 pin s45_core_0/tw_addr [list wide_tw_rom_0/addr] 0] "*ch 0 のピン wide_tw_rom_0/*"]
+    if {[llength $pcg] == 0} { set pc_ok 0; lappend nc_log "陽性対照 (g) が通ってしまった（ひねり係数 ROM の ch の照合が壊れている）" }
+    lappend nc_log "陽性対照: (g) [llength $pcg] 件で落ちた（1 件以上が期待）"
+}
 set fh [open $outdir/net_check.rpt w]
 foreach l $nc_log { puts $fh $l }
 close $fh
@@ -1593,7 +1606,9 @@ proc ooc_wait {names} { foreach n $names { catch {wait_on_run [get_runs $n]} } }
 generate_target all [get_files $bd_file]
 create_ip_run [get_files $bd_file]
 # proj023 3b: 共有の ROM のラッパに hex の絶対パスが文字列として書かれたか（**在るべき側**。引用符が抜けると合成で落ちるか、別の名前を探して 0 の ROM になる）
-foreach {inst par hex} [list wide_coef_rom_0 COEF_FILE $wide_coef_hex wide_tw_rom_0 TW_FILE $wide_tw_hex] {
+set wrap_list [list wide_coef_rom_0 COEF_FILE $wide_coef_hex]
+for {set i 0} {$i < $nch} {incr i} { lappend wrap_list wide_tw_rom_$i TW_FILE $wide_tw_hex }
+foreach {inst par hex} $wrap_list {
     set vs {}
     catch {set vs [split [exec find $projdir -path "*${bd_name}_${inst}_0*" -name "*.v"] "\n"]}
     set hit ""
@@ -1677,9 +1692,9 @@ foreach n $ooc_names {
     }
 }
 puts "ドライバ   : 自作のセルの OOC の run $nd_seen 個のログに Synth 8-3848（ドライバの無いネット）$nd_ng 行"
-if {$nd_seen < 4 + 2 + 1 + 1 + 4 + 4 + 1} { puts "ERROR: 自作のセルの OOC の run が $nd_seen 個（期待 17。run の名前が変わった？ $ooc_names）"; exit 1 }
+if {$nd_seen < 4 + 1 + $nch + 1 + 1 + 4 + 4 + 1} { puts "ERROR: 自作のセルの OOC の run が $nd_seen 個（期待 [expr {16 + $nch}]。run の名前が変わった？ $ooc_names）"; exit 1 }
 if {$nd_ng > 0} { puts "ERROR: ドライバの無いネットがある（RTL の書き漏れ）"; exit 1 }
-if {$rm_seen != 2} { puts "ERROR: wide_coef_rom・wide_tw_rom の OOC の run が 2 個でない（$rm_seen）。run の名前: $ooc_names"; exit 1 }
+if {$rm_seen != 1 + $nch} { puts "ERROR: wide_coef_rom・wide_tw_rom_* の OOC の run が [expr {1 + $nch}] 個でない（$rm_seen）。run の名前: $ooc_names"; exit 1 }
 if {$rm_ng > 0} { puts "ERROR: ROM の中身（hex）を合成が読めていない"; exit 1 }
 
 # ---- 合成〜実装〜ビットストリーム ----
@@ -1723,8 +1738,10 @@ foreach {pname want} {pps_trig AH13 pps_comp AJ13} {
 # ---- proj023 3b: 共有の ROM が BRAM として残っているか（合否。**中身が 0 なら ROM は消えて BRAM が 0 になる**）----
 # 予言: 係数 2048 × 1152 bit → RAMB36（512 × 72）× 64、ひねり係数 2048 × 576 bit → × 32（レーン 0 の定数の列が削られて少し減りうる）
 puts ""
-puts "---- 共有の ROM の BRAM ----"
-foreach {cell pred} {wide_coef_rom_0 64 wide_tw_rom_0 32} {
+puts "---- ROM の BRAM（係数は共有・ひねり係数はコアごと）----"
+set bram_list [list wide_coef_rom_0 64]
+for {set i 0} {$i < $nch} {incr i} { lappend bram_list wide_tw_rom_$i 32 }
+foreach {cell pred} $bram_list {
     set n36 0; set n18 0
     foreach x [get_cells -quiet -hierarchical -filter {REF_NAME =~ RAMB36*}] { if {[string first "/$cell/" "/$x"] >= 0} { incr n36 } }
     foreach x [get_cells -quiet -hierarchical -filter {REF_NAME =~ RAMB18*}] { if {[string first "/$cell/" "/$x"] >= 0} { incr n18 } }

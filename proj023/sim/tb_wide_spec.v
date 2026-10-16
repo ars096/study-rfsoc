@@ -133,7 +133,7 @@ module tb_wide_spec;
         $fwrite(fm, "T0 %0d\nKF %0d\nLB %0d\nS00 %0d\nS01 %0d\nSHIFT %0d\nNACC %0d\nNDUMP %0d\nGF %0d\nf_first %0d\nfa_run %0d\nflags %0d\nc_s0_0 %0d\nc_s0_1 %0d\nen %0d\n",
                 T0, KF, c_lb, `S00, `S01, c_shift, `NACC, NDUMP, `GF, dut.f_first, fa_run, flags, c_s0_0, c_s0_1, c_en);
         $fclose(fm); $fclose(fl); $fclose(fd);
-        $display("tb_wide_spec: ダンプ %0d 個・flags %02x・f_first %0d・fo %0d・IP に待たされた %0d クロック・待ち行列 %0d 語", ndone, flags, dut.f_first, fo, dut.q_stall, dut.q_n);
+        $display("tb_wide_spec: ダンプ %0d 個・flags %02x・f_first %0d・fo %0d・IP に待たされた %0d クロック・待ち行列 %0d 語・IP の位相 入口 %0d 出口 %0d・待たされるまで %0d", ndone, flags, dut.f_first, fo, dut.q_stall, dut.q_n, dut.ph_in, dut.ph_out, dut.st_at);
         $finish;
     end
     initial begin

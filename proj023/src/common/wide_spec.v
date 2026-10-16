@@ -86,6 +86,8 @@ module wide_spec #(
     output wire [15:0]       dbg_pfb_sat,
     output wire              dbg_have_first,
     output wire [15:0]       dbg_ipq,          // {待たされたクロック数（8 bit で飽和）, 2'b0, 待ち行列の語数}
+    output wire [31:0]       dbg_ip_ph,        // {5'b0, 入口の位相, 5'b0, 出口の位相}（下の「IP の位相」）
+    output wire [15:0]       dbg_ip_st,        // 最初に IP が受けてから初めて待たされるまでのクロック（飽和）
     // sim の記録用（IP の出口）
     output wire [16*64-1:0]  dbg_ip_tdata,
     output wire [10:0]       dbg_ip_k1,
@@ -184,6 +186,24 @@ module wide_spec #(
         end
     end
     assign dbg_ipq = {q_stall, 2'b00, q_n};
+
+    // ---- IP の位相（proj023 4b 実機 6 回目の診断）----
+    // 入口の位相 = IP が最初のビートを受けたクロックの m（T − K_F の下 11 bit）。出口の位相 = IP の出口が k1 = 0 を出したクロックの m（最新）。
+    // 出口 − 入口（mod 2048）が IP の遅れ（待たされたぶんを含む）。実機ではタイル 224 のコアだけ、出口の k1 の位相がコア 0 と違った（tw_mis）
+    reg [10:0] ph_in, ph_out;
+    reg        ph_in_v, st_seen;
+    reg [15:0] st_at;
+    always @(posedge clk) begin
+        if (rst) begin ph_in <= 11'd0; ph_out <= 11'd0; ph_in_v <= 1'b0; st_seen <= 1'b0; st_at <= 16'd0; end
+        else begin
+            if (q_pop && !ph_in_v) begin ph_in_v <= 1'b1; ph_in <= m_now; end
+            if (!st_seen && q_v && !ip_ready) st_seen <= 1'b1;
+            else if (ph_in_v && !st_seen && st_at != 16'hFFFF) st_at <= st_at + 16'd1;
+            if (ln_m_tvalid[0] && ln_m_tuser[10:0] == 11'd0) ph_out <= m_now;
+        end
+    end
+    assign dbg_ip_ph = {5'd0, ph_in, 5'd0, ph_out};
+    assign dbg_ip_st = st_at;
 
     // PFB に入った最初のフレームの番号（wide_pfb は rst の後 m = 0 のビートから始める）
     reg          have_first;
