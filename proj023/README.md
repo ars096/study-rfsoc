@@ -428,7 +428,8 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
 - [x] ビルド 8 回目（2026-10-16、b604fe8、既定の戦略）: **閉じなかった。WNS −0.008 ns・WHS +0.005 ns、負の経路 3 本だけ**。−0.008 は s45_core_2 の rstn_q2 → lane_fft_w の bit 反転 RAM の ENBWREN（power_opt の cooolgate の LUT 1 段、配線 3.15 ns）、−0.005 は u_chain/u_dft → g_pw の DSP、−0.001 は u_chain → u_acc。どれも 7 回目まで +0.03 前後だった所の揺らぎで、形の違う新しい経路は無い。資源は 7 回目と同じ（DSP 2,720・coef_q 1,152・tw_q 576）。**この .bit は実機に使わない**
 - [x] 9 回目（2026-10-16、b604fe8、RTL は 8 回目と同じ）: **PE・PEPRPO とも閉じた。WNS +0.008 ns・WHS +0.010 ns**（予言どおり）。2 本の上位 5 経路は同じ値で、PEPRPO の配線後の phys_opt は負が無いので実質働いていない。結線 132 行・問題 0・coef_q 1,152・tw_q 576・LUT 253,490。**実機には build-PE/ を使う**。余裕は 8 ps しかないので、次に RTL を触るときはリセットのレーンごとの受けと ROM の余裕の直しを一緒に入れる
 - [x] 実機 5 回目（build-PE/）: 起動の見張りが 4 回目と同じ 0x30 → 0x10 / 0x12。IP は流し始めてから tready を下げる（proj011・proj014 と同じ）→ IP の手前の待ち行列で tready を守る・レーンごとのリセット。sim-wsp に wsp-stl・wsp-stlp
-- [ ] Vivado サーバで sim（sim-wsp 9 本・sim-wco・sim-ws45）とビルド 10 回目（`IMPL=Performance_Explore`、build-PE/）
+- [x] Vivado サーバで sim（0dee749）: sim-wsp 9 本（wsp-stl・wsp-stlp を含む）・sim-wco 4 本・sim-ws45 3 本、全部通過（陽性対照 5 本は落ちるべきところで落ちた）
+- [ ] ビルド 10 回目（`IMPL=Performance_Explore`、build-PE/）
 - [ ] 手順 4b: 実機で wide.py（--list の起動の見張りが 0x00・待たされた 1・待ち行列 2・雑音・H-2・H-4）。F-2 → H-3。H-1 の掃引の道具
 
 ## 公開について
