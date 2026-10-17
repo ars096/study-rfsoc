@@ -7,7 +7,9 @@
 //   bit 反転順）→ g21_chain（＋ g21_tw、ひねり係数の積）→ g21_acc（全 ch の積分器、URAM）
 //   - コアは 1 個なので、係数・ひねり係数はコアの中（Wide の「共有の ROM」と配りの 1 段 coef_q・tw_q は無い）
 //   - フレームは 16384 ビート: m = (T − K_F) mod 16384、fa = ⌊(T − K_F) / 16384⌋。F0 の格子は 32 フレーム（2.048 ms、GF_L2 = 5。M-6）
-//   - 流れは 1 本（KIND 1 FULL）。帳簿は wide_spec の流れごとの形を NS = 1 で残した。WRST で取り込むのは SHIFT だけ（束ね・S0 は無い）
+//   - 流れは 1 本（KIND 1 FULL）。帳簿は wide_spec の流れごとの形を NS = 1 で残した。束ね・S0 は無い
+//   - **SHIFT は RUN で取り込む**（2d で直した。INTERFACE 2.5 の FULL の約束・spec_core と同じ。2c までは Wide（SLICE）を写して WRST で取り込んでいた。
+//     RUN の F0 は 2 格子（≧ 32 フレーム）先なので、鎖の途中のフレームは積まない。WRST は SHIFT を変えない）
 //   - 出口は bit 反転順: フレームの最初の k1 は 0、最後は 16383（bitrev(16383) = 16383）。fs = (k1 == 0)、最後の行 = (k1 == 16383)
 //   - flags[6]（出口の k1 の飛び）は「次の k1 = bitrev(bitrev(k1) + 1)」で見る。flags[7]（積分器の書き込みの衝突）は起きない形なので 0
 // DUMP_T = K_F ＋ 16384·DUMP_F0（コアの入口でのそのダンプの最初のビートの T）。
@@ -212,10 +214,10 @@ module g21_spec #(
                        .tw_addr(tw_addr), .tw(tw), .tw_k1(tw_k1), .shift(c_shift),
                        .p(pw), .p_v(pv), .p_k1(pk1), .p_sat(psat), .tw_mis(tw_mis));
 
-    // ---- WRST: SHIFT を取り込み、RUN を止める ----
+    // ---- RUN: SHIFT を取り込む（2d。FULL の約束）----
     always @(posedge clk) begin
         if (rst) c_shift <= SHIFT_DEFAULT;
-        else if (cmd_wrst) c_shift <= w_shift;
+        else if (cmd_run && !cmd_wrst) c_shift <= w_shift;
     end
 
     // ---- 出口のフレームの番号（bit 反転順: 最初の k1 = 0、最後の k1 = 16383）----

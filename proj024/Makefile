@@ -10,7 +10,7 @@ VVP           ?= vvp
 # survey の OOC 合成を同時に走らせる数（9 個）
 JOBS ?= 9
 
-.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane sim-g21a sim-g21s clean
+.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane sim-g21a sim-g21s sim-recfr sim-g21core clean
 
 # 模型（numpy だけ）。M-1〜M-6。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -134,6 +134,38 @@ sim-g21s:
 	done
 	@grep -q '結果: 全部通過' $(SIMDIR)/g21s_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21s_ipq/check.log \
 	  && echo "sim-g21s: 全部通過（陽性対照は落ちた）" || (echo "sim-g21s: NG"; exit 1)
+
+# 2d. rec_fr に NCH を足した版が NCH 4096 で 567fda2 の版（sim/rec_fr_ref.v）と同じ振る舞いか（全部の出口をクロックごとに比べる）。
+#     陽性対照（-DEQ_POSCTL: 新しい版を NCH 2048 に。違いが出るべき）。2 本を同時に回す
+sim-recfr:
+	@for v in normal posctl; do \
+	  o=$(SIMDIR)/recfr_$$v; mkdir -p $$o; d=""; [ $$v = posctl ] && d="-DEQ_POSCTL"; \
+	  ( $(IVERILOG) -g2005 $$d -o $$o/tb sim/rec_fr_ref.v src/common/rec_fr.v sim/tb_recfr_eq.v && $(VVP) -n $$o/tb > $$o/tb.log 2>&1 ) & \
+	done; wait; \
+	for v in normal posctl; do printf '%-14s %s\n' "recfr_$$v" "$$(grep '結果:' $(SIMDIR)/recfr_$$v/tb.log || echo '結果の行が無い')"; done
+	@grep -q '結果: 全部通過' $(SIMDIR)/recfr_normal/tb.log && grep -q '結果: 不合格' $(SIMDIR)/recfr_posctl/tb.log \
+	  && echo "sim-recfr: 全部通過（陽性対照は落ちた）" || (echo "sim-recfr: NG"; exit 1)
+
+# 2d. g21_core（FULL の流れのブロック・SPEC のレコード 1 MiB・FULL の TP・SRC）。入力は 2c と同じ x.hex（sim-g21s の g21s_in を作る）。
+#     ふつう・陽性対照 2 本（-DG21C_POSCTL: 積分器の読みの口に 1 段多い / -DG21C_TP_POSCTL: TP の F0 の × 32 を忘れる）。
+#     G21CORE_V で回す変種を選べる（コア 2 個の環境で 3 本を同時に回して 20 分前後。1 MiB のレコードを出す 13 万クロックが長い）
+G21CORE_RTL := src/common/cmul.v src/common/dft16.v src/common/adc_ev.v src/common/tp_core.v src/common/rec_fr.v src/common/rec_arb.v \
+               src/g21/g21_coef.v src/g21/g21_pfb_core.v src/g21/g21_pfb.v src/g21/g21_tw.v src/g21/g21_chain.v src/g21/g21_acc.v \
+               src/g21/g21_spec.v src/g21/g21_core.v sim/lane_fft_g21_model.v sim/tb_g21_core.v
+G21CORE_V ?= normal posctl tp
+sim-g21core:
+	@o0=$(SIMDIR)/g21s_in; mkdir -p $$o0; [ -f $$o0/x.hex ] || $(PYTHON) sim/check_g21.py spec-gen $$o0; \
+	for v in $(G21CORE_V); do \
+	  o=$(SIMDIR)/g21core_$$v; mkdir -p $$o; ln -sf ../g21s_in/x.hex $$o/x.hex; d="-DFFT_STALL_AT=3"; \
+	  [ $$v = posctl ] && d="$$d -DG21C_POSCTL"; [ $$v = tp ] && d="$$d -DG21C_TP_POSCTL"; \
+	  ( $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -DLO=\"src/g21/g21_coef_lo.hex\" -DHI=\"src/g21/g21_coef_hi.hex\" \
+	      -DTA=\"src/g21/g21_tw_a.hex\" -DTB=\"src/g21/g21_tw_b.hex\" -o $$o/tb $(G21CORE_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	    $(PYTHON) sim/check_g21.py core $$o $$o/tb.log > $$o/check.log 2>&1 ) & \
+	done; wait; \
+	for v in $(G21CORE_V); do printf '%-14s %s\n' "g21core_$$v" "$$(grep '結果:' $(SIMDIR)/g21core_$$v/check.log || echo '結果の行が無い')"; done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g21core_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21core_posctl/check.log \
+	  && grep -q '結果: 不合格' $(SIMDIR)/g21core_tp/check.log \
+	  && echo "sim-g21core: 全部通過（陽性対照 2 本は落ちた）" || (echo "sim-g21core: NG"; exit 1)
 
 clean:
 	rm -rf build-survey build-s2 build-gen build-sim .Xil *.jou *.log

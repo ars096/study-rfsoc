@@ -11,6 +11,7 @@
     python3 sim/check_g21.py acc <sim の出力ディレクトリ>
     python3 sim/check_g21.py spec-gen <sim の出力ディレクトリ>    （x.hex を書く）
     python3 sim/check_g21.py spec <sim の出力ディレクトリ> <tb のログ> <SHIFT>
+    python3 sim/check_g21.py core <sim の出力ディレクトリ> <tb のログ>        （2d。入力は spec-gen の x.hex）
     python3 sim/check_g21.py lane <sim の出力ディレクトリ> <tb のログ> <tready の下げを入れたか 0|1>
     python3 sim/check_g21.py chain <sim の出力ディレクトリ> <tb のログ> <SHIFT>
 成否は最後の「結果:」の行で読む（make の成功を信用しない）。
@@ -454,6 +455,150 @@ def spec(outdir, tblog, shift):
     return ok
 
 
+# ---- 2d: g21_core（レコード・TP・レジスタ）----
+CORE_SID, CORE_RC, CORE_SHIFT, CORE_NACC, CORE_TPN, CORE_TPK = 2, 1, 4, 2, 16, 4
+MAGIC = 0x52353453
+
+
+def _records(path):
+    """rec.txt → [(tuser, [u64 ...])]（tlast で区切る）"""
+    recs, cur = [], []
+    for l in open(path):
+        tl, tu, hx = l.split()
+        cur.append(int(hx, 16))
+        if tl == "1":
+            recs.append((int(tu), cur))
+            cur = []
+    return recs, len(cur)
+
+
+def core(outdir, tblog):
+    import re as _re
+    log = open(tblog, encoding="utf-8", errors="replace").read()
+    m = _re.search(r"ダンプ (\d+)・SPEC のレコード (\d+)・レコード (\d+)・src_sel (\d+)・rec_drop のクロック (\d+)・flags (\w+)", log)
+    if not m:
+        print("check core: tb のログに結果の行が無い（時間切れか途中で落ちた）")
+        print("結果: 不合格")
+        return False
+    ndump, nspec, nrec, src_sel, ndrop, flags = [int(m.group(i)) for i in range(1, 6)] + [int(m.group(6), 16)]
+    ok = True
+    regs = {}
+    for l in open(os.path.join(outdir, "regs.txt")):
+        name, _a, hx = l.split()
+        regs[name] = int(hx, 16)
+    recs, tail = _records(os.path.join(outdir, "rec.txt"))
+    spec_r = [r for r in recs if (r[1][0] >> 40) & 0xFF == 1]
+    tp_r = [r for r in recs if (r[1][0] >> 40) & 0xFF == 2]
+    print(f"check core: レコード {len(recs)}（SPEC {len(spec_r)}・TP {len(tp_r)}・途中で切れた語 {tail}）・ダンプ {ndump}・"
+          f"src_sel {src_sel}・rec_drop {ndrop}・flags {flags:02x}")
+    ok &= ndump == 1 and len(spec_r) == 1 and src_sel == 2 and flags == 0 and len(recs) == len(spec_r) + len(tp_r)
+
+    # ---- ダンプの期待: IP の出口 → 鎖（SHIFT 4）→ 積む（2c の A2 と同じ）----
+    lines = open(os.path.join(outdir, "dump1.txt")).read().split("\n")
+    hd = dict(zip(lines[0].split()[1::2], [int(v) for v in lines[0].split()[2::2]]))
+    snap = np.zeros((8, F.M), dtype=object)
+    for k, hx in enumerate(lines[1:1 + F.M]):
+        w = int(hx, 16)
+        for b in range(8):
+            snap[b, k] = (w >> (48 * b)) & ((1 << 48) - 1)
+    twr, twi = F.tw_prod()
+    frames, cur = [], None
+    for ks, hx in (l.split() for l in open(os.path.join(outdir, "ip.txt"))):
+        k = int(ks)
+        if k == 0:
+            cur = (np.zeros((16, F.M), dtype=np.int64), np.zeros((16, F.M), dtype=np.int64))
+            frames.append(cur)
+        if cur is None:
+            continue
+        w = int(hx, 16)
+        for p in range(16):
+            cur[0][p, k] = sx((w >> (64 * p)) & ((1 << 32) - 1), 32)
+            cur[1][p, k] = sx((w >> (64 * p + 32)) & ((1 << 32) - 1), 32)
+    lo, hi = -(1 << 17), (1 << 17) - 1
+    exp = np.zeros((8, F.M), dtype=object)
+    esat = 0
+    for i in range(hd["dn"]):
+        Yr, Yi = frames[hd["df0"] + i - hd["f_first"]]
+        Zr, Zi = F.chain_Y(Yr, Yi, twr, twi)
+        qr, qi = Zr >> CORE_SHIFT, Zi >> CORE_SHIFT
+        esat += int(((qr < lo) | (qr > hi) | (qi < lo) | (qi > hi)).sum())
+        qr, qi = np.clip(qr, lo, hi), np.clip(qi, lo, hi)
+        exp += (qr * qr + qi * qi).astype(object)
+    nsnap = int(np.sum(snap != exp))
+    print(f"check core ダンプ: seq {hd['seq']}・dk {hd['dk']}・df0 {hd['df0']}・dn {hd['dn']}・dsat {hd['dsat']}（模型 {esat}）・"
+          f"凍った面と模型の違う ch {nsnap}")
+    ok &= nsnap == 0 and hd["dsat"] == esat and hd["dn"] == CORE_NACC and hd["seq"] == 1
+
+    # ---- SPEC のレコード ----
+    if spec_r:
+        tu, w = spec_r[0]
+        body = w[8:]
+        f0 = hd["df0"]
+        eh = [
+            MAGIC | (1 << 32) | (1 << 40) | (CORE_RC << 48) | (CORE_SID << 56),
+            hd["seq"] | (hd["dk"] << 32),
+            f0,
+            F.M * f0,                                                   # DUMP_T = K_F ＋ 16384·DUMP_F0（K_F 0）
+            18 | (0 << 8) | (CORE_SHIFT << 16) | (0 << 24) | (0 << 32) | (2 << 40) | (0 << 48),   # DUMP_H 0・src 2
+            hd["dn"] | (hd["dsat"] << 32),
+            0x00C0FFEE | (0 << 32),
+            (F.M * 8 * 8) | (0 << 32),                                  # 1 MiB・KIND に固有 0
+        ]
+        hbad = [i for i in range(8) if w[i] != eh[i]]
+        ebody = [int(exp[c >> 14, c & (F.M - 1)]) for c in range(8 * F.M)]
+        nb = sum(1 for a, b in zip(body, ebody) if a != b) + abs(len(body) - len(ebody))
+        first = next((c for c, (a, b) in enumerate(zip(body, ebody)) if a != b), None)
+        print(f"check core SPEC: 語 {len(w)}（期待 {8 + 8 * F.M}）・tuser {tu}・頭の違う語 {hbad}"
+              + "".join(f"（語 {i}: {w[i]:016x} / 期待 {eh[i]:016x}）" for i in hbad)
+              + f"・中身の模型と違う ch {nb}" + (f"（最初 ch {first}: {body[first]} / 期待 {ebody[first]}）" if first is not None else ""))
+        ok &= tu == 0 and len(w) == 8 + 8 * F.M and not hbad and nb == 0
+    # ---- TP のレコード（RUN の F0 × 32 から 16 小フレームの区切り × 4）----
+    x = spec_x().reshape(-1, 16)
+    x2 = (x.astype(np.int64) ** 2).sum(axis=1)                       # ビートごとの Σx²
+    tf0 = 32 * hd["df0"]
+    nfull, nbad_it, hdr_bad, aligned = 0, 0, 0, False
+    # 捨てた TP のレコード: SEQ（最初の個の TP_WP）の飛びから数える。tb は TP を 2 フレームに 1 レコードに詰めたので、1 MiB の SPEC が出口を
+    # 塞ぐ間（≒ 15 万クロック）に TP の溜め 2 面が溢れて捨てる（実際の 10.24 ms ごとなら 20 倍の余裕）。捨てた数 = TP_REC_LATE = rec_drop を照らす
+    gap_items = sum((b[1][1] & 0xFFFFFFFF) - ((a[1][1] & 0xFFFFFFFF) + (a[1][5] & 0xFFFFFFFF)) for a, b in zip(tp_r, tp_r[1:]))
+    for tu, w in tp_r:
+        n = w[5] & 0xFFFFFFFF
+        rf0, rt = w[2], w[3]
+        if (w[0] & 0xFFFFFFFFFFFF) != (MAGIC | (1 << 32) | (2 << 40)) or (w[0] >> 48) & 0xFF != CORE_RC or (w[0] >> 56) != CORE_SID \
+                or rt != 512 * rf0 or tu != 0 or (w[7] & 0xFFFFFFFF) != ((n + 3) // 4) * 64:
+            hdr_bad += 1
+        if rf0 < tf0:
+            continue
+        aligned |= rf0 == tf0
+        for i in range(n):
+            s, hw = w[8 + 2 * i], w[9 + 2 * i]
+            f0lo, nfr, fl = hw & 0xFFFFFFFF, (hw >> 32) & 0xFFFFFF, hw >> 56
+            sb = f0lo * 512
+            e = int(sum(int(x2[b]) for b in range(sb, sb + 512 * CORE_TPN) if b < len(x2)))
+            efl = 2 if (f0lo == tf0) else 0
+            if s != e or nfr != CORE_TPN or fl != efl or f0lo != rf0 + CORE_TPN * i:
+                nbad_it += 1
+            nfull += 1
+    tlate = regs.get("TP_REC_LATE", -1)
+    print(f"check core TP: レコード {len(tp_r)}・頭の誤り {hdr_bad}・ダンプと同じ T から始まるレコード {'あり' if aligned else '無し'}"
+          f"（期待の F0 {tf0} 小フレーム = T {512 * tf0}・SPEC の DUMP_T {F.M * hd['df0']}）・F0 以後の個 {nfull}・模型と違う個 {nbad_it}・"
+          f"SEQ の飛び {gap_items} 個（= {gap_items / CORE_TPK:g} レコード）・TP_REC_LATE {tlate}・rec_drop {ndrop}")
+    ok &= hdr_bad == 0 and aligned and nfull >= 8 and nbad_it == 0
+    ok &= gap_items == CORE_TPK * tlate and tlate == ndrop and regs.get("REC_LATE") == 0
+    # ---- レジスタ ----
+    er = {"SRC_pre": 0x80000000, "SRC": 0x80000002, "WRST_CFG": 0x00C0FFEE, "RUN_SHIFT0": 7, "RUN_SHIFT1": CORE_SHIFT,
+          "RUN_F0": hd["df0"], "TP_F0": tf0, "TP_NEFF": CORE_TPN,
+          "SID": 0x02010000 | (CORE_SID << 8), "PARAM": 0x00400012, "FLAGS": 0, "SEQ": 1, "NCH": 131072, "FRAME_BEATS": 16384,
+          "DUMP_K": hd["dk"], "DUMP_F0": hd["df0"], "DUMP_N": hd["dn"], "DUMP_SAT": hd["dsat"],
+          "DUMP_T_LO": (F.M * hd["df0"]) & 0xFFFFFFFF, "DUMP_T_HI": (F.M * hd["df0"]) >> 32, "DUMP_H": 0, "DUMP_CFG": 0x00C0FFEE,
+          "NFFT_MM": 0x1212, "REC_CTRL": 1, "REC_LATE": 0, "BUILD_TAG": 0x20240d00}
+    rbad = [(k, regs.get(k), v) for k, v in er.items() if regs.get(k) != v]
+    print(f"check core レジスタ: {len(er)} 個・違う {len(rbad)}" + "".join(f"（{k}: {g if g is None else hex(g)} / 期待 {hex(v)}）" for k, g, v in rbad)
+          + f"・CTRL {regs.get('CTRL', 0):08x}")
+    ok &= not rbad
+    print("結果: 全部通過" if ok else "結果: 不合格")
+    return ok
+
+
 if __name__ == "__main__":
     what = sys.argv[1]
     if what == "coef":
@@ -462,6 +607,8 @@ if __name__ == "__main__":
         spec_gen(sys.argv[2]); sys.exit(0)
     if what == "spec":
         sys.exit(0 if spec(sys.argv[2], sys.argv[3], int(sys.argv[4])) else 1)
+    elif what == "core":
+        sys.exit(0 if core(sys.argv[2], sys.argv[3]) else 1)
     if what == "acc":
         sys.exit(0 if acc(sys.argv[2]) else 1)
     if what == "lane-gen":

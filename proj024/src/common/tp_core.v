@@ -26,6 +26,10 @@
 //   **RUN を書いた直後の 2 クロックに来るフレームの頭は、旧い TP_N で判定されることがある**（pre_* の遅れ）。
 //   F0 は必ず 2 フレーム以上先なので、F0 からの区切りは新しい TP_N で揃う。
 //
+// proj024 手順 2d: F0_EXT = 1 なら、RUN で取り込む F0 を外（f0_ext）から受ける。2G-1 の FULL の流れの TP は、T の格子の
+//   512 ビートの小フレーム（m_in = (T − K_F) mod 512）で数え、F0 を FULL の RUN_F0 × 32（16384 / 512）にして、
+//   TP の区切りと SPEC のダンプを同じ T の上に並べる（INTERFACE 2.5 の「FULL のフレームの格子で持つ」）。F0_EXT = 0 は今までと同じ
+//
 // ---- 時間の決め方（proj012 rev3 の `-1` の最悪経路から）----
 // - ファブリックの加算から DSP の入口へ直につながない: 二乗の DSP は入口にレジスタを 2 段（AREG/BREG = 2）、
 //   出口に M・P を置き、加算木は 1 段ごとにレジスタで区切る（16 → 8 → 4 → 2 → 1）
@@ -62,7 +66,8 @@ module tp_core #(
     parameter integer REC         = 0,
     parameter [7:0]   REC_CORE    = 8'd0,
     parameter [7:0]   REC_S       = 8'hFF,  // proj021 2-2d: レコードの頭の s（コアの TP は 0xFF、FULL の流れの TP はその流れの s）
-    parameter integer REC_EN_DEFAULT = 0
+    parameter integer REC_EN_DEFAULT = 0,
+    parameter integer F0_EXT      = 0       // proj024 2d: 1 = RUN の F0 を f0_ext から（0 = fin + 2、今までと同じ）
 )(
     input  wire          clk,
     input  wire          rst,          // spec_core の rst_core（起動のやり直しでも張り直す）
@@ -73,6 +78,7 @@ module tp_core #(
     input  wire [FW-1:0] fin,          // そのビートのフレーム番号
     input  wire [255:0]  tdata,        // 16 サンプル × 16 bit（下位が古い）
     input  wire          cmd_run,      // RUN（1 クロック）
+    input  wire [FW-1:0] f0_ext,       // proj024 2d: F0_EXT = 1 のときの F0（cmd_run と同じクロックで有効）。F0_EXT = 0 なら繋がなくてよい
     input  wire          wr_en,        // 0x0100–0x01FF への書き込み
     input  wire [5:0]    wr_addr,
     input  wire [31:0]   wr_data,
@@ -138,8 +144,8 @@ module tp_core #(
             end
             if (cmd_run) begin                                        // 最後に書く（同じクロックのフレームの頭より優先）
                 pend_arm <= 1'b1;
-                pend_f0  <= fin + 2;
-                pend_m1  <= fin + 1;
+                pend_f0  <= (F0_EXT != 0) ? f0_ext : fin + 2;
+                pend_m1  <= (F0_EXT != 0) ? f0_ext - 1'b1 : fin + 1;
                 tp_n     <= r_tpn;
             end
         end
@@ -269,6 +275,9 @@ module tp_core #(
     end
     assign rd_ring = q2[32*rd_addr[3:2] +: 32];
 
+    reg        rc_en;              // proj021 2-2b: TP_REC_CTRL（下の TP のレコードで使う）
+    reg [4:0]  rc_k;
+    reg [31:0] rc_late;
     always @* begin
         case (rd_addr[7:2])
             6'h00: rd_reg = {{(32-NW){1'b0}}, r_tpn};
@@ -290,9 +299,7 @@ module tp_core #(
     //   溜め 2 面。2 面とも埋まっているときに始まったレコードは丸ごと捨てる（rc_late・rec_drop）
     //   頭: w0 {REC_S（コアの TP は 0xFF）, core, 2, 1, "S45R"} / w1 SEQ（最初の個の番号）/ w2 F0（48 bit）/ w3 T / w5 DUMP_N / w7 中身のバイト数
     // =====================================================================
-    reg        rc_en;
-    reg [4:0]  rc_k;
-    reg [31:0] rc_late;
+    // rc_en・rc_k・rc_late は読み出し（上）より前で宣言した（proj024 2d: Icarus 14 は使った後の宣言を通さない）
     wire [4:0] kk = (rc_k == 5'd0) ? 5'd10 : (rc_k > 5'd16) ? 5'd16 : rc_k;
     always @(posedge clk) begin
         if (rst_rec) begin rc_en <= (REC_EN_DEFAULT != 0); rc_k <= 5'd10; end

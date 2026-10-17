@@ -301,7 +301,7 @@ sim は作業用のクラウドの環境の Icarus Verilog（oss-cad-suite、14.
   - 2a. `sim/lane_fft_g21_model.v`（済み。レーン FFT 16384 点・bit 反転順の行動模型。lane_fft_w_model.v を写す）: XK_INDEX = 本当の k1（bit 反転順で出る）・realtime・リセットの後の tready の遅れ・流し始めの 1 回の tready の下げ（LESSONS）。単体で numpy の rint(DFT) と比べる
   - 2b. `g21_acc`（済み。FULL の積分器）: 8 銀行（k2）× 16384（k1）× 48 bit × 2 面（URAM）。1 クロックに 8 銀行へ 1 つずつ書く（衝突は起きない形）。読み出しは ch の順（c → 銀行 c >> 14・番地 c & 16383）。wide_acc の RMW・面・commit の型
   - 2c. `g21_spec`（済み。wide_spec を写す）: 起動の見張り → g21_pfb → レーン FFT × 16（待ち行列つき）→ g21_chain（＋ g21_tw）→ g21_acc。フレームの頭は T の格子（m = (T − K_F) mod 16384）、F0 の格子は 32 フレーム（2.048 ms、M-6）。流れは 1 本。異常フラグは wide_spec と同じ並び
-  - 2d. `g21_core`（wide_core を写す）: 流れのブロックを KIND 1 FULL（NCH 131072・FRAME_BEATS 16384・SRC を書き換えられる）に、rec_fr は流れ 1 本・1 MiB のレコード（数えの幅を確かめる。INTERFACE 8. の 11）
+  - 2d. `g21_core`（済み。wide_core を写す）: 流れのブロックを KIND 1 FULL（NCH 131072・FRAME_BEATS 16384・SRC を書き換えられる）に、rec_fr は流れ 1 本・1 MiB のレコード（**数えの幅は足りず、NCH を引数にした**。INTERFACE 8. の 11）。FULL の TP（D-12）。g21_spec の SHIFT を RUN で取り込むように直した
   - 2e. `g21_s45_core`（wide_s45_core を写す）: core_cmn ＋ g21_core ＋ axis_sel4（SRC、D-8）＋ rec_arb（＋ RAW は D-13）
   - 2f. build.tcl・ブロックデザイン（proj023 を写す）: コア 1 個・レーン FFT 16384 点 bit 反転順の IP・結線の照合・part の照合。最初は既定の戦略（S-2）
   - その後: 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）/ 4. 実機
@@ -373,6 +373,72 @@ B（浮動小数点の PFB ＋ FFT と: 電力 ≒ |X|² / (16·2^SHIFT)²）・
 - ipq: flags[5]・[4] が立って落ちたのは当たり。「IP の出口のフレームが m からずれる」は当たりだが、**A2 は違う 0 のまま**（A2 は記録した IP の出口から積むので、IP の中で落ちたビートは A2 では見えない）・
   B も床の比が 0.04 % 動いただけ（CW は無傷）。1 ビート落ちるとフレームの枠が 1 サンプルずれるだけで、スペクトルにはほとんど出ない。**捕まえるのは flags だけ**（Wide の LESSONS「realtime の IP の手前の待ち行列」のとおり）
 
+
+### 2d. g21_core — 予言（走らせる前に書く、2026-10-17 夜）
+
+`src/g21/g21_core.v`: wide_core を写し、流れのブロックを **KIND 1 FULL の 1 本**（SID {2, 1, s, 0}・PARAM {0, 64, 0, 18}・NCH 131072・FRAME_BEATS 16384・NFFT_MIN_MAX 18/18・
+SRC は書き換えられる流れ [31] で、次の WRST で効く）にした。中身は g21_spec ＋ rec_fr（NS 1・**NCH 131072**）＋ **FULL の TP**（tp_core、D-12）＋ rec_arb（SPEC と TP をレコード単位で）。
+DUMP_T = K_F ＋ 16384·DUMP_F0。語 4 = {DUMP_H, src, 0, 0, SHIFT, 0, 18}（src・SHIFT はダンプを閉じたときの値を取っておく）、語 7 = {0, 1048576}。DUMP_H は wide_core の型を流れ 1 本で。
+
+2d で一緒に直したもの（どれも 2G の側。`src/common/` は 567fda2 の写し）:
+- **rec_fr の数えの幅**（引き継ぎの「1 MiB を受けられるか」、INTERFACE 8. の 11）: **受けられなかった**。rd_ch 12 bit・n_iss 13 bit・n_out 14 bit・語 7 の `32'd32768` が NCH 4096 の決め打ち。
+  NCH を引数にして（既定 4096）幅をそこから作った。NCH 4096 で 567fda2 と同じ振る舞いかを `make sim-recfr` で確かめる（下）
+- **g21_spec の SHIFT を RUN で取り込む**（2c では Wide（SLICE）を写して WRST で取り込んでいた）。INTERFACE 2.5 で WRST で取り込むのは SLICE の例外で、**FULL は RUN**（spec_core も RUN）。
+  2c の写しで SLICE の振る舞いが FULL に入っていた。RUN の F0 は 2 格子（≧ 32 フレーム）先なので、鎖の途中のフレームは積まない。WRST は SRC・CFG_ID を取り込むだけ（spec_core と同じ）
+- **tp_core に F0_EXT**（既定 0 = 今までと同じ）: FULL の TP は、入力のビートを T の格子の 512 ビートの小フレーム（m = (T − K_F) mod 512）で数え、
+  RUN の F0 を FULL の RUN_F0 × 32 にする。TP の区切り（1.024 ms）と SPEC のダンプが同じ T から始まる（INTERFACE 2.5 の「FULL のフレームの格子で持つ」）
+- tp_core の宣言の位置（rc_en・rc_k・rc_late を使う前に）: Icarus 14 が使った後の宣言を通さなかった。振る舞いは変わらない
+
+**sim-recfr**（`sim/tb_recfr_eq.v`）: 567fda2 の rec_fr（`sim/rec_fr_ref.v`）と新しい版を同じ入力で並べ、全部の出口（req・rd_ch・rd_s・late・drop・one_clr・m_* 全部）をクロックごとに比べる。
+組 A（NS 2・SNAP 0・W7HI 1 = wide_core の形）・組 B（NS 1・SNAP 1・NSN 2048 = spec_core の形）、seq・REC_CTRL・snap_ok・m_tready はでたらめ、300 万クロック。
+- 予言: 違うクロック 0。出たレコードも捨てたレコード（読みかけで seq が動いた）も両方の組で数十以上
+- 陽性対照 `-DEQ_POSCTL`（新しい版を NCH 2048）: 最初のレコードの頭（語 7 のバイト数）で違いが出る
+- （正直に書くと、この sim は予言を README に書く前に走らせた。予言は頭の中で「違い 0」と置いていた）
+
+**sim-g21core**（`sim/tb_g21_core.v`）: 2c と同じ x.hex（CW 100 ＋ 雑音 σ 100）。PS と同じ手順を AXI4-Lite で: SRC 2 → CFG_ID → WRST / SHIFT 4・N_ACC 2・N_DUMP 1・REC_CTRL ALL /
+TP_N 16 小フレーム・TP_REC_CTRL（4 個で 1 レコード）→ PFB が始まったら RUN。ST_N 256・GF_L2 1。m_axis_rec_tready は 1/8 で下げる。判定 `sim/check_g21.py core`:
+- SPEC のレコード 1 個: **131,080 語**（頭 8 ＋ 131,072 ch）・tuser 0。頭: magic・type 1・core 1・s 2 / SEQ 1・DUMP_K 0 / DUMP_F0 4 / **DUMP_T 65,536**（= 16384·4）/
+  語 4: log2 18・SHIFT 4・**src 2**・DUMP_H 0 / DUMP_N 2・DUMP_SAT 0 / DUMP_CFG 0xC0FFEE・FLAGS 0 / 語 7 = **1,048,576**・0
+- 中身: IP の出口から chain_Y（SHIFT 4）で積んだ模型と**違う ch 0**（全 131,072 ch。凍った面の写しも模型と違う ch 0）
+- TP: **DUMP_F0 = 128 小フレーム（T 65,536 = SPEC の DUMP_T）のレコードがある**。F0 以後の個（16 小フレーム）は Σx² が numpy と全部一致・フレーム数 16・FLAGS は F0 の個だけ [1]。
+  頭の DUMP_T = 512·DUMP_F0、語 7 = 64
+- レジスタ: SID 0x02010200・PARAM 0x00400012・NCH 131072・FRAME_BEATS 16384・SRC 0x80000002（WRST の前は 0x80000000）・**RUN_SHIFT は RUN の前 7・後 4**・
+  RUN_F0 4・TP_F0 128・TP_NEFF 16・DUMP_* はレコードと同じ・NFFT_MIN_MAX 0x1212・REC_LATE 0
+- flags 00・src_sel 2・rec_drop 0
+- 陽性対照 `-DG21C_POSCTL`（積分器の読みの口に 1 段多い）: 頭は合うが中身がほぼ全 ch で 1 ch ずれて違う → 不合格
+- 陽性対照 `-DG21C_TP_POSCTL`（TP の F0 の × 32 を忘れる）: TP_F0 = 4・TP のレコードが T 65,536 から始まらない → 不合格
+- 1 本 10 分前後（2c の 4 分 × 入力の後のレコードの 131k クロック）
+
+**sim-g21s を回し直す**（g21_spec の SHIFT を変えたので）: tb は WRST と RUN で同じ SHIFT 4 を渡すので、**数字は 2c と全部同じ**（A1 136,201 ビート・違う 0、A2 違う 0、ipq は flags 30 で落ちる）
+
+**結果（2026-10-17 夜、作業用のクラウドの環境）: 全部通過**（予言の外れ 1 つ: TP のレコードを 3 個捨てた。下に）
+
+| sim | 結果 | 中身 |
+|---|---|---|
+| recfr（NCH 4096、300 万クロック） | 全部通過 | 違うクロック 0。組 A: 出たレコード 308・捨てた 158・late 194 / 組 B: 出た 225・捨てた 100・late 82（SNAP の相を含む） |
+| recfr-posctl（NCH 2048） | 不合格（落ちた） | 3,022 クロック目の最初のレコードの語 7（0x8000 / 0x4000）から違う |
+| g21s（回し直し） | 全部通過 | 2c と全部同じ数字（A1 136,201 ビート・違う 0、A2 2 ダンプとも違う 0、CW −0.000 dB・床の比 1.0000、flags 00） |
+| g21s-ipq（回し直し） | 不合格（落ちた） | flags 30（2c と同じ） |
+| g21core（ふつう、1 本 18 分） | 全部通過 | 下の表 |
+| g21core-posctl（読みの口に 1 段） | 不合格（落ちた） | 頭は全部合い、中身が ch 1 から 131,071 ch 違う（1 ch ずれ） |
+| g21core-tp（TP の F0 の × 32 なし） | 不合格（落ちた） | TP_F0 = 4（期待 128）・T 65,536 から始まる TP のレコードが無い |
+
+g21core（ふつう）:
+
+| | 結果 |
+|---|---|
+| SPEC のレコード | 1 個・**131,080 語**・tuser 0・頭の 8 語は全部期待どおり（DUMP_T 65,536・語 4 の log2 18・SHIFT 4・src 2・DUMP_H 0・語 7 = 1,048,576）|
+| 中身 | 模型（IP の出口 → chain_Y、SHIFT 4 → 積む）と**違う ch 0 / 131,072**。凍った面の写しも違う 0。dsat 0（模型 0） |
+| TP | DUMP_F0 128 小フレーム（**T 65,536 = SPEC の DUMP_T**）のレコードがある。F0 以後の 16 個は Σx² が numpy と全部一致・フレーム数 16・FLAGS は F0 の個だけ [1] |
+| レジスタ（26 個） | 全部期待どおり（SID 0x02010200・PARAM 0x00400012・NCH 131072・FRAME_BEATS 16384・SRC 0x80000002（WRST の前 0x80000000）・**RUN_SHIFT は RUN の前 7・後 4**・TP_F0 128 ほか） |
+| ほか | flags 00・src_sel 2・REC_LATE 0 |
+
+予言の当たり・外れ:
+- **外れ: TP のレコードを 3 個捨てた**（TP_REC_LATE 3・rec_drop 3）。tb は TP を 16 小フレーム × 4 個 = 2 フレーム（32,768 クロック）ごとの 1 レコードに縮めたが、1 MiB の SPEC のレコードは
+  tready 7/8 で ≒ 15 万クロック rec_arb の出口を塞ぐので、その間に TP の溜め（2 面）が溢れた。**tb の作りもの**: 実際は TP のレコードが 10.24 ms（262 万クロック）ごと、SPEC は 13 万クロックで、20 倍の余裕がある。
+  判定を「捨てない」から**捨てた数の帳尻**に改めた: SEQ の飛び 12 個 = 3 レコード = TP_REC_LATE 3 = rec_drop 3（一致）。捨てる道の見張り（溜めの溢れ → late → drop）が実際に立つのを見た
+- ほかは全部当たり。陽性対照 2 本は予言どおりの形で落ちた（posctl は ch 0 だけ偶然一致）
+- 1 回目は tb の AXI の待ちを `while (!arready)` で書いていた（LESSONS の「`!== 1'b1` で」に反する）。値は合っていたが、直して 3 本とも回し直した（上の表は直した tb のもの）
 
 ### 1a. g21_coef — 予言（走らせる前に書く、2026-10-17）
 
@@ -509,6 +575,8 @@ proj023 の会話からの引き継ぎの「4. 2G で初めて決めること」
    PS 側は `NCH = 4096`・`s45proto.IF_ORDER`・`s45client` の `P.NCH` を NCH から作る形に（s45proto v2 の nch は u32 で足りる）
 4. **リングの大きさ**: 2G-4 は 10.24 ms ごとに 256 KiB のレコード × 4、2G-1 は 1 MiB × 1（どれも 102.4 MB/s）。32 MiB のリングでは ≒ 0.3 s しか持たない。PYNQ の allocate は 64 MiB まで（LESSONS）なので、64 MiB でも ≒ 0.6 s。4.1 の目安（1 s 以上）に届かない → リングを 2 本の allocate に分けるか、目安を 2G で読み替えるか
 5. **ネットワークの予算**（8. の 10）: float32 で 51.2 MB/s は今の予算 17.7 MB/s を越える。ネットワークの tint ≧ 30.72 ms に読み替えるか、送り出しの頭打ちを直すか（D-11）
+6. **8. の 11 の後半（rec_fr の数えの幅）は解決**（2026-10-17、2d）: NCH 4096 の決め打ちだったので NCH を引数にした（NCH 4096 で 567fda2 と同じ振る舞いを sim-recfr で確かめた）。1 MiB のレコードは sim で出た。リングの大きさ（前半）は未決のまま
+7. 2.5 の FULL の行に足すとよいこと（2d）: 2G-1 の FULL の TP は 512 ビートの小フレームを T の格子で数え、F0 は FULL の RUN_F0 × 32（TP のレコードの DUMP_F0 は小フレームの番号）
 
 ## 結論・次にやること
 
@@ -528,6 +596,8 @@ proj023 の会話からの引き継ぎの「4. 2G で初めて決めること」
 - [ ] 2G-1 の資源の引き締め（Wide の束ね・切り出しの LUT を除く）: **見送り**。ビルド 11 の階層の資源は `u_wide` の段までで切り出せない。2G-1（コア 1 個）では 0.5 % 未満で効かない。2G-4 の前に、Wide のビルドで階層を深くして測る
 - [x] S-2: 16384 点の FFT IP 1 個の OOC の配置配線（2026-10-17）。`-1`・256 MHz で WNS +1.885 ns（Default）、物差しの 2048 点と同じ程度。陽性対照（400 MHz）は組み方の誤りで負にならず、1.5 ns に直した
 - [ ] RTL の proj は SAM45-Wide を YATSUGATAKE にマージした後に。D-9・D-10・D-11 はそのとき INTERFACE.md・BITS.md と一緒に
+- [x] RTL の手順 1a〜2d（引き継ぎの 7. で、マージを待たずに部品と単体の sim から）。2d で g21_core（FULL の流れ・1 MiB のレコード・FULL の TP）まで（2026-10-17）
+- [ ] 2e g21_s45_core → 2f build.tcl・ブロックデザイン → 3. PS → 4. 実機
 
 ## 公開について
 
@@ -542,6 +612,11 @@ make estimate   # 資源の見積もりの表（レーン FFT は仮の値。S-1
 make gen        # 2G-1 の ROM の中身を build-gen/ に（読み返して模型と照らす）
 make s2         # Vivado サーバ: FFT IP 1 個の OOC の配置配線（S-2、-1・256 MHz）
 make survey     # Vivado サーバ: レーン FFT の OOC 合成（S-1）
+# RTL の単体の sim（iverilog・vvp。Icarus 14.0 devel で回した）。成否は各ログの「結果:」の行
+make sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane sim-g21a   # 手順 1a〜2b
+make sim-g21s     # 2c（1 本 4 分前後）
+make sim-recfr    # 2d: rec_fr の NCH 4096 が 567fda2 と同じ振る舞いか（1〜2 分）
+make sim-g21core  # 2d: g21_core（3 本を並べて回す。コア 2 個で 1 本 18 分前後。G21CORE_V で選べる）
 ```
 
 環境は [`../VERSIONS.md`](../VERSIONS.md)。

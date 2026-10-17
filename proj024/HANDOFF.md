@@ -1,4 +1,4 @@
-# proj024 の引き継ぎ（2G-1 の RTL、2026-10-17 夜の会話から）
+# proj024 の引き継ぎ（2G-1 の RTL、2026-10-17 夜の会話から。2d の後に更新）
 
 新しい会話の最初に、この文書・[`README.md`](README.md)（とくに「2G-1 の作り」「RTL（2G-1）」の節）・[`../LESSONS.md`](../LESSONS.md)・
 [`../docs/handoff_proj024.md`](../docs/handoff_proj024.md)（proj023 の会話からの引き継ぎ。**7. の追記**が RTL を始めてよい根拠）を読む。
@@ -6,23 +6,14 @@
 
 ## 0. 再開する前に（この会話の終わりで片づいていないこと）
 
-- **コミットが 1 つ残っている**: 2c の結果（README・INDEX の追記）と 2c の新しいファイルは、コンピュータ側のシェルが落ちたためコミットしていない。
-  README と INDEX は追記済み（ファイルの書き戻しで反映した）。新しい会話で最初に `git status` を見て、次をコミットする:
-
-  ```bash
-  cd ~/git/rfsoc
-  git add INDEX.md proj024/README.md proj024/Makefile proj024/src/g21/g21_spec.v proj024/sim proj024/HANDOFF.md
-  git -c user.name="Atsushi Nishimura" -c user.email="atsushi.nishimura@nao.ac.jp" commit \
-    -m "proj024: 2c g21_spec（分光の本体）と単体の sim、引き継ぎ（HANDOFF.md）" \
-    -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
-  ```
-  コミットの前に `.git/*.lock` が残っていないかを見る（シェルが落ちたとき git には触れていない見込み）。
-- push はしていない（西村さんがする）。この会話のコミットは db5efdf 〜 8349bc7 と上の 1 つ。proj023 の会話のコミットも間に入っている
+- 2c のコミット（956aa56）は 2026-10-17 夜の 2 つ目の会話で済ませた。2d は同じ会話でコミットした（push はしていない。西村さんがする）
 - `proj023/pynq/` の追跡していないファイル（v2b.json・v2bp.json・snap23.snap.npz）は proj023 の会話のもの。触らない
+- **コンピュータ側のシェルが「起動中」のまま返らないとき**: アプリの裏の仮想環境が古いまま止まっていることがある。
+  ウィンドウを開き直すだけでは直らない。アプリを終了し、残ったプロセス（仮想環境を含む）を止めてから起動し直す（10/17 夜は 10/9 から動いていたものが止まっていた）
 
 ## 1. 今どこにいるか
 
-2G-1（1 ADC × 262144 点、131072 ch、BIT_KIND 11）の RTL の**手順 2c まで済み**。全部、単体の sim で模型と bit 単位で一致し、陽性対照は落ちた。
+2G-1（1 ADC × 262144 点、131072 ch、BIT_KIND 11）の RTL の**手順 2d まで済み**。全部、単体の sim で模型と bit 単位で一致し、陽性対照は落ちた。
 
 | 手順 | 部品 | sim | 状態 |
 |---|---|---|---|
@@ -32,24 +23,22 @@
 | 1d | `src/g21/g21_chain.v`（Y の丸め・cmul SH 18・dft16・電力、束ねなし） | `make sim-g21ch` | 済み |
 | 2a | `sim/lane_fft_g21_model.v`（レーン FFT 16384 点・bit 反転順の行動模型） | `make sim-lane` | 済み |
 | 2b | `src/g21/g21_acc.v`（FULL の積分器、URAM 48） | `make sim-g21a` | 済み |
-| 2c | `src/g21/g21_spec.v`（分光の本体、流れ 1 本） | `make sim-g21s`（1 本 4 分前後） | 済み（コミット待ち、0.） |
-| **2d** | `g21_core`（wide_core を写す） | | **次** |
-| 2e | `g21_s45_core`（wide_s45_core を写す） | | |
+| 2c | `src/g21/g21_spec.v`（分光の本体、流れ 1 本）。**2d で SHIFT を RUN で取り込むように直した** | `make sim-g21s`（1 本 4 分前後） | 済み（2d で回し直した） |
+| 2d | `src/g21/g21_core.v`（FULL の流れのブロック・SPEC のレコード 1 MiB・FULL の TP・SRC）＋ rec_fr の NCH・tp_core の F0_EXT | `make sim-recfr`・`make sim-g21core`（1 本 10〜18 分） | 済み |
+| **2e** | `g21_s45_core`（wide_s45_core を写す） | | **次** |
 | 2f | build.tcl・ブロックデザイン（proj023 を写す） | | |
 
-写し元は **567fda2**（proj023 の RTL の凍結）。`src/common/` は 567fda2 の proj023/src/common をそのまま写したもの（35 個）。直すときは 2G の側で直す。
+写し元は **567fda2**（proj023 の RTL の凍結）。`src/common/` は 567fda2 の proj023/src/common を写したもの。直すときは 2G の側で直す。
+2d で `src/common/` を 2 つ直した（rec_fr の NCH・tp_core の F0_EXT と宣言の位置）。どちらも既定の引数では 567fda2 と同じ振る舞い（rec_fr は sim-recfr で確かめた）。Wide に戻すかはマージのときに決める。
 
-## 2. 次にやること（2d・2e）
+## 2. 次にやること（2e・2f）
 
-決めることは全部決まっている（README の「決めること」と手順 2 の D-12・D-13）:
-- **2d `g21_core`**: wide_core の流れのブロックを **KIND 1 FULL** 1 本に（NCH 131072・FRAME_BEATS 16384・PARAM・SRC は書き換えられる流れ [31]）。
-  - **D-12: FULL の流れの TP は SRC で選んだ ADC の入力で測る**（INTERFACE 2.5 の 0x100〜、SAM45-Fine の FULL と同じ形。proj021 2-2d）
-  - rec_fr は流れ 1 本・**レコード 1 MiB**（131072 ch × 8 B）。rec_fr の数え（バイト数・語数）の幅が 1 MiB を受けられるかを確かめる（INTERFACE 8. の 11）
-  - DUMP_T = K_F ＋ 16384·DUMP_F0、F0 の格子 32 フレーム（g21_spec の GF_L2 5）
-  - BIT_KIND 11・語 4・語 7 は INTERFACE の FULL の約束どおり（語 7 = 0）
-- **2e `g21_s45_core`**: core_cmn ＋ g21_core ＋ axis_sel4（SRC、D-8）＋ rec_arb、**D-13: RAW の流れを s = 1 に置く**（Wide のコア 0 と同じ形）
-- 2f: build.tcl（コア 1 個・IP は lane_fft_g21 = 16384 点・bit 反転順、S-1・S-2 の設定）。最初は既定の戦略（S-2 で IP の内部の余裕は +1.7 ns 以上）
+- **2e `g21_s45_core`**: core_cmn（BIT_KIND 11・NSTREAM 2・CAPS に SNAP は RAW が持つ）＋ g21_core（s = 0、FULL）＋ raw_core（**D-13: s = 1**、Wide のコア 0 と同じ形）＋
+  axis_sel4（**sel = g21_core の src_sel**、D-8）＋ rec_arb（core_cmn の TP・g21_core（SPEC と FULL の TP）・raw_core の SNAP）。番地はコアの 0x4000 + 0x400·s（wide_s45_core の振り分けを写す）。
+  - 確かめること: FULL の流れの s とコアの TP（s = 0xFF）が混ざらない・コアの 0x80 FFT_N は 0（SLICE が無い）・RAW の入力は SRC で選んだ ADC か、コアの ADC か（Wide のコア 0 の形を見て決める。西村さんに）
+- 2f: build.tcl（コア 1 個・IP は lane_fft_g21 = 16384 点・bit 反転順、S-1・S-2 の設定）。最初は既定の戦略（S-2 で IP の内部の余裕は +1.7 ns 以上）。URAM 48 ＋ PFB の履歴の URAM 2 列
 - その後: 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）/ 4. 実機
+- 2d で分かった PS への注意: **FULL の SHIFT は RUN で効く**（2c までの g21_spec は WRST だった）。FULL の TP は流れのブロックの 0x100〜、レコードの s = 流れの s
 
 各手順は今までと同じ型で: **予言を README に書いてから走らせる → 結果と当たり・外れを書く → INDEX の proj024 の行を更新 → コミット**。
 
@@ -59,6 +48,8 @@
 - ファイルはこの PC の `proj024/` を正とし、クラウドへは写しを置いて回す。**vvp は proj024 の直下から起動する**（hex の相対パス。出力のディレクトリから起動したら読めずに x で回った — この会話で 1 回やった）
 - `make sim-…` は「結果: 全部通過」と陽性対照の「結果: 不合格」の両方を見て判定する（make の成功を信用しない）
 - 長い sim（2c は 4 分前後）は裏で回して待つ
+- クラウドの環境はコア 2 個。sim-g21core の 3 本を同時に回すと 1 本 18 分前後（1 MiB のレコードを出す 131k クロックが長い）。make は変種を `&` で並べて `wait` する形にした（G21CORE_V で選べる）
+- クラウドで `pkill -f <パターン>` を使わない（自分のシェルのコマンド行にも当たって落ちる）。`ps` で pid を見て kill する
 
 ## 4. この会話で分かったこと（README に書いた。RTL の続きで効く）
 
@@ -67,6 +58,11 @@
 - **tb のレイテンシの数えは起点を揃える**: 1a の tb は番地を取り込んだ次のクロックから、1b の tb は番地を置いたクロックから数えていて、予言を 1 つ取り違えた。RTL の LAT は wide_coef_rom（LAT 2）と同じ数え（取り込んだクロックを 1）で書いてある: g21_coef 5・g21_tw 6
 - bit 反転順では、フレームの最初の k1 = 0・最後の k1 = 16383（bitrev(16383) = 16383）なので、フレームの頭・最後は k1 で数えられる
 - 前半・後半の係数の表は、どちらも番地 a = m >> 2 と b = 4095 − a で引く（1 ビートで 4 読み = 2 ポート × 2）
+- （2d）rec_fr は NCH 4096 の決め打ちだった。NCH を引数にし、旧版（`sim/rec_fr_ref.v`）と並べる等価性の sim で、NCH 4096 では全部の出口が同じことを確かめた
+- （2d）2c の g21_spec は SLICE の「SHIFT は WRST で」を持ち込んでいた。tb が WRST と RUN で同じ値を渡していたので sim を通った。RUN で取り込むように直し、tb_g21_core で RUN の前と後の RUN_SHIFT を読む
+- （2d）g21_acc の読みは rd_c から 4 クロック = rec_fr の LAT 5 そのもの（wide_core と同じく fr_ch を直に繋ぐ）。1 段足すと中身が 1 ch ずれる（陽性対照）
+- （2d）FULL の TP は 512 ビートの小フレームを T の格子で数え、F0 = FULL の RUN_F0 × 32。TP のレコードの DUMP_T = SPEC の DUMP_T（65,536）で揃うことを sim で見た
+- （2d）sim で TP の周期を縮めると、1 MiB の SPEC が出口を塞ぐ間に TP の溜め 2 面が溢れる（tb の作りもの。実際は 20 倍の余裕）。判定は捨てた数の帳尻で
 
 ## 5. 約束（どの会話でも同じ。docs/handoff_proj024.md の 1. と同じ）
 

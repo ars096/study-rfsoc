@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // tb_g21_spec — g21_spec の単体（proj024 手順 2c）。入力は `OUT/x.hex（sim/check_g21.py spec-gen。1 行 = 1 ビート = T のビート）。
-// T は 0 から 1 クロックに 1。s_tdata = x[T]（T と同じクロック）。設定: WRST（SHIFT `SHIFT）→ PFB が始まったら RUN（N_ACC 2・N_DUMP 2）。
+// T は 0 から 1 クロックに 1。s_tdata = x[T]（T と同じクロック）。設定: WRST → PFB が始まったら RUN（SHIFT `SHIFT・N_ACC 2・N_DUMP 2）。
+// （2d から SHIFT は RUN で効く。w_shift はずっと `SHIFT なので、2c のときと同じ値で積む）
 // 記録: PFB の出口（`OUT/y.txt）・IP の出口（`OUT/ip.txt）・ダンプ（commit の瞬間に凍った面の記憶をそのまま写す `OUT/dump<seq>.txt）。
 // 読み出しの口（rd_c → rd_d）は各ダンプの頭 4096 ch だけ口からも読んで、写しと比べる（全部は 2b で確かめた）
 `timescale 1ns / 1ps
