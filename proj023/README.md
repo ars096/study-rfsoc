@@ -444,7 +444,7 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
 - [x] Vivado サーバで sim（0dee749）: sim-wsp 9 本（wsp-stl・wsp-stlp を含む）・sim-wco 4 本・sim-ws45 3 本、全部通過（陽性対照 5 本は落ちるべきところで落ちた）
 - [x] ビルド 10 回目（2026-10-16、9589032、`IMPL=Performance_Explore`、build-PE/）: **閉じた。WNS +0.040 ns・WHS +0.010 ns**（9 回目の +0.008 から戻った）。結線 132 行・問題 0・DSP 2,720・tw_q 576・coef_q 1,152（コア 1 は 1,185、phys_opt の複製）・LUT 255,207（待ち行列の SRL のぶん +1,700）
 - [x] 実機 6 回目（ビルド 10 回目）: TLAST 事象は消えた。C・D だけ tw_mis（IP の出口の k1 の位相がコア 0 と違う）→ ひねり係数 ROM をコアごとに・IP の位相の診断
-- [ ] sim（Vivado サーバ）とビルド 11 回目（`IMPL=Performance_Explore`）
+- [x] ビルド 11 回目（2026-10-17、567fda2、PE）: **閉じた。WNS +0.001 ns・WHS +0.010 ns**（余裕はほぼ 0。上位 3 番目に 341 MHz 側の経路 +0.006）。ひねり係数 ROM 4 個とも RAMB36 29・係数 ROM 44・BRAM 817.5（75.7 %、予言 76 % 前後）・OOC の ROM の run 5 個で $readmemh の失敗 0・自作のセル 20 個で Synth 8-3848 0・結線 138 行・問題 0・陽性対照 (a)〜(g) OK・LUT 255,211
 - [ ] 手順 4b: 実機で wide.py（--list の起動の見張りが 0x00・IP の位相・雑音・H-2・H-4）。F-2 → H-3。H-1 の掃引の道具
 
 ## 公開について
