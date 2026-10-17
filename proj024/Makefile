@@ -10,7 +10,7 @@ VVP           ?= vvp
 # survey の OOC 合成を同時に走らせる数（9 個）
 JOBS ?= 9
 
-.PHONY: model estimate survey s2 gen sim-g21c sim-g21t clean
+.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p clean
 
 # 模型（numpy だけ）。M-1〜M-6。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -63,6 +63,22 @@ sim-g21t:
 	done
 	@grep -q '結果: 全部通過' $(SIMDIR)/g21t_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21t_err/check.log \
 	  && echo "sim-g21t: 全部通過（陽性対照は落ちた）" || (echo "sim-g21t: NG"; exit 1)
+
+# 1c. g21_pfb（PFB）。ふつう・陽性対照 2 本（-DPFB_DLY_ERR: 係数が 1 ビートずれる / -DPFB_NOMASK: 起動の直後も履歴を使う。どちらも落ちるべき）
+G21P_RTL := src/g21/g21_coef.v src/g21/g21_pfb_core.v src/g21/g21_pfb.v sim/tb_g21_pfb.v
+sim-g21p:
+	@for v in normal dlyerr nomask; do \
+	  o=$(SIMDIR)/g21p_$$v; mkdir -p $$o; d=""; \
+	  [ $$v = dlyerr ] && d="-DPFB_DLY_ERR"; [ $$v = nomask ] && d="-DPFB_NOMASK"; \
+	  $(PYTHON) sim/check_g21.py pfb-gen $$o > /dev/null && \
+	  $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -DLO=\"src/g21/g21_coef_lo.hex\" -DHI=\"src/g21/g21_coef_hi.hex\" \
+	    -o $$o/tb $(G21P_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	  $(PYTHON) sim/check_g21.py pfb $$o $$o/tb.log > $$o/check.log 2>&1; \
+	  printf '%-14s %s\n' "g21p_$$v" "$$(grep '結果:' $$o/check.log || echo '結果の行が無い')"; \
+	done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g21p_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21p_dlyerr/check.log \
+	  && grep -q '結果: 不合格' $(SIMDIR)/g21p_nomask/check.log \
+	  && echo "sim-g21p: 全部通過（陽性対照 2 本は落ちた）" || (echo "sim-g21p: NG"; exit 1)
 
 clean:
 	rm -rf build-survey build-s2 build-gen build-sim .Xil *.jou *.log

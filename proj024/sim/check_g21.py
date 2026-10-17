@@ -4,6 +4,8 @@
 
     python3 sim/check_g21.py coef <sim の出力ディレクトリ> [tb のログ]
     python3 sim/check_g21.py tw   <sim の出力ディレクトリ> [tb のログ]
+    python3 sim/check_g21.py pfb-gen <sim の出力ディレクトリ>     （x.hex を書く）
+    python3 sim/check_g21.py pfb  <sim の出力ディレクトリ> <tb のログ>
 成否は最後の「結果:」の行で読む（make の成功を信用しない）。
 """
 import os
@@ -90,10 +92,82 @@ def tw(outdir, tblog=None):
     return ok
 
 
+PRE, NF = 384, 5
+
+
+def pfb_x():
+    """1c の刺激: 雑音 σ 100 ＋ CW 1000（ch 40000）、フレーム 3 の頭の 2000 ビートは ±8191 の満杯（PFB の出口の最大に近づける。
+    y は Σ|c| ≦ 1.405 なので 15 bit で飽和しない — M-4。sat_cnt は 0 のはず）。int、長さ PRE·16 + NF·N。"""
+    rng = np.random.default_rng(1)
+    n = np.arange(NF * F.N)
+    x = np.round(1000 * np.cos(2 * np.pi * 40000 * n / F.N) + rng.normal(0, 100, NF * F.N))
+    full = slice(3 * F.N, 3 * F.N + 2000 * 16)
+    x[full] = np.where(np.arange(2000 * 16) % 32 < 16, 8191, -8192)
+    x = np.clip(x, -8192, 8191).astype(np.int64)
+    pre = np.clip(np.round(rng.normal(0, 3000, PRE * 16)), -8192, 8191).astype(np.int64)
+    return pre, x
+
+
+def pfb_gen(outdir):
+    os.makedirs(outdir, exist_ok=True)
+    pre, x = pfb_x()
+    allx = np.concatenate([pre, x]).reshape(-1, 16)
+    with open(os.path.join(outdir, "x.hex"), "w") as fo:
+        for row in allx:
+            w = 0
+            for p in range(16):
+                w |= ((int(row[p]) << 2) & 0xFFFF) << (16 * p)      # ADC の 16 bit（本体が >>> 2 する）
+            fo.write("%064x\n" % w)
+    print(f"pfb-gen: {len(allx)} ビート")
+
+
+def pfb(outdir, tblog):
+    pre, x = pfb_x()
+    yref, nsat = F.pfb_int(x, F.coef_interp())             # (NF, N)
+    rows = [l.split() for l in open(os.path.join(outdir, "y.txt"))]
+    log = open(tblog, encoding="utf-8", errors="replace").read()
+    import re as _re
+    mt = _re.search(r"sat_cnt (\d+)・coef_mis (\d+)", log)
+    sat_cnt, coef_mis = (int(mt.group(1)), int(mt.group(2))) if mt else (-1, -1)
+    nbad = 0
+    first = None
+    order_ok = len(rows) == NF * F.M
+    for j, (ms, frs, fst, hx) in enumerate(rows):
+        f, mm = divmod(j, F.M)
+        if int(ms) != mm or int(frs) != min(f, 3) or int(fst) != (mm == 0):
+            order_ok = False
+        if f >= NF:
+            continue
+        ref = yref[f, 16 * mm: 16 * mm + 16]
+        try:
+            w = int(hx, 16)
+        except ValueError:                                  # x・z を含む（初期化していない履歴を読んだ）
+            nbad += 1
+            if first is None:
+                first = (f, mm, -1, hx[:8], "x/z")
+            continue
+        got = np.array([sx((w >> (15 * p)) & 0x7FFF, 15) for p in range(16)])
+        if (got != ref).any():
+            nbad += 1
+            if first is None:
+                p = int(np.argmax(got != ref))
+                first = (f, mm, p, int(got[p]), int(ref[p]))
+    print(f"check pfb: {len(rows)} ビート（期待 {NF * F.M}）・並び（y_m・y_fr・y_first）{'OK' if order_ok else 'NG'}・"
+          f"模型と違うビート {nbad}" + (f"（最初: フレーム {first[0]}・m {first[1]}・p {first[2]}: RTL {first[3]} / 模型 {first[4]}）" if first else ""))
+    print(f"check pfb: sat_cnt {sat_cnt}（模型の飽和 {nsat}）・coef_mis {coef_mis}")
+    ok = order_ok and nbad == 0 and sat_cnt == min(nsat, 0xFFFF) and coef_mis == 0
+    print("結果: 全部通過" if ok else "結果: 不合格")
+    return ok
+
+
 if __name__ == "__main__":
     what = sys.argv[1]
     if what == "coef":
         sys.exit(0 if coef(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None) else 1)
+    if what == "pfb-gen":
+        pfb_gen(sys.argv[2]); sys.exit(0)
+    if what == "pfb":
+        sys.exit(0 if pfb(sys.argv[2], sys.argv[3]) else 1)
     if what == "tw":
         sys.exit(0 if tw(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None) else 1)
     sys.exit(2)
