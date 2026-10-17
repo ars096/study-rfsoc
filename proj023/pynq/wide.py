@@ -7,7 +7,7 @@
 
     sudo -E $(which python3) wide.py --clkin 0 --ref 10 --list
     sudo -E $(which python3) wide.py --clkin 0 --ref 10 --mode A=1,B=2,C=4,D=1 --s0 A0=0,A1=4096,B0=0,B1=4096 --nacc 100 --ndump 5 --out w1
-    sudo -E $(which python3) wide.py --clkin 0 --ref 10 --mode A=2 --s0 A0=1000 --tone-ch A0:1234 --sg HOST --dbm -30 --out h2a   # H-2
+    sudo -E $(which python3) wide.py --clkin 0 --ref 10 --mode A=2 --s0 A0=1000 --tone-ch A0:1234 --dbm -20 --out h2a   # H-2（SG は RFSOC_SG か --sg。E8257D の下限は −20 dBm）
     sudo -E $(which python3) wide.py --clkin 0 --ref 10 --switch 20 --nacc 100 --ndump 3                                       # H-4
 
 ch → IF（INTERFACE 2.1、ナイキストゾーン 2）: 流れの ch i の ADC の周波数 f = (S0 + i + (B − 1)/(2B))·fs / N（N = 32768 / B）、
@@ -26,6 +26,8 @@ ch → IF（INTERFACE 2.1、ナイキストゾーン 2）: 流れの ch i の AD
 """
 import argparse
 import json
+import os
+import traceback
 import math
 import sys
 import time
@@ -426,7 +428,7 @@ def main():
     p.add_argument("--timeout", type=float, default=10.0)
     p.add_argument("--out", default="")
     p.add_argument("--tone-ch", default="", help="H-2: KEY:i（流れ KEY の ch i の中心に SG）")
-    p.add_argument("--sg", default="", help="SG の宛先（HOST[:PORT]。リポジトリに書かない）")
+    p.add_argument("--sg", default=os.environ.get("RFSOC_SG", ""), help="SG の宛先（HOST[:PORT]。既定は環境変数 RFSOC_SG。リポジトリに書かない）")
     p.add_argument("--dbm", type=float, default=-30.0)
     p.add_argument("--switch", type=int, default=0, help="H-4: 切り替えの回数")
     a = p.parse_args()
@@ -480,6 +482,11 @@ def main():
             rc = 1 if ng else 0
             if a.out:
                 save(a.out, res, meta)
+    except Exception:
+        # 例外を main の外へ出さない。出すと終わり際に Segmentation fault になった（2026-10-17、H-2 の SG のレベルの範囲外で）。
+        # リングは下の finally で閉じ、終了の道は正常のときと同じ sys.exit にする
+        log("ERROR: 道具が例外で止まった:\n" + traceback.format_exc())
+        rc = 2
     finally:
         ring.close(allst)
     sys.exit(rc)
