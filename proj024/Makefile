@@ -10,7 +10,7 @@ VVP           ?= vvp
 # survey の OOC 合成を同時に走らせる数（9 個）
 JOBS ?= 9
 
-.PHONY: model estimate survey s2 gen sim-g21c clean
+.PHONY: model estimate survey s2 gen sim-g21c sim-g21t clean
 
 # 模型（numpy だけ）。M-1〜M-6。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -51,6 +51,18 @@ sim-g21c:
 	done
 	@grep -q '結果: 全部通過' $(SIMDIR)/g21c_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21c_err/check.log \
 	  && echo "sim-g21c: 全部通過（陽性対照は落ちた）" || (echo "sim-g21c: NG"; exit 1)
+
+# 1b. g21_tw（ひねり係数の積）。ふつうと陽性対照（-DTW_HI_ERR、落ちるべき）
+sim-g21t:
+	@for v in normal err; do \
+	  o=$(SIMDIR)/g21t_$$v; mkdir -p $$o; d=""; [ $$v = err ] && d="-DTW_HI_ERR"; \
+	  $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -DTA=\"src/g21/g21_tw_a.hex\" -DTB=\"src/g21/g21_tw_b.hex\" \
+	    -o $$o/tb src/common/cmul.v src/g21/g21_tw.v sim/tb_g21_tw.v && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	  $(PYTHON) sim/check_g21.py tw $$o $$o/tb.log > $$o/check.log 2>&1; \
+	  printf '%-14s %s\n' "g21t_$$v" "$$(grep '結果:' $$o/check.log || echo '結果の行が無い')"; \
+	done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g21t_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21t_err/check.log \
+	  && echo "sim-g21t: 全部通過（陽性対照は落ちた）" || (echo "sim-g21t: NG"; exit 1)
 
 clean:
 	rm -rf build-survey build-s2 build-gen build-sim .Xil *.jou *.log
