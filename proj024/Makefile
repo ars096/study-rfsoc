@@ -10,7 +10,7 @@ VVP           ?= vvp
 # survey の OOC 合成を同時に走らせる数（9 個）
 JOBS ?= 9
 
-.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p sim-g21ch clean
+.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane clean
 
 # 模型（numpy だけ）。M-1〜M-6。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -95,6 +95,18 @@ sim-g21ch:
 	@grep -q '結果: 全部通過' $(SIMDIR)/g21ch_normal/check.log && grep -q '結果: 全部通過' $(SIMDIR)/g21ch_sat/check.log \
 	  && grep -q '結果: 不合格' $(SIMDIR)/g21ch_twlat/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21ch_nornd/check.log \
 	  && echo "sim-g21ch: 全部通過（陽性対照 2 本は落ちた）" || (echo "sim-g21ch: NG"; exit 1)
+
+# 2a. レーン FFT 16384 点の行動模型（sim/lane_fft_g21_model.v）の単体。tready の下げなし・あり（-DFFT_STALL_AT=3）
+sim-lane:
+	@for v in plain stall; do \
+	  o=$(SIMDIR)/lane_$$v; mkdir -p $$o; d=""; st=0; [ $$v = stall ] && d="-DFFT_STALL_AT=3" && st=1; \
+	  $(PYTHON) sim/check_g21.py lane-gen $$o && \
+	  $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -o $$o/tb sim/lane_fft_g21_model.v sim/tb_lane_g21.v && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	  $(PYTHON) sim/check_g21.py lane $$o $$o/tb.log $$st > $$o/check.log 2>&1; \
+	  printf '%-14s %s\n' "lane_$$v" "$$(grep '結果:' $$o/check.log || echo '結果の行が無い')"; \
+	done
+	@grep -q '結果: 全部通過' $(SIMDIR)/lane_plain/check.log && grep -q '結果: 全部通過' $(SIMDIR)/lane_stall/check.log \
+	  && echo "sim-lane: 全部通過" || (echo "sim-lane: NG"; exit 1)
 
 clean:
 	rm -rf build-survey build-s2 build-gen build-sim .Xil *.jou *.log

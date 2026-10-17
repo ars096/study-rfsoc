@@ -7,6 +7,8 @@
     python3 sim/check_g21.py pfb-gen <sim の出力ディレクトリ>     （x.hex を書く）
     python3 sim/check_g21.py pfb  <sim の出力ディレクトリ> <tb のログ>
     python3 sim/check_g21.py chain-gen <sim の出力ディレクトリ>   （yre.hex・yim.hex を書く）
+    python3 sim/check_g21.py lane-gen <sim の出力ディレクトリ>    （lx.hex を書く）
+    python3 sim/check_g21.py lane <sim の出力ディレクトリ> <tb のログ> <tready の下げを入れたか 0|1>
     python3 sim/check_g21.py chain <sim の出力ディレクトリ> <tb のログ> <SHIFT>
 成否は最後の「結果:」の行で読む（make の成功を信用しない）。
 """
@@ -243,10 +245,66 @@ def chain(outdir, tblog, shift):
     return ok
 
 
+def lane_x():
+    """2a の刺激: 1 レーン 3 フレーム。0: PFB の出口に近い CW ＋ 雑音、1: ±11507 の満杯（同相の最悪に近い）、2: 雑音 σ 30。int（15 bit）"""
+    rng = np.random.default_rng(2)
+    n = np.arange(F.M)
+    f0 = np.clip(np.round(3000 * np.cos(2 * np.pi * 1234.3 * n / F.M) + rng.normal(0, 300, F.M)), -11507, 11507)
+    f1 = np.where(rng.random(F.M) < 0.5, 11507, -11507)
+    f2 = np.round(rng.normal(0, 30, F.M))
+    return np.concatenate([f0, f1, f2]).astype(np.int64)
+
+
+def lane_gen(outdir):
+    os.makedirs(outdir, exist_ok=True)
+    with open(os.path.join(outdir, "lx.hex"), "w") as fo:
+        for v in lane_x():
+            fo.write("%04x\n" % (int(v) & 0xFFFF))
+
+
+def lane(outdir, tblog, stalled):
+    import re as _re
+    x = lane_x().reshape(3, F.M)
+    ref = [np.fft.fft(x[f].astype(np.float64)) for f in range(3)]
+    rows = [l.split() for l in open(os.path.join(outdir, "lane.txt"))]
+    br = F.bitrev(np.arange(F.M), 14)
+    order_ok = len(rows) == 3 * F.M
+    nd = nexact = 0
+    dmax = 0
+    for j, (ks, rs, is_, ls) in enumerate(rows):
+        f, i = divmod(j, F.M)
+        k = int(ks)
+        if f >= 3 or k != br[i] or int(ls) != (i == F.M - 1):
+            order_ok = False
+            continue
+        e = ref[f][k]
+        d = max(abs(int(rs) - e.real), abs(int(is_) - e.imag))
+        er, ei = np.floor(e.real + 0.5), np.floor(e.imag + 0.5)
+        if int(rs) == er and int(is_) == ei:
+            nexact += 1
+        else:
+            nd += 1
+        dmax = max(dmax, d)
+    log = open(tblog, encoding="utf-8", errors="replace").read()
+    m = _re.search(r"tready で待った (\d+) クロック（最初に受ける前の待ち \d+）・TLAST の事象 (\d+) / (\d+)", log)
+    nst, ntu, ntm = (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else (-1, -1, -1)
+    ymax = max(np.abs(r.real).max() for r in ref)
+    print(f"check lane: {len(rows)} 行（期待 {3 * F.M}）・並び（bit 反転順の XK_INDEX・TLAST）{'OK' if order_ok else 'NG'}・"
+          f"floor(x + 0.5) と一致 {nexact}・違う {nd}・|RTL − DFT| の最大 {dmax:.3f}・|Y| の最大 {ymax:.0f}（29 bit ≦ 2^28 = 268435456）")
+    print(f"check lane: 流し始めた後に tready で待った {nst} クロック（下げを入れた: {stalled}）・TLAST の事象 {ntu} / {ntm}")
+    ok = order_ok and dmax < 1.0 and ntu == 0 and ntm == 0 and ((nst > 0) == bool(stalled))
+    print("結果: 全部通過" if ok else "結果: 不合格")
+    return ok
+
+
 if __name__ == "__main__":
     what = sys.argv[1]
     if what == "coef":
         sys.exit(0 if coef(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None) else 1)
+    if what == "lane-gen":
+        lane_gen(sys.argv[2]); sys.exit(0)
+    if what == "lane":
+        sys.exit(0 if lane(sys.argv[2], sys.argv[3], int(sys.argv[4])) else 1)
     if what == "chain-gen":
         chain_gen(sys.argv[2]); sys.exit(0)
     if what == "chain":

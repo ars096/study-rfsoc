@@ -297,7 +297,39 @@ sim は作業用のクラウドの環境の Icarus Verilog（oss-cad-suite、14.
 - 1b. `g21_tw`（ひねり係数の積）: wide_tw_rom と同じ口（k1 → 576 bit・k1_out）、LAT 6（済み）
 - 1c. `g21_pfb`（wide_pfb ＋ 長さ 16384 ＋ 係数の遅れの分だけ入力を 3 クロック遅らせる）: 模型の pfb_int と bit 単位で一致（済み）
 - 1d. `g21_chain`（Y の 2 bit の丸め・cmul SH 18・dft16・SHIFT・電力。束ね・切り出しは無い）: 模型の chain_Y と bit 単位で一致（済み）
-- 2. 以降（レーン FFT 16384 点の行動模型・積分器・コア・レコード・build.tcl）は 1 が揃ってから並べる
+- 2. コアに組む（2026-10-17 に並べた。写し元は 567fda2 の proj023 の同じ名前の部品）:
+  - 2a. `sim/lane_fft_g21_model.v`（済み。レーン FFT 16384 点・bit 反転順の行動模型。lane_fft_w_model.v を写す）: XK_INDEX = 本当の k1（bit 反転順で出る）・realtime・リセットの後の tready の遅れ・流し始めの 1 回の tready の下げ（LESSONS）。単体で numpy の rint(DFT) と比べる
+  - 2b. `g21_acc`（FULL の積分器）: 8 銀行（k2）× 16384（k1）× 48 bit × 2 面（URAM）。1 クロックに 8 銀行へ 1 つずつ書く（衝突は起きない形）。読み出しは ch の順（c → 銀行 c >> 14・番地 c & 16383）。wide_acc の RMW・面・commit の型
+  - 2c. `g21_spec`（wide_spec を写す）: 起動の見張り → g21_pfb → レーン FFT × 16（待ち行列つき）→ g21_chain（＋ g21_tw）→ g21_acc。フレームの頭は T の格子（m = (T − K_F) mod 16384）、F0 の格子は 32 フレーム（2.048 ms、M-6）。流れは 1 本。異常フラグは wide_spec と同じ並び
+  - 2d. `g21_core`（wide_core を写す）: 流れのブロックを KIND 1 FULL（NCH 131072・FRAME_BEATS 16384・SRC を書き換えられる）に、rec_fr は流れ 1 本・1 MiB のレコード（数えの幅を確かめる。INTERFACE 8. の 11）
+  - 2e. `g21_s45_core`（wide_s45_core を写す）: core_cmn ＋ g21_core ＋ axis_sel4（SRC、D-8）＋ rec_arb（＋ RAW は D-13）
+  - 2f. build.tcl・ブロックデザイン（proj023 を写す）: コア 1 個・レーン FFT 16384 点 bit 反転順の IP・結線の照合・part の照合。最初は既定の戦略（S-2）
+  - その後: 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）/ 4. 実機
+- 2 の途中で決めること（その手順の前に西村さんに）:
+  - **D-12**（2d の前）: FULL の流れの TP（INTERFACE 2.5 の 0x100〜）を、SRC で選んだ ADC の入力で測るか（SAM45-Fine の FULL と同じ形）、コアの TP（自分の ADC）だけにするか
+  - **D-13**（2e の前）: RAW の流れ（生サンプルの SNAP、F-2・specd の SNAP に使う。Wide はコア 0 に置いた）を 2G-1 にも置くか
+
+### 2a. レーン FFT 16384 点の行動模型 — 予言（走らせる前に書く、2026-10-17）
+
+`sim/lane_fft_g21_model.v`: lane_fft_w_model.v（567fda2）を写し、M 16384・bit 反転順の出力（XK_INDEX = 本当の k1）・出力待ち QF 4 にした。
+tb（`sim/tb_lane_g21.v`）: 1 レーンに 3 フレーム（CW ＋ 雑音 / ±11507 の満杯 / 雑音 σ 30）を AXI の手渡しで。判定は `sim/check_g21.py lane`（numpy の DFT と比べる）。
+- 出口 49,152 行、XK_INDEX は bit 反転順（0, 8192, 4096, …）・TLAST はフレームの最後、TLAST の事象 0
+- 値は floor(DFT + 0.5)。倍精度の基数 2 と numpy の差で丸めの境目だけ 1 違いうる → |RTL − DFT| < 1 は全部、floor と違う行は 0〜数行
+- 満杯のフレームの |Y| は 29 bit に入る（|Y| ≦ 11507·16384 = 188,530,688 < 2^28）
+- `-DFFT_STALL_AT=3`: tready が 1 回下がり（待った 1 クロック）、手渡しで吸えてデータは欠けない（同じ判定が通る）
+
+**結果（2026-10-17、`make sim-lane`、作業用のクラウドの環境）: 通過**（1 回目は判定の誤りで plain が不合格。下に）
+
+| | 行 | 並び（XK_INDEX・TLAST） | floor(DFT + 0.5) と | \|RTL − DFT\| の最大 | 流し始めた後の tready の待ち | TLAST の事象 | 結果 |
+|---|---|---|---|---|---|---|---|
+| lane（下げなし） | 49,152 | OK | 全部一致 | 0.500 | 0 | 0 / 0 | 全部通過 |
+| lane（`-DFFT_STALL_AT=3`） | 49,152 | OK | 全部一致 | 0.500 | **1** | 0 / 0 | 全部通過 |
+
+- 予言は当たり（floor と違う行は 0）。ただし「満杯のフレーム」は符号がでたらめの ±11507 で、|Y| は 12.4M（√M で育つ）にしかならず、29 bit の上限は試していない（同相の最悪は 1d で試した）
+- 1 回目: tb が「tready で待ったクロック」にリセットの後の tready の遅れ（READY_DELAY の 6 クロック）を混ぜていて、下げを入れない plain が「待った」と判定されて落ちた。
+  **模型ではなく判定の誤り**。最初に受ける前と後を分けて数えるように tb を直した（後: plain 0・stall 1）
+- この行動模型の陽性対照（たとえば自然順で出す変種）は置いていない。bit 反転順の並びは 2c 以降の sim（g21_chain の k1・積分器の番地）でもう一度見る
+
 
 ### 1a. g21_coef — 予言（走らせる前に書く、2026-10-17）
 
