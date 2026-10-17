@@ -19,8 +19,8 @@ README の判定 M-1〜M-6 を数える。RTL を書く前の、式と語長と�
   r·k + m < N/2 ⇔ k < Nc/2 なので、**各コアは今と同じく k2 = 0..7 だけを出せば全帯域の半分（実数の入力の全部）が揃う**。
 
 使い方:
-  python3 g2_model.py all        # M-1〜M-7（1〜2 分）
-  python3 g2_model.py m1 | m2 | m3 | m4 | m5 | m6 | m7
+  python3 g2_model.py all        # M-1〜M-8（1〜2 分）
+  python3 g2_model.py m1 | m2 | m3 | m4 | m5 | m6 | m7 | m8
 """
 import sys
 import time
@@ -403,9 +403,115 @@ def m7():
     return ok
 
 
+def m8():
+    import g21_fixed as F
+    print("M-8 2G-1 の新しい部品を bit 単位で（model/g21_fixed.py）")
+    ok = True
+    N = F.N
+    c = quantize(design(N))
+    # ---- 8-a 係数の補間 ----
+    print("  8-a 係数の補間（D 64、左右の折り返し、節の追加の小数 G bit）: 全部の表 c = round(h·2^16) との差")
+    sigbits = lambda v: int(np.ceil(np.log2(np.abs(v).max() + 1))) + 1
+    hs = design(N) * (1 << CF)
+    e_c = np.sqrt(np.mean((c - hs) ** 2))
+    print(f"   （物差し: 全部の表 c の h に対する rms {e_c:.4f} LSB）")
+    for g in range(0, 9):
+        V, S = F.coef_tables(g)
+        cg = F.coef_fold(V, S, g)
+        d = np.abs(cg - c)
+        w_ = sigbits(V) + sigbits(S)
+        print(f"   G {g}: c との差 最大 {d.max()} LSB・違う係数 {np.mean(d > 0) * 100:6.3f} %・h に対する rms {np.sqrt(np.mean((cg - hs) ** 2)):.4f} LSB"
+              f"・V {sigbits(V)}・S {sigbits(S)} bit（計 {w_}、RAMB36 {2 * int(np.ceil(w_ / 9))}）" + ("  ← 使う" if g == F.G else ""))
+    V, S = F.coef_tables()
+    cf = F.coef_fold(V, S)
+    d = np.abs(cf - c)
+    e_i = np.sqrt(np.mean((cf - hs) ** 2))
+    ok &= d.max() <= 1 and e_i <= 1.01 * e_c
+    cb = F.coef_beat(V, S)
+    same = np.array_equal(cb.reshape(-1), cf)               # [t, m, p] → t·N + 16m + p
+    bad = F.coef_fold(V, S, fold_err=True)
+    pc = int(np.sum(bad != cf))
+    print(f"   ビートの式と折り返しの式: {'全部の i で一致' if same else '不一致'}。陽性対照（i' = L − i）: 違う係数 {pc:,}")
+    ok &= same and pc > 0
+    vw, sw = sigbits(V), sigbits(S)
+    w = vw + sw
+    # t = 0・3 は前半の 4096 個、t = 1・2 は後半を引く → 半分ずつの 2 ポートの ROM（4K × 9 の RAMB36）
+    nb = 2 * int(np.ceil(w / 9))
+    print(f"   表: 8192 × {w} bit（V {vw}・S {sw}）= {8192 * w / 1e3:.0f} kbit。1 ビートの 4 読みは t 0・3 が前半、t 1・2 が後半"
+          f" → 前半・後半を 2 ポートの ROM（4K × 9）に: RAMB36 {nb} 個")
+    r0 = response_metrics(c.astype(np.float64), N, pad=4)
+    r1 = response_metrics(cf.astype(np.float64), N, pad=4)
+    dmax = max(abs(r1[k] - r0[k]) for k in ("half", "p04", "ge1", "ge15", "ge3"))
+    print(f"   応答の差の最大 {dmax:.3f} dB")
+    ok &= dmax <= 0.05
+    # ---- 8-b ひねり係数の積 ----
+    pr, pi = F.tw_prod()
+    dr, di = F.tw_direct()
+    p_ = np.arange(LANES)[:, None]
+    k1 = np.arange(F.M)[None, :]
+    wx = np.exp(-2j * np.pi * p_ * k1 / N) * 65536
+    dlsb = max(np.abs(pr - dr).max(), np.abs(pi - di).max())
+    e_p = np.sqrt(np.mean(np.abs(pr + 1j * pi - wx) ** 2))
+    e_d = np.sqrt(np.mean(np.abs(dr + 1j * di - wx) ** 2))
+    cmax = max(np.abs(pr).max(), np.abs(pi).max())
+    br, bi = F.tw_prod(map_err=True)
+    pcd = max(np.abs(br - dr).max(), np.abs(bi - di).max())
+    print(f"  8-b ひねり係数の積（S {F.S_TW}）: 直の表との差 最大 {dlsb} LSB・誤差 rms {e_p:.3f} LSB（直の表 {e_d:.3f}、比 {e_p / e_d:.2f}）"
+          f"・成分の最大 {cmax}（18 bit ≦ 131071）。陽性対照（hi·127 + lo）: 差 最大 {pcd} LSB")
+    ok &= dlsb <= 2 and e_p / e_d < 2.0 and cmax <= 131071 and pcd > 100
+    # ---- 8-c 鎖の全体 ----
+    rng = np.random.default_rng(8)
+    c0 = 40000
+    nf = 5
+    n = np.arange(nf * N)
+    x = np.clip(np.round(1000 * np.cos(2 * np.pi * c0 * n / N) + rng.normal(0, 100, nf * N)), -8191, 8191).astype(np.int64)
+    y, ysat = F.pfb_int(x, cf)
+    yfl = pfb_float(x.astype(np.float64), design(N), N)
+    st = {}
+    res = {}
+    for name, tw in (("鎖", (pr, pi)), ("陽性対照（k1 を 1 ずらす）", (np.roll(pr, -1, axis=1), np.roll(pi, -1, axis=1)))):
+        en = ed = 0.0
+        dcw = []
+        for f in (3, 4):
+            Zr, Zi = F.chain_frame(y[f], *tw, stats=st if name == "鎖" else None)
+            Zc = (Zr + 1j * Zi).reshape(-1) * 16.0
+            Xf = core_fft(yfl[f])
+            mask = np.abs(np.arange(N // 2) - c0) > 3
+            en += np.sum(np.abs(Zc - Xf)[mask] ** 2)
+            ed += np.sum(np.abs(Xf)[mask] ** 2)
+            dcw.append(10 * np.log10(np.abs(Zc[c0]) ** 2 / np.abs(Xf[c0]) ** 2))
+            if name == "鎖" and f == 4:
+                pw, psat = F.power(Zr, Zi, 7)
+                zrms = np.sqrt(np.mean((np.abs(Zr + 1j * Zi).reshape(-1)[mask]) ** 2))
+        res[name] = en / ed
+        print(f"  8-c {name}: 雑音の ch の ε {en / ed:.2e}・CW の ch の電力の差 {max(dcw, key=abs):+.4f} dB")
+        if name == "鎖":
+            ok &= en / ed <= 2e-5 and max(abs(v) for v in dcw) < 0.01
+        else:
+            ok &= en / ed > 2e-5
+    print(f"     y の飽和 {ysat}・各段の最大 Y {st['Y']:,}・Yd {st['Yd']:,}・V {st['V']:,}・U {st['U']:,}・Z {st['Z']:,}"
+          f"（参考: 雑音の Z の rms {zrms:.0f}、SHIFT 7 で q の飽和 {psat}）")
+    # ---- 8-d 積分器の番地 ----
+    k = F.bitrev(np.arange(F.M), 14)
+    perm = np.array_equal(np.sort(k), np.arange(F.M))
+    seq = np.concatenate([k, k])
+    last = {}
+    dist = F.M
+    for i, a in enumerate(seq):
+        if a in last:
+            dist = min(dist, i - last[a])
+        last[a] = i
+    print(f"  8-d 積分器の番地（bit 反転順の k1）: {'1 フレームで全部の番地を 1 回ずつ' if perm else '並べ替えでない'}・"
+          f"同じ番地に戻るまで最小 {dist} ビート")
+    ok &= perm and dist == F.M
+    print(f"  → M-8 {'通過' if ok else '不合格'}（8-a: 差 ≦ 1 LSB・h に対する rms ≦ 全部の表の 1.01 倍・ビートの式が一致・応答の差 ≦ 0.05 dB。"
+          "8-b: 差 ≦ 2 LSB・rms 比 < 2。8-c: ε ≦ 2e-5・CW < 0.01 dB、陽性対照は ε > 2e-5。8-d: 並べ替え・距離 16384）")
+    return ok
+
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
-    fns = dict(m1=m1, m2=m2, m3=m3, m4=m4, m5=m5, m6=m6, m7=m7)
+    fns = dict(m1=m1, m2=m2, m3=m3, m4=m4, m5=m5, m6=m6, m7=m7, m8=m8)
     names = list(fns) if which == "all" else [which]
     res = {}
     for k in names:

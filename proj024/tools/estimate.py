@@ -113,7 +113,12 @@ def options(d):
     # 補間: 1 タップ 1 読み（1 拍の 16 レーンは同じ区間に入る。D 64 は 16 の倍数）× 4 タップ、値と傾き 24 bit × 2
     #       傾き × 端数（6 bit）は LUT の掛け算（≒ 60 LUT）× 16 レーン × 4 タップ
     L_taps = 4 * N_core * (4 if d["front"] else 1)                         # R はコアごとに 1 ADC の原型の全部を引けるように
-    coef["線形補間（D 64）"] = dict(BRAM=nc * T_ * n_bram(L_taps // 64 // T_, 48), LUT=nc * 64 * 60, FF=nc * 64 * 24)
+    # M-8（2026-10-17）: 表は片側 L/128 区間 × 35 bit（節 23 ＋ 傾き 12、G 5）。1 拍の 4 読みは t 0・3 が前半、t 1・2 が後半
+    #   → 前半・後半を 2 ポートの ROM に（2G-1 で RAMB36 8 個）。R は M-8 の前の数え（4 タップ × 48 bit）のまま
+    if d["front"]:
+        coef["線形補間（D 64）"] = dict(BRAM=nc * T_ * n_bram(L_taps // 64 // T_, 48), LUT=nc * 64 * 60, FF=nc * 64 * 24)
+    else:
+        coef["線形補間（D 64）"] = dict(BRAM=nc * 2 * n_bram(L_taps // 128 // 2, 35), LUT=nc * 64 * 60, FF=nc * 64 * 24)
     o["coef"] = coef
     # ひねり係数 W_N^(p·k1)（15 レーン × M × 36 bit）: コアごとの表（IP の出口の位相はコアで揃う保証が無い。LESSONS）/ 2 つの小さな表の積
     o["tw"] = {
