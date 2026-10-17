@@ -524,6 +524,16 @@ T_raw = RAW の SNAP の DUMP_T ＋ サンプルの添字 // 16。T_slice = K_F 
 - (p) 4 ADC × 5 試行とも縁が見えない
 - 結果は timebase.CAL[0x0023_0100] の adc_to_core_ns に入れ、錨の「未較正」を外す（SLICE の utc_ns の補正がこれで全部そろう）
 
+### 手順 4g: Wide の SNAP（2026-10-17 書いた。実機はまだ）
+
+RAW の流れ（コア 0 の s 2、入口は axis_sel4 で 4 ADC から選ぶ）は SAM45-Fine の RAW と番地・意味が同じなので、`HwBackend._snap_ring`
+（SRC → WRST・N_ACC・N_DUMP・REC_CTRL = ALL | SNAP・RUN、SNAP のレコードを集める。SEQ の飛び・DUMP_K・CRC を見る）を WideBackend からそのまま呼ぶ。
+WideBackend は open で RAW の流れを `full`・`fkey` に持つ（RAW が無い bit なら起動で止める）。specd の SNAP の命令・記録（T_SNAP）・受け側（s45snap.py）は変えない。
+`test_fake.sh widesnap`: 偽物の Wide で `SNAP adc=B n=4` → 受け側 SNAP 4・EVENT SNAP_END、陽性対照は RUN の間の SNAP が ERR STATE。**16 試験とも通過**（作業用の環境、ほかの 15 本は 4d から変えていない道）
+
+**実機の予言**（specd `--wide`、IDLE で `SNAP adc=A..D n=16 every=20`、受け側 `s45snap.py`）: 4 ADC とも 16 個・S-1 の間隔（dump_t の差 10,000 × 512 ビート・frame の差・k の連続）OK・
+S-2 下位 2 bit 0・振り切れ 0・電力 ≒ −12.5 dBFS（V2-b の STATUS の tp_dbfs と同じ入力）。陽性対照: RUN の間の SNAP は ERR STATE
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -586,7 +596,9 @@ T_raw = RAW の SNAP の DUMP_T ＋ サンプルの添字 // 16。T_slice = K_F 
 - [x] Vivado サーバで `make sim-wds`（2026-10-17）: wds 通過・wds-p は D_S +1 で落ちるべきところで落ちた（作業用の環境と同じ）
 - [x] 手順 4f: F-2 の道具 `widef2.py`（(a) RAW ＋ 陽性対照 (p)・`--combine`）
 - [ ] F-2 の実機（配線 P、2 回）→ timebase.CAL[0x0023_0100]
-- [ ] 後で: Wide の SNAP（RAW の流れ）。F-2（1PPS の配線）。H-1 の掃引の道具。タイミングの余裕
+- [x] 手順 4g: Wide の SNAP（WideBackend が RAW の流れで _snap_ring、test_fake widesnap 通過）
+- [ ] Wide の SNAP の実機
+- [ ] 後で: F-2（1PPS の配線）。H-1 の掃引の道具。タイミングの余裕
 
 ## 公開について
 

@@ -205,8 +205,19 @@ t_widep() {   # proj023 陽性対照: B 4 の流れ 1（空）に s0 を書く�
   judge $(echo "$r1" | grep -q "^ERR" && echo "$r2" | grep -q "^ERR" && echo "$r3" | grep -q "^ERR" && echo 1 || echo 0) "範囲の外の s0・B 3・コアの s0 が ERR（$r1 / $r2 / $r3）"
 }
 
+t_widesnap() {  # proj023 4g: Wide の SNAP（IDLE で ADC_B を 4 個）→ SNAP 4・EVENT SNAP / SNAP_END。陽性対照: RUN の間の SNAP は ERR STATE
+  echo "== widesnap"; srv widesnap --wide
+  local r1=$(ctl "SNAP adc=B n=4 every=20") r2=$(ctl "START n=0" "SNAP adc=A n=1" "STOP")
+  ctl "SEND ON" > /dev/null
+  rcv --seconds 4 --json "$OUT/widesnap.json" > "$OUT/widesnap.recv.log"
+  local sn=$(js "$OUT/widesnap.json" snap)
+  stop_srv
+  judge $([ "$sn" = 4 ] && echo "$r1" | grep -q "^OK n=4" && echo "$r2" | grep -q "ERR STATE" && grep -q "SNAP_END" "$OUT/widesnap.recv.log" && echo 1 || echo 0) \
+    "SNAP $sn（期待 4）・応答 $(echo $r1 | tr '\n' ' ')・RUN の間の SNAP $(echo "$r2" | grep -o 'ERR STATE' | head -1)"
+}
+
 case "${1:-all}" in
-  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1; t_load; t_tpjump; t_idle; t_wide; t_widep ;;
+  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1; t_load; t_tpjump; t_idle; t_wide; t_widep; t_widesnap ;;
   *) "t_$1" ;;
 esac
 if [ $NG = 0 ]; then echo "test_fake: 全部通過"; else echo "test_fake: NG $NG 件"; exit 1; fi

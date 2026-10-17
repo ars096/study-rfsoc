@@ -19,7 +19,7 @@ proj023 手順 4d: **SAM45-Wide（BIT_KIND 1）の裏 WideBackend**（`--wide`�
   specd が tint / BASE 個を束ねる（Bundler はそのまま。r = 2·G は H-3 の V2-f で見た式の定数）。SPEC は s45proto v2 の kind 2（SLICE）:
   ns の欄 = log2 B、中身は IF の昇順（流れの ch の逆順）、if_mhz = 送る 2047 番目の ch の IF（DDC と同じく IF = if_mhz ＋ (i − 2047)·df）。
   utc_ns = beat_utc(dump_t) − adc_to_core − (D_S ＋ 1.5·L)、L = 2048。**D_S = 0**（手順 4e の sim-wds: SLICE と RAW は同じサンプルに同じ T を付ける）。
-  SNAP（RAW の流れ）はまだ移していない
+  SNAP は RAW の流れ（コア 0 の s 2）で、SAM45-Fine と同じ HwBackend._snap_ring（proj023 4g）
 """
 import collections
 import gc
@@ -876,6 +876,12 @@ class WideBackend(HwBackend):
         self.amap = {c.adc: i for i, c in enumerate(self.cores)}
         self.q = [collections.deque() for _ in self.wins]
         self.raws = [st for c in self.cores for st in c.raw()]
+        # proj023 4g: SNAP は RAW の流れ（コア 0 の s 2、入口は axis_sel4 で 4 ADC から選ぶ）。HwBackend._snap_ring をそのまま使う
+        #   （SRC → WRST・N_ACC・N_DUMP・REC_CTRL = ALL | SNAP・RUN、SNAP のレコードを集める。番地と意味は SAM45-Fine の RAW と同じ）
+        self.full = SC.snap_stream(self.cores)
+        if self.full.kind != SC.KIND_RAW:
+            raise RuntimeError("RAW の流れが無い（SNAP を取れない）")
+        self.fkey = (self.full.core.adc, self.full.s)
         self.log(f"リング: BASE {self.ring.base:#x} / SIZE {self.ring.size}（Wide: SLICE {len(self.wins)} 本）")
 
     def _rec_off(self):
@@ -982,7 +988,8 @@ class WideBackend(HwBackend):
         return dict(run_t_bad=bad)
 
     def snap(self, adc, n, nacc, timeout=5.0):
-        raise RuntimeError("Wide の SNAP（RAW の流れ）はまだ移していない")
+        """proj023 4g: RAW の流れで（IDLE のときだけ。Acq._snap が見る）"""
+        return self._snap_ring(adc, n, nacc, timeout)
 
     def stop(self):
         SC = self.SC

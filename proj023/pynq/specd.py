@@ -15,7 +15,7 @@
   SEND ON [from=oldest|now] | SEND OFF | CLEAR | BYE | HELP | SHUTDOWN confirm=1（サーバーを止める） |
   SNAP adc=A|B|C|D [n=1] [every=20]（proj019: ADC の生サンプル 8192 個 = 2 µs を n 個、every ms おき。IDLE のときだけ。記録は T_SNAP）
 proj023 4d: `--wide`（または bits.json の項目に "kind": "wide"）で SAM45-Wide の .bit（SLICE の流れ 8 本）。SET のキーは
-  tint・fmt・cfg・A.b（束ね B 1/2/4、コアで 1 つ）・A.shift（コアで 1 つ）・A0.s0（流れの最初の ch）・all.b・all.shift。SNAP はまだ無い
+  tint・fmt・cfg・A.b（束ね B 1/2/4、コアで 1 つ）・A.shift（コアで 1 つ）・A0.s0（流れの最初の ch）・all.b・all.shift。SNAP は RAW の流れ（SAM45-Fine と同じ命令）
 proj021 2-3d: BITS（bits.json の許す bit の一覧）| LOAD bit=<名前>（IDLE のときだけ。取得のプロセスを新しい bit で起こし直す。
   制御・データの口と溜まりは保つ。データの口に EVENT LOAD を出す）
 データの口（既定 51001、同時に 1 接続）: s45proto の記録を続けて送る。SEND ON の間だけ。
