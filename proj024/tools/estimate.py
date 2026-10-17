@@ -13,8 +13,7 @@
 目安（DSP ≦ 75 %・BRAM ≦ 80 %・URAM ≦ 90 %・LUT ≦ 65 %・FF ≦ 80 %）に入るものを並べる。
 LUT の目安は proj022 の 70 % から 65 % に下げた（SAM45-Wide は 59.8 % で `-1` の余裕が +0.001〜0.04 ns しかなかった）。
 
-**仮の値（S-1 の survey で置き換える）**: レーン FFT 1 個の資源（FFT_IP の表）。2048 点だけが実測（proj023 のビルド 11 の
-lane_fft_w、固定長・自然順・入力 15 bit）で、4096〜16384 点と bit 反転順は外挿。**BRAM の行が律速を決めるので、外挿のまま結論にしない**。
+レーン FFT 1 個の資源（FFT_IP の表）は S-1 の survey の実測（2026-10-17）。その前は外挿の仮の値だった（README の E-1 の「S-1 の前」）。
 
 使い方: python3 estimate.py [--design O4|O2|O1|R|all] [--all] [--fft "4096,nat,30,3320,7000,15" ...]
 """
@@ -27,19 +26,18 @@ LIMIT = dict(DSP=0.75, BRAM=0.80, URAM=0.90, LUT=0.65, FF=0.80)
 LANES = 16
 XW = 14
 
-# レーン FFT 1 個（realtime・unscaled・入力 15 bit・use_mults_resources・use_luts）。(点数, 出力順) → DSP, LUT, FF, BRAM
-#   2048 nat: proj023 ビルド 11 の実測（lane_fft_w × 64 の 1 個ぶん）
-#   外挿: 長さ 2 倍ごとに DSP +3（proj022 S-1: 512 → 2048 で +6）・LUT +330・FF +760（512 → 2048 の差の半分）
-#         BRAM（自然順）は記憶 ∝ N（2048 の 8 を 0.9 倍の線形で）。bit 反転順は出口の並べ替え（N × 54 bit）を引いた値
+# レーン FFT 1 個（固定長・realtime・unscaled・入力 15 bit・use_mults_resources・use_luts）。(点数, 出力順) → DSP, LUT, FF, BRAM
+#   **S-1 の survey の実測**（2026-10-17、runs/survey_s1.txt）。DSP・BRAM は OOC のまま。LUT・FF は OOC 単体が本番より多めに出るので、
+#   物差し（2048 点・自然順 = proj023 の lane_fft_w）の比で本番の大きさに直した: LUT × 2993 / 3157・FF × 6237 / 6343
 FFT_IP = {
     (2048, "nat"): (27, 2993, 6237, 8),
-    (4096, "nat"): (30, 3320, 7000, 15),
-    (8192, "nat"): (33, 3650, 7760, 29),
-    (16384, "nat"): (36, 3980, 8520, 57),
-    (2048, "rev"): (27, 2850, 6000, 5),
-    (4096, "rev"): (30, 3170, 6750, 9),
-    (8192, "rev"): (33, 3500, 7500, 17),
-    (16384, "rev"): (36, 3830, 8250, 33),
+    (2048, "rev"): (27, 2912, 5988, 5),
+    (4096, "nat"): (27, 3365, 6820, 13.5),
+    (4096, "rev"): (27, 3256, 6556, 7),
+    (8192, "nat"): (33, 3896, 7814, 26),
+    (8192, "rev"): (33, 3751, 7534, 13),
+    (16384, "nat"): (33, 4348, 8446, 48.5),
+    (16384, "rev"): (33, 4149, 8150, 21.5),
 }
 
 # コア 1 個の残り（レーン FFT・メモリの置き場を選ぶ部品を除く）。proj023 ビルド 11 の実測から:
@@ -215,7 +213,7 @@ def run(dname, show_all):
             break
     FFT_IP[key] = keep
     print(f"  感度: PFB あり・bit 反転順で目安に入るのは、レーン FFT（{d['M']} 点）1 個の "
-          + (f"BRAM ≦ {lim:g} のとき（今の仮の値 {keep[3]:g}）" if lim is not None
+          + (f"BRAM ≦ {lim:g} のとき（今の値 {keep[3]:g}）" if lim is not None
              else "BRAM がいくつでも入らない（BRAM 以外が律速）"))
     print()
     return n_ok
@@ -224,7 +222,7 @@ def run(dname, show_all):
 def mem_table():
     """記憶の量（Mbit、割り付けの前）。どこが重いかを先に見る"""
     print("記憶の量（Mbit、割り付けの前）。デバイスは BRAM 38.9・URAM 23.6、計 62.5 Mbit")
-    print(f"  {'':4s} {'積分器 64b':>10s} {'48b':>6s} {'履歴':>6s} {'係数(表)':>9s} {'tw(表)':>7s} {'FFT IP(仮)':>11s}")
+    print(f"  {'':4s} {'積分器 64b':>10s} {'48b':>6s} {'履歴':>6s} {'係数(表)':>9s} {'tw(表)':>7s} {'FFT IP(自然順)':>11s}")
     for name, d in DESIGNS.items():
         M, nc = d["M"], d["ncore"]
         acc64 = nc * 2 * 8 * M * 64 / 1e6
@@ -249,7 +247,7 @@ def main():
         n, o, *v = s.split(",")
         FFT_IP[(int(n), o)] = tuple(float(x) for x in v)
     print("レーン FFT 1 個（DSP・LUT・FF・BRAM）: " + "  ".join(f"{n}{'n' if o == 'nat' else 'r'} {v}" for (n, o), v in sorted(FFT_IP.items())))
-    print("  （2048 自然順だけが実測。ほかは外挿の仮の値 → S-1 の survey で置き換える）")
+    print("  （S-1 の survey の実測。LUT・FF は物差しの比で本番の大きさに直した）" if not a.fft else "  （--fft で置き換えた値を含む）")
     print()
     mem_table()
     for dn in (DESIGNS if a.design == "all" else [a.design]):
