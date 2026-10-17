@@ -10,7 +10,7 @@ VVP           ?= vvp
 # survey の OOC 合成を同時に走らせる数（9 個）
 JOBS ?= 9
 
-.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane sim-g21a clean
+.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane sim-g21a sim-g21s clean
 
 # 模型（numpy だけ）。M-1〜M-6。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -118,6 +118,22 @@ sim-g21a:
 	done
 	@grep -q '結果: 全部通過' $(SIMDIR)/g21a_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21a_err/check.log \
 	  && echo "sim-g21a: 全部通過（陽性対照は落ちた）" || (echo "sim-g21a: NG"; exit 1)
+
+# 2c. g21_spec（分光の本体）。ふつう（流し始めの tready の下げあり）と陽性対照（-DIPQ_POSCTL: 待ち行列なし。落ちるべき）
+G21S_RTL := src/common/cmul.v src/common/dft16.v src/g21/g21_coef.v src/g21/g21_pfb_core.v src/g21/g21_pfb.v \
+            src/g21/g21_tw.v src/g21/g21_chain.v src/g21/g21_acc.v src/g21/g21_spec.v sim/lane_fft_g21_model.v sim/tb_g21_spec.v
+sim-g21s:
+	@o0=$(SIMDIR)/g21s_in; mkdir -p $$o0; $(PYTHON) sim/check_g21.py spec-gen $$o0; \
+	for v in normal ipq; do \
+	  o=$(SIMDIR)/g21s_$$v; mkdir -p $$o; ln -sf ../g21s_in/x.hex $$o/x.hex; d="-DFFT_STALL_AT=3"; \
+	  [ $$v = ipq ] && d="$$d -DIPQ_POSCTL"; \
+	  $(IVERILOG) -g2005 $$d -DSHIFT=4 -DOUT=\"$$o\" -DLO=\"src/g21/g21_coef_lo.hex\" -DHI=\"src/g21/g21_coef_hi.hex\" \
+	    -DTA=\"src/g21/g21_tw_a.hex\" -DTB=\"src/g21/g21_tw_b.hex\" -o $$o/tb $(G21S_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	  $(PYTHON) sim/check_g21.py spec $$o $$o/tb.log 4 > $$o/check.log 2>&1; \
+	  printf '%-14s %s\n' "g21s_$$v" "$$(grep '結果:' $$o/check.log || echo '結果の行が無い')"; \
+	done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g21s_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21s_ipq/check.log \
+	  && echo "sim-g21s: 全部通過（陽性対照は落ちた）" || (echo "sim-g21s: NG"; exit 1)
 
 clean:
 	rm -rf build-survey build-s2 build-gen build-sim .Xil *.jou *.log

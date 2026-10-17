@@ -9,6 +9,8 @@
     python3 sim/check_g21.py chain-gen <sim の出力ディレクトリ>   （yre.hex・yim.hex を書く）
     python3 sim/check_g21.py lane-gen <sim の出力ディレクトリ>    （lx.hex を書く）
     python3 sim/check_g21.py acc <sim の出力ディレクトリ>
+    python3 sim/check_g21.py spec-gen <sim の出力ディレクトリ>    （x.hex を書く）
+    python3 sim/check_g21.py spec <sim の出力ディレクトリ> <tb のログ> <SHIFT>
     python3 sim/check_g21.py lane <sim の出力ディレクトリ> <tb のログ> <tready の下げを入れたか 0|1>
     python3 sim/check_g21.py chain <sim の出力ディレクトリ> <tb のログ> <SHIFT>
 成否は最後の「結果:」の行で読む（make の成功を信用しない）。
@@ -21,6 +23,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "model"))
 import g21_fixed as F  # noqa: E402
+from g2_model import core_fft, design, pfb_float  # noqa: E402
 
 
 def sx(v, w):
@@ -339,10 +342,126 @@ def acc(outdir):
     return ok
 
 
+SPEC_NB = 10 * 16384
+
+
+def spec_x():
+    """2c の刺激: T のビートごとの 16 サンプル（int、長さ SPEC_NB·16）。CW 100（ch 40000）＋ 雑音 σ 100"""
+    rng = np.random.default_rng(3)
+    n = np.arange(SPEC_NB * 16)
+    return np.clip(np.round(100 * np.cos(2 * np.pi * 40000 * n / F.N) + rng.normal(0, 100, n.size)), -8192, 8191).astype(np.int64)
+
+
+def spec_gen(outdir):
+    os.makedirs(outdir, exist_ok=True)
+    x = spec_x().reshape(-1, 16)
+    with open(os.path.join(outdir, "x.hex"), "w") as fo:
+        for row in x:
+            fo.write("%064x\n" % _pack([(int(v) << 2) & 0xFFFF for v in row], 16))
+
+
+def spec(outdir, tblog, shift):
+    import re as _re
+    log = open(tblog, encoding="utf-8", errors="replace").read()
+    m = _re.search(r"ダンプ (\d+)・flags (\w+)・SHIFT (\d+)・ipq (\w+)（待たされた (\d+)）・f_first (\d+)・rd の不一致 (\d+)", log)
+    if not m:
+        print("check spec: tb のログに結果の行が無い（時間切れか途中で落ちた）")
+        print("結果: 不合格")
+        return False
+    ndump, flags, c_shift, ipq, nstall, f_first, nrd = (int(m.group(1)), int(m.group(2), 16), int(m.group(3)), m.group(4),
+                                                         int(m.group(5)), int(m.group(6)), int(m.group(7)))
+    x = spec_x()
+    b0 = f_first * F.M                                      # PFB のフレーム 0 の最初のビート（T = 16384·f_first、K_F 0）
+    xs = x[b0 * 16:]
+    nfr = len(xs) // F.N
+    ok = True
+    # ---- A1: PFB の出口 ----
+    yref, _ = F.pfb_int(xs[: nfr * F.N], F.coef_interp())
+    rows = [l.split() for l in open(os.path.join(outdir, "y.txt"))]
+    a1bad = 0
+    for j, (ms, hx) in enumerate(rows):
+        f, mm = divmod(j, F.M)
+        if f >= nfr or int(ms) != mm:
+            a1bad += 1
+            continue
+        w = int(hx, 16)
+        got = [sx((w >> (15 * p)) & 0x7FFF, 15) for p in range(16)]
+        if got != list(yref[f, 16 * mm: 16 * mm + 16]):
+            a1bad += 1
+    print(f"check spec A1（PFB の出口）: {len(rows)} ビート（{len(rows) / F.M:.2f} フレーム）・模型と違うビート {a1bad}")
+    ok &= a1bad == 0 and len(rows) >= 7 * F.M
+    # ---- A2: IP の出口 → 鎖 → 積む ----
+    twr, twi = F.tw_prod()
+    frames = []
+    cur = None
+    br_ok = True
+    for ks, hx in (l.split() for l in open(os.path.join(outdir, "ip.txt"))):
+        k = int(ks)
+        if k == 0:
+            cur = (np.zeros((16, F.M), dtype=np.int64), np.zeros((16, F.M), dtype=np.int64), [])
+            frames.append(cur)
+        if cur is None:
+            br_ok = False
+            continue
+        w = int(hx, 16)
+        for p in range(16):
+            cur[0][p, k] = sx((w >> (64 * p)) & ((1 << 32) - 1), 32)
+            cur[1][p, k] = sx((w >> (64 * p + 32)) & ((1 << 32) - 1), 32)
+        cur[2].append(k)
+    br = list(F.bitrev(np.arange(F.M), 14))
+    full = [fr for fr in frames if fr[2] == br]
+    print(f"check spec A2: IP の出口のフレーム {len(frames)}（bit 反転順で揃った {len(full)}）")
+    lo, hi = -(1 << 17), (1 << 17) - 1
+    pw_fr, sat_fr = [], []
+    for Yr, Yi, _ in frames:
+        Zr, Zi = F.chain_Y(Yr, Yi, twr, twi)
+        qr, qi = Zr >> shift, Zi >> shift
+        sat = (qr < lo) | (qr > hi) | (qi < lo) | (qi > hi)
+        qr, qi = np.clip(qr, lo, hi), np.clip(qi, lo, hi)
+        pw_fr.append(qr * qr + qi * qi)
+        sat_fr.append(int(sat.sum()))
+    # ---- B: 浮動小数点の PFB ＋ FFT ----
+    yfl = pfb_float(xs[: nfr * F.N].astype(np.float64), design(F.N), F.N)
+    for dname in ("dump1.txt", "dump2.txt"):
+        path = os.path.join(outdir, dname)
+        if not os.path.exists(path):
+            print(f"check spec: {dname} が無い"); ok = False; continue
+        lines = open(path).read().split("\n")
+        hd = dict(zip(lines[0].split()[1::2], [int(v) for v in lines[0].split()[2::2]]))
+        got = np.zeros((8, F.M), dtype=object)
+        for k, hx in enumerate(lines[1:1 + F.M]):
+            w = int(hx, 16)
+            for b in range(8):
+                got[b, k] = (w >> (48 * b)) & ((1 << 48) - 1)
+        js = [hd["df0"] + i - f_first for i in range(hd["dn"])]
+        exp = sum(pw_fr[j].astype(object) for j in js)
+        esat = sum(sat_fr[j] for j in js)
+        nbad = int(np.sum(got != exp))
+        # B: 電力 ≒ |X|² / (16·2^SHIFT)²
+        fx = sum(np.abs(core_fft(yfl[j])) ** 2 for j in js) / (16.0 * 2 ** shift) ** 2
+        gc = np.array([float(got[c >> 14, c & (F.M - 1)]) for c in range(F.N // 2)])
+        cw = 10 * np.log10(gc[40000] / fx[40000])
+        mask = np.abs(np.arange(F.N // 2) - 40000) > 3
+        mask[:8] = False
+        fl = np.median(gc[mask]) / np.median(fx[mask])
+        print(f"check spec {dname}: seq {hd['seq']}・dk {hd['dk']}・df0 {hd['df0']}・dn {hd['dn']}・面 {hd['plane']}・"
+              f"A2 模型と違う ch {nbad} / {8 * F.M}・dsat {hd['dsat']}（模型 {esat}）・B: CW の ch {cw:+.3f} dB・床の中央値の比 {fl:.4f}")
+        ok &= nbad == 0 and hd["dsat"] == esat and hd["dn"] == 2 and abs(cw) < 0.05 and abs(fl - 1) < 0.02
+    print(f"check spec: ダンプ {ndump}・flags {flags:02x}・SHIFT {c_shift}・IP に待たされた {nstall} クロック・"
+          f"f_first {f_first}・読み出しの口の不一致 {nrd}")
+    ok &= ndump == 2 and flags == 0 and c_shift == shift and nrd == 0 and br_ok
+    print("結果: 全部通過" if ok else "結果: 不合格")
+    return ok
+
+
 if __name__ == "__main__":
     what = sys.argv[1]
     if what == "coef":
         sys.exit(0 if coef(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None) else 1)
+    if what == "spec-gen":
+        spec_gen(sys.argv[2]); sys.exit(0)
+    if what == "spec":
+        sys.exit(0 if spec(sys.argv[2], sys.argv[3], int(sys.argv[4])) else 1)
     if what == "acc":
         sys.exit(0 if acc(sys.argv[2]) else 1)
     if what == "lane-gen":
