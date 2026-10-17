@@ -8,7 +8,7 @@ PYTHON        ?= python3
 # survey の OOC 合成を同時に走らせる数（9 個）
 JOBS ?= 9
 
-.PHONY: model estimate survey gen clean
+.PHONY: model estimate survey s2 gen clean
 
 # 模型（numpy だけ）。M-1〜M-6。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -19,6 +19,12 @@ model:
 estimate:
 	mkdir -p runs
 	$(PYTHON) tools/estimate.py $(EST_ARGS) | tee runs/estimate.log
+
+# Vivado サーバ: レーン FFT 1 個の OOC の配置配線（S-2）。-1・256 MHz で閉じるか。結果は build-s2/s2.txt（数十分〜1 時間）
+# proj023 のビルドと重ならないときに回す
+s2:
+	mkdir -p build-s2
+	$(VIVADO) -mode batch -nojournal -log build-s2/vivado.log -source tools/ip_impl.tcl -tclargs 4
 
 # 2G-1 の ROM の中身（model/g21_fixed.py の定義）を build-gen/ に書き、読み返して模型と照らす（M-8 の続き）
 gen:
@@ -31,4 +37,4 @@ survey:
 	$(VIVADO) -mode batch -nojournal -log build-survey/vivado.log -source tools/ip_survey.tcl -tclargs $(JOBS)
 
 clean:
-	rm -rf build-survey build-gen .Xil *.jou *.log
+	rm -rf build-survey build-s2 build-gen .Xil *.jou *.log
