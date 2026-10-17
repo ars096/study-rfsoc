@@ -425,6 +425,30 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
   D1 は `--s0` に書かなかったので道具の既定 S0 0 になり、D0 と同じ帯域を出した（道具の既定どおり。D1 にも 4096 を書けば A と同じ形）
 - **H-4（`--switch 30`、N_ACC 100・N_DUMP 3）: 30 回の切り替えで NG 0 件**。B は 1 → 2 → 4 をコアごとにずらして回し、流れは B 4 のコアが 1 本になる回で 6 本・ほかは 7 本、毎回のレコードの頭（log2 NFFT・log2 B・S0）・SEQ の連続・DROP_CNT・REC_LATE が全部 OK（判定 H-4 通過）
 
+### 手順 4c: H-3（PL だけで先に、2026-10-17 西村さんが決めた）
+
+**範囲**: specd を使わず、ボードの道具 `pynq/wide_v2.py` で V2-a 相当・V2-e・V2-f。
+- **V2-b（specd の 30 分）は後回し**: s45acq・specd・s45proto を SLICE に移してから（今の specd は SAM45-Fine の DDC・FULL の流れしか知らない）
+- **V2-c は H-3 から外す**: proj021 の V2-c は窓（DDC）の W-G の golden の比べで、Wide には窓が無い。SLICE の中身が正しいことは、
+  sim の A2（模型と bit 単位）・実機の H-2（ch → IF）・雑音の 7 本で見ている。Wide の golden（4096 ch × B の比べ）が要るなら、H-1 の掃引の道具と一緒に別の項目として立てる
+
+**V2-a 相当**（`--v2a`）: proj021 の V2-a は specd の 10.24 ms と 40.96 ms の比べだった。ここでは **PL の積分器そのもの**を比べる。
+同じ ADC の流れ 0・1 を同じ B・同じ S0 にし、流れ 0 を N_ACC 1280（10.24 ms）、流れ 1 を N_ACC 5120（40.96 ms）で、**同じ START_AT（ARM_RUN、tint 40.96 ms の格子）**から RUN。
+流れ 1 のダンプ j と、DUMP_F0 が F0 + 5120·j + 1280·q（q = 0..3）の流れ 0 の 4 個の和が**全 ch で整数として一致**。陽性対照: 1 個ずらした和（q = 1..4）は一致しない。
+既定は A・C が B 1、B・D が B 2（B 4 は流れ 1 が空なので入らない）。ほかに DUMP_T = K_F ＋ 2048·DUMP_F0・FLAGS 0・DUMP_SAT 0・SEQ の連続・REC_LATE・DROP_CNT
+- 予言: 4 ADC とも 10 組が全 ch 一致・陽性対照 10/10 で不一致・2 本の流れの F0 が同じ
+
+**V2-e**（`--v2e`）: `plring.py --tpcompare` と同じ関数（core_cmn は win_core の TP を番地・意味を変えずに写した。手順 3a）。
+TP のレコードの個 = AXI4-Lite の TP のリングの個（bit 単位）・SEQ の飛び 0・DUMP_T = ANCH_T ＋ (DUMP_F0 − ANCH_F)·512
+- 予言: 4 ADC とも不一致 0（TP の作りは proj021 と同じなので、Wide で変わる理由が無い）
+
+**V2-f**（`--v2f`）: 全部の流れ（既定 A B 1・B B 2・C B 4・D B 1 の 7 本）を N_ACC 1280（= BASE）・N_DUMP 0 で、START_AT を tint の格子に置いて RUN。
+ダンプごとに r = DUMP_T mod BASE。見るもの: RUN の中で r が 1 つ・m の飛び 0・SEQ の飛び 0・DUMP_T の式・RUN の間で同じ。
+- **予言: r = 2·G = 1,048,576（全部の流れ・全部の RUN・Overlay をまたいでも）**。RUN は START_AT ＋ 1 のビートで、そのときのフレームの番号 fa = START_AT / 2048（K_F 0）、
+  F0 = (⌊fa / 256⌋ + 2)·256 = fa ＋ 512 フレーム → DUMP_T = START_AT ＋ 2·G。proj021 の r（742・517・948、Overlay ごとの実測）と違い、**式で決まる**（D-2）
+- 陽性対照（`--posctl`）: 最後に START_AT を格子 ＋ G にずらした RUN を足す → r = 3·G になり、「RUN の間で同じ」の比べが違うと言うこと
+- Overlay をまたぐのは、道具を 3 回続けて回し（毎回 Overlay を読み直す）、最後の行の r を並べる
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -478,7 +502,9 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
   (B − 1)/(2B) を落とせば 0.25・0.375 ch ずれ、境目の比は 23・70 dB になるところ。**B 4 は CW の高さの線（20・17 dB）で NG と出たが、線の置き方の誤り**:
   束ねた ch の雑音は B に比例して増え、さらに 3478 MHz は BPF の通過域の中。雑音だけなら 0 dB 前後なので、線を 10・7 dB に直した（判定 H-2 は 3 つの B で通過）
   - 直した線で B 4 を回し直した: CW 16.1・13.3 dB で OK、最大の ch 1234、境目 −0.04 dB（道具の判定も全部 OK）
-- [ ] 手順 4b の続き: H-2（`--tone-ch`、SG）。F-2 → H-3。H-1 の掃引の道具
+- [x] 手順 4c: H-3 の道具 `wide_v2.py`（V2-a 相当・V2-e・V2-f、selftest 通過）。V2-b は specd を SLICE に移してから、V2-c は外した（上の「手順 4c」）
+- [ ] H-3 の実機（V2-a 相当・V2-e・V2-f ＋ 陽性対照・Overlay 3 回）
+- [ ] 後で: s45acq・specd・s45proto を SLICE に → V2-b。F-2（1PPS の配線）。H-1 の掃引の道具。タイミングの余裕
 
 ## 公開について
 
