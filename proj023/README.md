@@ -548,8 +548,8 @@ S-2 下位 2 bit 0・振り切れ 0・電力 ≒ −12.5 dBFS（V2-b の STATUS 
 | 項目 | 値 |
 |---|---|
 | bit | `build-PE/proj023.bit` 34,437,476 B |
-| bit の sha256 | `473911e59baa87fc8bff43d15e4791bd90d9cfd0cf2d4900898bd0218a3c5178`（Vivado サーバの build-PE/。ボードの写しと同じかは、次にボードに触るときに sha256 で確かめる） |
-| hwh の sha256 | `32759af1f59ff04fc6041977442a2029abc6c056b6aaa67ebf48b6c5a7bf769a` |
+| bit の sha256 | `473911e59baa87fc8bff43d15e4791bd90d9cfd0cf2d4900898bd0218a3c5178`（Vivado サーバの build-PE/ と**ボードの写しで同じ**、2026-10-17 に確かめた） |
+| hwh の sha256 | `32759af1f59ff04fc6041977442a2029abc6c056b6aaa67ebf48b6c5a7bf769a`（Vivado サーバ・ボードで同じ） |
 | ID | BIT_KIND 1・BIT_REV 1・PROJ 0x0023_0100。BUILD 0x50c0000i（コア i） |
 | WNS / WHS | +0.001 ns / +0.010 ns |
 
