@@ -477,6 +477,17 @@ TP のレコードの個 = AXI4-Lite の TP のリングの個（bit 単位）�
   （proj021 は 8 窓 × 10.24 ms で 1 周 15〜17 ms。ここは記録を出すのが 40.96 ms ごと）
 - 陽性対照（`--posctl-ring-stall 8`、40 s）: 受け側 kgap 7（7 本 × 1 回）・tdev 0、STATUS の bdrop > 0・pl_drop > 0
 
+**V2-b の実機（2026-10-17、ビルド 11 回目の .bit、7 本・tint 40.96 ms・float32、30 分）: 通過**
+- 受け側: SPEC 308,210（7 本 × 44,030 = 1,803.5 s。受けを始める前の溜まりの分を含む）・TP 176,121（4 × 44,030）・5.07 GB、
+  **CRC・欠け・説明のない欠け・dup・kgap・tdev・tp_gap 0**、記録は全部 版 2、health・flags・sat 0
+- STATUS（STOP の直前）: **miss・bdrop・r_bad・pl_drop・pl_crc・pl_err・tp_lost・tp_bad・tp_rec_lost・drop 0**。
+  **bund_r は 7 本とも 1,048,576（2·G、予言どおり。H-3 の V2-f と同じ）**、C1（B 4 の空の流れ）は「-」。pl_dumps 1,232,959（7 × 176,137 ≒ 4 × 44,034）
+- 1 周: loop_p99 6.9 ms・loop_max 22.5 ms（周 0、RUN の最初）・**loop_slow 0**（275,555 周）。pl_peak 694,656 B（リング 32 MiB の 2 %）
+- **予言の外れ: 錨が打てた**（time_ok 1・forced 0・utc_ns が入った）。`force=1` は要らなかった。1PPS がボードに来ている
+  （START の EVENT の utc_ns は 2026-10-17T01:57:53Z）。ただし proj023 の CAL は未較正（adc_to_core・pps_det）で、SLICE の D_S も未較正なので、utc_ns の絶対値は F-2 の前は ±数 µs の目安
+- TP_JUMP 2 回（C・D の同じ区切り、−0.019 dB、σ 0.003 dB）: proj021 の PS-2 と同じ「分配器より前の入力の小さな山」の型（2 ADC で同時）
+- 陽性対照（`--posctl-ring-stall 8`）はまだ
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -533,7 +544,8 @@ TP のレコードの個 = AXI4-Lite の TP のリングの個（bit 単位）�
 - [x] 手順 4c: H-3 の道具 `wide_v2.py`（V2-a 相当・V2-e・V2-f、selftest 通過）。V2-b は specd を SLICE に移してから、V2-c は外した（上の「手順 4c」）
 - [x] H-3 の実機（PL だけ）: V2-a 相当・V2-e・V2-f と陽性対照が全部通過。r = 2·G が Overlay 4 回で同じ
 - [x] 手順 4d: s45acq・specd・specrecv・s45client を SLICE に（test_fake 15 試験通過）
-- [ ] V2-b の実機（30 分 ＋ 陽性対照）
+- [x] V2-b の実機（30 分）: 通過（欠け 0・bund_r 2·G・loop_slow 0）
+- [ ] V2-b の陽性対照（ring-stall 8）
 - [ ] 後で: Wide の SNAP（RAW の流れ）。F-2（1PPS の配線）。H-1 の掃引の道具。タイミングの余裕
 
 ## 公開について
