@@ -466,6 +466,8 @@ proj021 の PS 側（s45core・plring・timebase・gbboot）は Fine（DDC・RAW
   境目の判定は雑音だけの隣り合う 2 ch で 0 dB 前後になり OK と出た → wide.py に CW の高さの判定（中心 20 dB・境目 17 dB）を足した。
   SG のレベルを下げていくと ch 1234 の CW / 中央値は +10 dBm 36.2・+5 30.9・0 25.0・−5 14.4 dB・−10 以下で消える（線形なら −10 で 16 dB 残るはず）。
   **0 dBm より下で SG の出力が設定どおりに出ていない**疑い（ALC が外れる・unleveled）。tools/sgstat.py で段ごとの状態を読む。経路と周波数の軸は +10 dBm で 4 ADC とも ch 1234 に出て正しい
+  - **決着（sgstat.py、3941.75 MHz）**: `:STAT:QUES:POW:COND?` が +10・0・−5 dBm で 0、**−10・−20 dBm で 2（bit 1 = unleveled）**。ALC は 1、`:POW?` は設定した値を返す（読み返しでは気づけない）。−5 dBm は bit が立たないが CW は線形より 6 dB 低い（境目の付近）。配線はノイズソース → BPF 2.2〜3.8 GHz → 分配器 A ← SG、分配器 A → PATT → 分配器 B・C（4 分配）→ ADC
+  - 直したこと: sg.py が出力 ON の間は unleveled を読み、立っていれば止める（sgstat.py だけは警告で続ける）。H-2 は 0 dBm で（CW / 中央値 25 dB）。低いレベルが要るときは SG の出口に固定減衰器
 - [ ] 手順 4b の続き: H-2（`--tone-ch`、SG）。F-2 → H-3。H-1 の掃引の道具
 
 ## 公開について

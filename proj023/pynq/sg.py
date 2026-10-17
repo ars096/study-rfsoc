@@ -41,6 +41,7 @@ class SG:
         self.log(f"SG: {self.idn}")
         self._out0 = None
         self.warnings = []
+        self.allow_unleveled = False                        # True にすると unleveled でも止めずに警告だけ（sgstat.py の調べ用）
         old = self.read_errors()
         if old:
             self.log(f"SG: つないだ時点で溜まっていたエラー {len(old)} 件（消す）: " + " / ".join(old))
@@ -132,6 +133,8 @@ class SG:
             raise RuntimeError(f"SG のレベルが {got} dBm（要求 {dbm} dBm）" + (f"。SG のエラー: {' / '.join(e)}" if e else ""))
         self.check_err()
         self.log(f"SG: レベル {got:+.2f} dBm")
+        if self.output():
+            self.require_leveled()
 
     def set_output(self, on):
         if self._out0 is None:
@@ -142,6 +145,29 @@ class SG:
             raise RuntimeError("SG の出力の ON / OFF が要求と違う")
         self.check_err()
         self.log(f"SG: 出力 {'ON' if on else 'OFF'}")
+        if on:
+            self.require_leveled()
+
+    def unleveled(self):
+        """:STAT:QUES:POW:COND? の bit 1（E8257D の unleveled）。読めなければ None"""
+        try:
+            return bool(int(float(self.query(":STAT:QUES:POW:COND?"))) & 2)
+        except (socket.timeout, OSError, ValueError):
+            self.read_errors()
+            return None
+
+    def require_leveled(self):
+        """proj023 H-2（2026-10-17）: この E8257D は 3.94 GHz で −10 dBm 以下が unleveled（ALC が外れ、出力が設定どおりに出ない）。
+        設定値の読み返し（:POW?）は設定した値を返すので気づけない。CW が雑音に沈み、判定がそれらしく通る。**ON の間は必ず見る**"""
+        time.sleep(0.3)
+        u = self.unleveled()
+        if u:
+            msg = (f"SG が unleveled（:STAT:QUES:POW:COND? bit 1）: {self.power():+.2f} dBm は設定どおりに出ていない"
+                   "（レベルを上げ、SG の出口に固定減衰器を入れてその値を記録する）")
+            if self.allow_unleveled:
+                self.warnings.append(msg); self.log("WARNING: " + msg)
+            else:
+                raise RuntimeError(msg)
 
     def state(self):
         return dict(idn=self.idn, freq_hz=self.freq(), dbm=self.power(), on=self.output(), ref=self.ref,

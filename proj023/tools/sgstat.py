@@ -14,6 +14,7 @@ p.add_argument("freq", type=float)
 p.add_argument("levels", type=float, nargs="+")
 a = p.parse_args()
 s = SGM.SG(a.sg)
+s.allow_unleveled = True
 try:
     s.set_freq_mhz(a.freq)
     s.set_output(True)
