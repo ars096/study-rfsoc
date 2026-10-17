@@ -670,6 +670,26 @@ sim-wco:
 	@fail=$$(grep -L '結果: 全部通過' build-sim-logs/sim-wco*.log); \
 	  if [ -n "$$fail" ]; then echo "FAIL: $$fail"; exit 1; else echo "sim-wco: 全部通過"; fi
 
+# ---- proj023 手順 4e: SLICE の遅れ D_S（INTERFACE 5.2）。wide_s45_core に孤立したサンプルを 12 個、RAW の口は axis_sel4 の 1 段ぶん遅らせて入れ、
+#   SLICE が付ける T（IP の出口の位相とフレームのラベル）と RAW の SNAP の T を比べる。iverilog で 1 本 4 分ほど
+#   wds: 実機の配線（D_S = 0 のはず）/ wds-p: RAW の口を遅らせない（陽性対照。D_S = +1 で落ちるべき）
+WDS_RTL := src/common/wide_coef_rom.v src/common/wide_tw_rom.v src/common/wide_s45_core.v src/common/core_cmn.v src/common/tp_core.v \
+           src/common/raw_core.v src/common/rec_arb.v src/common/wide_core.v src/common/wide_spec.v src/common/wide_pfb.v src/common/wide_chain.v \
+           src/common/wide_acc.v src/common/cmul.v src/common/dft16.v src/common/rec_fr.v src/common/adc_ev.v sim/lane_fft_w_model.v sim/tb_wide_ds.v
+WDS_VARIANTS ?= wds:: wds-p:-DDS_NODELAY:posctl
+.PHONY: sim-wds
+sim-wds:
+	@mkdir -p build-sim-logs
+	@for v in $(WDS_VARIANTS); do \
+	  nm=$$(echo "$$v" | cut -d: -f1); def=$$(echo "$$v" | cut -d: -f2); pc=$$(echo "$$v" | cut -d: -f3); d=build-sim-$$nm; \
+	  ( mkdir -p $$d && \
+	    $(IVERILOG) -g2005 $$def -DOUT=\"$$d\" -DCOEF=\"$(WPFB_COEF)\" -DTWF=\"$(WCH_TW)\" -DNIMP=12 -o $$d/tb $(WDS_RTL) && \
+	    $(VVP) -n $$d/tb && $(PYTHON) sim/check_ds.py $$d $$pc ) > build-sim-logs/sim-$$nm.log 2>&1 & \
+	done; wait
+	@for f in build-sim-logs/sim-wds*.log; do printf '%-36s %s\n' "$$f" "$$(grep '結果:' $$f || echo '結果の行が無い（途中で落ちた）')"; done
+	@fail=$$(grep -L '結果: 全部通過' build-sim-logs/sim-wds*.log); \
+	  if [ -n "$$fail" ]; then echo "FAIL: $$fail"; exit 1; else echo "sim-wds: 全部通過"; fi
+
 # ---- proj023 手順 3: wide_s45_core（コアの共通 core_cmn ＋ wide_core ＋ RAW ＋ レコードの束ね）の sim ----
 # iverilog で 1 本 5 分ほど。変種は 名前:LB:S0_0:S0_1:SHIFT:定義:posctl（N_ACC 5・N_DUMP 2・格子 2^2 フレーム。RAW は N_ACC 20 フレーム × 2）
 #   ws45-b2: B 2、時刻の健全性をダンプ 1 にだけ / ws45-b4: B 4、出口をときどき止める /

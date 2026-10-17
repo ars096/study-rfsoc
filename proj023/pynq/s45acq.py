@@ -18,7 +18,7 @@ proj023 手順 4d: **SAM45-Wide（BIT_KIND 1）の裏 WideBackend**（`--wide`�
   8 本の SLICE の流れ（A0〜D1、コアごとに束ね B と流れごとの S0）。PL のダンプは BASE（10.24 ms = 1280 フレーム × 2048 ビート）で、
   specd が tint / BASE 個を束ねる（Bundler はそのまま。r = 2·G は H-3 の V2-f で見た式の定数）。SPEC は s45proto v2 の kind 2（SLICE）:
   ns の欄 = log2 B、中身は IF の昇順（流れの ch の逆順）、if_mhz = 送る 2047 番目の ch の IF（DDC と同じく IF = if_mhz ＋ (i − 2047)·df）。
-  utc_ns = beat_utc(dump_t) − adc_to_core − (D_S ＋ 1.5·L)、L = 2048。**D_S は未較正（0 として引く。INTERFACE 5.2 の表に値が無い）**。
+  utc_ns = beat_utc(dump_t) − adc_to_core − (D_S ＋ 1.5·L)、L = 2048。**D_S = 0**（手順 4e の sim-wds: SLICE と RAW は同じサンプルに同じ T を付ける）。
   SNAP（RAW の流れ）はまだ移していない
 """
 import collections
@@ -58,7 +58,7 @@ def default_settings():
 # ---- proj023: SAM45-Wide（SLICE の流れ）
 W_FS_MHZ, W_NPHYS, W_FRAME = 4096.0, 32768, 2048
 W_PL_NACC = BASE_BEATS // W_FRAME          # 1280
-W_DS_BEATS = 0                             # D_S（RTL の遅れ）。未較正
+W_DS_BEATS = 0                             # D_S（RTL の遅れ）。proj023 4e の sim-wds で 0（SLICE の T = RAW の T。adc_to_core は RAW で測る）
 W_LB = {1: 0, 2: 1, 4: 2}
 W_SID_CTRL_ARMRUN, W_CTRL_ARMWRST, W_CTRL_DISARM = 1 << 2, 1 << 13, 1 << 3
 W_FFT_N = 0x80
@@ -1404,7 +1404,7 @@ class Acq:
 
     def _spec_record_slice(self, j, m, spec, cf, h):
         """proj023: SLICE の SPEC（s45proto v2、kind 2）。ns の欄 = log2 B。中身は IF の昇順（流れの ch i の逆順）。
-        utc_ns = beat_utc(dump_t) − adc_to_core − (D_S ＋ 1.5·L)、L = 2048 ビート（D_S は未較正で 0）"""
+        utc_ns = beat_utc(dump_t) − adc_to_core − (D_S ＋ 1.5·L)、L = 2048 ビート（D_S = 0、sim-wds）"""
         adc, s = j // NW, j % NW
         utc = self.be.clock.utc_ns(m["t"], None, adc)
         if utc:

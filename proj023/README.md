@@ -491,6 +491,27 @@ TP のレコードの個 = AXI4-Lite の TP のリングの個（bit 単位）�
   BDROP は止まりの後の束 432（6 本は持っていた 1 個、再開がダンプの途中）と、D1 だけ止まりの前の束 267（持っていた 3 個: リングが満ちたのが D1 の束の途中）。
   出た束は全部 4 個ぶん（tdev 0）で、欠けは BDROP と kgap で説明される。proj021 の V2-b の陽性対照（BDROP 16 = 8 窓 × 2）と同じ型
 
+### 手順 4e: SLICE の遅れ D_S（`make sim-wds`、2026-10-17。作業用の環境で書きながら回した）
+
+**問い**: INTERFACE 5.2 の utc_ns = beat_utc(dump_t) − adc_to_core − D_eff の D_eff（SLICE）= D_S ＋ 1.5·L の D_S。
+adc_to_core は F-2 が **RAW の流れの生サンプル**で測るので、D_S = 「同じ ADC のサンプルに SLICE が付ける T − RAW が付ける T」。
+
+**RTL を読んだ予言**: 0 ビート。
+- 道: gb_dn → gb_bc（axis_broadcaster、2 本の出口は同じ遅れ）→ M00 → s45_core_i/s_axis（wide_core → wide_spec に段なし）/ M01 → full_sel（axis_sel4、**1 段**）→ s45_core_0/s_axis_full → raw_core
+- wide_spec はデータと T を同じクロックで 1 段ずつ受ける（口のビートに、そのクロックの T）。raw_core は口のビートに t_loc（1 クロック前の T）を付ける。axis_sel4 の 1 段がそれを打ち消す
+- 1.5·L: 出口のフレーム f は入力のフレーム f − 3..f を係数 c（対称、4N）で重ねる（check_wide.pfb_int、A1' で RTL と一致を確かめた模型）。c² の重心は f の頭の 1.0 フレーム前、矩形の重心は 0.5 フレーム後で、差はちょうど 1.5·L
+
+**sim**（`sim/tb_wide_ds.v`・`sim/check_ds.py`）: wide_s45_core 全体（wide_core ＋ RAW）に、0 の上の孤立したサンプル（14 bit で 8000）を 12 個。
+RAW の口には実機と同じく 1 クロック遅らせて入れ、RAW の N_ACC を 21 フレーム（SLICE の 5.25 フレーム）にして、RAW の頭の位相が SLICE のフレームの全部の位相を通るように置いた。
+T_raw = RAW の SNAP の DUMP_T ＋ サンプルの添字 // 16。T_slice = K_F ＋ 2048·g ＋ m（m は IP の出口のレーンの逆 FFT のピークの位置、g は 4 つの出口の y が模型の PFB の 4 タップと**全部一致**するフレーム）。
+陽性対照 wds-p: RAW の口を遅らせない（-DDS_NODELAY）
+
+**結果**: 予言どおり。
+- wds: 12 個とも 4 タップが模型と bit で一致・T_slice = tb が入れた T・**D_S = 0**（12 個とも）。m は 0・2046・2047 の境目と 236〜1482 を通った。**D_eff = 3072 ビート = 12 µs**。結果: 全部通過
+- wds-p: 同じ 12 個で **D_S = +1**（D_S = 0 の判定だけが落ちた）。結果: 全部通過（陽性対照が落ちるべきところで落ちた）
+- 反映: INTERFACE 5.2 の SLICE の行に D_S = 0・D_eff = 1.5·L、s45acq の W_DS_BEATS = 0 は値を変えずに「未較正」の注を外した。**utc_ns の未較正は F-2（adc_to_core）だけ**になった
+- 注意（2G・ほかの全帯域の bit）: D_S = 0 は「RAW の入口に axis_sel4 の 1 段があり、SLICE の入口には段が無い」ことで成り立つ。どちらかの入口の段数を変えたら sim-wds で出し直す
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -549,6 +570,9 @@ TP のレコードの個 = AXI4-Lite の TP のリングの個（bit 単位）�
 - [x] 手順 4d: s45acq・specd・specrecv・s45client を SLICE に（test_fake 15 試験通過）
 - [x] V2-b の実機（30 分）: 通過（欠け 0・bund_r 2·G・loop_slow 0）
 - [x] V2-b の陽性対照（ring-stall 8）: kgap 7・tdev 0・bdrop 8・r_bad 0。**H-3 は V2-c（外した）を除いて全部通過**
+- [x] 手順 4e: SLICE の D_S（sim-wds 2 本、作業用の環境で通過）: **D_S = 0・D_eff = 1.5·L = 3072 ビート**。INTERFACE 5.2 に入れた
+- [ ] Vivado サーバで `make sim-wds`
+- [ ] F-2（Wide の道具に移す・配線 P）
 - [ ] 後で: Wide の SNAP（RAW の流れ）。F-2（1PPS の配線）。H-1 の掃引の道具。タイミングの余裕
 
 ## 公開について
