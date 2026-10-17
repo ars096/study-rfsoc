@@ -512,6 +512,18 @@ T_raw = RAW の SNAP の DUMP_T ＋ サンプルの添字 // 16。T_slice = K_F 
 - 反映: INTERFACE 5.2 の SLICE の行に D_S = 0・D_eff = 1.5·L、s45acq の W_DS_BEATS = 0 は値を変えずに「未較正」の注を外した。**utc_ns の未較正は F-2（adc_to_core）だけ**になった
 - 注意（2G・ほかの全帯域の bit）: D_S = 0 は「RAW の入口に axis_sel4 の 1 段があり、SLICE の入口には段が無い」ことで成り立つ。どちらかの入口の段数を変えたら sim-wds で出し直す
 
+### 手順 4f: F-2 の道具を Wide に（`pynq/widef2.py`、2026-10-17 書いた。実機はまだ）
+
+`timetest.py --t2` は DDC の窓を前提にしている（open_all・窓 0 の (b)）ので、(a)（RAW の流れの生サンプルで 1PPS の縁）だけを写し、
+窓の (b) の代わりに**陽性対照 (p)**: 同じ手順で RAW のフレームを縁の 2 フレーム前に置き、縁が写らない（最大 / σ < 20）ことを見る（縁の見張りが何でも縁に見るものでないこと）。
+2 回（ケーブルを A↔C・B↔D に入れ替え）の `.f2.json` を `--combine` で平均し、M と判定を出す。PL なしで `--combine` と縁の検出（edge_of）を確かめた
+
+**予言**（配線 P: 1PPS を PPS Clk と ADC_A〜D に分配）:
+- (a) 4 ADC × 5 試行とも縁が見える（最大 / σ ≧ 20。proj021 は 323〜437）・1 回の中の σ ≦ 0.4 ビート（proj021 は ≦ 0.05）・2 回の差 ≦ 1 ビート（proj021 は 0.84〜0.97 で、Overlay ごとの共通の分 ≒ +0.9）
+- **M ≒ 146〜148 ns**（ギアボックス・axis_sel4・RAW の RTL は proj021 2-5 と同じ。配置が違うので ±5 ns）。タイルの向き（226 と 224 のどちらが遅いか）は予言しない（proj021 で外れた）
+- (p) 4 ADC × 5 試行とも縁が見えない
+- 結果は timebase.CAL[0x0023_0100] の adc_to_core_ns に入れ、錨の「未較正」を外す（SLICE の utc_ns の補正がこれで全部そろう）
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -571,8 +583,9 @@ T_raw = RAW の SNAP の DUMP_T ＋ サンプルの添字 // 16。T_slice = K_F 
 - [x] V2-b の実機（30 分）: 通過（欠け 0・bund_r 2·G・loop_slow 0）
 - [x] V2-b の陽性対照（ring-stall 8）: kgap 7・tdev 0・bdrop 8・r_bad 0。**H-3 は V2-c（外した）を除いて全部通過**
 - [x] 手順 4e: SLICE の D_S（sim-wds 2 本、作業用の環境で通過）: **D_S = 0・D_eff = 1.5·L = 3072 ビート**。INTERFACE 5.2 に入れた
-- [ ] Vivado サーバで `make sim-wds`
-- [ ] F-2（Wide の道具に移す・配線 P）
+- [x] Vivado サーバで `make sim-wds`（2026-10-17）: wds 通過・wds-p は D_S +1 で落ちるべきところで落ちた（作業用の環境と同じ）
+- [x] 手順 4f: F-2 の道具 `widef2.py`（(a) RAW ＋ 陽性対照 (p)・`--combine`）
+- [ ] F-2 の実機（配線 P、2 回）→ timebase.CAL[0x0023_0100]
 - [ ] 後で: Wide の SNAP（RAW の流れ）。F-2（1PPS の配線）。H-1 の掃引の道具。タイミングの余裕
 
 ## 公開について
