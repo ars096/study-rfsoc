@@ -306,8 +306,8 @@ sim は作業用のクラウドの環境の Icarus Verilog（oss-cad-suite、14.
   - 2f. build.tcl・ブロックデザイン（proj023 を写す）: コア 1 個・レーン FFT 16384 点 bit 反転順の IP・結線の照合・part の照合。最初は既定の戦略（S-2）
   - その後: 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）/ 4. 実機
 - 2 の途中で決めること（その手順の前に西村さんに）:
-  - **D-12**（2d の前）: FULL の流れの TP（INTERFACE 2.5 の 0x100〜）を、SRC で選んだ ADC の入力で測るか（SAM45-Fine の FULL と同じ形）、コアの TP（自分の ADC）だけにするか
-  - **D-13**（2e の前）: RAW の流れ（生サンプルの SNAP、F-2・specd の SNAP に使う。Wide はコア 0 に置いた）を 2G-1 にも置くか
+  - **D-12 決定（2026-10-17、西村さん）: FULL の流れの TP は SRC で選んだ ADC の入力で測る**（INTERFACE 2.5 の 0x100〜、SAM45-Fine の FULL と同じ形。proj021 2-2d）
+  - **D-13 決定（2026-10-17、西村さん）: RAW の流れを 2G-1 にも置く**（生サンプルの SNAP。F-2・specd の SNAP に使う。Wide のコア 0 と同じ形で、流れ s = 1）
 
 ### 2a. レーン FFT 16384 点の行動模型 — 予言（走らせる前に書く、2026-10-17）
 
