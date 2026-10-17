@@ -534,6 +534,12 @@ WideBackend は open で RAW の流れを `full`・`fkey` に持つ（RAW が無
 **実機の予言**（specd `--wide`、IDLE で `SNAP adc=A..D n=16 every=20`、受け側 `s45snap.py`）: 4 ADC とも 16 個・S-1 の間隔（dump_t の差 10,000 × 512 ビート・frame の差・k の連続）OK・
 S-2 下位 2 bit 0・振り切れ 0・電力 ≒ −12.5 dBFS（V2-b の STATUS の tp_dbfs と同じ入力）。陽性対照: RUN の間の SNAP は ERR STATE
 
+**実機（2026-10-17、ビルド 11 回目の .bit、specd `--wide`、`s45snap.py --adc ABCD --n 16 --every 20`）: 通過（予言どおり）**
+- 4 ADC とも 16 個・S-1 の間隔（dump_t・frame）True/True・UTC の刻み 20,000,000 ns ちょうど（錨あり）・振り切れ 0
+- 電力 −12.42〜−12.47 dBFS（予言 ≒ −12.5、V2-b の tp_dbfs −12.47〜−12.54 と同じ入力）・尖度 2.04〜2.06（雑音帯の入力。ガウスの 3 より小さいのは BPF の帯域の雑音 ＋ CW の混ざりの型で、proj021 と同じ読みは未確認）・DC −3.3〜+0.9 LSB
+- 受け側の照合: SNAP 64・CRC・欠け・dup 0、記録は全部 版 2
+- 陽性対照: START の直後（ARMED）の `SNAP adc=A n=1` は `ERR STATE ARMED の間は SNAP できない`
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -597,7 +603,7 @@ S-2 下位 2 bit 0・振り切れ 0・電力 ≒ −12.5 dBFS（V2-b の STATUS 
 - [x] 手順 4f: F-2 の道具 `widef2.py`（(a) RAW ＋ 陽性対照 (p)・`--combine`）
 - [ ] F-2 の実機（配線 P、2 回）→ timebase.CAL[0x0023_0100]
 - [x] 手順 4g: Wide の SNAP（WideBackend が RAW の流れで _snap_ring、test_fake widesnap 通過）
-- [ ] Wide の SNAP の実機
+- [x] Wide の SNAP の実機（2026-10-17）: 4 ADC × 16 個とも OK・陽性対照（ARMED の間の SNAP）は ERR STATE
 - [ ] 後で: F-2（1PPS の配線）。H-1 の掃引の道具。タイミングの余裕
 
 ## 公開について
