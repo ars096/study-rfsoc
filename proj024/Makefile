@@ -10,7 +10,7 @@ VVP           ?= vvp
 # survey の OOC 合成を同時に走らせる数（9 個）
 JOBS ?= 9
 
-.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p clean
+.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p sim-g21ch clean
 
 # 模型（numpy だけ）。M-1〜M-6。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -79,6 +79,22 @@ sim-g21p:
 	@grep -q '結果: 全部通過' $(SIMDIR)/g21p_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21p_dlyerr/check.log \
 	  && grep -q '結果: 不合格' $(SIMDIR)/g21p_nomask/check.log \
 	  && echo "sim-g21p: 全部通過（陽性対照 2 本は落ちた）" || (echo "sim-g21p: NG"; exit 1)
+
+# 1d. g21_tw ＋ g21_chain（鎖）。ふつう（SHIFT 7）・飽和（SHIFT 4）・陽性対照 2 本（-DCHAIN_TW_LAT_ERR・-DCHAIN_NORND、落ちるべき）
+G21CH_RTL := src/common/cmul.v src/common/dft16.v src/g21/g21_tw.v src/g21/g21_chain.v sim/tb_g21_chain.v
+sim-g21ch:
+	@o0=$(SIMDIR)/g21ch_in; mkdir -p $$o0; $(PYTHON) sim/check_g21.py chain-gen $$o0 > /dev/null; \
+	for v in normal sat twlat nornd; do \
+	  o=$(SIMDIR)/g21ch_$$v; mkdir -p $$o; cp $$o0/yre.hex $$o0/yim.hex $$o/; d=""; sh=7; \
+	  [ $$v = sat ] && sh=4; [ $$v = twlat ] && d="-DCHAIN_TW_LAT_ERR"; [ $$v = nornd ] && d="-DCHAIN_NORND"; \
+	  $(IVERILOG) -g2005 $$d -DSHIFT=$$sh -DOUT=\"$$o\" -DTA=\"src/g21/g21_tw_a.hex\" -DTB=\"src/g21/g21_tw_b.hex\" \
+	    -o $$o/tb $(G21CH_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	  $(PYTHON) sim/check_g21.py chain $$o $$o/tb.log $$sh > $$o/check.log 2>&1; \
+	  printf '%-14s %s\n' "g21ch_$$v" "$$(grep '結果:' $$o/check.log || echo '結果の行が無い')"; \
+	done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g21ch_normal/check.log && grep -q '結果: 全部通過' $(SIMDIR)/g21ch_sat/check.log \
+	  && grep -q '結果: 不合格' $(SIMDIR)/g21ch_twlat/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21ch_nornd/check.log \
+	  && echo "sim-g21ch: 全部通過（陽性対照 2 本は落ちた）" || (echo "sim-g21ch: NG"; exit 1)
 
 clean:
 	rm -rf build-survey build-s2 build-gen build-sim .Xil *.jou *.log

@@ -6,6 +6,8 @@
     python3 sim/check_g21.py tw   <sim の出力ディレクトリ> [tb のログ]
     python3 sim/check_g21.py pfb-gen <sim の出力ディレクトリ>     （x.hex を書く）
     python3 sim/check_g21.py pfb  <sim の出力ディレクトリ> <tb のログ>
+    python3 sim/check_g21.py chain-gen <sim の出力ディレクトリ>   （yre.hex・yim.hex を書く）
+    python3 sim/check_g21.py chain <sim の出力ディレクトリ> <tb のログ> <SHIFT>
 成否は最後の「結果:」の行で読む（make の成功を信用しない）。
 """
 import os
@@ -160,10 +162,95 @@ def pfb(outdir, tblog):
     return ok
 
 
+def chain_Y_frames():
+    """1d の刺激: レーン FFT の出口 Y（re, im）を 3 フレーム。0: CW 1000 ＋ 雑音 σ 100（PFB の履歴が埋まった 4 フレーム目）、
+    1: 雑音だけ σ 30、2: 最悪の同相（y がすべて +11507 → k1 = 0 で |Y| = 11507·16384、29 bit いっぱい）。戻り値 [(Yr, Yi)] × 3（各 (16, M)）"""
+    rng = np.random.default_rng(4)
+    n = np.arange(4 * F.N)
+    x = np.clip(np.round(1000 * np.cos(2 * np.pi * 40000 * n / F.N) + rng.normal(0, 100, 4 * F.N)), -8192, 8191).astype(np.int64)
+    y, _ = F.pfb_int(x, F.coef_interp())
+    xn = np.clip(np.round(rng.normal(0, 30, 4 * F.N)), -8192, 8191).astype(np.int64)
+    yn, _ = F.pfb_int(xn, F.coef_interp())
+    yw = np.full(F.N, 11507, dtype=np.int64)
+    return [F.lane_fft(y[3]), F.lane_fft(yn[3]), F.lane_fft(yw)]
+
+
+def _pack(vals, w):
+    out = 0
+    for p, v in enumerate(vals):
+        out |= (int(v) & ((1 << w) - 1)) << (w * p)
+    return out
+
+
+def chain_gen(outdir):
+    os.makedirs(outdir, exist_ok=True)
+    fr = chain_Y_frames()
+    br = F.bitrev(np.arange(F.M), 14)
+    with open(os.path.join(outdir, "yre.hex"), "w") as fr_, open(os.path.join(outdir, "yim.hex"), "w") as fi_:
+        for Yr, Yi in fr:
+            assert max(np.abs(Yr).max(), np.abs(Yi).max()) < (1 << 28), "Y が 29 bit に入らない"
+            for i in range(F.M):
+                k = br[i]
+                fr_.write("%0116x\n" % _pack(Yr[:, k], 29))
+                fi_.write("%0116x\n" % _pack(Yi[:, k], 29))
+    print(f"chain-gen: {len(fr) * F.M} ビート")
+
+
+def chain(outdir, tblog, shift):
+    import re as _re
+    fr = chain_Y_frames()
+    twr, twi = F.tw_prod()
+    lo, hi = -(1 << 17), (1 << 17) - 1
+    refs = []
+    for Yr, Yi in fr:
+        Zr, Zi = F.chain_Y(Yr, Yi, twr, twi)
+        qr, qi = Zr >> shift, Zi >> shift
+        sat = (qr < lo) | (qr > hi) | (qi < lo) | (qi > hi)
+        qr, qi = np.clip(qr, lo, hi), np.clip(qi, lo, hi)
+        refs.append((qr * qr + qi * qi, sat.sum(axis=0)))       # (8, M)・(M,)
+    br = F.bitrev(np.arange(F.M), 14)
+    rows = [l.split() for l in open(os.path.join(outdir, "p.txt"))]
+    log = open(tblog, encoding="utf-8", errors="replace").read()
+    mt = _re.search(r"tw_mis (\d+)", log)
+    tw_mis = int(mt.group(1)) if mt else -1
+    nbad = nsat_beats = 0
+    first = None
+    order_ok = len(rows) == len(fr) * F.M
+    for j, (ks, ss, hx) in enumerate(rows):
+        f, i = divmod(j, F.M)
+        if f >= len(fr):
+            order_ok = False
+            break
+        k = int(ks)
+        if k != br[i]:
+            order_ok = False
+        pw, sc = refs[f]
+        w = int(hx, 16)
+        got = [(w >> (37 * b)) & ((1 << 37) - 1) for b in range(8)]
+        exp = [int(pw[b, k]) for b in range(8)]
+        if got != exp or int(ss) != int(sc[k]):
+            nbad += 1
+            if first is None:
+                b = next((b for b in range(8) if got[b] != exp[b]), -1)
+                first = (f, k, b, got[b] if b >= 0 else None, exp[b] if b >= 0 else None, int(ss), int(sc[k]))
+        if int(sc[k]) > 0:
+            nsat_beats += 1
+    print(f"check chain: {len(rows)} ビート（期待 {len(fr) * F.M}）・k1 の並び {'OK' if order_ok else 'NG'}・模型と違うビート {nbad}"
+          + (f"（最初: フレーム {first[0]}・k1 {first[1]}・銀行 {first[2]}: RTL {first[3]} / 模型 {first[4]}、飽和 {first[5]} / {first[6]}）" if first else ""))
+    print(f"check chain: SHIFT {shift}・模型で飽和を含むビート {nsat_beats}・tw_mis {tw_mis}")
+    ok = order_ok and nbad == 0 and tw_mis == 0
+    print("結果: 全部通過" if ok else "結果: 不合格")
+    return ok
+
+
 if __name__ == "__main__":
     what = sys.argv[1]
     if what == "coef":
         sys.exit(0 if coef(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None) else 1)
+    if what == "chain-gen":
+        chain_gen(sys.argv[2]); sys.exit(0)
+    if what == "chain":
+        sys.exit(0 if chain(sys.argv[2], sys.argv[3], int(sys.argv[4])) else 1)
     if what == "pfb-gen":
         pfb_gen(sys.argv[2]); sys.exit(0)
     if what == "pfb":

@@ -142,11 +142,21 @@ def pfb_int(x, c, YW=15):
     return np.clip(y, lo, hi), nsat
 
 
-def chain_frame(yf, twr, twi, d1=2, sh=18, stats=None):
-    """1 フレームの y（長さ N）→ Z（re, im、(8, M)、ch c = k1 + M·k2）。"""
+def lane_fft(yf):
+    """1 フレームの y（長さ N）→ レーン FFT の出口 Y（re, im、(16, M)、[p, k1]）。IP（unscaled）の値は rint（Wide の行動模型と同じ）。"""
     yp = yf.reshape(M, LANES).T
     Yc = np.fft.fft(yp.astype(np.float64), axis=1)
-    Yr, Yi = np.rint(Yc.real).astype(np.int64), np.rint(Yc.imag).astype(np.int64)
+    return np.rint(Yc.real).astype(np.int64), np.rint(Yc.imag).astype(np.int64)
+
+
+def chain_frame(yf, twr, twi, d1=2, sh=18, stats=None):
+    """1 フレームの y（長さ N）→ Z（re, im、(8, M)、ch c = k1 + M·k2）。"""
+    Yr, Yi = lane_fft(yf)
+    return chain_Y(Yr, Yi, twr, twi, d1, sh, stats)
+
+
+def chain_Y(Yr, Yi, twr, twi, d1=2, sh=18, stats=None):
+    """レーン FFT の出口 Y（(16, M)）→ Z（re, im、(8, M)）。RTL の g21_chain の入口からの定義。"""
     Ydr, Ydi = rshift_round(Yr, d1), rshift_round(Yi, d1)
     Vr, Vi = cmul_q(Ydr, Ydi, twr, twi, sh)
     Vr4, Vi4 = Vr.reshape(4, 4, M), Vi.reshape(4, 4, M)
