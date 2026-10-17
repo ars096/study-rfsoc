@@ -486,7 +486,10 @@ TP のレコードの個 = AXI4-Lite の TP のリングの個（bit 単位）�
 - **予言の外れ: 錨が打てた**（time_ok 1・forced 0・utc_ns が入った）。`force=1` は要らなかった。1PPS がボードに来ている
   （START の EVENT の utc_ns は 2026-10-17T01:57:53Z）。ただし proj023 の CAL は未較正（adc_to_core・pps_det）で、SLICE の D_S も未較正なので、utc_ns の絶対値は F-2 の前は ±数 µs の目安
 - TP_JUMP 2 回（C・D の同じ区切り、−0.019 dB、σ 0.003 dB）: proj021 の PS-2 と同じ「分配器より前の入力の小さな山」の型（2 ADC で同時）
-- 陽性対照（`--posctl-ring-stall 8`）はまだ
+- **陽性対照（`--posctl-ring-stall 8`、40 s）: 通過（予言どおり）**。受け側 **kgap 7**（7 本 × 1 回）・**tdev 0**・tp_gap 4・CRC 0・説明のない欠け 0（照合は kgap で「失敗」= 期待どおり）。
+  STATUS: bdrop 8・pl_drop 7,250・pl_peak 33,554,176 B（32 MiB のリングが満ちた）・miss 4,614・tp_lost 26,360・loop_max 8,534 ms（周 99 = 止めた周）・**r_bad 0・bund_r は 7 本とも 2·G のまま**。
+  BDROP は止まりの後の束 432（6 本は持っていた 1 個、再開がダンプの途中）と、D1 だけ止まりの前の束 267（持っていた 3 個: リングが満ちたのが D1 の束の途中）。
+  出た束は全部 4 個ぶん（tdev 0）で、欠けは BDROP と kgap で説明される。proj021 の V2-b の陽性対照（BDROP 16 = 8 窓 × 2）と同じ型
 
 ## 結論・次にやること
 
@@ -545,7 +548,7 @@ TP のレコードの個 = AXI4-Lite の TP のリングの個（bit 単位）�
 - [x] H-3 の実機（PL だけ）: V2-a 相当・V2-e・V2-f と陽性対照が全部通過。r = 2·G が Overlay 4 回で同じ
 - [x] 手順 4d: s45acq・specd・specrecv・s45client を SLICE に（test_fake 15 試験通過）
 - [x] V2-b の実機（30 分）: 通過（欠け 0・bund_r 2·G・loop_slow 0）
-- [ ] V2-b の陽性対照（ring-stall 8）
+- [x] V2-b の陽性対照（ring-stall 8）: kgap 7・tdev 0・bdrop 8・r_bad 0。**H-3 は V2-c（外した）を除いて全部通過**
 - [ ] 後で: Wide の SNAP（RAW の流れ）。F-2（1PPS の配線）。H-1 の掃引の道具。タイミングの余裕
 
 ## 公開について
