@@ -13,6 +13,13 @@
 proj021 手順 2-3a: HwBackend の読み口を **PL が書くリング**（s45_ring_0。plring.Ring）に替えた（`--read ring`、既定）。
   SPEC・TP・SNAP をレコードで受け、記録の形（s45proto v1）は今のまま。2-3a〜2-3d にあった `--read axi`（仮の読み窓を seqlock で）は
   2-2d で外した（bit に仮の読み窓が無い）
+
+proj023 手順 4d: **SAM45-Wide（BIT_KIND 1）の裏 WideBackend**（`--wide`。bits.json の項目なら "kind": "wide"）。窓の代わりに
+  8 本の SLICE の流れ（A0〜D1、コアごとに束ね B と流れごとの S0）。PL のダンプは BASE（10.24 ms = 1280 フレーム × 2048 ビート）で、
+  specd が tint / BASE 個を束ねる（Bundler はそのまま。r = 2·G は H-3 の V2-f で見た式の定数）。SPEC は s45proto v2 の kind 2（SLICE）:
+  ns の欄 = log2 B、中身は IF の昇順（流れの ch の逆順）、if_mhz = 送る 2047 番目の ch の IF（DDC と同じく IF = if_mhz ＋ (i − 2047)·df）。
+  utc_ns = beat_utc(dump_t) − adc_to_core − (D_S ＋ 1.5·L)、L = 2048。**D_S は未較正（0 として引く。INTERFACE 5.2 の表に値が無い）**。
+  SNAP（RAW の流れ）はまだ移していない
 """
 import collections
 import gc
@@ -37,7 +44,7 @@ ADC_NAMES = ("ADC_A", "ADC_B", "ADC_C", "ADC_D")
 NW = 2
 NS_OF_BW = {256: 1, 128: 2, 64: 3, 32: 4, 16: 5, 8: 6}
 FLAGS_OK_MASK = 0x7EF                      # 窓の FLAGS で異常に数えるもの（[4] FFT IP に待たされた は正常。fine.py と同じ）
-VERSION = "proj019-0.2"                 # proj019: SNAP（ADC の生サンプル）・LMX の出力の強さ
+VERSION = "proj023-0.1"                 # proj023: SAM45-Wide（SLICE の流れ、--wide）。proj019-0.2: SNAP・LMX の出力の強さ
 
 
 def default_settings():
@@ -46,6 +53,61 @@ def default_settings():
         wins.append(dict(if_mhz=3000.0, ns=1, shift=9, bundle=1))     # 窓 0: 256 MHz
         wins.append(dict(if_mhz=3000.0, ns=6, shift=9, bundle=1))     # 窓 1: 8 MHz
     return dict(tint=0.04096, cfg=0, fmt="f32", wins=wins)
+
+
+# ---- proj023: SAM45-Wide（SLICE の流れ）
+W_FS_MHZ, W_NPHYS, W_FRAME = 4096.0, 32768, 2048
+W_PL_NACC = BASE_BEATS // W_FRAME          # 1280
+W_DS_BEATS = 0                             # D_S（RTL の遅れ）。未較正
+W_LB = {1: 0, 2: 1, 4: 2}
+W_SID_CTRL_ARMRUN, W_CTRL_ARMWRST, W_CTRL_DISARM = 1 << 2, 1 << 13, 1 << 3
+W_FFT_N = 0x80
+
+
+def w_s0_max(b):
+    return W_NPHYS // b // 2 - P.NCH
+
+
+def w_if_mhz(s0, i, b):
+    """流れの ch i の IF（INTERFACE 2.1、ナイキストゾーン 2）"""
+    n = W_NPHYS // b
+    return W_FS_MHZ - (s0 + i + (b - 1) / (2 * b)) * W_FS_MHZ / n
+
+
+def default_settings_wide():
+    wins = []
+    for i in range(4):
+        for s in range(NW):
+            wins.append(dict(b=1, s0=0 if s == 0 else 4096, shift=7))
+    return dict(kind="wide", tint=0.04096, cfg=0, fmt="f32", wins=wins)
+
+
+def check_wide(st):
+    """SET の後の照合（Wide）。b・shift はコアで 1 つ（流れ 0・1 にそろえて持つ）"""
+    for i in range(4):
+        a, b_ = st["wins"][NW * i], st["wins"][NW * i + 1]
+        if a["b"] != b_["b"] or a["shift"] != b_["shift"]:
+            raise ValueError(f"{'ABCD'[i]}: b・shift はコアで 1 つ")
+        if a["b"] not in W_LB:
+            raise ValueError(f"{'ABCD'[i]}.b は 1・2・4")
+        for s, ws in enumerate((a, b_)):
+            if a["b"] == 4 and s == 1:
+                continue                         # B 4 の流れ 1 は空
+            if not 0 <= ws["s0"] <= w_s0_max(a["b"]):
+                raise ValueError(f"{'ABCD'[i]}{s}.s0 {ws['s0']}（B {a['b']} では 0〜{w_s0_max(a['b'])}）")
+
+
+def wide_cfgs(st):
+    """START の設定（流れごと）。B 4 の流れ 1 は active False（レコードが来ない）"""
+    n_sum = check_tint(st["tint"])
+    out = []
+    for j, ws in enumerate(st["wins"]):
+        b = ws["b"]
+        act = not (b == 4 and j % NW == 1)
+        out.append(dict(kind="slice", b=b, lb=W_LB[b], s0=ws["s0"], shift=ws["shift"], active=act,
+                        nacc=n_sum * W_PL_NACC, n_sum=n_sum, pl_nacc=W_PL_NACC, bundle=1, g=0, ns=W_LB[b],
+                        if_mhz=float(w_if_mhz(ws["s0"], 2048, b)), df_hz=W_FS_MHZ * 1e6 * b / W_NPHYS))
+    return out
 
 
 def win_key(j):
@@ -754,13 +816,227 @@ class FakeBackend:
         return [dict(adc=i, anch_dev=0, gap=0) for i in range(4)] if was else []
 
 
+# ================================================================ proj023: SAM45-Wide
+class WideBackend(HwBackend):
+    """SAM45-Wide（BIT_KIND 1）の裏。8 本の SLICE の流れを窓 j = 2·ADC + s の位置に。TP・リング・束ね・時刻は HwBackend と同じ"""
+
+    def open(self):
+        import spectrometer as S
+        import timetest as T
+        import window as W
+        import timebase as TB
+        import s45core as SC
+        self.S, self.T, self.W, self.TB, self.SC = S, T, W, TB, SC
+        from pynq import Overlay
+        import xrfdc                               # Overlay() より前に import する（VERSIONS.md）
+        S.setup_clocks(self.o.clkin, self.o.ref)
+        self.lmx = None
+        self.ol = Overlay(self.o.bitfile)
+        if not isinstance(self.ol.rfdc, xrfdc.RFdc):
+            raise RuntimeError("RFDC に xrfdc のドライバが当たっていない")
+        S.check_tiles(self.ol.rfdc, 2)
+        time.sleep(self.o.settle)
+        self.cores, tmm = SC.discover(self.ol, bit_kind=1, bit_rev_min=1)
+        self.tc = TB.TimeCore(tmm)
+        self.wms = [c.m for c in self.cores]
+        self.wins = []
+        for c in self.cores:
+            ss = c.slices()
+            if [x.s for x in ss] != [0, 1]:
+                raise RuntimeError(f"{c.name} の SLICE の流れが s = 0・1 でない")
+            self.wins += ss
+        for wm in self.wms:
+            prm = int(wm.read(W.A_BASE + S.R_TP_PARAM)) & 0xFFFFFFFF
+            if prm != S.TP_PARAM_EXPECT:
+                raise RuntimeError(f"TP_PARAM {prm:08x}（期待 {S.TP_PARAM_EXPECT:08x}）")
+        self.tc.configure(src=self.o.path, tol=1)
+        self.tb = TB.Timebase(self.tc, path=self.o.path)
+        self.TpStream = make_tp_reader(S)
+        c0 = self.cores[0]
+        self.ids = dict(win=f"{self.wins[0].rd(SC.S_SID):08x}", adc=f"{c0.if_id:08x}", time=f"{self.tc.rd(0x00):08x}",
+                        proj=f"{c0.proj:08x}", kind="wide", lmx_vco="7864.32", lmx_pwr="31")
+        self.clock = Clock(None, {})
+        self._open_ring()
+        self.ids["read"] = "ring"
+        self.bit_kind = c0.bit_kind
+        self.anchor()
+
+    def _open_ring(self):
+        import plring as PR
+        SC = self.SC
+        bad = [c.name for c in self.cores if (c.caps & 3) != 3]
+        if bad:
+            raise RuntimeError(f"CAPS の [0]〜[1]（レコード・TP）が無いコア {bad}")
+        rip = getattr(self.ol, "s45_ring_0", None)
+        if rip is None:
+            raise RuntimeError("ol.s45_ring_0 が無い")
+        self.ring = PR.Ring(rip.mmio, getattr(self.o, "ring_mib", 32) << 20)
+        self.ring.enable(True)
+        self.jmap = {(st.core.adc, st.s): j for j, st in enumerate(self.wins)}
+        self.amap = {c.adc: i for i, c in enumerate(self.cores)}
+        self.q = [collections.deque() for _ in self.wins]
+        self.raws = [st for c in self.cores for st in c.raw()]
+        self.log(f"リング: BASE {self.ring.base:#x} / SIZE {self.ring.size}（Wide: SLICE {len(self.wins)} 本）")
+
+    def _rec_off(self):
+        SC = self.SC
+        for st in self.wins + self.raws:
+            st.wr(SC.S_REC_CTRL, 0)
+        for wm in self.wms:
+            wm.write(TP_REC_CTRL, TP_REC_K << 8)
+
+    def disarm(self):
+        SC, T, W = self.SC, self.T, self.W
+        for st in self.wins:
+            st.wr(SC.S_CTRL, W_CTRL_DISARM)
+        for wm in self.wms:
+            wm.write(W.A_BASE + T.RA_TP_CTRL, T.TP_DISARM)
+
+    def _arm_tc(self, sa):
+        try:
+            self.tc.arm(sa)
+        except Exception:
+            self.tc.wr(0x08, self.TB.TimeCore.CTRL_CANCEL)
+            self.disarm()
+            raise
+
+    def start(self, st, at_beat, force):
+        """FFT_N・S0・SHIFT・CFG → ARM_WRST（tint の格子で 4 コア一斉）→ 読み返し → N_ACC 1280・REC ALL・TP → ARM_RUN と TP_ARM を tint の格子で"""
+        SC, T, W = self.SC, self.T, self.W
+        if self.clock.ok:
+            try:
+                self.tb.check()
+            except Exception as e:
+                self.clock.ok, self.clock.err = False, str(e)
+        if not self.clock.ok and not force:
+            raise RuntimeError("時刻を答えられない（錨が無い・PPS が来ていない）。ANCHOR か force=1")
+        self.disarm()
+        check_wide(st)
+        self.tint_beats = check_tint(st["tint"]) * BASE_BEATS
+        bb = {c.base_beats for c in self.cores}
+        if bb != {BASE_BEATS}:
+            raise RuntimeError(f"コアの BASE_BEATS {bb}（{BASE_BEATS} を期待）")
+        self.cfgs = wide_cfgs(st)
+        for st_ in self.wins:
+            st_.wr(SC.S_CTRL, 1 << 1)              # STOP
+            st_.wr(SC.S_REC_CTRL, 0)
+        for i, c in enumerate(self.cores):
+            cf0 = self.cfgs[NW * i]
+            c.wr(W_FFT_N, 15 - cf0["lb"])
+            for s in range(NW):
+                cf, st_ = self.cfgs[NW * i + s], self.wins[NW * i + s]
+                st_.wr(SC.S_S0, cf["s0"]); st_.wr(SC.S_SHIFT, cf["shift"]); st_.wr(SC.S_CFG, st["cfg"])
+            self.wins[NW * i].wr(SC.S_CTRL, W_CTRL_ARMWRST)     # どちらの流れでもコアの WRST
+        sa_w = self.grid_after(self.now_beat() + BEATS_PER_SEC // 2)
+        self._arm_tc(sa_w)
+        self._wait_fired(5.0)
+        time.sleep(0.01)
+        for i, c in enumerate(self.cores):
+            lb = self.cfgs[NW * i]["lb"]
+            fr = c.rd(W_FFT_N)
+            if (fr & 0xFF, fr >> 8 & 0xFF) != (15 - lb, 15 - lb):
+                raise RuntimeError(f"{c.adc_name}: WRST の後の FFT_N {fr:#x}（書いた {15 - lb}）")
+            for s in range(NW):
+                cf, st_ = self.cfgs[NW * i + s], self.wins[NW * i + s]
+                if cf["active"] and st_.rd(SC.S_S0_CUR) != cf["s0"]:
+                    raise RuntimeError(f"{win_key(NW * i + s)}: S0_CUR {st_.rd(SC.S_S0_CUR)}（書いた {cf['s0']}）")
+                if st_.rd(SC.S_NCH) != (P.NCH if cf["active"] else 0):
+                    raise RuntimeError(f"{win_key(NW * i + s)}: NCH {st_.rd(SC.S_NCH)}")
+        for cf, st_ in zip(self.cfgs, self.wins):
+            if cf["active"]:
+                st_.wr(SC.S_NACC, cf["pl_nacc"]); st_.wr(SC.S_NDUMP, 0)
+                st_.wr(SC.S_REC_CTRL, REC_ALL)
+        for wm in self.wms:
+            wm.write(W.A_BASE + T.RA_TP_N, TP_N)
+            wm.write(TP_REC_CTRL, (TP_REC_K << 8) | 1)
+        self._drain()
+        sa = self.grid_after(max(at_beat or 0, self.now_beat() + BEATS_PER_SEC // 2))
+        for cf, st_ in zip(self.cfgs, self.wins):
+            if cf["active"]:
+                st_.wr(SC.S_CTRL, (1 << 8) | W_SID_CTRL_ARMRUN)
+        for wm in self.wms:
+            wm.write(W.A_BASE + T.RA_TP_CTRL, T.TP_ARM)
+        self._arm_tc(sa)
+        self.sa = sa
+        self.armed = True
+        return sa
+
+    def begin(self):
+        S, T, W, SC = self.S, self.T, self.W, self.SC
+        act = [st for st, cf in zip(self.wins, self.cfgs) if cf["active"]]
+        rd64 = lambda st, a: st.rd(a) | (st.rd(a + 4) << 32)
+        runts = [rd64(st, SC.S_RUN_T) for st in act] + [T.tp_run_t(wm) for wm in self.wms]
+        bad = [i for i, t in enumerate(runts) if t != self.sa + 1]
+        for st, cf in zip(self.wins, self.cfgs):
+            if cf["active"] and st.rd(SC.S_RUN_SHIFT) != cf["shift"]:
+                raise RuntimeError(f"{st.name}: RUN_SHIFT {st.rd(SC.S_RUN_SHIFT)}（書いた値 {cf['shift']}）")
+        self.seq = [st.rd(SC.S_SEQ) for st in self.wins]
+        self.tps, self.anch = [], []
+        for wm in self.wms:
+            tp = _WinTp(wm, W.A_BASE)
+            tf0 = tp.rd(S.R_TP_F0_LO) | (tp.rd(S.R_TP_F0_HI) << 32)
+            self.tps.append(self.TpStream(tp, TP_N, tf0))
+            self.anch.append(self._tanch(wm))
+        self.gap0 = [int(wm.read(W.A_BASE + T.RA_GAP)) for wm in self.wms]
+        self.running = True
+        return dict(run_t_bad=bad)
+
+    def snap(self, adc, n, nacc, timeout=5.0):
+        raise RuntimeError("Wide の SNAP（RAW の流れ）はまだ移していない")
+
+    def stop(self):
+        SC = self.SC
+        if not self.running:
+            self.disarm()
+            self.tc.wr(0x08, self.TB.TimeCore.CTRL_CANCEL)
+            self._rec_off()
+            return []
+        for st in self.wins:
+            st.wr(SC.S_CTRL, 1 << 1)
+        self.pump()
+        self._rec_off()
+        self.running = False
+        out = []
+        for i, wm in enumerate(self.wms):
+            try:
+                af1, at1 = self._tanch(wm)
+                af, at = self.anch[i]
+                gap1 = int(wm.read(self.W.A_BASE + self.T.RA_GAP))
+                out.append(dict(adc=i, anch_dev=(at1 - at) - (af1 - af) * 512, gap=gap1 - self.gap0[i]))
+            except Exception as e:
+                out.append(dict(adc=i, err=str(e)))
+        return out
+
+
+class FakeWideBackend(FakeBackend):
+    """PL なしの Wide（偽物は束ねない: ダンプ = tint。中身の形・鍵・IF の軸・DUMP_T の進み 2048·nacc を受け側で確かめる）"""
+
+    def start(self, st, at_beat, force):
+        if not self.clock.ok and not force:
+            raise RuntimeError("時刻を答えられない（錨が無い・PPS が来ていない）。ANCHOR か force=1")
+        check_wide(st)
+        self.cfgs = wide_cfgs(st)
+        for cf in self.cfgs:
+            cf.update(bundle=0, n_sum=1, pl_nacc=cf["nacc"])
+        self.cfg = st["cfg"]
+        self.tint_beats = int(round(st["tint"] * BEATS_PER_SEC))
+        self.sa = self.grid_after(max(at_beat or 0, self.now_beat() + BEATS_PER_SEC // 2))
+        return self.sa
+
+    def poll_win(self, j):
+        if not self.cfgs[j]["active"]:
+            return None
+        return super().poll_win(j)
+
+
 # ================================================================ 取得の本体
 class Acq:
     IDLE, ARMED, RUN, ERROR = "IDLE", "ARMED", "RUN", "ERROR"
 
     def __init__(self, conn, ring, opts):
         self.conn, self.ring, self.o = conn, ring, opts
-        self.st = default_settings()
+        self.wide = bool(getattr(opts, "wide", False))               # proj023: SAM45-Wide（SLICE の流れ）
+        self.st = default_settings_wide() if self.wide else default_settings()
         self.state = self.IDLE
         self.seq = 0
         self.drop = dict(n=0, first=None, last=None, pending=None)
@@ -782,6 +1058,7 @@ class Acq:
 
     def _reset_counters(self):
         self.n_dump = [0] * (4 * NW)
+        self.active = [True] * (4 * NW)            # proj023: B 4 の流れ 1 は空（数えない）
         self.n_miss = [0] * (4 * NW)
         self.kgap = [0] * (4 * NW)
         self.last_k = [None] * (4 * NW)
@@ -857,6 +1134,14 @@ class Acq:
                     return dict(ok=False, code="STATE", msg=f"{self.state} の間は SET できない（STOP の後に）")
                 st = self.st
                 new = dict(tint=st["tint"], cfg=st["cfg"], fmt=st.get("fmt", "f32"), wins=[dict(w) for w in st["wins"]])
+                if self.wide:
+                    new["kind"] = "wide"
+                    for k, v in cmd["kv"].items():
+                        self._set1_wide(new, k, v)
+                    check_tint(new["tint"])
+                    check_wide(new)
+                    self.st = new
+                    return dict(ok=True)
                 for k, v in cmd["kv"].items():
                     self._set1(new, k, v)
                 check_tint(new["tint"])
@@ -890,6 +1175,36 @@ class Acq:
         except Exception as e:
             self.log(traceback.format_exc())
             return dict(ok=False, code="FAIL", msg=f"{type(e).__name__}: {e}")
+
+    def _set1_wide(self, new, k, v):
+        """proj023: tint・fmt・cfg と、A.b / A0.b（束ね B、コアで 1 つ）・A.shift / A0.shift（コアで 1 つ）・A0.s0 / A0.ch0（流れの最初の ch）。all.b・all.shift も"""
+        if k in ("tint", "fmt", "cfg"):
+            return self._set1(new, k, v)
+        name, _, field = k.partition(".")
+        nu = name.upper()
+        if nu == "ALL":
+            js = list(range(4 * NW))
+        elif len(nu) == 1 and nu in "ABCD":
+            js = [NW * "ABCD".index(nu) + s for s in range(NW)]
+        elif len(nu) == 2 and nu[0] in "ABCD" and nu[1] in "01":
+            js = [NW * "ABCD".index(nu[0]) + int(nu[1])]
+        else:
+            raise ValueError(f"知らない設定 {k}（tint・fmt・cfg・A.b・A.shift・A0.s0・all.b・all.shift …）")
+        if field in ("b", "shift"):
+            js = sorted({NW * (j // NW) + s for j in js for s in range(NW)})     # コアで 1 つ
+            x = int(v)
+            if field == "b" and x not in W_LB:
+                raise ValueError(f"{k}: B は 1・2・4")
+            if field == "shift" and x not in range(16):
+                raise ValueError(f"{k}: SHIFT は 0..15")
+            for j in js:
+                new["wins"][j][field] = x
+        elif field in ("s0", "ch0"):
+            if len(nu) != 2:
+                raise ValueError(f"{k}: s0 は流れごと（A0.s0 のように）")
+            new["wins"][js[0]]["s0"] = int(v)
+        else:
+            raise ValueError(f"知らない流れの設定 {k}（b・shift・s0）")
 
     def _set1(self, new, k, v):
         if k == "tint":
@@ -957,6 +1272,7 @@ class Acq:
             raise
         self.forced = force and not self.be.clock.ok
         self.start_at = sa
+        self.active = [bool(cf.get("active", True)) for cf in self.be.cfgs]
         self.bund = [Bundler(cf["n_sum"], cf["pl_nacc"]) if cf.get("bundle") else None for cf in self.be.cfgs]
         self.ndump_target = int(cmd.get("n") or 0)
         utc = self.be.clock.utc_ns(sa)
@@ -1021,7 +1337,7 @@ class Acq:
         tps = getattr(self.be, "tps", [])
         w, r = self.ring.positions()
         return dict(state=self.state, time_ok=self.be.clock.ok, time_err=self.be.clock.err, start_at=self.start_at,
-                    dumps=min(self.n_dump) if self.n_dump else 0, dumps_each=self.n_dump, miss=sum(self.n_miss), kgap=sum(self.kgap),
+                    dumps=self._dumps_min(), dumps_each=self.n_dump, miss=sum(self.n_miss), kgap=sum(self.kgap),
                     tp=[t.total for t in tps], tp_lost=sum(t.lost + t.overflow for t in tps), tp_bad=sum(t.bad_seq + t.bad_flag + t.bad_nfr for t in tps),
                     tp_ovr=sum(t.n_ovr for t in tps), tp_jump=[t.count for t in self.tpj], health=self.h_or, flags=self.fl_or, sat=self.sat,
                     loop_max_ms=round(self.loop_max * 1e3, 2), loop_p99_ms=p99, loops=self.n_loop,
@@ -1035,6 +1351,10 @@ class Acq:
                             for i, v in enumerate(self.tp_last)],
                     ring=self.be.ring_stat() if hasattr(self.be, "ring_stat") else None)
 
+    def _dumps_min(self):
+        v = [n for n, a in zip(self.n_dump, self.active) if a]
+        return min(v) if v else 0
+
     # ---- 読み出しの 1 周
     def _cal_pub(self):
         """START の EVENT・GET CAL に出す較正（使えないときは None）"""
@@ -1045,6 +1365,9 @@ class Acq:
     def _spec_record(self, j, m, spec):
         cf = self.be.cfgs[j]
         h = int(m["h"]) | (0 if self.be.clock.ok else P.H_NOTIME) | (P.H_FORCED if self.forced else 0)
+        if cf.get("kind") == "slice":
+            self._spec_record_slice(j, m, spec, cf, h)
+            return
         utc = self.be.clock.utc_ns(m["t"], cf["ns"], j // NW)
         if self.proto == 2:
             self._spec_record2(j, m, spec, cf, h, utc)
@@ -1078,6 +1401,29 @@ class Acq:
                                 m["t"], utc, P.BASE_NS, cf["if_mhz"], df)
             self._put(P.T_SPEC, [hd, data], P.crc32(hd, data))
         self.h_or |= int(m["h"]); self.fl_or |= int(m["flags"]) & FLAGS_OK_MASK; self.sat += int(m["sat"])
+
+    def _spec_record_slice(self, j, m, spec, cf, h):
+        """proj023: SLICE の SPEC（s45proto v2、kind 2）。ns の欄 = log2 B。中身は IF の昇順（流れの ch i の逆順）。
+        utc_ns = beat_utc(dump_t) − adc_to_core − (D_S ＋ 1.5·L)、L = 2048 ビート（D_S は未較正で 0）"""
+        adc, s = j // NW, j % NW
+        utc = self.be.clock.utc_ns(m["t"], None, adc)
+        if utc:
+            utc -= ((W_DS_BEATS + 3 * W_FRAME // 2) * 125) // 32
+        raw = np.ascontiguousarray(np.asarray(spec, np.uint64)[::-1])
+        fm = self.st.get("fmt", "f32")
+        for f in (("u64", "f32") if fm == "both" else (fm,)):
+            if f == "u64":
+                data, code = raw, P.FMT_RAW
+            else:
+                data, code = P.f32_round(raw), P.FMT_F32
+                if self.f32_trunc:
+                    up = data.astype(np.float64) > raw.astype(np.float64)
+                    data[up] = np.nextafter(data[up], np.float32(0))
+            hd = P.SPEC2_H.pack(adc, s, adc, 2, cf["lb"], cf["shift"], code, int(getattr(self.be, "bit_kind", 1)),
+                                P.NCH, int(cf["n_sum"]), m["cfg"], m["k"], cf["nacc"], m["sat"], m["flags"], h, 0, 0,
+                                m["t"], utc, P.BASE_NS, cf["if_mhz"], cf["df_hz"])
+            self._put(P.T_SPEC, [hd, data], P.crc32(hd, data))
+        self.h_or |= int(m["h"]); self.fl_or |= int(m["flags"]); self.sat += int(m["sat"])   # Wide の FLAGS は全部が異常
 
     def _bdrop(self, j, d):
         """束を捨てた（INTERFACE 5.1 の 4）。EVENT は最初の 20 回まで（止まりの後に窓ごとに続くので）"""
@@ -1169,13 +1515,16 @@ class Acq:
                 self.log(f"1 周が {dt * 1e3:.1f} ms（周 {self.n_loop}・リングのレコード {nrec}）: リングの読み {lp[0] * 1e3:.1f}・振り分け {lp[1] * 1e3:.1f}・"
                          f"窓の記録 {(t_w - t_p) * 1e3:.1f}・TP {(t_t - t_w) * 1e3:.1f}・時刻の確かめ {(t_c - t_t) * 1e3:.1f} ms")
         self.n_loop += 1
-        if self.ndump_target and min(self.n_dump) >= self.ndump_target:
+        if self.ndump_target and self._dumps_min() >= self.ndump_target:
             self._stop("n に達した")
 
     # ---- 本体
     def run(self):
         self._rt()
-        self.be = (FakeBackend if self.o.fake else HwBackend)(self.o, self.log)
+        if self.wide:
+            self.be = (FakeWideBackend if self.o.fake else WideBackend)(self.o, self.log)
+        else:
+            self.be = (FakeBackend if self.o.fake else HwBackend)(self.o, self.log)
         try:
             self.be.open()
         except BaseException as e:

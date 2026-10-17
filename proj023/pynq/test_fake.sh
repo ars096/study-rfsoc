@@ -170,8 +170,43 @@ t_idle() {    # proj021: 何も受けていない受けを 15 s 置いても spe
   judge $([ "$s" = 160 ] && grep -q "照合: 通過" "$OUT/idle.recv.log" && echo 1 || echo 0) "15 s 待った後の START n=20: SPEC $s（期待 160）・data_drop $drop"
 }
 
+t_wide() {    # proj023: Wide（--wide、SLICE の流れ）。C は B 4 で流れ 1 が空 → 7 本 × 30 ダンプ。kind 2・log2 B・IF の軸・DUMP_T の進み 2048·nacc
+  echo "== wide"; rm -f "$OUT/wide.s45"; srv wide --wide
+  ctl "SET tint=0.04096 A.b=1 B.b=2 C.b=4 D.b=1 B0.s0=1000 B1.s0=4096 C0.s0=0 D1.s0=12288 all.shift=7 fmt=both" "GET" "START n=30" "SEND ON" > "$OUT/wide.ctl.log"
+  rcv --seconds 6 --out "$OUT/wide.s45" --json "$OUT/wide.json" > "$OUT/wide.recv.log"
+  local s=$(js "$OUT/wide.json" spec) fp=$(js "$OUT/wide.json" f32_pairs) fb=$(js "$OUT/wide.json" f32_bad)
+  stop_srv
+  local ax=$(python3 - "$OUT/wide.s45" <<'EOF'
+import sys, numpy as np, s45proto as P, s45acq as A
+f = open(sys.argv[1], "rb").read(); o = 0; seen = {}; ng = 0
+while o < len(f):
+    rt, pl, crc, seq = P.parse_header(f[o:o + 24]); ver = P.header_ver(f[o:o + 24])
+    d = P.decode(rt, f[o + 24:o + 24 + pl], ver); o += 24 + pl
+    if rt != P.T_SPEC or d["fmt"] != P.FMT_F32:
+        continue
+    key = f"{'ABCD'[d['core']]}{d['s']}"
+    want = dict(A0=(1, 0), A1=(1, 4096), B0=(2, 1000), B1=(2, 4096), C0=(4, 0), D0=(1, 0), D1=(1, 12288))[key]
+    b, s0 = want
+    ifx = d["if_mhz"] + (np.arange(4096) - 2047) * d["df_hz"] / 1e6        # 受け側の式（s45client.freq）
+    ref = A.w_if_mhz(s0, 4095 - np.arange(4096), b)                        # 送る i ↔ 流れの ch 4095 − i
+    ng += (d["kind"] != 2 or d["ns"] != {1: 0, 2: 1, 4: 2}[b] or d["nch"] != 4096 or float(np.max(np.abs(ifx - ref))) > 1e-6
+           or not np.all(np.diff(ifx) > 0) or d["nacc"] != 5120)
+    seen[key] = seen.get(key, 0) + 1
+print(f"{len(seen)}:{ng}")
+EOF
+)
+  judge $([ "$s" = 420 ] && [ "$fp" = 210 ] && [ "$fb" = 0 ] && [ "$ax" = "7:0" ] && grep -q "照合: 通過" "$OUT/wide.recv.log" && grep -q "C1.b=4" "$OUT/wide.ctl.log" && echo 1 || echo 0) \
+    "SPEC $s（期待 420 = 7 本 × 30 × u64・f32）・組 $fp・不一致 $fb・流れ:軸の NG $ax（期待 7:0）"
+}
+t_widep() {   # proj023 陽性対照: B 4 の流れ 1（空）に s0 を書くのは拒まない（使わない）が、B 2 で s0 が範囲の外なら SET が ERR
+  echo "== widep（陽性対照）"; srv widep --wide
+  local r1=$(ctl "SET B.b=2 B0.s0=12288") r2=$(ctl "SET A0.b=3") r3=$(ctl "SET A.s0=5")
+  stop_srv
+  judge $(echo "$r1" | grep -q "^ERR" && echo "$r2" | grep -q "^ERR" && echo "$r3" | grep -q "^ERR" && echo 1 || echo 0) "範囲の外の s0・B 3・コアの s0 が ERR（$r1 / $r2 / $r3）"
+}
+
 case "${1:-all}" in
-  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1; t_load; t_tpjump; t_idle ;;
+  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1; t_load; t_tpjump; t_idle; t_wide; t_widep ;;
   *) "t_$1" ;;
 esac
 if [ $NG = 0 ]; then echo "test_fake: 全部通過"; else echo "test_fake: NG $NG 件"; exit 1; fi

@@ -459,6 +459,24 @@ TP のレコードの個 = AXI4-Lite の TP のリングの個（bit 単位）�
 - **Overlay をまたぐ**: 道具を 3 回続けて回した（毎回 Overlay を読み直す。陽性対照の回を入れると 4 回）。4 回とも r = 1,048,576、IP の位相は入口 8・出口 155。
   **proj021 の r（742・517・948 が Overlay ごとに変わった）と違い、Wide の r は式で決まる定数**（D-2 の狙いどおり）。PS の表には 2·G を置けばよい
 
+### 手順 4d: specd を SLICE に移して V2-b（2026-10-17）
+
+**変えたもの**（PL は変えない）:
+- `s45acq.py`: `WideBackend`（SAM45-Wide の .bit。8 本の SLICE の流れを窓の位置 j = 2·ADC + s に置く）と `FakeWideBackend`（PL なし）。設定は `default_settings_wide`
+  （流れごとに b・s0・shift。b・shift はコアで 1 つ）。START は FFT_N・S0・SHIFT・CFG → ARM_WRST（tint の格子で 4 コア一斉）→ FFT_N・S0_CUR・NCH の読み返し →
+  N_ACC 1280（BASE）・REC ALL・TP → ARM_RUN と TP_ARM を tint の格子で。束ね（Bundler）・TP・時刻・溜まりは SAM45-Fine と同じコード
+- SPEC は s45proto v2 の **kind 2（SLICE）**: ns の欄 = log2 B、nch 4096、中身は **IF の昇順**（流れの ch の逆順）、if_mhz = 送る 2047 番目の IF、df_hz = 125 kHz·B
+  （DDC と同じ式 IF = if_mhz ＋ (i − 2047)·df で軸が出る）。utc_ns は D_S ＋ 1.5·L（L = 2048）を引く。**D_S は未較正で 0**（F-2 と sim で決める）
+- `specd.py`: `--wide`（bits.json の項目なら `"kind": "wide"`）。SET のキーは tint・fmt・cfg・`A.b`・`A.shift`・`A0.s0`・`all.b`・`all.shift`。GET も同じ形。SNAP は Wide ではまだ無い
+- `specrecv.py`: SLICE（kind 2）の DUMP_T の進みを 2048·nacc で見る。`s45client.py`: v2 の IF の軸を df_hz から
+- `test_fake.sh`: `wide`（C を B 4 にして 7 本 × 30 ダンプ・fmt=both・kind・log2 B・IF の軸・nacc 5120）・`widep`（範囲の外の s0・B 3・コアの s0 が ERR）。**15 試験とも通過**（作業用の環境）
+
+**V2-b（Wide、tint 40.96 ms・float32・30 分）の予言**: 設定は A B 1・B B 2・C B 4・D B 1（7 本）・SHIFT 7。1PPS が無いので `START force=1`（utc_ns は 0・health に H_NOTIME と H_FORCED）
+- 受け側: SPEC ≒ 7 × 43,945 = 307,600・TP ≒ 4 × 43,945 = 175,800・≒ 5 GB（2.8 MB/s）。CRC・説明のない欠け・kgap・tdev・tp_gap 0
+- STATUS: miss・bdrop・r_bad・pl_drop・pl_crc・tp_lost 0、**bund_r は 7 本とも 1,048,576（2·G。H-3 の V2-f と同じ）**。PL のダンプは 7 × 97.7 / s で、1 周が tint を越える周（loop_slow）は 0 か少数
+  （proj021 は 8 窓 × 10.24 ms で 1 周 15〜17 ms。ここは記録を出すのが 40.96 ms ごと）
+- 陽性対照（`--posctl-ring-stall 8`、40 s）: 受け側 kgap 7（7 本 × 1 回）・tdev 0、STATUS の bdrop > 0・pl_drop > 0
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -514,7 +532,9 @@ TP のレコードの個 = AXI4-Lite の TP のリングの個（bit 単位）�
   - 直した線で B 4 を回し直した: CW 16.1・13.3 dB で OK、最大の ch 1234、境目 −0.04 dB（道具の判定も全部 OK）
 - [x] 手順 4c: H-3 の道具 `wide_v2.py`（V2-a 相当・V2-e・V2-f、selftest 通過）。V2-b は specd を SLICE に移してから、V2-c は外した（上の「手順 4c」）
 - [x] H-3 の実機（PL だけ）: V2-a 相当・V2-e・V2-f と陽性対照が全部通過。r = 2·G が Overlay 4 回で同じ
-- [ ] 後で: s45acq・specd・s45proto を SLICE に → V2-b。F-2（1PPS の配線）。H-1 の掃引の道具。タイミングの余裕
+- [x] 手順 4d: s45acq・specd・specrecv・s45client を SLICE に（test_fake 15 試験通過）
+- [ ] V2-b の実機（30 分 ＋ 陽性対照）
+- [ ] 後で: Wide の SNAP（RAW の流れ）。F-2（1PPS の配線）。H-1 の掃引の道具。タイミングの余裕
 
 ## 公開について
 

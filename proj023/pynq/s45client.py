@@ -78,6 +78,8 @@ class Data:
         if not recs:
             raise KeyError(f"{key} の記録が無い")
         d = recs[-1][0]
+        if d.get("df_hz"):                           # proj023: v2 は ch の幅を持つ（SLICE も DDC も IF = if_mhz ＋ (i − 2047)·df）
+            return d["if_mhz"] + (np.arange(P.NCH) - 2047) * (d["df_hz"] / 1e6)
         w = 512.0 / (1 << d["ns"])
         b = P.IF_ORDER
         nu = np.where(b < P.NCH // 2, b, b - P.NCH) * (w / P.NCH)

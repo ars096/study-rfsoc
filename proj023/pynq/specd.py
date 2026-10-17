@@ -14,6 +14,8 @@
   ID | STATUS | GET | SET key=val ... | ANCHOR | START [at=<UTC>] [n=<ダンプ数>] [force=1] | STOP |
   SEND ON [from=oldest|now] | SEND OFF | CLEAR | BYE | HELP | SHUTDOWN confirm=1（サーバーを止める） |
   SNAP adc=A|B|C|D [n=1] [every=20]（proj019: ADC の生サンプル 8192 個 = 2 µs を n 個、every ms おき。IDLE のときだけ。記録は T_SNAP）
+proj023 4d: `--wide`（または bits.json の項目に "kind": "wide"）で SAM45-Wide の .bit（SLICE の流れ 8 本）。SET のキーは
+  tint・fmt・cfg・A.b（束ね B 1/2/4、コアで 1 つ）・A.shift（コアで 1 つ）・A0.s0（流れの最初の ch）・all.b・all.shift。SNAP はまだ無い
 proj021 2-3d: BITS（bits.json の許す bit の一覧）| LOAD bit=<名前>（IDLE のときだけ。取得のプロセスを新しい bit で起こし直す。
   制御・データの口と溜まりは保つ。データの口に EVENT LOAD を出す）
 データの口（既定 51001、同時に 1 接続）: s45proto の記録を続けて送る。SEND ON の間だけ。
@@ -151,6 +153,7 @@ class Server:
         o = copy.copy(self.a)
         o.bitfile = e["bit"]
         o.seq0 = seq0
+        o.wide = bool(self.a.wide) if e.get("kind") is None else e.get("kind") == "wide"     # proj023: SAM45-Wide
         if e.get("tp_cal"):
             o.tp_cal = None
             if os.path.exists(e["tp_cal"]):
@@ -315,6 +318,12 @@ class Server:
             def f(r):
                 st = r["settings"]
                 d = dict(tint=st["tint"], cfg=f"{st['cfg']:#x}")
+                if st.get("kind") == "wide":                 # proj023: SLICE の流れ
+                    d["fmt"] = st.get("fmt")
+                    for j, ws in enumerate(st["wins"]):
+                        key = f"{'ABCD'[j // 2]}{j % 2}"
+                        d[f"{key}.b"] = ws["b"]; d[f"{key}.s0"] = ws["s0"]; d[f"{key}.shift"] = ws["shift"]
+                    return kv_line(d)
                 for j, ws in enumerate(st["wins"]):
                     key = f"{'ABCD'[j // 2]}{j % 2}"
                     d[f"{key}.if"] = ws["if_mhz"]; d[f"{key}.ns"] = ws["ns"]; d[f"{key}.bw"] = 512 >> ws["ns"]; d[f"{key}.shift"] = ws["shift"]
@@ -618,6 +627,7 @@ def main():
     p.add_argument("--loop-sleep", type=float, default=0.003, help="読み出しの 1 周の後に寝る秒数（proj017 F-4 と同じ 3 ms）")
     p.add_argument("--boot-timeout", type=float, default=120.0)
     p.add_argument("--fake", action="store_true", help="PL を使わない（偽の記録。通信の試験）")
+    p.add_argument("--wide", action="store_true", help="proj023: SAM45-Wide の .bit（SLICE の流れ。bits.json の項目の kind が優先）")
     p.add_argument("--tp-cal", default="tp_cal.json", help="TP の dBm の較正ファイル（無ければ使わない。s45cal.py）")
     p.add_argument("--fake-notime", action="store_true", help="偽物で 1PPS が無い（時刻を答えられない）状態を作る")
     p.add_argument("--fake-stall", type=int, default=0, help="偽物の陽性対照: 窓 A0 の k がこの倍数のとき読み出しを 50 ms 止める")
