@@ -5,10 +5,12 @@
 XILINX_VIVADO ?= /tools/Xilinx/Vivado/2024.1
 VIVADO        := $(XILINX_VIVADO)/bin/vivado
 PYTHON        ?= python3
+IVERILOG      ?= iverilog
+VVP           ?= vvp
 # survey の OOC 合成を同時に走らせる数（9 個）
 JOBS ?= 9
 
-.PHONY: model estimate survey s2 gen clean
+.PHONY: model estimate survey s2 gen sim-g21c clean
 
 # 模型（numpy だけ）。M-1〜M-6。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -36,5 +38,19 @@ survey:
 	mkdir -p build-survey
 	$(VIVADO) -mode batch -nojournal -log build-survey/vivado.log -source tools/ip_survey.tcl -tclargs $(JOBS)
 
+# ---- RTL の単体の sim（手順 1。成否は各ログの「結果:」の行で読む）----
+SIMDIR := build-sim
+# 1a. g21_coef（係数の補間）。ふつうと陽性対照（-DCOEF_FRAC_ERR、落ちるべき）
+sim-g21c:
+	@for v in normal err; do \
+	  o=$(SIMDIR)/g21c_$$v; mkdir -p $$o; d=""; [ $$v = err ] && d="-DCOEF_FRAC_ERR"; \
+	  $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -DLO=\"src/g21/g21_coef_lo.hex\" -DHI=\"src/g21/g21_coef_hi.hex\" \
+	    -o $$o/tb src/g21/g21_coef.v sim/tb_g21_coef.v && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	  $(PYTHON) sim/check_g21.py coef $$o $$o/tb.log > $$o/check.log 2>&1; \
+	  printf '%-14s %s\n' "g21c_$$v" "$$(grep '結果:' $$o/check.log || echo '結果の行が無い')"; \
+	done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g21c_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21c_err/check.log \
+	  && echo "sim-g21c: 全部通過（陽性対照は落ちた）" || (echo "sim-g21c: NG"; exit 1)
+
 clean:
-	rm -rf build-survey build-s2 build-gen .Xil *.jou *.log
+	rm -rf build-survey build-s2 build-gen build-sim .Xil *.jou *.log
