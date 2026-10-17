@@ -140,7 +140,7 @@ module core_cmn #(
         if (TP != 0) begin : g_tp
             tp_core #(.TPN_DEFAULT(TPN_DEFAULT), .FW(FW), .REC(1), .REC_CORE({4'd0, CP16[3:0]})) u_tp (
                 .clk(aclk), .rst(rst), .rst_rec(rst), .in_acc(s_axis_tvalid), .m_in(a_cnt[8:0]), .fin(a_fin), .tdata(s_axis_tdata),
-                .cmd_run(tp_run),
+                .cmd_run(tp_run), .f0_ext({FW{1'b0}}),                  // proj024 2f: F0_EXT = 0 なので使わないが、繋がない入口を残さない（Synth 8-3848 の見張り）
                 .wr_en(wr_go && wr_tpr), .wr_addr(s_axi_awaddr[7:2]), .wr_data(s_axi_wdata),
                 .rd_addr(ar_addr), .rd_ring(tp_ring_rd), .rd_reg(tp_reg_rd),
                 .t_now(t_loc), .m_tdata(m_axis_rec_tdata), .m_tvalid(m_axis_rec_tvalid), .m_tready(m_axis_rec_tready),

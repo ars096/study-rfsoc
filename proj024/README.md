@@ -482,6 +482,24 @@ RAW: SRC 1・N_ACC 64・N_DUMP 2・REC ALL → RUN / FULL: SRC 2・SHIFT 4・N_A
 - FULL の RUN の後、TP_N 512 → 16 で起動の個が切られ、F0（128 小フレーム）まで 16 小フレームの個が自走して F0 で揃い直す（tp_core の約束どおり。その間の個も Σx² は一致）
 - 捨てたのは 2d と同じく tb の縮めた周期のため（FULL の TP 3・コアの TP 3。SNAP と SPEC は捨てていない）
 
+### 2f. build.tcl・ブロックデザイン — 予言（走らせる前に書く、2026-10-18）
+
+`build.tcl` は proj023 の build.tcl（ビルド 11 の頃）を写し、PS・RFDC・Clocking Wizard・ギアボックス・リセット・照合・診断はそのまま、コア・入力の選び・ROM・資源の数えを 2G-1 に直した（冒頭の 1.〜8.）。
+`src/board/`（timing.xdc・pps.xdc・ps_preset.tcl）は proj023 から写した。`make build`（Vivado サーバ）→ `build/proj024.bit`・`.hwh`。
+- コアは s45_core_0（g21_s45_core、CORE_PORT = ADC_A）の 1 個。ギアボックスは 4 ADC とも。ch 1〜3 のギアボックスの制御は定数（gb_tie_*）と rst_dsp
+- axis_sel4 は 2 個（full_sel・raw_sel）。gb_bc_0 は 3 本（コア・full_sel・raw_sel）、gb_bc_1〜3 は 2 本
+- FFT IP lane_fft_g21: 16384 点・bit_reversed_order・入力 15・unscaled・realtime（tools/ip_impl.tcl の fft_req と同じ）。output_width 30・tuser 16・tdata 64 を読み返す
+- ROM の hex 4 本は絶対パスで s45_core_0 の CONFIG（LO_FILE・HI_FILE・TA_FILE・TB_FILE）に。ラッパの文字列・合成のログ・配置後の BRAM の数で照らす
+- core_cmn の tp_core の f0_ext を 0 に繋いだ（2d で足した入口。繋がないと Synth 8-3848 の見張りに当たりうる）。**sim-g21s45（ふつう）を回し直し、2e と全部同じ数字で通過**（陽性対照は 2e のもの）
+
+予言:
+- **照合（合成の前に止めるもの）は全部通る**: part -1・FFT IP の設定と幅・RFDC の確定値・結線の照合（陽性対照 (a)〜(h) は全部落ちる）・アドレスの重なりなし・ROM のラッパに 4 本の絶対パス・自作のセルの OOC の run 13 個で Synth 8-3848 は 0 行
+- 資源（README の E-1、PFB あり・URAM 2 列 ＋ BRAM・積）: **DSP ≒ 837（19.6 %）・BRAM ≒ 624（57.8 %）・URAM ≒ 56（70 %）・LUT ≒ 10.2 万（23.9 %）**。
+  レーン FFT 16 個で DSP 528（1 個 33、S-1）・BRAM 344（1 個 21.5）。積分器 URAM 48。ROM の BRAM: 係数 RAMB36 8・ひねり係数 16
+- タイミング（-1・256 MHz・既定の戦略）: **閉じる（WNS ≧ 0）**。LUT は Wide（≒ 60 %）の半分以下、IP の内部は S-2 で +1.7 ns 以上。
+  最悪の経路はコアの新しい部品（積分器の RMW・係数の補間・ひねり係数の積）のどれか。閉じなければ、負の経路の塊（neg_paths_groups.rpt）を見てから IMPL=Performance_Explore
+- CRITICAL WARNING は proj023 のビルド 11 と同じ種類だけ（新しい種類が出たら止めて読む）
+
 ### 1a. g21_coef — 予言（走らせる前に書く、2026-10-17）
 
 tb（`sim/tb_g21_coef.v`）: 1 フレーム 16384 ビート ＋ 次のフレームの頭 512 ビート、途中 2 か所で有効を 3 クロック落とす。判定は `sim/check_g21.py coef`。
@@ -640,7 +658,7 @@ proj023 の会話からの引き継ぎの「4. 2G で初めて決めること」
 - [ ] RTL の proj は SAM45-Wide を YATSUGATAKE にマージした後に。D-9・D-10・D-11 はそのとき INTERFACE.md・BITS.md と一緒に
 - [x] RTL の手順 1a〜2d（引き継ぎの 7. で、マージを待たずに部品と単体の sim から）。2d で g21_core（FULL の流れ・1 MiB のレコード・FULL の TP）まで（2026-10-17）
 - [x] 2e g21_s45_core（コア 1 個: 共通・FULL・RAW、axis_sel4 × 2、D-14）（2026-10-18）
-- [ ] 2f build.tcl・ブロックデザイン → 3. PS → 4. 実機
+- [ ] 2f build.tcl・ブロックデザイン（build.tcl を書いた。Vivado サーバのビルド待ち）→ 3. PS → 4. 実機
 
 ## 公開について
 
@@ -661,6 +679,14 @@ make sim-g21s     # 2c（1 本 4 分前後）
 make sim-recfr    # 2d: rec_fr の NCH 4096 が 567fda2 と同じ振る舞いか（1〜2 分）
 make sim-g21core  # 2d: g21_core（3 本を並べて回す。コア 2 個で 1 本 18 分前後。G21CORE_V で選べる）
 make sim-g21s45   # 2e: g21_s45_core（2 本を並べて 20 分前後）
+```
+
+Vivado サーバ（2f）:
+
+```bash
+cd ~/git/rfsoc && git pull && cd proj024
+make build        # 2G-1 の .bit（-1・既定の戦略）。build/proj024.bit・.hwh、ログは build/vivado.log
+grep BUILD_TAG build/vivado.log; grep 'TIMING (確定)' build/vivado.log
 ```
 
 環境は [`../VERSIONS.md`](../VERSIONS.md)。

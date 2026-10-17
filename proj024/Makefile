@@ -1,16 +1,42 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# proj024 — 2G の模型と資源の見積もり。RTL は無いので build.tcl は無い（RTL は SAM45-Wide を YATSUGATAKE に入れた後の proj で）
+# proj024 — 2G の模型と資源の見積もり、2G-1 の RTL の単体の sim（手順 1a〜2e）、2G-1 の .bit（2f、`make build`、Vivado サーバ）
 #
-# Vivado のインストール先（survey だけが使う）。settings64.sh を .bashrc で source しないこと（VERSIONS.md）
+# Vivado のインストール先（survey・s2・build が使う）。settings64.sh を .bashrc で source しないこと（VERSIONS.md）
 XILINX_VIVADO ?= /tools/Xilinx/Vivado/2024.1
 VIVADO        := $(XILINX_VIVADO)/bin/vivado
+
+# ---- 2f: 2G-1 の .bit（Vivado サーバ。`make build`。proj023 の Makefile の build の部分を写した）----
+# RealDigitalOrg/RFSoC4x2-BSP を clone した先の board_files（Vivado のインストールツリーの中には置かない。VERSIONS.md）
+BOARD_REPO ?= $(HOME)/src/RFSoC4x2-BSP/board_files
+# part。既定は -1（実機の .bit。PS には src/board/ps_preset.tcl を当てる）。-2 は PART=xczu48dr-ffvg1517-2-e → build-2-e/
+PART_DEFAULT := xczu48dr-ffvg1517-1-e
+PART         ?= $(PART_DEFAULT)
+# gb_gate のしきい値の既定（core_cmn の GB_K_RST）。proj012 rev3 から 2
+GB_K_DEFAULT := 2
+GB_K ?= $(GB_K_DEFAULT)
+# 実装の戦略（impl_1 の strategy）。空なら既定。例: make build IMPL=Performance_Explore → build-PE/
+IMPL ?=
+ifeq ($(PART),$(PART_DEFAULT))
+  OUTDIR := build
+else
+  OUTDIR := build-$(patsubst xczu48dr-ffvg1517-%,%,$(PART))
+endif
+ifneq ($(GB_K),$(GB_K_DEFAULT))
+  OUTDIR := $(OUTDIR)-k$(GB_K)
+endif
+ifneq ($(IMPL),)
+  OUTDIR := $(OUTDIR)-$(shell echo $(IMPL) | tr -cd 'A-Z')
+endif
+# launch_runs -jobs（効くのは OOC 合成だけ）。ビルドサーバの nproc = 32 に合わせてある
+BUILD_JOBS ?= 30
+export BOARD_REPO PART OUTDIR GB_K IMPL
 PYTHON        ?= python3
 IVERILOG      ?= iverilog
 VVP           ?= vvp
 # survey の OOC 合成を同時に走らせる数（9 個）
 JOBS ?= 9
 
-.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane sim-g21a sim-g21s sim-recfr sim-g21core sim-g21s45 clean
+.PHONY: model estimate survey s2 gen build sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane sim-g21a sim-g21s sim-recfr sim-g21core sim-g21s45 clean
 
 # 模型（numpy だけ）。M-1〜M-6。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -27,6 +53,12 @@ estimate:
 s2:
 	mkdir -p build-s2
 	$(VIVADO) -mode batch -nojournal -log build-s2/vivado.log -source tools/ip_impl.tcl -tclargs 4
+
+# Vivado サーバ: 2G-1 の .bit（2f。合成〜ビットストリーム、1 時間前後）。成果物は $(OUTDIR)/proj024.bit・.hwh。
+# **ビルドの後、今のディレクトリで今の RTL が焼けたかを確かめる**（grep BUILD_TAG $(OUTDIR)/vivado.log）。成否は make の終了状態でなくログの ERROR・TIMING (確定) で読む
+build:
+	mkdir -p $(OUTDIR)
+	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(BUILD_JOBS)
 
 # 2G-1 の ROM の中身（model/g21_fixed.py の定義）を build-gen/ に書き、読み返して模型と照らす（M-8 の続き）
 gen:
@@ -186,4 +218,4 @@ sim-g21s45:
 	  && echo "sim-g21s45: 全部通過（陽性対照は落ちた）" || (echo "sim-g21s45: NG"; exit 1)
 
 clean:
-	rm -rf build-survey build-s2 build-gen build-sim .Xil *.jou *.log
+	rm -rf build build-* .Xil *.jou *.log

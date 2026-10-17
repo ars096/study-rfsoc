@@ -6,7 +6,7 @@
 
 ## 0. 再開する前に（この会話の終わりで片づいていないこと）
 
-- 2c のコミット（956aa56）は 2026-10-17 夜の 2 つ目の会話で済ませた。2d・2e は同じ会話（10/17 夜〜10/18 朝）でコミットした（push はしていない。西村さんがする）
+- 2c のコミット（956aa56）は 2026-10-17 夜の 2 つ目の会話で済ませた。2d・2e・2f の build.tcl は同じ会話（10/17 夜〜10/18 朝）でコミットした（push はしていない。西村さんがする）
 - `proj023/pynq/` の追跡していないファイル（v2b.json・v2bp.json・snap23.snap.npz）は proj023 の会話のもの。触らない
 - **コンピュータ側のシェルが「起動中」のまま返らないとき**: アプリの裏の仮想環境が古いまま止まっていることがある。
   ウィンドウを開き直すだけでは直らない。アプリを終了し、残ったプロセス（仮想環境を含む）を止めてから起動し直す（10/17 夜は 10/9 から動いていたものが止まっていた）
@@ -26,17 +26,18 @@
 | 2c | `src/g21/g21_spec.v`（分光の本体、流れ 1 本）。**2d で SHIFT を RUN で取り込むように直した** | `make sim-g21s`（1 本 4 分前後） | 済み（2d で回し直した） |
 | 2d | `src/g21/g21_core.v`（FULL の流れのブロック・SPEC のレコード 1 MiB・FULL の TP・SRC）＋ rec_fr の NCH・tp_core の F0_EXT | `make sim-recfr`・`make sim-g21core`（1 本 10〜18 分） | 済み |
 | 2e | `src/g21/g21_s45_core.v`（コア 1 個: core_cmn ＋ g21_core（s 0）＋ raw_core（s 1、0x4400）＋ rec_arb。axis_sel4 は外に 2 個、D-14） | `make sim-g21s45`（2 本で 20 分前後） | 済み |
-| **2f** | build.tcl・ブロックデザイン（proj023 を写す） | | **次** |
+| **2f** | `build.tcl`（proj023 を写して直した）・`src/board/`・`make build` | Vivado サーバ（1 時間前後） | **ビルド待ち**（build.tcl は書いた。予言は README の 2f） |
 
 写し元は **567fda2**（proj023 の RTL の凍結）。`src/common/` は 567fda2 の proj023/src/common を写したもの。直すときは 2G の側で直す。
 2d で `src/common/` を 2 つ直した（rec_fr の NCH・tp_core の F0_EXT と宣言の位置）。どちらも既定の引数では 567fda2 と同じ振る舞い（rec_fr は sim-recfr で確かめた）。Wide に戻すかはマージのときに決める。
 
-## 2. 次にやること（2f）
+## 2. 次にやること（2f のビルド）
 
-- **2f: build.tcl・ブロックデザイン**（proj023 を写す）: コア 1 個（`s45_core_0` = g21_s45_core）・**axis_sel4 を 2 個**（FULL 用の sel = full_sel、RAW 用の sel = raw_sel。D-14）・
-  ADC 4 本はどちらの axis_sel4 にも・コアの s_axis はコアの ADC（CORE_PORT）を直に。IP は lane_fft_g21（16384 点・bit 反転順、S-1・S-2 の設定）。
-  ROM の hex（src/g21/*.hex）をプロジェクトに入れる。結線の照合（「在るか」と「在ってはいけないか」）・part の照合。最初は既定の戦略（S-2 で IP の内部の余裕 +1.7 ns 以上）。
-  記憶は URAM 48（積分器）＋ PFB の履歴。Vivado サーバは共有なので、使う前に西村さんと順番を決める
+- **Vivado サーバで `make build`**（`cd ~/git/rfsoc && git pull && cd proj024 && make build`。PC で push してから）。予言は README の 2f
+  - 読むもの: `build/vivado.log` の ERROR・「結線の照合」・「ROM の BRAM」・「FFT IP の資源」・`TIMING (確定)`・run の CRITICAL WARNING（proj023 のビルド 11 と同じ種類だけか）
+  - 照合で止まったら、止めた照合の行を README に写してから直す（照合が正しいのか、照合が間違っているのかを先に決める）
+  - 閉じなければ `build/neg_paths_groups.rpt` を見てから `make build IMPL=Performance_Explore`（build-PE/ に出る）
+- build.tcl は Vivado を通していない（この会話の環境には Vivado が無い。tclsh で括弧の閉じだけ確かめた）。**最初のビルドは build.tcl の誤りで止まりうる**。止まった行とログを持って直す
 - その後: 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）/ 4. 実機
 - PS への注意（2d・2e で分かった）: **FULL の SHIFT は RUN で効く**。FULL の TP は流れのブロックの 0x100〜（レコードの s = 0）。RAW は s = 1（0x4400）で、自分の SRC を持つ（FULL と同じ ADC を見るなら両方に書く）。
   TP の DUMP_T とデータの T のずれは経路ごと（コアの TP +1・FULL −1・RAW 0 ビート）→ D_S の表に
