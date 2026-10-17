@@ -55,7 +55,7 @@
 
 ## 2. 流れ（stream）と自己記述（決定、2026-10-08）
 
-状態: **決定**（2026-10-08。見直しの 1 番目）。2.4・2.5 の番地は案で、proj021 の RTL で確定する
+状態: **決定**（2026-10-08。見直しの 1 番目）。2.4・2.5 の番地は案で、proj021 の RTL で確定する。**SLICE の分（2.4 の FFT_N・2.5 の SLICE の設定と SHIFT・4.4 の語 4・7）は proj023（SAM45-Wide）の RTL と実機で確定した**（2026-10-17。H-2・H-4・H-3 の V2-a〜f が通過）
 - **決定**: 全帯域コアと窓を「流れ」という同じ枠で扱い、違いは KIND だけにする
   **理由**: SAM45-Wide・2G・512M は全帯域側がデータの本体。窓だけの枠では足りず、SAM45-Wide の作り方（DDC か切り出しか）もまだ決まっていない
 - **決定**: SAM45-Fine の全帯域（今の spec_core_0）は ADC_A のコアの流れ（s = 2、KIND FULL）として置き、入力は SRC で選ぶ
@@ -150,7 +150,7 @@ BIT_KIND（BITS.md の 9 本。proj の番号とは別の固定の番号）:
 | 0x08 | CTRL | W: [0] RUN / [1] STOP / [2] ARM_RUN / [3] 予約の取り消し / [8] FLAGS を消す / [12] WRST / [13] ARM_WRST。R: 今の win_core と同じ |
 | 0x0C | N_ACC | RUN で取り込む |
 | 0x10 | N_DUMP | RUN で取り込む |
-| 0x14 | SHIFT | RUN で取り込む |
+| 0x14 | SHIFT | RUN で取り込む。**SLICE（SAM45-Wide）はコアに 1 つ**: 束ねる前の鎖を 2 本の流れで共有するので、効くのは **WRST で取り込んだ流れ 0 の値**。流れ 1 の 0x14 は書けるが効かず、RUN_SHIFT（0x38）は今効いている値を返す（2026-10-15、proj023 の D-8） |
 | 0x18 | FLAGS | 粘着。ビットの意味は KIND ごと（PS は KIND で名前を引く） |
 | 0x1C | SEQ | 閉じたダンプの通し番号 |
 | 0x20 | NCH | 出力の ch 数（FULL の 8192 点なら 4096）。**0 = 空の流れ**（今の設定では出すものが無い。SEQ は進まず、REC_CTRL を書いてもレコードを出さない。2.1）。RAW は 0（スペクトルを出さない。SEQ は進み、SNAP のレコードを出す。空の流れとは KIND で見分ける） |
@@ -176,7 +176,7 @@ BIT_KIND（BITS.md の 9 本。proj の番号とは別の固定の番号）:
 | 0x88 | REC_LATE | 出し切れずに捨てたダンプの数（4.1） |
 | 0x8C〜0xFF | （予約） | 時刻の補正の定数（見直しの 4 番目）などを足す場所 |
 | 0x100〜0x1FF | 種類に固有の設定 | DDC: WK・WDPHI・WNS・WCUR・WCUR_DPHI・WSTART・NS_MIN_MAX・WRST_T。SLICE: 下の表（点数はコアの FFT_N、2.4）。FULL: その流れの TP のレジスタ（コアの 0x0100〜 と同じ並び。値は TP のレコードで、s = この流れ。proj021 2-2d で決めた。FULL の流れは SRC を選べるので、その入力の Σx² を FULL のフレームの格子で持つ）。RAW: なし（0 を返す） |
-| 0x200〜0x3FF | 診断（約束の外） | DDC: PFB_SAT・DDC_SAT・WS_STALL・WS_RDY0・DDC_OVR・WRST_CNT。FULL: DIAG_*・SRST・GRST・INJ・RAW_*・ST_*。RAW: なし（0 を返す） |
+| 0x200〜0x3FF | 診断（約束の外） | DDC: PFB_SAT・DDC_SAT・WS_STALL・WS_RDY0・DDC_OVR・WRST_CNT。FULL: DIAG_*・SRST・GRST・INJ・RAW_*・ST_*。RAW: なし（0 を返す）。SLICE（Wide）: 0x200 PFB の飽和の数・0x204 {IP に待たされたクロック数, 待ち行列の語数, go, have_first}・0x208 BUILD_TAG・0x20C {IP の入口の位相, 出口の位相}・0x210 最初に受けてから待たされるまで（proj023 4b） |
 
 RAW の流れ（KIND 4。proj021 2-5、`src/common/raw_core.v`）の 0x000〜0x0FF の読み方:
 - 区切りは FULL と同じ約束（フレーム 512 ビート、RUN の fin + 2 から N_ACC フレームごと、N_DUMP 個）。**DUMP_T・DUMP_F0 はダンプの最初のフレーム**（FULL と同じ点）、DUMP_N = N_ACC
@@ -195,6 +195,8 @@ SLICE の種類に固有の設定（0x100〜。2026-10-09、proj022 から。DDC
 - FFT_N（2.4）はそのコアの SLICE の流れの**どれかの WRST** で効き、そのとき**コアの全部の SLICE の流れが WRST される**（PS は ARM_WRST を全部の流れに打って同じ発火に揃える。5.1 の格子が崩れないように）。束ねる bit（Wide）では切り替えは束ねだけで FFT は作り直さないが、帳簿と積分をそろえるためにこの約束はそのまま（2026-10-14、proj023 から。前は「点数の切り替えはコアの FFT を作り直す」）
 - 各 SLICE の流れの PARAM の [7:0]・NCH は今効いている N を映す（書けない）。FRAME_BEATS は実際の FFT のフレーム（N_PHYS / 16 ビート。Wide は N に依らず 2048）
 - S0 は束ねた ch の単位（0 ≦ S0 ≦ N/2 − 4096）。S0_STEP は 1
+- **確定（2026-10-17、proj023）**: 上の番地・意味は RTL と実機（H-2 の ch → IF・H-4 の 30 回の切り替え・H-3）で確かめた。B 4 の流れ 1 は NCH 0（空の流れ）。PS は**期待を自分が書いた値から取り**、FFT_N・S0_CUR・NCH・PARAM の読み返しは「効いたか」の照合だけに使う
+- **NCH が 4096 を越える bit（2G など）は未決**: 上の「N/2 − 4096」は NCH 4096 の Wide の書き方。2G で NCH・S0 の範囲・FRAME_BEATS をどう一般化するかは、その bit の設計で決める（proj024）
 
 - **SEQ → 中身 → SEQ の seqlock は残す**（DMA の前でも AXI4-Lite で帳簿を読めるように。試験と移行に使う）
 - 消すもの: SNAP_F・BANK（AXI4-Lite のスペクトル・スナップショットの記憶を出さないので意味がなくなる）・窓ごとの ID（SID に）・WIDX（SID の s に）・表 A の NW（NSTREAM に）・SNAP_SEL・FULL_SEL（SNAP の扱いと SRC に。SNAP は 8. の 3 で）
@@ -392,7 +394,7 @@ TP のレコード（type 2）:
 | 較正 | timebase の CAL・tp_cal・遅れの定数（5.2）は bit の ID（BIT_KIND・BIT_REV）ごと。無い bit は「未較正」と明示して動く（黙って別の bit の値を使わない） |
 
 命令（今の HELP に足すもの）: `BITS`（許す bit の一覧）・`LOAD bit=<名前>`・`GET CAPS`（自己記述をそのまま返す）。
-`SET` の窓のキーは今と同じ（`A0.if`・`A0.bw`・`A0.ns`・`A0.shift`）に `A0.nfft`（点数を選べる bit）を足す。キーの頭は「ADC のラベル＋流れの番号 s」（`A0` = コア ADC_A の s = 0）。種類に固有のキーは KIND で決まる（DDC: `if`・`bw`・`ns`、SLICE: `nfft`・`ch0`）。SRC を書き換えられる流れは `A2.src=B` のように入力を選ぶ。
+`SET` の窓のキーは今と同じ（`A0.if`・`A0.bw`・`A0.ns`・`A0.shift`）に `A0.nfft`（点数を選べる bit）を足す。キーの頭は「ADC のラベル＋流れの番号 s」（`A0` = コア ADC_A の s = 0）。種類に固有のキーは KIND で決まる（DDC: `if`・`bw`・`ns`、SLICE: `nfft`・`ch0`）。**SLICE の実装（proj023 の specd `--wide`、2026-10-17）では `A.b`（束ね B 1・2・4。コアで 1 つ、`A0.b` もコアに効く）・`A.shift`（コアで 1 つ）・`A0.s0`（流れの最初の ch。`A0.ch0` は別名）・`all.b`・`all.shift` を正とする**（点数そのものより B のほうが、束ねる bit の作りに合う。`nfft` は使わない）。SRC を書き換えられる流れは `A2.src=B` のように入力を選ぶ。
 
 ### 5.1 束ねの区切り（決定、2026-10-08。見直しの 4 番目）
 
@@ -410,6 +412,7 @@ TP のレコード（type 2）:
 
 1. 基本のダンプの番号 **m = round(DUMP_T / BASE_BEATS)**（T の原点から。DUMP_T の KIND・NS ごとの一定のずれ ≦ F(8) = 5,344 ビートは BASE の半分 1,310,720 より十分小さい）
 2. **見張り**: 残り r = DUMP_T − m·BASE_BEATS が**1 回の RUN の中で一定**（±1 ビート）で、表があれば 5.2 の F(KIND, NS) と ±1 ビートで合うこと。合わなければ ERROR の EVENT を出し、その流れを束ねない（黙って束ねない）。表が無い bit は一定であることだけを見て「未較正」と印を付ける
+   - **SAM45-Wide（SLICE、proj023）: r = 2·G = 1,048,576 ビート（RTL で決まる定数、2026-10-17 確定）**。RUN は START_AT ＋ 1、F0 = (⌊fa / 256⌋ + 2)·256 = START_AT / 2048 ＋ 512 フレーム（K_F 0）。V2-f で 7 本・Overlay 4 回・陽性対照（START_AT ＋ G で 3·G）、V2-b で 30 分を通して同じ
    - **FULL は今のままでは表と合わない**: spec_core の F0 は RUN の「fin + 2」で格子に寄っておらず、ADC のフレーム（512 ビート）の位相も Overlay ごとに違う。proj021 で spec_core も wspec と同じく F0 を格子に寄せる（proj017 からの持ち越し。8. の 8）。寄せても残るフレームの位相（< 512 ビート、ADC・Overlay ごとに一定）は TANCH から出して表の代わりにする
 3. 束の番号 **j = floor(m / n_sum)**。束 j = m が j·n_sum 〜 j·n_sum + n_sum − 1 のダンプ
 4. **束が揃う条件**: n_sum 個がすべてある（SEQ の飛びなし）・DUMP_CFG・SRC・NFFT・NS・SHIFT が全部同じ・DUMP_N がどれも BASE / L。**一つでも欠けたら束ごと捨て**、DROP の EVENT に流れと束の番号と理由を書く。STOP の前の半端な束も捨てる
@@ -434,7 +437,7 @@ TP のレコード（type 2）:
 | FULL | 0（コアの入口 = フレームの最初のビート。矩形の FFT） | — |
 | RAW | 0（FULL と同じ点。生サンプルのフレームの最初のビート） | — |
 | DDC（PFB T = 4） | D(NS) ＋ 1.5·L(NS)（D は |z|² の重心が wspec に入るまでの遅れ。矩形の区切りに PFB の重心のずれを足す） | sim-wdelay・proj020 の模型 |
-| SLICE（PFB T = 4） | **D_S ＋ 1.5·L**（L = 実際の FFT のフレーム、Wide は 2048 ビート = 8 µs で束ねに依らない。D_S は RTL の遅れ。2026-10-14、proj023 から） | proj023 の sim |
+| SLICE（PFB T = 4） | **D_S ＋ 1.5·L**（L = 実際の FFT のフレーム、Wide は 2048 ビート = 8 µs で束ねに依らない。D_S は RTL の遅れ。2026-10-14、proj023 から） | proj023 の sim。**D_S はまだ出していない**（2026-10-17 の specd は 0 として引き、1.5·L = 12 µs だけ引く） |
 
 | 表の項目 | キー | 出どころ |
 |---|---|---|
@@ -453,6 +456,7 @@ TP のレコード（type 2）:
 - TP・SNAP の中身は v1 と同じ形（TP は 1.024 ms の区切りごとで束ねない。SNAP は FULL の ADC の生か DDC の PFB の出口かを kind で言う）
 - EVENT に `LOAD`（bit の名前・sha256・IF_ID・PROJ）を足す
 - 受け側は ver 1 と 2 の両方を読む（ver 1 は nch = 4096・n_sum = 1 として）
+- **SLICE（kind 2）の SPEC v2 の読み方（2026-10-17、proj023 の specd で決めた）**: ns の欄 = log2 B（PL のレコードの語 4 と同じ）・g = 0・nch = NCH・中身は **IF の昇順**（ゾーン 2 では流れの ch の逆順）・**if_mhz = 送る 2047 番目の ch の IF**・df_hz = fs / N（Wide は 125 kHz·B）。受け側は DDC と同じ式 **IF(i) = if_mhz ＋ (i − 2047)·df** で軸を作る（ns から幅を作らない）。DUMP_T の進みは nacc·FRAME_BEATS（Wide は 2048）
 
 ## 7. 版の運用
 
@@ -475,7 +479,7 @@ TP のレコード（type 2）:
 7. ~~1 ADC の窓の上限~~ → 3. で解決（流れのブロック 1 KiB 間隔で 1 コアに 48 本）
 8. spec_core（FULL）の F0 を時刻の格子に寄せる（proj017 の「次に」から持ち越し。5.1 の見張りと束ねに要る）。
    proj021 の V2-f で、FULL の r（DUMP_T − m·BASE）は 1 回の RUN の中では一定だが Overlay・SRST ごとに変わる（742・517・948）ことを実測。
-   **SAM45-Fine では要らなくなった**（proj021 2-5 で FULL を RAW に替えた。RAW は束ねない）。**spec_core を使う全帯域の bit（SAM45-Wide など）で扱う**。→ **SAM45-Wide の作り方（proj023 の D-2、2026-10-14）**: FFT が固定長なので、起動（ハードのリセット・SRST・GRST）の入力の口を T の格子の決まった位相（T ≡ K_F − K_OPEN mod 2048 ビート）で開け、4 ADC のフレームの頭を Overlay の直後から同じ T の位相にそろえる。F0 は wspec と同じく格子に寄せる（M = G / 2048 = 256）。r は RTL の定数になり、sim で出して 5.2 の表に置く
+   **SAM45-Fine では要らなくなった**（proj021 2-5 で FULL を RAW に替えた。RAW は束ねない）。**spec_core を使う全帯域の bit（SAM45-Wide など）で扱う**。**→ SAM45-Wide では実機で確かめた（2026-10-17、proj023 の V2-f: r = 2·G が Overlay 4 回で同じ）**。→ **SAM45-Wide の作り方（proj023 の D-2、2026-10-14）**: FFT が固定長なので、起動（ハードのリセット・SRST・GRST）の入力の口を T の格子の決まった位相（T ≡ K_F − K_OPEN mod 2048 ビート）で開け、4 ADC のフレームの頭を Overlay の直後から同じ T の位相にそろえる。F0 は wspec と同じく格子に寄せる（M = G / 2048 = 256）。r は RTL の定数になり、sim で出して 5.2 の表に置く
 9. ~~WIN_DELAY_BEATS・WIN_FIRST_Z_BEATS を PFB 入りの RTL（proj020 以降）で出し直す~~ → **出し直した（proj021、2026-10-14）: 値は変わらない**。窓の PFB は wspec の中（z の後）にあり、sim-wdelay が測る z までの遅れ D(NS)・最初の z の遅れ F(NS) は NS 1〜8 とも proj017 の値と小数 2 桁まで同じ。
    PFB の重心のずれ 1.5·L(NS) は 5.2 の D_eff として PS が足す（proj021 2-3c）
 10. **1 ボードあたりのネットワークの予算**（2026-10-08 の相談。方針の案で、まだ決めていない）: 最終的には複数の RFSoC ボードを 1 台のダウンロード PC で受けるので、**1 ボード 100〜200 Mbps（12.5〜25 MB/s）**が目安かもしれない。4.5 の予算（1 GbE の実測の 70 %）より 1 桁近く小さく、float32 でも BITS.md の dt 10.24 ms の 6 本はネットワークでは 10.24 ms で送れない:
