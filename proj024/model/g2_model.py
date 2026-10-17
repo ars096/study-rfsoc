@@ -19,8 +19,8 @@ README の判定 M-1〜M-6 を数える。RTL を書く前の、式と語長と�
   r·k + m < N/2 ⇔ k < Nc/2 なので、**各コアは今と同じく k2 = 0..7 だけを出せば全帯域の半分（実数の入力の全部）が揃う**。
 
 使い方:
-  python3 g2_model.py all        # M-1〜M-6（1〜2 分）
-  python3 g2_model.py m1 | m2 | m3 | m4 | m5 | m6
+  python3 g2_model.py all        # M-1〜M-7（1〜2 分）
+  python3 g2_model.py m1 | m2 | m3 | m4 | m5 | m6 | m7
 """
 import sys
 import time
@@ -327,9 +327,85 @@ def m6():
     return ok
 
 
+def _cround(z):
+    return np.round(z.real) + 1j * np.round(z.imag)
+
+
+def chain_lsb(Y, d1, sh, exact=False):
+    """レーン FFT の出口 Y（16 × M、整数）→ Y の d1 bit を丸め → cmul（係数 18 bit、2^16 = 1.0、右シフト sh）
+    → dft16（4 × 4、段 2 の cmul も 18 bit・SH 16 で丸め）→ Z[k2]（k2 = 0..7、8 × M）。
+    戻り値は Y の単位に戻した Z と、V・Z の成分の最大値（V・Z の整数の単位）。exact = True は丸めなしの浮動小数点の鎖。"""
+    M = Y.shape[1]
+    N = LANES * M
+    p = np.arange(LANES)[:, None]
+    k1 = np.arange(M)[None, :]
+    w = np.exp(-2j * np.pi * p * k1 / N)
+    if exact:
+        V = Y * w
+        Z = np.exp(-2j * np.pi * np.arange(8)[:, None] * np.arange(LANES)[None, :] / LANES) @ V
+        return Z, 0, 0
+    Yd = _cround(Y / 2 ** d1)
+    wq = _cround(w * 2 ** 16)
+    V = _cround(Yd * wq / 2 ** sh)
+    unit = 2.0 ** (d1 + sh - 16)
+    Vr = V.reshape(4, 4, M)                             # Vr[a, b] = V[4a + b]
+    W4 = np.exp(-2j * np.pi * np.outer(np.arange(4), np.arange(4)) / 4).round()
+    U = np.einsum("ca,abm->bcm", W4, Vr)               # U[b, c]（±1・±j だけ = 整数のまま）
+    W16 = _cround(np.exp(-2j * np.pi * np.outer(np.arange(4), np.arange(4)) / 16) * 2 ** 16)
+    Tt = _cround(U * W16[:, :, None] / 2 ** 16)         # 段 2
+    Zc = np.einsum("db,bcm->dcm", W4[:2], Tt)           # Z[c + 4d]、d = 0, 1
+    Z = Zc.reshape(8, M)
+    vmax = max(np.abs(V.real).max(), np.abs(V.imag).max())
+    zmax = max(np.abs(Z.real).max(), np.abs(Z.imag).max())
+    return Z * unit, vmax, zmax
+
+
+def m7():
+    print("M-7 2G-1 の語長（D-7）: Y → V で落とす bit（dft16 を変えずに V 25 bit）の雑音")
+    rng = np.random.default_rng(7)
+    ymax = 11507
+    ok = True
+    cases = [("2G-1", 16384, 2, 18, True), ("2G-2", 8192, 1, 18, True), ("Wide（参考）", 2048, 0, 17, False),
+             ("陽性対照 2G-1 ＋10 bit", 16384, 12, 18, False)]
+    for name, M, d1, sh, judged in cases:
+        line = []
+        for sy in (2, 8, 64):
+            y = np.clip(np.round(rng.normal(0, sy, (2, LANES, M))), -ymax, ymax)
+            num = den = 0.0
+            for f in range(2):
+                Yf = np.fft.fft(y[f], axis=1)
+                Y = _cround(Yf)                          # IP の出口は整数
+                Zi, _, _ = chain_lsb(Y, d1, sh)
+                Zf, _, _ = chain_lsb(Yf, 0, 0, exact=True)
+                num += np.sum(np.abs(Zi - Zf) ** 2)
+                den += np.sum(np.abs(Zf) ** 2)
+            eps = num / den
+            ddb = 10 * np.log10(1 + eps)
+            line.append(f"σ_y {sy:2d}: ε {eps:.2e}（ε·σ² {eps * sy * sy:.1e}）劣化 {ddb:.4f} dB")
+            if judged and sy >= 2:
+                ok &= ddb < 0.01
+            if name.startswith("陽性") and sy == 2:
+                ok &= ddb > 1.0
+        # 最悪（y が全部 +ymax で同相）: V・Z が語幅に入るか
+        Yw = _cround(np.fft.fft(np.full((LANES, M), float(ymax)), axis=1))
+        _, vmax, zmax = chain_lsb(Yw, d1, sh)
+        vbits = int(np.ceil(np.log2(vmax + 1))) + 1
+        zbits = int(np.ceil(np.log2(zmax + 1))) + 1
+        yb = int(np.ceil(np.log2(ymax * M + 1))) + 1
+        fit = vbits <= 25 and zbits <= 29
+        print(f"  {name}: M {M}・Y {yb} bit → {d1} bit 丸め → {yb - d1} bit（A ポート ≦ 27）→ cmul SH {sh} → V"
+              f"。最悪の同相で V {vbits} bit・Z {zbits} bit" + ("（V 25・Z 29 に入る）" if fit else "（入らない）"))
+        for l in line:
+            print("     " + l)
+        if judged:
+            ok &= fit and (yb - d1) <= 27
+    print(f"  → M-7 {'通過' if ok else '不合格'}（2G-1・2G-2 は σ_y ≧ 2 で劣化 < 0.01 dB・最悪でも V 25・Z 29 に入る、陽性対照は σ_y 2 で > 1 dB）")
+    return ok
+
+
 def main():
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
-    fns = dict(m1=m1, m2=m2, m3=m3, m4=m4, m5=m5, m6=m6)
+    fns = dict(m1=m1, m2=m2, m3=m3, m4=m4, m5=m5, m6=m6, m7=m7)
     names = list(fns) if which == "all" else [which]
     res = {}
     for k in names:
