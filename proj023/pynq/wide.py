@@ -337,6 +337,9 @@ def save(path, res, meta):
 #   CW の 10·log10(P_i / P_{i+1}) [dB]。δ = 0.1 での値を判定の線に、0 の近くの傾き [dB / ch] を δ の見積もりに使う
 EDGE_DB_AT_01 = {1: 4.82, 2: 10.37, 4: 28.68}
 EDGE_SLOPE = {1: 46.9, 2: 93.9, 4: 188.2}
+# CW が届いているかの線（ch の電力 / スペクトルの中央値）。2026-10-17 の H-2 の 1 回目は CW が届いていないのに境目の比が 0 dB 前後で OK と出た
+#   （雑音だけの隣り合う 2 ch は同じ高さ）。中心で 20 dB・境目で両側の大きい方が 17 dB に満たなければ NG
+TONE_MIN_DB = {"center": 20.0, "edge": 17.0}
 
 
 def do_tone(cores, ring, a, mode, s0):
@@ -367,6 +370,14 @@ def do_tone(cores, ring, a, mode, s0):
             out.update({f"{kk}_{tag}": v for kk, v in res.items()})
             p = res[key]["spec"]
             r[f"{tag}_if_mhz"] = f_if
+            med = float(np.median(p))
+            top = float(max(p[i], p[i + 1]) if tag == "edge" else p[i])
+            snr = 10 * math.log10(max(top, 1e-30) / max(med, 1e-30))
+            r[f"{tag}_snr_db"] = snr
+            okc = snr >= TONE_MIN_DB[tag]
+            log(f"  {'OK' if okc else 'NG'}  CW の高さ（ch {i}{' / ' + str(i + 1) if tag == 'edge' else ''} の電力 / 中央値）{snr:+.1f} dB（≧ {TONE_MIN_DB[tag]} dB）")
+            if not okc:
+                ngs.append(f"H-2 {tag}: CW が見えない（{snr:+.1f} dB < {TONE_MIN_DB[tag]} dB。SG の出力・経路・レベルを見る）")
             if tag == "center":
                 k = int(np.argmax(p))
                 r.update(peak=k, peak_pow=float(p[k]), centroid=centroid(p, k))
