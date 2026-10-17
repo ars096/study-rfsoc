@@ -302,12 +302,13 @@ sim は作業用のクラウドの環境の Icarus Verilog（oss-cad-suite、14.
   - 2b. `g21_acc`（済み。FULL の積分器）: 8 銀行（k2）× 16384（k1）× 48 bit × 2 面（URAM）。1 クロックに 8 銀行へ 1 つずつ書く（衝突は起きない形）。読み出しは ch の順（c → 銀行 c >> 14・番地 c & 16383）。wide_acc の RMW・面・commit の型
   - 2c. `g21_spec`（済み。wide_spec を写す）: 起動の見張り → g21_pfb → レーン FFT × 16（待ち行列つき）→ g21_chain（＋ g21_tw）→ g21_acc。フレームの頭は T の格子（m = (T − K_F) mod 16384）、F0 の格子は 32 フレーム（2.048 ms、M-6）。流れは 1 本。異常フラグは wide_spec と同じ並び
   - 2d. `g21_core`（済み。wide_core を写す）: 流れのブロックを KIND 1 FULL（NCH 131072・FRAME_BEATS 16384・SRC を書き換えられる）に、rec_fr は流れ 1 本・1 MiB のレコード（**数えの幅は足りず、NCH を引数にした**。INTERFACE 8. の 11）。FULL の TP（D-12）。g21_spec の SHIFT を RUN で取り込むように直した
-  - 2e. `g21_s45_core`（wide_s45_core を写す）: core_cmn ＋ g21_core ＋ axis_sel4（SRC、D-8）＋ rec_arb（＋ RAW は D-13）
+  - 2e. `g21_s45_core`（済み。wide_s45_core を写す）: core_cmn ＋ g21_core ＋ raw_core（D-13）＋ rec_arb。axis_sel4 は外に 2 個（FULL・RAW、D-8・D-14）
   - 2f. build.tcl・ブロックデザイン（proj023 を写す）: コア 1 個・レーン FFT 16384 点 bit 反転順の IP・結線の照合・part の照合。最初は既定の戦略（S-2）
   - その後: 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）/ 4. 実機
 - 2 の途中で決めること（その手順の前に西村さんに）:
   - **D-12 決定（2026-10-17、西村さん）: FULL の流れの TP は SRC で選んだ ADC の入力で測る**（INTERFACE 2.5 の 0x100〜、SAM45-Fine の FULL と同じ形。proj021 2-2d）
   - **D-13 決定（2026-10-17、西村さん）: RAW の流れを 2G-1 にも置く**（生サンプルの SNAP。F-2・specd の SNAP に使う。Wide のコア 0 と同じ形で、流れ s = 1）
+  - **D-14 決定（2026-10-18、西村さん）: RAW の流れの入力も SRC で選んだ ADC**（FULL と RAW がそれぞれ自分の SRC で選ぶ。axis_sel4 は 2 個）
 
 ### 2a. レーン FFT 16384 点の行動模型 — 予言（走らせる前に書く、2026-10-17）
 
@@ -439,6 +440,47 @@ g21core（ふつう）:
   判定を「捨てない」から**捨てた数の帳尻**に改めた: SEQ の飛び 12 個 = 3 レコード = TP_REC_LATE 3 = rec_drop 3（一致）。捨てる道の見張り（溜めの溢れ → late → drop）が実際に立つのを見た
 - ほかは全部当たり。陽性対照 2 本は予言どおりの形で落ちた（posctl は ch 0 だけ偶然一致）
 - 1 回目は tb の AXI の待ちを `while (!arready)` で書いていた（LESSONS の「`!== 1'b1` で」に反する）。値は合っていたが、直して 3 本とも回し直した（上の表は直した tb のもの）
+
+### 2e. g21_s45_core — 予言（走らせる前に書く、2026-10-18）
+
+**D-14 決定（2026-10-18、西村さん）: RAW の流れ（s = 1）の入力も SRC で選んだ ADC**（コアの ADC に固定しない）。
+FULL と RAW はそれぞれ自分の SRC（流れのブロックの 0x28、次の WRST で効く）で 4 本から選ぶ。axis_sel4 はブロックデザインに **2 個**（FULL 用・RAW 用。Wide は RAW 用の 1 個）。
+同じ ADC を見たいときは PS が両方に同じ値を書く。
+
+`src/g21/g21_s45_core.v`: wide_s45_core を写し、core_cmn（BIT_KIND 11・NSTREAM 2・PROJ 0x00240100・FFT_N は 0）＋ g21_core（s 0、0x4000）＋ raw_core（s 1、**0x4400**。Wide は 0x4800）＋
+rec_arb（コアの TP・g21_core（SPEC と FULL の TP）・SNAP）。入口は 3 本: コアの ADC（s_axis、コアの TP）・s_axis_full（full_sel）・s_axis_raw（raw_sel）。
+
+**気づいたこと（時刻の補正に入る）**: axis_sel4 の出口は 1 段のレジスタなので、**FULL の入口は T に対して 1 ビート遅れる**（T のビートに x[T − 1]）。
+Wide の SLICE の流れは自分の ADC を直に受けていたので、ここが Wide と違う。D_S（INTERFACE 5.2）に入る定数で、2G-1 の sim で出すときに含める。
+
+tb（`sim/tb_g21_s45.v`）: ブロックデザインと同じく ADC 4 本・axis_sel4 × 2 を外に置く。ADC 0・1・3 は式（`check_g21.py` の adc_x）、ADC 2 は 2c の x.hex。
+RAW: SRC 1・N_ACC 64・N_DUMP 2・REC ALL → RUN / FULL: SRC 2・SHIFT 4・N_ACC 2・N_DUMP 1・TP_N 16・4 個で 1 レコード / コアの TP: TP_N 16・4 個・TP_RUN → PFB が始まったら FULL の RUN。判定 `check_g21.py s45`:
+- レジスタ: IF_ID 0x020B0101・PROJ 0x00240100・NSTREAM 2・FFT_N 0・SID0 0x02010000（0x4000）・SID1 0x02040100（0x4400）・0x4800 は 0・NCH 131072 / 0・SRC0 0x80000002・SRC1 0x80000001・SEQ0 1・SEQ1 2
+- full_sel 2・raw_sel 1。レコードは 4 種類（SPEC s 0・FULL の TP s 0・コアの TP s 0xFF・SNAP s 1）だけ、core は全部 0、tuser は全部 0
+- SPEC: 131,080 語・中身は模型と違う ch 0・src 2・DUMP_T = 16384·DUMP_F0
+- TP のデータの T と頭の DUMP_T のずれ（{−1, 0, +1} のうち合うもの）: **FULL の TP は −1**（axis_sel4 の 1 段。g21_core は入力と T を同じ段で受ける）、
+  **コアの TP は +1**（core_cmn の tp_core はデータを受けたままで、T だけ 1 段受けた t_loc を使う。Wide でも同じはず）。個は全部 Σx² が一致
+- SNAP（RAW）: 2 個・各 2,056 語・src 1・**ずれ 0**（raw_core の DUMP_T は口でビートを受けたクロックの t_loc で、axis_sel4 の 1 段とちょうど打ち消す）・中身は ADC 1 と全部一致
+- 捨てた数: rec_drop の和 = 4 本の LATE の和。tb の縮めた周期では FULL の TP は捨てる（≧ 1。2d と同じ理由）。コアの TP も捨てうる
+- 陽性対照 `-DDROP_POSCTL`（FULL の TP の drop を数え忘れる）: rec_drop の和 < LATE の和 → 不合格
+
+**結果（2026-10-18、`make sim-g21s45`、作業用のクラウドの環境、2 本を同時に 20 分前後）: 全部通過**（予言は全部当たり）
+
+| | ふつう | 陽性対照 `-DDROP_POSCTL` |
+|---|---|---|
+| レコード | 17（SPEC 1・FULL の TP 7・コアの TP 7・SNAP 2・ほか 0）・tuser は全部 0・core は全部 0 | 同じ |
+| レジスタ（15 個） | 全部期待どおり（IF_ID 0x020B0101・SID0 0x02010000・SID1 0x02040100・0x4800 は 0・SRC0 0x80000002・SRC1 0x80000001 ほか） | 同じ |
+| full_sel・raw_sel | 2・1 | 同じ |
+| SPEC | 131,080 語・DUMP_F0 4・DUMP_T 65,536・src 2・中身の模型と違う ch 0 | 同じ |
+| FULL の TP（ADC 2） | 21 個が一致・**合うずれは −1 だけ** | 同じ |
+| コアの TP（ADC 0） | 24 個が一致・**合うずれは +1 だけ** | 同じ |
+| SNAP（RAW、ADC 1） | 2 個（DUMP_T 1,032・33,800）・src 1・**ずれ 0** で 2,048 語とも一致 | 同じ |
+| 捨てた数 | rec_drop の和 6 = LATE の和 6（FULL の TP 3・コアの TP 3） | **rec_drop の和 3 ≠ 6 → 不合格** |
+
+- TP の頭の DUMP_T とデータの T のずれは**経路ごとに違う**: コアの TP は DUMP_T がデータより 1 ビート前（core_cmn の tp_core はデータをそのまま、T だけ 1 段受けた t_loc。Wide のコアの TP も同じ）、
+  FULL の TP・SPEC は 1 ビート後（axis_sel4 の 1 段）、RAW は 0。どれも 3.9 ns で要求の 100 µs より 4 桁小さいが、**D_S の表（INTERFACE 5.2）に経路ごとに載せる**
+- FULL の RUN の後、TP_N 512 → 16 で起動の個が切られ、F0（128 小フレーム）まで 16 小フレームの個が自走して F0 で揃い直す（tp_core の約束どおり。その間の個も Σx² は一致）
+- 捨てたのは 2d と同じく tb の縮めた周期のため（FULL の TP 3・コアの TP 3。SNAP と SPEC は捨てていない）
 
 ### 1a. g21_coef — 予言（走らせる前に書く、2026-10-17）
 
@@ -597,7 +639,8 @@ proj023 の会話からの引き継ぎの「4. 2G で初めて決めること」
 - [x] S-2: 16384 点の FFT IP 1 個の OOC の配置配線（2026-10-17）。`-1`・256 MHz で WNS +1.885 ns（Default）、物差しの 2048 点と同じ程度。陽性対照（400 MHz）は組み方の誤りで負にならず、1.5 ns に直した
 - [ ] RTL の proj は SAM45-Wide を YATSUGATAKE にマージした後に。D-9・D-10・D-11 はそのとき INTERFACE.md・BITS.md と一緒に
 - [x] RTL の手順 1a〜2d（引き継ぎの 7. で、マージを待たずに部品と単体の sim から）。2d で g21_core（FULL の流れ・1 MiB のレコード・FULL の TP）まで（2026-10-17）
-- [ ] 2e g21_s45_core → 2f build.tcl・ブロックデザイン → 3. PS → 4. 実機
+- [x] 2e g21_s45_core（コア 1 個: 共通・FULL・RAW、axis_sel4 × 2、D-14）（2026-10-18）
+- [ ] 2f build.tcl・ブロックデザイン → 3. PS → 4. 実機
 
 ## 公開について
 
@@ -617,6 +660,7 @@ make sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane sim-g21a   # 手順 1a〜2b
 make sim-g21s     # 2c（1 本 4 分前後）
 make sim-recfr    # 2d: rec_fr の NCH 4096 が 567fda2 と同じ振る舞いか（1〜2 分）
 make sim-g21core  # 2d: g21_core（3 本を並べて回す。コア 2 個で 1 本 18 分前後。G21CORE_V で選べる）
+make sim-g21s45   # 2e: g21_s45_core（2 本を並べて 20 分前後）
 ```
 
 環境は [`../VERSIONS.md`](../VERSIONS.md)。

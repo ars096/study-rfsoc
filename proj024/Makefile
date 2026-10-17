@@ -10,7 +10,7 @@ VVP           ?= vvp
 # survey の OOC 合成を同時に走らせる数（9 個）
 JOBS ?= 9
 
-.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane sim-g21a sim-g21s sim-recfr sim-g21core clean
+.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane sim-g21a sim-g21s sim-recfr sim-g21core sim-g21s45 clean
 
 # 模型（numpy だけ）。M-1〜M-6。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -166,6 +166,24 @@ sim-g21core:
 	@grep -q '結果: 全部通過' $(SIMDIR)/g21core_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21core_posctl/check.log \
 	  && grep -q '結果: 不合格' $(SIMDIR)/g21core_tp/check.log \
 	  && echo "sim-g21core: 全部通過（陽性対照 2 本は落ちた）" || (echo "sim-g21core: NG"; exit 1)
+
+# 2e. g21_s45_core（コアの共通・FULL（s 0）・RAW（s 1）・axis_sel4 × 2 は tb がブロックデザインと同じく外に置く）。
+#     ふつうと陽性対照（-DDROP_POSCTL: FULL の TP の drop を数え忘れる。rec_drop の和と LATE の和が合わなくなるべき）。2 本を同時に
+G21S45_RTL := $(filter-out sim/tb_g21_core.v,$(G21CORE_RTL)) src/common/core_cmn.v src/common/raw_core.v src/common/axis_sel4.v \
+              src/g21/g21_s45_core.v sim/tb_g21_s45.v
+G21S45_V ?= normal drop
+sim-g21s45:
+	@o0=$(SIMDIR)/g21s_in; mkdir -p $$o0; [ -f $$o0/x.hex ] || $(PYTHON) sim/check_g21.py spec-gen $$o0; \
+	for v in $(G21S45_V); do \
+	  o=$(SIMDIR)/g21s45_$$v; mkdir -p $$o; ln -sf ../g21s_in/x.hex $$o/x.hex; d="-DFFT_STALL_AT=3"; \
+	  [ $$v = drop ] && d="$$d -DDROP_POSCTL"; \
+	  ( $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -DLO=\"src/g21/g21_coef_lo.hex\" -DHI=\"src/g21/g21_coef_hi.hex\" \
+	      -DTA=\"src/g21/g21_tw_a.hex\" -DTB=\"src/g21/g21_tw_b.hex\" -o $$o/tb $(G21S45_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	    $(PYTHON) sim/check_g21.py s45 $$o $$o/tb.log > $$o/check.log 2>&1 ) & \
+	done; wait; \
+	for v in $(G21S45_V); do printf '%-14s %s\n' "g21s45_$$v" "$$(grep '結果:' $(SIMDIR)/g21s45_$$v/check.log || echo '結果の行が無い')"; done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g21s45_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21s45_drop/check.log \
+	  && echo "sim-g21s45: 全部通過（陽性対照は落ちた）" || (echo "sim-g21s45: NG"; exit 1)
 
 clean:
 	rm -rf build-survey build-s2 build-gen build-sim .Xil *.jou *.log

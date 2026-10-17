@@ -12,6 +12,7 @@
     python3 sim/check_g21.py spec-gen <sim の出力ディレクトリ>    （x.hex を書く）
     python3 sim/check_g21.py spec <sim の出力ディレクトリ> <tb のログ> <SHIFT>
     python3 sim/check_g21.py core <sim の出力ディレクトリ> <tb のログ>        （2d。入力は spec-gen の x.hex）
+    python3 sim/check_g21.py s45 <sim の出力ディレクトリ> <tb のログ>         （2e。ADC 2 は spec-gen の x.hex、0・1・3 は adc_x の式）
     python3 sim/check_g21.py lane <sim の出力ディレクトリ> <tb のログ> <tready の下げを入れたか 0|1>
     python3 sim/check_g21.py chain <sim の出力ディレクトリ> <tb のログ> <SHIFT>
 成否は最後の「結果:」の行で読む（make の成功を信用しない）。
@@ -599,6 +600,145 @@ def core(outdir, tblog):
     return ok
 
 
+# ---- 2e: g21_s45_core（コア 1 個: 共通・FULL（s 0）・RAW（s 1）・axis_sel4 × 2）----
+def adc_x(adc, T):
+    """tb_g21_s45 の ADC の値（14 bit の整数、shape (len(T), 16)）。ADC 2 は 2c の刺激（T < SPEC_NB、その後は 0）、ほかは式"""
+    T = np.asarray(T, dtype=np.int64)
+    if adc == 2:
+        x = spec_x().reshape(-1, 16)
+        out = np.zeros((len(T), 16), dtype=np.int64)
+        ok = (T >= 0) & (T < len(x))
+        out[ok] = x[T[ok]]
+        return out
+    n = ((16 * T[:, None] + np.arange(16)[None, :]) & 0xFFFFFFFF).astype(np.uint64)
+    h = ((n * np.uint64(0x9E3779B1)) & np.uint64(0xFFFFFFFF)) ^ np.uint64(adc << 20)
+    v = ((h >> np.uint64(17)) & np.uint64(0x3FFF)).astype(np.int64)
+    return np.where(v & 0x2000, v - 0x4000, v)
+
+
+def _tp_check(recs, adc, off, tpn, name):
+    """TP のレコードの個の Σx² を ADC の値と比べる。データの T = 個の頭の T（レコードの DUMP_T ＋ 512·tpn·i）＋ off"""
+    nit, nbad = 0, 0
+    for tu, w in recs:
+        n = w[5] & 0xFFFFFFFF
+        for i in range(n):
+            s, hw = w[8 + 2 * i], w[9 + 2 * i]
+            nfr, fl = (hw >> 32) & 0xFFFFFF, hw >> 56
+            if nfr != tpn or (fl & 1):
+                continue                                    # 短い個（起動・F0 の前）は数えない
+            t0 = w[3] + 512 * tpn * i + off
+            e = int((adc_x(adc, np.arange(t0, t0 + 512 * tpn)) ** 2).sum())
+            nit += 1
+            nbad += s != e
+    return nit, nbad
+
+
+def s45(outdir, tblog):
+    import re as _re
+    log = open(tblog, encoding="utf-8", errors="replace").read()
+    m = _re.search(r"ダンプ (\d+)・SPEC のレコード (\d+)・レコード (\d+)・full_sel (\d+)・raw_sel (\d+)・rec_drop の和 (\d+)・flags (\w+)", log)
+    if not m:
+        print("check s45: tb のログに結果の行が無い（時間切れか途中で落ちた）")
+        print("結果: 不合格")
+        return False
+    ndump, nspec, nrec, fsel, rsel, ndrop = [int(m.group(i)) for i in range(1, 7)]
+    flags = int(m.group(7), 16)
+    regs = {}
+    for l in open(os.path.join(outdir, "regs.txt")):
+        name, _a, hx = l.split()
+        regs[name] = int(hx, 16)
+    ok = True
+    recs, tail = _records(os.path.join(outdir, "rec.txt"))
+    def kind(w):
+        return ((w[0] >> 40) & 0xFF, w[0] >> 56)
+    spec_r = [r for r in recs if kind(r[1]) == (1, 0)]
+    ftp_r = [r for r in recs if kind(r[1]) == (2, 0)]
+    ctp_r = [r for r in recs if kind(r[1]) == (2, 0xFF)]
+    snap_r = [r for r in recs if kind(r[1]) == (4, 1)]
+    other = len(recs) - len(spec_r) - len(ftp_r) - len(ctp_r) - len(snap_r)
+    print(f"check s45: レコード {len(recs)}（SPEC {len(spec_r)}・FULL の TP {len(ftp_r)}・コアの TP {len(ctp_r)}・SNAP {len(snap_r)}・"
+          f"ほか {other}・途中で切れた語 {tail}）・ダンプ {ndump}・full_sel {fsel}・raw_sel {rsel}・flags {flags:02x}")
+    ok &= ndump == 1 and len(spec_r) == 1 and other == 0 and fsel == 2 and rsel == 1 and flags == 0 and all(r[0] == 0 for r in recs)
+    ok &= all(((w[0] >> 48) & 0xFF) == 0 and (w[0] & 0xFFFFFFFFFF) == (MAGIC | (1 << 32)) for _, w in recs)
+
+    # ---- レジスタ（番地の振り分け）----
+    er = {"IF_ID": 0x020B0101, "PROJ": 0x00240100, "NSTREAM": 2, "FFT_N": 0, "SID0": 0x02010000, "SID1": 0x02040100, "SID_none": 0,
+          "NCH0": 131072, "NCH1": 0, "SRC0": 0x80000002, "SRC1": 0x80000001, "SEQ0": 1, "SEQ1": 2, "FLAGS0": 0, "FLAGS1": 0}
+    rbad = [(k, regs.get(k), v) for k, v in er.items() if regs.get(k) != v]
+    print(f"check s45 レジスタ: {len(er)} 個・違う {len(rbad)}" + "".join(f"（{k}: {g if g is None else hex(g)} / 期待 {hex(v)}）" for k, g, v in rbad))
+    ok &= not rbad
+
+    # ---- SPEC（2d と同じ: IP の出口 → chain_Y → 積む）----
+    lines = open(os.path.join(outdir, "dump1.txt")).read().split("\n")
+    hd = dict(zip(lines[0].split()[1::2], [int(v) for v in lines[0].split()[2::2]]))
+    twr, twi = F.tw_prod()
+    frames, cur = [], None
+    for ks, hx in (l.split() for l in open(os.path.join(outdir, "ip.txt"))):
+        k = int(ks)
+        if k == 0:
+            cur = (np.zeros((16, F.M), dtype=np.int64), np.zeros((16, F.M), dtype=np.int64))
+            frames.append(cur)
+        if cur is None:
+            continue
+        w = int(hx, 16)
+        for p in range(16):
+            cur[0][p, k] = sx((w >> (64 * p)) & ((1 << 32) - 1), 32)
+            cur[1][p, k] = sx((w >> (64 * p + 32)) & ((1 << 32) - 1), 32)
+    lo, hi = -(1 << 17), (1 << 17) - 1
+    exp = np.zeros((8, F.M), dtype=object)
+    for i in range(hd["dn"]):
+        Yr, Yi = frames[hd["df0"] + i - hd["f_first"]]
+        Zr, Zi = F.chain_Y(Yr, Yi, twr, twi)
+        qr, qi = np.clip(Zr >> CORE_SHIFT, lo, hi), np.clip(Zi >> CORE_SHIFT, lo, hi)
+        exp += (qr * qr + qi * qi).astype(object)
+    if spec_r:
+        tu, w = spec_r[0]
+        ebody = [int(exp[c >> 14, c & (F.M - 1)]) for c in range(8 * F.M)]
+        nb = sum(1 for a, b in zip(w[8:], ebody) if a != b) + abs(len(w) - 8 - len(ebody))
+        src = (w[4] >> 40) & 0xFF
+        print(f"check s45 SPEC: 語 {len(w)}・DUMP_F0 {w[2]}・DUMP_T {w[3]}・src {src}・中身の模型と違う ch {nb}")
+        ok &= len(w) == 8 + 8 * F.M and nb == 0 and src == 2 and w[3] == F.M * w[2] and w[2] == hd["df0"]
+
+    # ---- TP: データの T と頭の T のずれを {−1, 0, +1} で調べ、予言（FULL −1・コア +1）と比べる ----
+    res = {}
+    for name, rr, adc, pred in (("FULL の TP（ADC 2）", ftp_r, 2, -1), ("コアの TP（ADC 0）", ctp_r, 0, +1)):
+        found = []
+        for off in (-1, 0, 1):
+            nit, nbad = _tp_check(rr, adc, off, CORE_TPN, name)
+            if nit and nbad == 0:
+                found.append(off)
+        nit, nbad = _tp_check(rr, adc, pred, CORE_TPN, name)
+        print(f"check s45 {name}: レコード {len(rr)}・個 {nit}・予言のずれ {pred:+d} で違う個 {nbad}・合うずれ {found}")
+        ok &= nit >= 4 and nbad == 0 and found == [pred]
+        res[name] = found
+    ft0 = [w[2] for _, w in ftp_r]
+    print(f"check s45 FULL の TP の F0: {sorted(ft0)[:6]}…（期待 {32 * hd['df0']} がある）")
+    ok &= (32 * hd["df0"]) in ft0
+    # ---- SNAP（RAW、ADC 1）: 語 j = サンプル 4j〜4j+3。予言のずれ 0（DUMP_T = データの T）----
+    nsb = 0
+    for tu, w in snap_r:
+        T0 = w[3]
+        x = adc_x(1, np.arange(T0, T0 + 512))
+        e = []
+        for mm in range(512):
+            for q in range(4):
+                vv = 0
+                for r in range(4):
+                    vv |= ((int(x[mm, 4 * q + r]) << 2) & 0xFFFF) << (16 * r)
+                e.append(vv)
+        bad = sum(1 for a, b in zip(w[8:], e) if a != b) + abs(len(w) - 8 - len(e))
+        src = (w[4] >> 40) & 0xFF
+        print(f"check s45 SNAP: SEQ {w[1] & 0xFFFFFFFF}・DUMP_T {T0}・src {src}・語 {len(w)}・ADC 1（ずれ 0）と違う語 {bad}")
+        nsb += bad + (src != 1) + (len(w) != 8 + 2048)
+    ok &= len(snap_r) == 2 and nsb == 0
+    # ---- 捨てた数の帳尻（rec_drop の和 = 4 本の LATE の和）----
+    lates = {k: regs.get(k, -1) for k in ("REC_LATE0", "TP_REC_LATE0", "REC_LATE1", "TP_REC_LATEc")}
+    print(f"check s45 捨てた数: rec_drop の和 {ndrop}・LATE {lates}（和 {sum(lates.values())}）")
+    ok &= ndrop == sum(lates.values()) and lates["TP_REC_LATE0"] >= 1
+    print("結果: 全部通過" if ok else "結果: 不合格")
+    return ok
+
+
 if __name__ == "__main__":
     what = sys.argv[1]
     if what == "coef":
@@ -609,6 +749,8 @@ if __name__ == "__main__":
         sys.exit(0 if spec(sys.argv[2], sys.argv[3], int(sys.argv[4])) else 1)
     elif what == "core":
         sys.exit(0 if core(sys.argv[2], sys.argv[3]) else 1)
+    elif what == "s45":
+        sys.exit(0 if s45(sys.argv[2], sys.argv[3]) else 1)
     if what == "acc":
         sys.exit(0 if acc(sys.argv[2]) else 1)
     if what == "lane-gen":
