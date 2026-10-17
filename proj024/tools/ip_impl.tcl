@@ -8,7 +8,8 @@
 #   ruler2048_nat     物差し: proj023 の lane_fft_w。ビルド 11 では本番の中で閉じている（WNS +0.001 ns は IP の外の経路）
 #   lane8192_rev      2G-2
 #   lane16384_rev     2G-1
-#   pc16384_400       陽性対照: 16384 点を 2.5 ns（400 MHz）で。**負になるはず**（ならなければクロックが効いていない）
+#   pc16384_667       陽性対照: 16384 点を 1.5 ns（667 MHz）で。**負になるはず**（ならなければクロックが効いていない）。
+#                     1 回目（2026-10-17）は 2.5 ns（400 MHz）で、IP の内部の経路が間に合って +0.72 ns と正だった（組み方の誤り）
 # 戦略: Default と Explore（opt・place・phys_opt・route の -directive Explore）。OOC なので入出力の口の経路は数えない（内部のレジスタ間だけ）
 #
 # 照合（違えば exit 1）: 設定が要求どおり / 合成が完走 / aclk のクロックが 1 本で周期が要求どおり / 時間を見た経路がある / 陽性対照が負
@@ -25,7 +26,7 @@ set variants {
     {ruler2048_nat   2048 natural_order      3.906}
     {lane8192_rev    8192 bit_reversed_order 3.906}
     {lane16384_rev  16384 bit_reversed_order 3.906}
-    {pc16384_400    16384 bit_reversed_order 2.500}
+    {pc16384_667    16384 bit_reversed_order 1.500}
 }
 set strategies {Default Explore}
 
@@ -144,13 +145,13 @@ foreach ch [list stdout $fh] {
     puts $ch [format $fmt 名前 点数 周期ns 戦略 WNS WHS 負の数 最悪経路（始→終） 段 遅延ns LUT]
     foreach r $rows { puts $ch [format $fmt {*}$r] }
 }
-# 陽性対照は負であること
+# 陽性対照は負であること（報告書の Requirement が陽性対照の周期になっていることも timing_pc*.rpt で見られる）
 set pc_ok 1
 foreach r $rows { if {[string match pc* [lindex $r 0]] && [lindex $r 4] >= 0} { set pc_ok 0 } }
 foreach ch [list stdout $fh] {
     puts $ch ""
-    if {$pc_ok} { puts $ch "陽性対照（400 MHz）は負 → クロックは効いている。上の 256 MHz の行は読んでよい" } \
-    else        { puts $ch "**陽性対照（400 MHz）が負にならない。クロックか解析が効いていない疑い。256 MHz の行を信用しない**" }
+    if {$pc_ok} { puts $ch "陽性対照（667 MHz）は負 → クロックは効いている。上の 256 MHz の行は読んでよい" } \
+    else        { puts $ch "**陽性対照（667 MHz）が負にならない。クロックか解析が効いていない疑い。256 MHz の行を信用しない**" }
 }
 close $fh
 puts "\n=== S-2 完了: $outdir/s2.txt ==="
