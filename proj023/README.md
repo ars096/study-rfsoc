@@ -540,6 +540,26 @@ S-2 下位 2 bit 0・振り切れ 0・電力 ≒ −12.5 dBFS（V2-b の STATUS 
 - 受け側の照合: SNAP 64・CRC・欠け・dup 0、記録は全部 版 2
 - 陽性対照: START の直後（ARMED）の `SNAP adc=A n=1` は `ERR STATE ARMED の間は SNAP できない`
 
+### RTL の凍結（2026-10-17、西村さんが決めた）
+
+**SAM45-Wide の RTL はビルド 11（ビルドに効くファイルの最後の変更 567fda2、`IMPL=Performance_Explore`、build-PE/）で凍結する。**
+タイミングの余裕（WNS +0.001 ns）は手当てしない（試した直しは効かなかった。今の bit は実機の判定を全部通っている）。2G で同じ形の経路が問題になれば 2G の側で直す。
+
+| 項目 | 値 |
+|---|---|
+| bit | `build-PE/proj023.bit` 34,437,476 B |
+| bit の sha256 | `473911e59baa87fc8bff43d15e4791bd90d9cfd0cf2d4900898bd0218a3c5178`（Vivado サーバの build-PE/。ボードの写しと同じかは、次にボードに触るときに sha256 で確かめる） |
+| hwh の sha256 | `32759af1f59ff04fc6041977442a2029abc6c056b6aaa67ebf48b6c5a7bf769a` |
+| ID | BIT_KIND 1・BIT_REV 1・PROJ 0x0023_0100。BUILD 0x50c0000i（コア i） |
+| WNS / WHS | +0.001 ns / +0.010 ns |
+
+凍結の代わりに引き受けること（相談の記録）:
+- **作り直しても閉じる保証は無い**（余裕 1 ps）。Wide の正本は上の bit そのもの。build-PE/ の bit・hwh は消さない。proj023-m0 のタグと表（資源・CDC を足す）は閉じるときに
+- **YATSUGATAKE で RTL に手を入れる（PL が USR_ACCESSE2 を読む口・common の境目の直しなど）と、Wide の作り直しとタイミングの詰め直しが要る**。値を書き込むだけ（BITSTREAM.CONFIG.USR_ACCESS）なら配置は変わらない
+- **2G で共通の部品（待ち行列・PFB・鎖・rec_fr など）の不具合が見つかって直したら、Wide に戻すかはマージのときに決める**（凍結した Wide は古いままになる）
+- ビルド 10 の IP の位相の謎（9589032）は未解決のまま。起動の見張り（0x20C・0x210）は残してあり、作り直したら 4 コアの位相を記録する
+- 2G の RTL の proj は、この RTL（567fda2）を写す元にする
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -604,7 +624,8 @@ S-2 下位 2 bit 0・振り切れ 0・電力 ≒ −12.5 dBFS（V2-b の STATUS 
 - [ ] F-2 の実機（配線 P、2 回）→ timebase.CAL[0x0023_0100]
 - [x] 手順 4g: Wide の SNAP（WideBackend が RAW の流れで _snap_ring、test_fake widesnap 通過）
 - [x] Wide の SNAP の実機（2026-10-17）: 4 ADC × 16 個とも OK・陽性対照（ARMED の間の SNAP）は ERR STATE
-- [ ] 後で: F-2（1PPS の配線）。H-1 の掃引の道具。タイミングの余裕
+- [x] RTL はビルド 11（567fda2）で凍結（2026-10-17）。タイミングの余裕は手当てしない（2G の側で）
+- [ ] 後で: F-2（配線 P、widef2.py）。H-1 の掃引の道具。閉じるときに proj023-m0 のタグと表
 
 ## 公開について
 
