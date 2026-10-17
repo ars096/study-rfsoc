@@ -10,7 +10,7 @@ VVP           ?= vvp
 # survey の OOC 合成を同時に走らせる数（9 個）
 JOBS ?= 9
 
-.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane clean
+.PHONY: model estimate survey s2 gen sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane sim-g21a clean
 
 # 模型（numpy だけ）。M-1〜M-6。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -107,6 +107,17 @@ sim-lane:
 	done
 	@grep -q '結果: 全部通過' $(SIMDIR)/lane_plain/check.log && grep -q '結果: 全部通過' $(SIMDIR)/lane_stall/check.log \
 	  && echo "sim-lane: 全部通過" || (echo "sim-lane: NG"; exit 1)
+
+# 2b. g21_acc（FULL の積分器）。ふつうと陽性対照（-DACC_FIRST_ERR: ダンプの最初で消さない。面 0 の 2 回目のダンプ C が落ちるべき）
+sim-g21a:
+	@for v in normal err; do \
+	  o=$(SIMDIR)/g21a_$$v; mkdir -p $$o; d=""; [ $$v = err ] && d="-DACC_FIRST_ERR"; \
+	  $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -o $$o/tb src/g21/g21_acc.v sim/tb_g21_acc.v && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	  $(PYTHON) sim/check_g21.py acc $$o > $$o/check.log 2>&1; \
+	  printf '%-14s %s\n' "g21a_$$v" "$$(grep '結果:' $$o/check.log || echo '結果の行が無い')"; \
+	done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g21a_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21a_err/check.log \
+	  && echo "sim-g21a: 全部通過（陽性対照は落ちた）" || (echo "sim-g21a: NG"; exit 1)
 
 clean:
 	rm -rf build-survey build-s2 build-gen build-sim .Xil *.jou *.log

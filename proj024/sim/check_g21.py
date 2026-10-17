@@ -8,6 +8,7 @@
     python3 sim/check_g21.py pfb  <sim の出力ディレクトリ> <tb のログ>
     python3 sim/check_g21.py chain-gen <sim の出力ディレクトリ>   （yre.hex・yim.hex を書く）
     python3 sim/check_g21.py lane-gen <sim の出力ディレクトリ>    （lx.hex を書く）
+    python3 sim/check_g21.py acc <sim の出力ディレクトリ>
     python3 sim/check_g21.py lane <sim の出力ディレクトリ> <tb のログ> <tready の下げを入れたか 0|1>
     python3 sim/check_g21.py chain <sim の出力ディレクトリ> <tb のログ> <SHIFT>
 成否は最後の「結果:」の行で読む（make の成功を信用しない）。
@@ -297,10 +298,53 @@ def lane(outdir, tblog, stalled):
     return ok
 
 
+def acc_p(f, k1, b):
+    """tb_g21_acc の電力の式（64 bit で掛けて下 35 bit）。k1・b は numpy 配列でよい"""
+    t = (1315423911 * f + 2654435761 * k1.astype(object) + 97531 * b + 12345) * 2246822519
+    return np.array([int(v) & ((1 << 35) - 1) for v in np.ravel(t)], dtype=object).reshape(np.shape(t))
+
+
+def acc(outdir):
+    NA = 9
+    k1 = np.arange(F.M)
+    ok = True
+    for d, name in enumerate("ABC"):
+        exp = np.zeros((8, F.M), dtype=object)
+        for f in range(d * NA, (d + 1) * NA):
+            for b in range(8):
+                exp[b] += acc_p(f, k1, b)
+        path = os.path.join(outdir, f"rd_{name}.txt")
+        rows = [l.split() for l in open(path)] if os.path.exists(path) else []
+        nbad = 0
+        first = None
+        seen = 0
+        for cs, vs in rows:
+            c = int(cs)
+            try:
+                v = int(vs)
+            except ValueError:
+                v = None
+            e = int(exp[c >> 14, c & (F.M - 1)])
+            if v != e:
+                nbad += 1
+                if first is None:
+                    first = (c, v, e)
+            seen += 1
+        good = seen == 8 * F.M and nbad == 0
+        print(f"check acc: ダンプ {name}（面 {d % 2}）: 読んだ ch {seen} / {8 * F.M}・模型と違う ch {nbad}"
+              + (f"（最初: ch {first[0]}: RTL {first[1]} / 期待 {first[2]}）" if first else "")
+              + f"・和の最大 {max(int(v) for v in exp.ravel()):,}（48 bit ≦ {(1 << 48) - 1:,}）")
+        ok &= good
+    print("結果: 全部通過" if ok else "結果: 不合格")
+    return ok
+
+
 if __name__ == "__main__":
     what = sys.argv[1]
     if what == "coef":
         sys.exit(0 if coef(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None) else 1)
+    if what == "acc":
+        sys.exit(0 if acc(sys.argv[2]) else 1)
     if what == "lane-gen":
         lane_gen(sys.argv[2]); sys.exit(0)
     if what == "lane":
