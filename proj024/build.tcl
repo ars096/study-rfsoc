@@ -1359,13 +1359,21 @@ set v [get_property VLNV [get_bd_cells s45_core_0]]
 set tag [expr {[string match "*:module_ref:g21_s45_core:*" $v] ? "OK" : "NG"}]
 lappend nc_log [format "ch 0 %-3s s45_core_0 の中身 = %s（期待 g21_s45_core）" $tag $v]
 if {$tag eq "NG"} { incr nc_ng }
-# proj024: ch 1〜3 のギアボックスの制御はどれも s45_core_0 から来ていない（在ってはいけない側。上の ch_nets の (2) でも見ているが、名指しで）
+# proj024: ch 1〜3 のギアボックスの制御はどれも s45_core_0 の gb_* の出口から来ていない（在ってはいけない側。上の ch_nets の (2) でも見ているが、名指しで）
+#   **ネットの上に s45_core_0 が居ないこと、ではない**: rst_dsp のネットには s45_core_0/aresetn も正しく載る（2026-10-18 の 1 回目のビルドはこれで止めた）。
+#   見るのはコアのギアボックスの制御の出口 4 本（gb_hold・gb_adj・gb_k・gb_dn_rstn）だけ
+set core_gb_out {s45_core_0/gb_hold s45_core_0/gb_adj s45_core_0/gb_k s45_core_0/gb_dn_rstn}
+proc from_core_gb {p} {
+    set peers [peer_names [get_bd_pins -quiet $p] pin]
+    set bad {}
+    foreach q $::core_gb_out { if {[lsearch -exact $peers $q] >= 0} { lappend bad $q } }
+    return [list $peers $bad]
+}
 for {set i 1} {$i < $nch} {incr i} {
-    foreach p [list gb_adc_$i/hold gb_adc_$i/adj gb_gate_$i/k gb_gate_$i/aresetn] {
-        set peers [peer_names [get_bd_pins -quiet $p] pin]
-        set bad [lsearch -all -inline $peers s45_core_*]
+    foreach p [list gb_adc_$i/hold gb_adc_$i/adj gb_gate_$i/k gb_gate_$i/aresetn gb_dn_$i/aresetn] {
+        lassign [from_core_gb $p] peers bad
         set tag [expr {[llength $peers] > 0 && [llength $bad] == 0 ? "OK" : "NG"}]
-        lappend nc_log [format "ch %d %-3s %s はコアに繋がっていない（ネットの上: %s）" $i $tag $p $peers]
+        lappend nc_log [format "ch %d %-3s %s はコアの gb_* の出口に繋がっていない（%s）" $i $tag $p [expr {[llength $bad] ? "繋がっている: $bad" : "ネットの上 [llength $peers] 本"}]]
         if {$tag eq "NG"} { incr nc_ng }
     }
 }
@@ -1415,6 +1423,11 @@ lappend nc_log "陽性対照: (e) [expr {$pce ? "通った（NG）" : "落ちた
 set pcg [lsearch -all -inline [net_check 2 pin gb_adc_1/gb_rstn [list gb_up_1/aresetn] 0] "*ch 1 のピン*"]
 if {[llength $pcg] == 0} { set pc_ok 0; lappend nc_log "陽性対照 (g) が通ってしまった（ch の照合が壊れている）" }
 lappend nc_log "陽性対照: (g) [llength $pcg] 件で落ちた（1 件以上が期待）"
+# (i) 上の「コアの gb_* の出口に繋がっていない」を ch 0 に当てる（ch 0 はコアが握るので、繋がっていると言うべき）
+set pci 0
+foreach p {gb_adc_0/hold gb_gate_0/k gb_gate_0/aresetn} { lassign [from_core_gb $p] peers bad; if {[llength $bad] > 0} { incr pci } }
+if {$pci != 3} { set pc_ok 0; lappend nc_log "陽性対照 (i) が通ってしまった（ch 0 の 3 本のうち $pci 本しかコアの gb_* に繋がっていると言わない）" }
+lappend nc_log "陽性対照: (i) ch 0 の 3 本のうち $pci 本で「コアの gb_* に繋がっている」と言った（3 が期待）"
 set fh [open $outdir/net_check.rpt w]
 foreach l $nc_log { puts $fh $l }
 close $fh
