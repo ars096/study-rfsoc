@@ -40,6 +40,18 @@ def _key(adc, win):
     return f"{'ABCD'[adc]}{win}"
 
 
+def if_axis(d):
+    """記録（decode の辞書）d の ch ごとの IF [MHz]、IF の昇順。proj024 3b: 長さは記録の nch（2G-1 の FULL は 131072）。
+    v2（df_hz あり）は INTERFACE 6. の IF(i) = if_mhz ＋ (i − 2047)·df（DDC・SLICE・FULL で同じ。2047 は nch によらず「送る 2047 番目」）。
+    v1 は 4096 ch の DDC の式（window.ch_if と同じ。if_mhz と ns から）"""
+    if d.get("df_hz"):
+        n = int(d.get("nch") or P.NCH)
+        return d["if_mhz"] + (np.arange(n) - 2047) * (d["df_hz"] / 1e6)
+    w = 512.0 / (1 << d["ns"])
+    b = P.IF_ORDER
+    return d["if_mhz"] - np.where(b < P.NCH // 2, b, b - P.NCH) * (w / P.NCH)
+
+
 def _adc_index(a):
     return "ABCD".index(a[0].upper()) if isinstance(a, str) else int(a)
 
@@ -65,7 +77,7 @@ class Data:
         return m
 
     def spec(self, key, raw=False):
-        """窓 key のスペクトル (ダンプ数, 4096)。既定は float64、raw=True で uint64（PL の値そのまま）。IF の昇順"""
+        """窓 key のスペクトル (ダンプ数, nch)（DDC・SLICE は 4096、2G-1 の FULL は 131072）。既定は float64、raw=True で uint64（PL の値そのまま）。IF の昇順"""
         recs = self._w.get(key, [])
         if not recs:
             return np.zeros((0, P.NCH), np.uint64 if raw else np.float64)
@@ -77,13 +89,7 @@ class Data:
         recs = self._w.get(key, [])
         if not recs:
             raise KeyError(f"{key} の記録が無い")
-        d = recs[-1][0]
-        if d.get("df_hz"):                           # proj023: v2 は ch の幅を持つ（SLICE も DDC も IF = if_mhz ＋ (i − 2047)·df）
-            return d["if_mhz"] + (np.arange(P.NCH) - 2047) * (d["df_hz"] / 1e6)
-        w = 512.0 / (1 << d["ns"])
-        b = P.IF_ORDER
-        nu = np.where(b < P.NCH // 2, b, b - P.NCH) * (w / P.NCH)
-        return d["if_mhz"] - nu
+        return if_axis(recs[-1][0])                  # proj024 3b: 長さは記録の nch
 
     def cal(self):
         """直近の START の EVENT に載っていた TP の較正（s45cal の形）。無ければ None"""
@@ -312,10 +318,7 @@ class S45:
             return None
         d = recs[-1][0]
         y = np.mean([x for _, x in recs], axis=0) / d["nacc"]
-        w = 512.0 / (1 << d["ns"])
-        b = P.IF_ORDER
-        f = d["if_mhz"] - np.where(b < P.NCH // 2, b, b - P.NCH) * (w / P.NCH)
-        return f, y, d, len(recs)
+        return if_axis(d), y, d, len(recs)           # proj024 3b: freq() と同じ式（土台は v2 でも v1 の式だった）
 
     def live(self, keys=None, avg=5, interval=0.3, duration=None, db=True, ylim=None, hold=False, cols=2, height=2.2):
         """スペアナのように表示し続ける（Jupyter）。止めるのは Jupyter の ■（カーネルの割り込み）か duration [s]。

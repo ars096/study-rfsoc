@@ -44,7 +44,7 @@ ADC_NAMES = ("ADC_A", "ADC_B", "ADC_C", "ADC_D")
 NW = 2
 NS_OF_BW = {256: 1, 128: 2, 64: 3, 32: 4, 16: 5, 8: 6}
 FLAGS_OK_MASK = 0x7EF                      # 窓の FLAGS で異常に数えるもの（[4] FFT IP に待たされた は正常。fine.py と同じ）
-VERSION = "proj023-0.1"                 # proj023: SAM45-Wide（SLICE の流れ、--wide）。proj019-0.2: SNAP・LMX の出力の強さ
+VERSION = "proj024-0.1"                 # proj024: 2G-1 の写しの起こし（中身は proj023-0.1 と同じ）。proj023: SAM45-Wide（SLICE の流れ、--wide）。proj019-0.2: SNAP・LMX の出力の強さ
 
 
 def default_settings():

@@ -549,6 +549,41 @@ RAW: SRC 1・N_ACC 64・N_DUMP 2・REC ALL → RUN / FULL: SRC 2・SHIFT 4・N_A
   **build.tcl の「run の CRITICAL WARNING」は run の runme.log しか読まず、BD を組むときの警告（vivado.log の本体）を拾っていなかった**。2 回目の予言「CRITICAL WARNING は proj023 と同じ種類だけ」は、見張りの穴で当たりに見えていた → 外れに改める。
   次に作り直すとき: 空いた入口を xlconstant で縛る（proj021 の full_tie と同じ）・vivado.log の本体の CRITICAL WARNING も拾う
 
+### 3. PS — 土台と手順（2026-10-18 から）
+
+**土台: proj023/pynq の追跡されているファイル 56 個を 1ebc92c から `pynq/` に写した**（2026-10-18、西村さん。RTL を 567fda2 から写したのと同じ型）。
+YATSUGATAKE の `sw/pynq/`（M5a: 較正の鍵を (BIT_KIND, BIT_REV) に・M5b: bitinfo・USR_ACCESS）とは二方向に分かれたまま（s45acq で 375 行・timebase で 49 行違う）。M5a・M5b は Wide のマージのときに合わせる。
+`proj023/pynq/` には触らない（読むだけ）。
+
+手順（各手順は予言 → 結果 → 当たり・外れ → INDEX → コミット）:
+- 3a. 写す・ID を proj024 に（BIT_KIND 11 = 2G-1・BIT_REV 1・PROJ 0x0024_0100・time_core の IF_ID 0x020B_0102・CAL は未較正の行・既定の .bit の名前）
+- 3b. NCH の一般化: 受け側（s45client）の軸と形を記録の nch から作る。v1・DDC・SLICE は NCH 4096 のまま（`P.NCH` は「DDC・SLICE の ch 数」の意味に限る）
+- 3c. G21Backend（FULL 1 本・NCH 131072・SRC・SHIFT は RUN・TP は流れの 0x100〜（s 0）・RAW は s 1（0x4400）・D_S は経路ごと）と FakeG21Backend で test_fake に 2G-1 の試験を足す
+- 3d. 取得を C に（D-11、INTERFACE 8. の 4・6）: リングから 1 MiB のレコードを読み、CRC・束ねの和・float32 の丸めを 1 回のなめで。ボードで 1 呼び出しずつ速さを測る
+- 3e. リングの大きさ（INTERFACE 8. の 11 の前半）: 64 MiB を越える bo が取れるかをボードで
+- ネットワークの予算（8. の 10、D-11）は西村さんの判断。3c〜3d の間に材料（float32 51.2 MB/s・送り出しの実測 25.3 MB/s）を並べる
+
+**土台の確かめ（写しただけ、変更なし）**: `bash test_fake.sh` の 16 試験（basic〜widesnap）を、この PC のコンピュータ側のシェルで全部 OK（予言は書かずに回した。写しの確かめ）。
+コンピュータ側のシェルは呼び出しが返ると裏のプロセスを止めるので、`all` は 1 回に入らず、試験の名前を並べて 3 回に分けて回した
+
+**3a 予言**: ID と既定の名前を変えるだけなので、test_fake の 16 試験は全部 OK で数字も土台と同じ（偽物の裏は ID を読まない。版の文字列 VERSION だけが EVENT で変わる）。
+`python3 -c "import s45core, timebase"` が通り、BIT_KINDS[11] = "2G-1"・TimeCore.IDS に 0x020B_0102・CAL[0x0024_0100] が未較正（adc_to_core_ns None）
+
+**3b 予言**: s45client の `freq()`・`latest()`・`spec()` を記録の nch・df_hz から作る形にする（v2 は IF(i) = if_mhz ＋ (i − 2047)·df のまま。INTERFACE 6. の SLICE の式を FULL にも使い、2047 は「送る 2047 番目」のまま変えない）。
+- 単体の試験 `test_nch.py`: v2 の記録を nch 4096・131072 で作って decode → 軸の長さ = nch・軸の差 = df・2047 番目 = if_mhz。v1 の記録（nch 欄なし）では 4096 と前と同じ式（土台の s45client の式と配列が一致）
+- 陽性対照 `--posctl`（軸を P.NCH で作る、つまり今までの形）: nch 131072 の軸の長さが 4096 で不一致 → 不合格
+- test_fake の 16 試験は数字も土台と同じ（受け側の照合は軸を使わない）
+- ついで: 土台の `latest()` は v2（SLICE）でも v1 の式で軸を作っていた（df_hz を見ない）。同じ関数に寄せるので直る（Wide の live 表示の軸。proj023 には戻さない）
+
+**3a 結果（2026-10-18）: 全部 OK**（16 試験。予言どおり）。import の確かめも予言どおり（BIT_KINDS[11] = 2G-1・IDS に 0x020B_0102・CAL[0x0024_0100] は未較正）。EVENT の version は proj024-0.1。
+- 予言の外れ（書き方の粗さ）: 「数字も土台と同じ」は、判定に使う数（SPEC 800・欠け 1154・組 800 など）では当たり。時計で決まる数（TP 4001 → 4004・版の内訳 1994 → 1998）は数個動く。予言は判定に使う数で書く
+
+**3b 結果（2026-10-18）: `test_nch.py` は全部通過（14 項目）、陽性対照 `--posctl` は「軸の長さ 4096（期待 131072）」の 1 項目で不合格**（予言どおり）
+- **s45proto は直す所が無かった**: v2 の decode は頭の nch で中身を読むので、131072 ch もそのまま読めた。`NCH`・`IF_ORDER` は v1 と DDC の 4096 ch の定数として残す
+- s45client: `if_axis(d)` を足し、`freq()`・`latest()` をそれに寄せた（`latest()` の v2 の軸も直った）。nch 4096 の v2（DDC・SLICE）と v1 は土台の式と配列が一致
+- **test_fake は回さなかった**: test_fake.sh は s45client を import しない（Wide の試験の軸の式を書き写しているだけ）ので、3b の変更では何も変わらない。予言の「16 試験は数字も同じ」は、確かめる意味が無い予言だった
+- 3c に持ち越す: s45client の手元の溜め（窓ごと keep 500 ダンプ）は 131072 ch では 500 × 512 KiB = 256 MiB（float32）になる。keep を nch で割るか、2G-1 の既定を小さく
+
 ### 1a. g21_coef — 予言（走らせる前に書く、2026-10-17）
 
 tb（`sim/tb_g21_coef.v`）: 1 フレーム 16384 ビート ＋ 次のフレームの頭 512 ビート、途中 2 か所で有効を 3 クロック落とす。判定は `sim/check_g21.py coef`。
@@ -686,6 +721,7 @@ proj023 の会話からの引き継ぎの「4. 2G で初めて決めること」
 5. **ネットワークの予算**（8. の 10）: float32 で 51.2 MB/s は今の予算 17.7 MB/s を越える。ネットワークの tint ≧ 30.72 ms に読み替えるか、送り出しの頭打ちを直すか（D-11）
 6. **8. の 11 の後半（rec_fr の数えの幅）は解決**（2026-10-17、2d）: NCH 4096 の決め打ちだったので NCH を引数にした（NCH 4096 で 567fda2 と同じ振る舞いを sim-recfr で確かめた）。1 MiB のレコードは sim で出た。リングの大きさ（前半）は未決のまま
 7. 2.5 の FULL の行に足すとよいこと（2d）: 2G-1 の FULL の TP は 512 ビートの小フレームを T の格子で数え、F0 は FULL の RUN_F0 × 32（TP のレコードの DUMP_F0 は小フレームの番号）
+8. **6. の FULL（kind 1）の SPEC v2 の読み方**（2026-10-18、3b）: SLICE と同じ形にする — 中身は IF の昇順（ゾーン 2 では FFT の ch の逆順）・**if_mhz = 送る 2047 番目の ch の IF**（nch によらず 2047）・df_hz = fs / N（2G-1 は 15.625 kHz）。受け側は IF(i) = if_mhz ＋ (i − 2047)·df のまま（s45client.if_axis）
 
 ## 結論・次にやること
 
@@ -708,7 +744,7 @@ proj023 の会話からの引き継ぎの「4. 2G で初めて決めること」
 - [x] RTL の手順 1a〜2d（引き継ぎの 7. で、マージを待たずに部品と単体の sim から）。2d で g21_core（FULL の流れ・1 MiB のレコード・FULL の TP）まで（2026-10-17）
 - [x] 2e g21_s45_core（コア 1 個: 共通・FULL・RAW、axis_sel4 × 2、D-14）（2026-10-18）
 - [x] 2f build.tcl・ブロックデザイン（2026-10-18）: 既定の戦略は −0.110 ns、**Performance_Explore で +0.0018 ns で閉じた**（build-PE/）
-- [ ] 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）→ 4. 実機
+- [ ] 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）→ 4. 実機。**3a（proj023/pynq を 1ebc92c から写し、ID を proj024 に）・3b（受け側の軸を記録の nch から）は済み**（2026-10-18）。次は 3c G21Backend
 
 ## 公開について
 
