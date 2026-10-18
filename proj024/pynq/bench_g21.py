@@ -18,6 +18,7 @@ TP（10 個 / 10.24 ms の小さなレコード）は入れない（1 周に 1 �
 **specd を止めてから測る**（同じ A53 を取り合う）。CPU を 1 つに固定し（--cpu、既定 3）、SCHED_FIFO（--rt、既定 50。root のとき）で specd の取得と同じ条件に。
 """
 import argparse
+import gc
 import json
 import os
 import time
@@ -114,6 +115,8 @@ def main():
     p.add_argument("--cpu", type=int, default=3)
     p.add_argument("--rt", type=int, default=50)
     p.add_argument("--out", default="runs/bench_g21.json")
+    p.add_argument("--gc", action="store_true", help="GC を止めない（3d の 1 回目の形。既定は specd と同じく gc.freeze・gc.disable）")
+    p.add_argument("--warm", type=int, default=20, help="最大を「最初の warm BASE を除いて」も出す（溜まり・リングのページの最初の割り当て）")
     a = p.parse_args()
 
     if a.cpu is not None and a.cpu >= 0:
@@ -145,6 +148,8 @@ def main():
     cf = cfgs[0]
     bund = A.Bundler(cf["n_sum"], cf["pl_nacc"])
 
+    if not a.gc:
+        gc.collect(); gc.freeze(); gc.disable()                      # specd の Acq.run と同じ
     t_rd, t_bu, t_sp, t_all = [], [], [], []
     crc_bad = tail_bad = nrec = nspec = 0
     pos = 0
@@ -198,11 +203,14 @@ def main():
     res = dict(pynq=a.pynq, ring_mib=a.ring_mib, bases=a.bases, n_sum=a.n_sum, fmt=a.fmt, corrupt=a.corrupt,
                nrec=nrec, nspec=nspec, crc_bad=crc_bad, tail_bad=tail_bad, drop=acq.drop["n"],
                all_mean=float(al.mean()), all_p99=float(np.percentile(al, 99)), all_max=float(al.max()),
+               gc_off=not a.gc, max_at=int(al.argmax()), slow=int((al > 10.24).sum()), slow_at=[int(x) for x in np.flatnonzero(al > 10.24)[:20]],
+               max_after_warm=float(al[a.warm:].max()) if al.size > a.warm else None,
                load=float(al.mean() / base_ms),
                read_mean=float(rd.mean()), bund_mean=float(bu.mean()) if bu.size else 0.0,
                spec_mean_per_bundle=float(sp[sp > 0].mean()) if (sp > 0).any() else 0.0)
     print(f"2G-1 の 1 BASE（1 MiB のレコード 1 個、{a.bases} 個・n_sum {a.n_sum}・fmt {a.fmt}・{'pynq.allocate' if a.pynq else 'numpy'}）:")
-    print(f"  合計  平均 {res['all_mean']:6.2f} ms・p99 {res['all_p99']:6.2f}・最大 {res['all_max']:6.2f} ms（10.24 ms の {100 * res['load']:.0f} %）")
+    print(f"  合計  平均 {res['all_mean']:6.2f} ms・p99 {res['all_p99']:6.2f}・最大 {res['all_max']:6.2f} ms（10.24 ms の {100 * res['load']:.0f} %）GC {'止めた' if not a.gc else '動く'}")
+    print(f"  裾    最大は {res['max_at']} 番目・最初の {a.warm} を除いた最大 {res['max_after_warm']:.2f} ms・10.24 ms を越えた BASE {res['slow']}（番目: {res['slow_at']}）")
     print(f"  内訳  リングの読み（invalidate・CRC・写し）{res['read_mean']:.2f} ms / 束ねの和 {res['bund_mean']:.2f} ms / "
           f"記録（逆順・float32・CRC・溜まり）1 束あたり {res['spec_mean_per_bundle']:.2f} ms（{a.n_sum} BASE に 1 回）")
     print(f"  レコード {nrec}・SPEC の記録 {nspec}（期待 {a.bases // a.n_sum if not a.corrupt else '壊したぶん少ない'}）・"
