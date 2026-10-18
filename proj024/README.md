@@ -626,6 +626,16 @@ YATSUGATAKE の `sw/pynq/`（M5a: 較正の鍵を (BIT_KIND, BIT_REV) に・M5b:
   ch → IF = 4096 − c·df（SG の CW で）・D_S = +1 ビート（F-2 の RAW と並べて）
 - 3d・3e に持ち越し: 1 MiB のレコードの Python の道の速さ（リングの CRC・束ねの和・float32・CRC）と、リング 32 MiB（≒ 0.3 s）
 
+**3d 予言（2026-10-18、ボードで測る前に書く）**: `pynq/bench_g21.py` — 2G-1 の取得の 1 周を、specd と**同じ関数**（plring.Ring.read・rec_meta・Bundler.add・Acq._spec_record_full・s45ring.put）で通して、
+1 BASE（10.24 ms に 1 MiB のレコード 1 個）あたりの A53 の時間を測る。PL・Overlay は使わない（PS がリングに試験のレコードを書き、W を手で進める）。CPU 3 に固定・SCHED_FIFO 50（specd の取得と同じ条件）。
+- 道具の確かめ（この PC、numpy のバッファ、`--no-pynq`）: 1 BASE 平均 1.19 ms（読み 0.80・和 0.15・記録 0.24 ms / 束）。SPEC 10 / 40 BASE・CRC の不一致 0。
+  陽性対照 `--corrupt 50`: 100 個のうち CRC の不一致 2・SPEC 23（壊したレコードの束 2 つを捨てる）。1 回目は試験の DUMP_T を束ねの格子に乗せておらず、最初の束が欠けた（道具の誤り。直した）
+- **ボードの予言**: 1 BASE の平均 **10〜13 ms（10.24 ms の 100〜125 %）**、p99 はそれより上 → **Python 1 本では回らない**（INTERFACE 8. の 4 の「2G は 94 %」と、PC の 10 倍遅いという LESSONS の見当から。
+  proj021 M-5 の 2g（2 流れ × 65536 ch = 同じ 1 MiB / BASE）は 94 % だったが、今の道は M-5 に無い写しが 3 つ多い: Ring.read の中身の写し・Bundler の最初の写し・逆順の写し）。
+  内訳はリングの読み（invalidate・1 MiB の CRC・写し）が 6 割以上。`--fmt both` は記録が 2 倍重くなるが、試験のときだけ
+- 陽性対照（ボード）: `--corrupt 50` で 400 個のうち CRC の不一致 8・SPEC 92（= 100 − 8）
+- 予言が当たったら（回らない）: C にする（ARMv8 の CRC 命令で読みと CRC と和を 1 回のなめで）か、読みと記録を 2 プロセスに分けるかを、内訳を見て決める（西村さんと）。外れて回るなら、余裕（p99 と最大）で決める
+
 ### 1a. g21_coef — 予言（走らせる前に書く、2026-10-17）
 
 tb（`sim/tb_g21_coef.v`）: 1 フレーム 16384 ビート ＋ 次のフレームの頭 512 ビート、途中 2 か所で有効を 3 クロック落とす。判定は `sim/check_g21.py coef`。
