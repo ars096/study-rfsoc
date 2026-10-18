@@ -701,6 +701,10 @@ YATSUGATAKE の `sw/pynq/`（M5a: 較正の鍵を (BIT_KIND, BIT_REV) に・M5b:
 **3d 4 回目の予言**（mallopt を取得の中で呼ぶ形。環境変数の 3b と同じことのはず）: 平均 6.1 ms 前後・最大 12 ms 以下・位相 3 の記録 5.4 ms / 束・ページフォルトは 3b と同じ程度（1.4 万）・終わりの Segmentation fault なし。
 `--no-malloc-tune` は 3a と同じ（最大はまれに数十 ms。出なくてもおかしくない: 400 BASE で 1 回）
 
+**3e 予言（リングの大きさ、INTERFACE 8. の 11 の前半。ボードで `python3 bench_ps.py --only m2`）**: CMA の大きさ（/proc/meminfo の CmaTotal）と、pynq.allocate で 1 個に取れる最大（16 MiB から倍々）を読む。
+予言: LESSONS の「CMA の allocate は 64 MiB まで」のとおり **64 MiB は取れ、128 MiB は取れない**。そうなら 2G-1 のリングは 64 MiB（63 BASE ≒ 0.65 s）が上限で、4.1 の目安（1 s）に届かない。
+3d の読みでは、Python の取得が止まる最長は 12 ms 程度（mallopt の後）なので、0.65 s は 50 倍の余裕。**2G-1 は `--ring-mib 64` を既定にし、目安を 2G で読み替える**案（INTERFACE.md の変更案に）。128 MiB が取れたら 128 にする
+
 ### 1a. g21_coef — 予言（走らせる前に書く、2026-10-17）
 
 tb（`sim/tb_g21_coef.v`）: 1 フレーム 16384 ビート ＋ 次のフレームの頭 512 ビート、途中 2 か所で有効を 3 クロック落とす。判定は `sim/check_g21.py coef`。
