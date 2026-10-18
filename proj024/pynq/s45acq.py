@@ -47,6 +47,19 @@ FLAGS_OK_MASK = 0x7EF                      # 窓の FLAGS で異常に数える�
 VERSION = "proj024-0.1"                 # proj024: 2G-1 の写しの起こし（中身は proj023-0.1 と同じ）。proj023: SAM45-Wide（SLICE の流れ、--wide）。proj019-0.2: SNAP・LMX の出力の強さ
 
 
+def malloc_tune(mmap_threshold=32 << 20, trim_threshold=1 << 30):
+    """proj024 3d: glibc に 1 MiB 級の配列を mmap で取らせず（閾値 32 MiB = 64 bit の上限）、解放したメモリを OS に返させない（trim 1 GiB）。
+    2G-1 の 1 MiB のレコードでは、周ごとに mmap・munmap とゼロ埋めのページフォルトが起き、まれに 57 ms の嵐になった（bench_g21 3a）。
+    設定は環境変数 MALLOC_MMAP_THRESHOLD_・MALLOC_TRIM_THRESHOLD_ と同じ（mallopt。M_TRIM_THRESHOLD −1・M_MMAP_THRESHOLD −3）。戻り値 (成功, 説明)"""
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6")
+        ok = libc.mallopt(-3, int(mmap_threshold)) == 1 and libc.mallopt(-1, int(trim_threshold)) == 1
+        return ok, f"mallopt M_MMAP_THRESHOLD {mmap_threshold}・M_TRIM_THRESHOLD {trim_threshold}: {'OK' if ok else '失敗'}"
+    except Exception as e:  # noqa: BLE001
+        return False, f"mallopt を呼べない（{type(e).__name__}: {e}）"
+
+
 def default_settings():
     wins = []
     for i in range(4):
@@ -1927,6 +1940,8 @@ class Acq:
             else:
                 self.log(f"TP の較正: {self.cal.get('_file')}（" + "・".join(
                     f"{a} K {c['k_db']:+.2f}{' 暫定' if c.get('provisional') else ''}" for a, c in sorted(self.cal["adc"].items())) + "）")
+        if self.g21 and not getattr(self.o, "no_malloc_tune", False):
+            self.log(malloc_tune()[1])               # proj024 3d: 2G-1 の 1 MiB の配列（Fine・Wide の道は今までどおり）
         gc.collect(); gc.freeze(); gc.disable()
         self.conn.send(dict(ok=True, ids=self.be.ids, version=VERSION))
         self.log(f"準備完了（{'偽物' if self.o.fake else '実機'}、ID {self.be.ids}）")

@@ -635,6 +635,7 @@ def main():
     p.add_argument("--fake", action="store_true", help="PL を使わない（偽の記録。通信の試験）")
     p.add_argument("--wide", action="store_true", help="proj023: SAM45-Wide の .bit（SLICE の流れ。bits.json の項目の kind が優先）")
     p.add_argument("--g21", action="store_true", help="proj024: 2G-1 の .bit（FULL の流れ 1 本・131072 ch。bits.json の項目の kind が優先）")
+    p.add_argument("--no-malloc-tune", action="store_true", help="proj024 3d: 2G-1 の取得で mallopt（1 MiB の配列を mmap で取らせない）をしない（比べる用）")
     p.add_argument("--tp-cal", default="tp_cal.json", help="TP の dBm の較正ファイル（無ければ使わない。s45cal.py）")
     p.add_argument("--fake-notime", action="store_true", help="偽物で 1PPS が無い（時刻を答えられない）状態を作る")
     p.add_argument("--fake-stall", type=int, default=0, help="偽物の陽性対照: 窓 A0 の k がこの倍数のとき読み出しを 50 ms 止める")

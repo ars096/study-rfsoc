@@ -118,6 +118,7 @@ def main():
     p.add_argument("--rt", type=int, default=50)
     p.add_argument("--out", default="runs/bench_g21.json")
     p.add_argument("--gc", action="store_true", help="GC を止めない（3d の 1 回目の形。既定は specd と同じく gc.freeze・gc.disable）")
+    p.add_argument("--no-malloc-tune", action="store_true", help="s45acq.malloc_tune を呼ばない（3d 3a の形。3b は環境変数で同じことをした）")
     p.add_argument("--warm", type=int, default=20, help="最大を「最初の warm BASE を除いて」も出す（溜まり・リングのページの最初の割り当て）")
     a = p.parse_args()
 
@@ -150,6 +151,8 @@ def main():
     cf = cfgs[0]
     bund = A.Bundler(cf["n_sum"], cf["pl_nacc"])
 
+    mt = (False, "呼ばない") if a.no_malloc_tune else A.malloc_tune()          # specd の Acq.run（2G-1）と同じ
+    print(f"malloc: {mt[1]}")
     if not a.gc:
         gc.collect(); gc.freeze(); gc.disable()                      # specd の Acq.run と同じ
     t_rd, t_bu, t_sp, t_all = [], [], [], []
@@ -201,8 +204,11 @@ def main():
             t_sp_k.append(td - tc if recs else 0.0)
     finally:
         ring.a64 = ring.a8 = ring.u8 = None
+        ring.bo_sync = None                                           # 3d 3a の終わりの Segmentation fault: bo を握る lambda を先に手放す（疑い）
         if ring.buf is not None:
-            ring.buf.freebuffer()
+            buf, ring.buf = ring.buf, None
+            buf.freebuffer()
+            del buf
         sh.close()
 
     ms = lambda v: np.array(v) * 1e3
@@ -215,7 +221,8 @@ def main():
                max_after_warm=float(al[a.warm:].max()) if al.size > a.warm else None,
                load=float(al.mean() / base_ms),
                read_mean=float(rd.mean()), bund_mean=float(bu.mean()) if bu.size else 0.0,
-               spec_mean_per_bundle=float(sp[sp > 0].mean()) if (sp > 0).any() else 0.0)
+               spec_mean_per_bundle=float(np.sort(sp)[-nspec:].mean()) if nspec else 0.0,   # 3d 3 回目で直した: 束を作った nspec 回だけの平均
+               malloc_tune=mt[0])
     print(f"2G-1 の 1 BASE（1 MiB のレコード 1 個、{a.bases} 個・n_sum {a.n_sum}・fmt {a.fmt}・{'pynq.allocate' if a.pynq else 'numpy'}）:")
     print(f"  合計  平均 {res['all_mean']:6.2f} ms・p99 {res['all_p99']:6.2f}・最大 {res['all_max']:6.2f} ms（10.24 ms の {100 * res['load']:.0f} %）GC {'止めた' if not a.gc else '動く'}")
     print(f"  裾    最大は {res['max_at']} 番目・最初の {a.warm} を除いた最大 {res['max_after_warm'] if res['max_after_warm'] is None else round(res['max_after_warm'], 2)} ms・10.24 ms を越えた BASE {res['slow']}（番目: {res['slow_at']}）")
