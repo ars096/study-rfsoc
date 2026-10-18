@@ -722,6 +722,29 @@ YATSUGATAKE の `sw/pynq/`（M5a: 較正の鍵を (BIT_KIND, BIT_REV) に・M5b:
 - **D-15: 2G-1 のリングは 64 MiB**（allocate の上限、63 BASE ≒ 0.65 s）。`specd.py --ring-mib` の既定は bit ごと（2G-1 は 64、Fine・Wide は 32 のまま）。INTERFACE 4.1 の目安（1 s）は 2G で読み替える（INTERFACE.md の変更案の 10）
 - 19 試験（test_fake.sh）と test_nch.py は、この決めを入れた後に全部 OK（2026-10-18）
 
+### 4. 実機 — 手順と予言（2026-10-18、走らせる前に書く）
+
+載せるもの: **build-PE/ の proj024.bit・.hwh**（sha256 `fdb04d80…714dd8`・`e98a0f2e…6f77bc3f`、2026-10-18 にこの PC で照らして一致）と pynq/*.py。
+順番（西村さん、2026-10-18）: **4a 立ち上げ → 4b ch → IF（SG の CW）→ 4c 長い運転（D-11 の判定）→ 4d D_S（F-2）**。判定の道具は `pynq/g21cw.py`（記録の .s45 を読む。PC で偽物の記録と、期待の ch にピークを入れた合成の記録で確かめた: 通過・陽性対照 `--posctl` は軸の向きで不合格）
+
+**4a 立ち上げ（SG なし。入力は今の配線のまま、構成を記録する）**
+- `specd.py --g21 --bitfile proj024.bit --clkin 0 --ref 10` → `specctl`: ID・STATUS → `SET src=A shift=7` → `START n=700`（≒ 28.7 s。時刻が無ければ `force=1`）→ `specrecv.py --out runs/g21_4a1.s45`。
+  続けて `SET src=C` で同じ（`runs/g21_4a2.s45`。SRC の道とコアの TP を足す道）
+- 予言:
+  - 起動: ID の adc = 020b0101（IF_ID: IF_VER 2・BIT_KIND 11・BIT_REV 1・CORE_KIND 1）・time 020b0102・proj 00240100・ログに「リング … SIZE 67108864」と mallopt OK
+  - **START が通る**（= G21Backend の照合が全部通る: WRST の後の SRC 0x8000_000s・NCH 131072・FRAME_BEATS 16384・RUN_SHIFT 7・**FULL の TP の F0 = RUN_F0 × 32**）。RUN_T の WARN なし
+  - 記録: SPEC 700・CRC の不一致 0・説明のない欠け 0・照合 通過（DUMP_T の進み 640·16384）。g21cw: 頭の欄が全部期待どおり・DUMP_K が 1 ずつ・**床の中央値 > 1**（SHIFT 7 で潰れていない）。TP の ADC は src = A で {A}、src = C で {A, C}
+  - STATUS（STOP の後）: miss 0・kgap 0・bdrop 0・r_bad 0・**loop_slow 0**・drop 0・ring の drop 0・tp_lost 0・tp_bad 0。loop_max は 3d の bench から 12 ms 前後（まれに 60 ms 級）
+  - 自信が低い所: 床の絶対の高さ（SHIFT 7 の床が何 LSB² か。模型の σ からは出していない）・health / flags の OR（PPS が来ていなければ health に [0]）
+
+**4b ch → IF（SG の CW）**: E8257D（ボードと同じ 10 MHz）→ **0 dBm ＋ 固定減衰器 20 dB**（ADC の入口で −20 dBm ≒ −26 dBFS。LESSONS の「−10 dBm 以下は unleveled」を避ける）→ SMA の ADC_A、`SET src=A`。
+  周波数は ch の中心で、試験音の約束（fs/64・k·fs/8・n × 163.84 MHz）を避けた **3000.25 MHz**（ch c 70128 → 送る i 60943）と **2500.5 MHz**（c 102112 → i 28959）。向きの取り違え（昇順か）を 2 点で見る
+- 予言: 2 点とも **CW が見えている（ピーク / 中央値 ≧ 30 dB）・ピークの番号が期待と一致・軸の値と SG の差 0 Hz（ch の中心）**。隣の ch は PFB（T 4）でピークより 50 dB 以上下
+- 自信が低い所: SHIFT 7 で CW が飽和しないか（sat の和を見る。飽和したら SHIFT を上げて取り直し、そのことを書く）
+
+**4c 長い運転**（4a・4b の後に、時間を決めて）: `START n=0` で 30 分。STATUS を 1 分ごと。予言: loop_slow 0・drop 0・ring の drop・REC_LATE 0・miss 0。1 つでも 0 でなければ D-11（C は見送り）を考え直す
+**4d D_S**: proj023 の F-2 の道具（RAW の流れ）で adc_to_core を測り、FULL の D_S = +1 ビートを確かめる。手順は 4c の後に書く
+
 ### 1a. g21_coef — 予言（走らせる前に書く、2026-10-17）
 
 tb（`sim/tb_g21_coef.v`）: 1 フレーム 16384 ビート ＋ 次のフレームの頭 512 ビート、途中 2 か所で有効を 3 クロック落とす。判定は `sim/check_g21.py coef`。
