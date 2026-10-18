@@ -728,12 +728,12 @@ YATSUGATAKE の `sw/pynq/`（M5a: 較正の鍵を (BIT_KIND, BIT_REV) に・M5b:
 順番（西村さん、2026-10-18）: **4a 立ち上げ → 4b ch → IF（SG の CW）→ 4c 長い運転（D-11 の判定）→ 4d D_S（F-2）**。判定の道具は `pynq/g21cw.py`（記録の .s45 を読む。PC で偽物の記録と、期待の ch にピークを入れた合成の記録で確かめた: 通過・陽性対照 `--posctl` は軸の向きで不合格）
 
 **4a 立ち上げ（SG なし。入力は今の配線のまま、構成を記録する）**
-- `specd.py --g21 --bitfile proj024.bit --clkin 0 --ref 10` → `specctl`: ID・STATUS → `SET src=A shift=7` → `START n=700`（≒ 28.7 s。時刻が無ければ `force=1`）→ `specrecv.py --out runs/g21_4a1.s45`。
+- `specd.py --g21 --bitfile proj024.bit --clkin 0 --ref 10` → `specctl`: ID・STATUS → `SET src=A shift=7` → `START n=200`（≒ 8.2 s・記録 ≒ 100 MB。時刻が無ければ `force=1`）→ **この PC で** `specrecv.py --host <ボード> --out runs/g21_4a1.s45`（ボードの SD に書かない。送り出し 12.5 MB/s のネットワークも一緒に通る）。
   続けて `SET src=C` で同じ（`runs/g21_4a2.s45`。SRC の道とコアの TP を足す道）
 - 予言:
   - 起動: ID の adc = 020b0101（IF_ID: IF_VER 2・BIT_KIND 11・BIT_REV 1・CORE_KIND 1）・time 020b0102・proj 00240100・ログに「リング … SIZE 67108864」と mallopt OK
   - **START が通る**（= G21Backend の照合が全部通る: WRST の後の SRC 0x8000_000s・NCH 131072・FRAME_BEATS 16384・RUN_SHIFT 7・**FULL の TP の F0 = RUN_F0 × 32**）。RUN_T の WARN なし
-  - 記録: SPEC 700・CRC の不一致 0・説明のない欠け 0・照合 通過（DUMP_T の進み 640·16384）。g21cw: 頭の欄が全部期待どおり・DUMP_K が 1 ずつ・**床の中央値 > 1**（SHIFT 7 で潰れていない）。TP の ADC は src = A で {A}、src = C で {A, C}
+  - 記録: SPEC 200・CRC の不一致 0・説明のない欠け 0・照合 通過（DUMP_T の進み 640·16384）。g21cw: 頭の欄が全部期待どおり・DUMP_K が 1 ずつ・**床の中央値 > 1**（SHIFT 7 で潰れていない）。TP の ADC は src = A で {A}、src = C で {A, C}
   - STATUS（STOP の後）: miss 0・kgap 0・bdrop 0・r_bad 0・**loop_slow 0**・drop 0・ring の drop 0・tp_lost 0・tp_bad 0。loop_max は 3d の bench から 12 ms 前後（まれに 60 ms 級）
   - 自信が低い所: 床の絶対の高さ（SHIFT 7 の床が何 LSB² か。模型の σ からは出していない）・health / flags の OR（PPS が来ていなければ health に [0]）
 
