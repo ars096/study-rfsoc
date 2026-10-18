@@ -584,6 +584,48 @@ YATSUGATAKE の `sw/pynq/`（M5a: 較正の鍵を (BIT_KIND, BIT_REV) に・M5b:
 - **test_fake は回さなかった**: test_fake.sh は s45client を import しない（Wide の試験の軸の式を書き写しているだけ）ので、3b の変更では何も変わらない。予言の「16 試験は数字も同じ」は、確かめる意味が無い予言だった
 - 3c に持ち越す: s45client の手元の溜め（窓ごと keep 500 ダンプ）は 131072 ch では 500 × 512 KiB = 256 MiB（float32）になる。keep を nch で割るか、2G-1 の既定を小さく
 
+**3c 予言（2026-10-18、書いてから作る）**: `s45acq.py` に 2G-1 の裏 **G21Backend** と **FakeG21Backend**、specd に `--g21`（bits.json の項目なら `"kind": "g21"`）。
+作りの決め（Wide の枠を崩さない）:
+- **窓の枠 8 本のまま、A0 = FULL の流れ（コア 0 の s 0）だけを使う**（残り 7 本は active False、B 4 の空の流れと同じ扱い）。受け側の鍵も A0
+- 設定: `src`（FULL の入力の ADC、A〜D。次の WRST で効く。D-8）・`shift`（RUN で効く。既定 7 = RTL の既定）・tint・fmt・cfg。`A0.src`・`A0.shift`・`all.shift` も同じ。A1〜D1 の設定は ERR
+- START: STOP・REC 0 → SRC・SHIFT・CFG → **ARM_WRST**（tint の格子）→ SRC の読み返し（0x8000_000s）・NCH 131072・FRAME_BEATS 16384 → N_ACC 160（= BASE / 16384）・N_DUMP 0・REC ALL・FULL の TP（流れの 0x100 の TP_N 512・0x11C の TP_REC_CTRL）・コアの TP → **ARM_RUN と TP_ARM** を tint の格子で。
+  begin で RUN_T = START_AT ＋ 1・RUN_SHIFT = 書いた値を照らす（判定の期待は PS が書いた値。LESSONS）
+- 束ね: PL のダンプ 10.24 ms（160 フレーム）を Bundler で tint / BASE 個（既定 40.96 ms で 4 個）。nacc = 640
+- SPEC v2: **kind 1・ns 0（B 1）・nch 131072**・中身は IF の昇順（送る i ↔ ch c = 131071 − i）・IF(c) = 4096 − c·df（Wide の w_if_mhz の B 1 と同じ形）・
+  **if_mhz = 送る 2047 番目（c = 129024）= 2080 MHz**・df = 4096 MHz / 262144 = 15.625 kHz。
+  utc_ns = beat_utc(dump_t) − adc_to_core[src] − (D_S ＋ 1.5·L)、**L = 16384・D_S = +1 ビート**（2e: FULL の DUMP_T はデータより 1 ビート後 = axis_sel4 の 1 段。RAW は 0 で、adc_to_core は RAW で測る）
+- TP: **FULL の TP（SRC の ADC）を ADC の欄 = src に**、コアの TP（コアの ADC = A）を A に。**src = A のときはコアの TP を使わない**（同じ ADC の 2 本を 1 つの欄に混ぜない）。
+  FULL の TP の区切りの頭 = 512·f − D_S（K_F 0、小フレームの番号 f）、コアの TP は Wide と同じ TANCH の錨から
+- SNAP: RAW の流れ（s 1）で、Wide と同じ `_snap_ring`（select_full で RAW の SRC → WRST）
+- specrecv の DUMP_T の進みの照合: **kind 1 の L = nch / 8**（2G-1 は 16384。Fine の FULL 4096 ch なら 512 で今までと同じ）
+
+試験（test_fake.sh に足す。PL なし）:
+- `g21`: SET tint=0.04096 src=C shift=7 fmt=both → GET → START n=30 → SEND ON。予言: **SPEC 60**（30 × u64・f32）・組 30・不一致 0・照合 通過（DUMP_T の進み 640·16384）・
+  記録は全部 kind 1・nch 131072・core 0・s 0・src 2・ns 0・nacc 640・df 15625・軸が 4096 − (131071 − i)·df と一致し昇順。TP の ADC は {A, C} だけ。GET に src=C・shift=7
+- 同じ試験の中の陽性対照: 1 ch ずらした軸（131072 − i）と比べると、30 個全部が NG
+- `g21p`（陽性対照）: `src=E`・`shift=16`・`A1.shift=7`・`tint=0.03` はどれも ERR
+- 既存の 16 試験は全部 OK（Fine・Wide の道は変えない。specrecv の L は kind 2 と DDC で前と同じ）
+- 実機の道（G21Backend）は PL が無いと通らない。4. で初めて走る（ここでは import と、FakeG21 と共有する関数の試験だけ）
+
+**3c 結果（2026-10-18）: 全部 OK**（test_fake.sh は 16 ＋ 3 = 19 試験、`test_nch.py` 17 項目。予言は全部当たり）
+| 試験 | 結果 |
+|---|---|
+| g21 | SPEC 60・組 30・不一致 0・照合 通過。f32 の記録 30 個は全部 kind 1・nch 131072・core 0・s 0・src 2・ns 0・nacc 640・df 15625・bit_kind 11、軸は 4096 − (131071 − i)·df と一致し昇順。TP の ADC は A・C だけ。GET に src=C・shift=7 |
+| g21 の中の陽性対照 | 1 ch ずらした軸（131072 − i）では 30 個全部が NG |
+| g21p（陽性対照） | src=E・shift=16・A1.shift・tint=0.03 は全部 ERR、src=B shift=3 は通る |
+| g21cli（予言の後に足した） | s45client で偽物の specd から acquire(20): 手元 15 ダンプ × 131072 ch・軸 131072 個の昇順・説明のない欠け 0・CRC 0 |
+| 既存の 16 試験 | 全部 OK（判定に使う数は土台と同じ） |
+
+- **作っている途中で見つけた s45client の穴 2 つ**（予言には無かった。g21cli と test_nch に足した）:
+  - `acquire()` は **8 窓の最小**で届いたダンプを数えていた → 窓が A0 だけの 2G-1 では必ず時間切れになる。START の EVENT の `active` の窓だけを数える形に（`active_keys`）。
+    **Wide の B 4（流れ 1 が空）でも同じはずの穴**で、proj023 の s45client.acquire は B 4 のコアがあると時間切れになる見込み（proj023 には触っていない。proj023 の会話に伝える）
+  - 手元の溜めを nch で絞る（`keep_of`: 4096 ch で 500、131072 ch で 15 = 同じ 8 MiB / 窓）と、acquire の「手元の数で n を待つ」が n > 15 で終わらない → 届いた数を (run, 窓) ごとに別に数える（`_nrec`）
+- specd のログの終わりの `resource_tracker` の KeyError は、土台の 17 本のログ全部に同じものがある（終わり際の共有メモリの後片づけ。今回の変更と関係ない）
+- **実機の道（G21Backend）はまだ一度も走っていない**。4. で最初に確かめること（sim で見た値を前提にしている所）:
+  WRST の後の SRC の読み返し = 0x8000_000s・NCH 131072 / FRAME_BEATS 16384・begin の **FULL の TP の F0 = FULL の RUN_F0 × 32**・RUN_T = START_AT ＋ 1・
+  ch → IF = 4096 − c·df（SG の CW で）・D_S = +1 ビート（F-2 の RAW と並べて）
+- 3d・3e に持ち越し: 1 MiB のレコードの Python の道の速さ（リングの CRC・束ねの和・float32・CRC）と、リング 32 MiB（≒ 0.3 s）
+
 ### 1a. g21_coef — 予言（走らせる前に書く、2026-10-17）
 
 tb（`sim/tb_g21_coef.v`）: 1 フレーム 16384 ビート ＋ 次のフレームの頭 512 ビート、途中 2 か所で有効を 3 クロック落とす。判定は `sim/check_g21.py coef`。
@@ -722,6 +764,7 @@ proj023 の会話からの引き継ぎの「4. 2G で初めて決めること」
 6. **8. の 11 の後半（rec_fr の数えの幅）は解決**（2026-10-17、2d）: NCH 4096 の決め打ちだったので NCH を引数にした（NCH 4096 で 567fda2 と同じ振る舞いを sim-recfr で確かめた）。1 MiB のレコードは sim で出た。リングの大きさ（前半）は未決のまま
 7. 2.5 の FULL の行に足すとよいこと（2d）: 2G-1 の FULL の TP は 512 ビートの小フレームを T の格子で数え、F0 は FULL の RUN_F0 × 32（TP のレコードの DUMP_F0 は小フレームの番号）
 8. **6. の FULL（kind 1）の SPEC v2 の読み方**（2026-10-18、3b）: SLICE と同じ形にする — 中身は IF の昇順（ゾーン 2 では FFT の ch の逆順）・**if_mhz = 送る 2047 番目の ch の IF**（nch によらず 2047）・df_hz = fs / N（2G-1 は 15.625 kHz）。受け側は IF(i) = if_mhz ＋ (i − 2047)·df のまま（s45client.if_axis）
+9. **5.2 の D_S の表に 2G-1 の行**（2026-10-18、3c）: FULL（SPEC・FULL の TP）は **D_S = +1 ビート**（DUMP_T はデータの T より 1 ビート後、axis_sel4 の 1 段）・RAW 0・コアの TP は Wide と同じ。D_eff = D_S ＋ 1.5·L、L = 16384（≒ 96 µs）。specd は G_DS_BEATS = 1 で引く。DUMP_T の進みの照合は kind 1 で L = nch / 8
 
 ## 結論・次にやること
 
@@ -744,7 +787,7 @@ proj023 の会話からの引き継ぎの「4. 2G で初めて決めること」
 - [x] RTL の手順 1a〜2d（引き継ぎの 7. で、マージを待たずに部品と単体の sim から）。2d で g21_core（FULL の流れ・1 MiB のレコード・FULL の TP）まで（2026-10-17）
 - [x] 2e g21_s45_core（コア 1 個: 共通・FULL・RAW、axis_sel4 × 2、D-14）（2026-10-18）
 - [x] 2f build.tcl・ブロックデザイン（2026-10-18）: 既定の戦略は −0.110 ns、**Performance_Explore で +0.0018 ns で閉じた**（build-PE/）
-- [ ] 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）→ 4. 実機。**3a（proj023/pynq を 1ebc92c から写し、ID を proj024 に）・3b（受け側の軸を記録の nch から）は済み**（2026-10-18）。次は 3c G21Backend
+- [ ] 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）→ 4. 実機。**3a（proj023/pynq を 1ebc92c から写し、ID を proj024 に）・3b（受け側の軸を記録の nch から）・3c（G21Backend・FakeG21Backend・specd --g21、PL なしの 3 試験）は済み**（2026-10-18）。次は 3d 取得の速さ（C か）
 
 ## 公開について
 

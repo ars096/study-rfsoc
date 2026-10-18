@@ -52,6 +52,18 @@ def if_axis(d):
     return d["if_mhz"] - np.where(b < P.NCH // 2, b, b - P.NCH) * (w / P.NCH)
 
 
+def keep_of(keep, nch):
+    """窓ごとに手元に残すダンプの数。4096 ch で keep（既定 500 ≒ 8 MiB / 窓）、それより多い ch は同じバイト数まで（下限 8）"""
+    return keep if nch <= P.NCH else max(8, keep * P.NCH // nch)
+
+
+def active_keys(start_ev):
+    """START の EVENT の wins から、レコードが来る窓の鍵（active が False の窓 = 空の流れを除く）。無ければ 8 窓"""
+    ws = (start_ev or {}).get("wins") or []
+    ks = [w["key"] for w in ws if w.get("active", True) and "key" in w]
+    return ks or list(KEYS)
+
+
 def _adc_index(a):
     return "ABCD".index(a[0].upper()) if isinstance(a, str) else int(a)
 
@@ -121,6 +133,7 @@ class S45:
         self.ctl = Ctl(host, ctrl_port, timeout=timeout)
         self._lock = threading.Lock()
         self._w = {k: collections.deque(maxlen=keep) for k in KEYS}
+        self._nrec = collections.Counter()             # proj024 3c: (run, 窓) ごとに届いた SPEC の数（手元の溜めは nch で絞るので、数は別に持つ）
         self._t = {i: collections.deque() for i in range(4)}
         self._tn = {i: 0 for i in range(4)}
         self.events = []
@@ -212,6 +225,13 @@ class S45:
             time.sleep(poll)
         raise TimeoutError("IDLE にならない")
 
+    def _active_keys(self, start_at):
+        """その START の EVENT が届いていれば、レコードが来る窓だけ（2G-1 は A0、Wide の B 4 は流れ 1 を除く）。届く前は 8 窓"""
+        for e in reversed(self.events):
+            if e.get("ev") == "START" and e.get("start_at") == start_at:
+                return active_keys(e)
+        return list(KEYS)
+
     def acquire(self, n, clear=True, timeout=None, settle=1.0, force=None, **setkw):
         """n ダンプを取って手元の写し（Data）を返す: [SET] → SEND ON → START n → 8 窓とも n 個届くまで待つ。
         clear=True なら、始める前にサーバーの溜まりと手元を空にする（前の残りを混ぜない）。
@@ -244,9 +264,9 @@ class S45:
         t_e = time.time() + (timeout or (n * tint + 10.0))
         while time.time() < t_e:
             with self._lock:
-                got = min(sum(1 for d, _ in self._w[k] if d["_run"] == r["start_at"]) for k in KEYS)
+                got = min(self._nrec[(r["start_at"], k)] for k in self._active_keys(r["start_at"]))
                 stopped = any(e.get("ev") == "STOP" for e in self.events[-4:])
-            if got >= min(n, self.keep):
+            if got >= n:
                 break
             if self._err:
                 raise RuntimeError(f"受けのスレッドが止まった: {self._err}")
@@ -481,7 +501,13 @@ class S45:
                             continue                   # fmt=both の u64 は照合（chk）だけに使い、手元には float32 を残す
                         d["_run"] = run
                         x = d.pop("data").copy()
-                        self._w[_key(d["adc"], d["win"])].append((d, x))
+                        wk = _key(d["adc"], d["win"])
+                        w = self._w[wk]
+                        w.append((d, x))
+                        self._nrec[(run, wk)] += 1
+                        lim = keep_of(self.keep, x.size)      # proj024 3c: 131072 ch は 1 ダンプ 512 KiB。窓ごとの溜めを ch 数で割る
+                        while len(w) > lim:
+                            w.popleft()
                     elif rtype == P.T_TP:
                         d = P.decode(rtype, pb)
                         i = d["adc"]

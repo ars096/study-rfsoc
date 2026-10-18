@@ -216,8 +216,68 @@ t_widesnap() {  # proj023 4g: Wide の SNAP（IDLE で ADC_B を 4 個）→ SNA
     "SNAP $sn（期待 4）・応答 $(echo $r1 | tr '\n' ' ')・RUN の間の SNAP $(echo "$r2" | grep -o 'ERR STATE' | head -1)"
 }
 
+t_g21() {     # proj024 3c: 2G-1（--g21、FULL の流れ A0 の 1 本・131072 ch）。kind 1・nch・src・IF の軸・DUMP_T の進み 16384·nacc・TP の欄は src と A だけ
+  echo "== g21"; rm -f "$OUT/g21.s45"; srv g21 --g21
+  ctl "SET tint=0.04096 src=C shift=7 fmt=both" "GET" "START n=30" "SEND ON" > "$OUT/g21.ctl.log"
+  rcv --seconds 6 --out "$OUT/g21.s45" --json "$OUT/g21.json" > "$OUT/g21.recv.log"
+  local s=$(js "$OUT/g21.json" spec) fp=$(js "$OUT/g21.json" f32_pairs) fb=$(js "$OUT/g21.json" f32_bad)
+  stop_srv
+  local ax=$(python3 - "$OUT/g21.s45" <<'EOF'
+import sys, numpy as np, s45proto as P, s45acq as A
+from s45client import if_axis
+f = open(sys.argv[1], "rb").read(); o = 0; n = ng = ngp = 0; tps = set()
+for _ in range(10**6):
+    if o >= len(f):
+        break
+    rt, pl, crc, seq = P.parse_header(f[o:o + 24]); ver = P.header_ver(f[o:o + 24])
+    d = P.decode(rt, f[o + 24:o + 24 + pl], ver); o += 24 + pl
+    if rt == P.T_TP:
+        tps.add(d["adc"])
+    if rt != P.T_SPEC or d["fmt"] != P.FMT_F32:
+        continue
+    i = np.arange(131072)
+    ifx = if_axis(d)                                                     # 受け側の式（s45client.if_axis）
+    ref = A.g_if_mhz(131071 - i)                                         # 送る i ↔ ch 131071 − i
+    ng += (d["kind"] != 1 or d["ns"] != 0 or d["nch"] != 131072 or d["core"] != 0 or d["s"] != 0 or d["src"] != 2 or d["nacc"] != 640
+           or d["df_hz"] != 15625.0 or d["bit_kind"] != 11 or d["data"].size != 131072
+           or float(np.max(np.abs(ifx - ref))) > 1e-6 or not np.all(np.diff(ifx) > 0))
+    ngp += float(np.max(np.abs(ifx - A.g_if_mhz(131072 - i)))) > 1e-6  # 陽性対照: 1 ch ずらした軸 → 全部 NG のはず
+    n += 1
+print(f"{n}:{ng}:{ngp}:{''.join('ABCD'[a] for a in sorted(tps))}")
+EOF
+)
+  judge $([ "$s" = 60 ] && [ "$fp" = 30 ] && [ "$fb" = 0 ] && [ "$ax" = "30:0:30:AC" ] && grep -q "照合: 通過" "$OUT/g21.recv.log" && grep -q "src=C" "$OUT/g21.ctl.log" && grep -q "shift=7" "$OUT/g21.ctl.log" && echo 1 || echo 0) \
+    "SPEC $s（期待 60 = 30 × u64・f32）・組 $fp・不一致 $fb・f32 の数:NG:陽性対照の NG:TP の ADC $ax（期待 30:0:30:AC）"
+}
+t_g21p() {    # proj024 3c 陽性対照: 範囲の外の src・SHIFT、A0 以外の流れ、BASE の倍数でない tint は ERR
+  echo "== g21p（陽性対照）"; srv g21p --g21
+  local r1=$(ctl "SET src=E") r2=$(ctl "SET shift=16") r3=$(ctl "SET A1.shift=7") r4=$(ctl "SET tint=0.03") r5=$(ctl "SET src=B shift=3" "GET")
+  stop_srv
+  judge $(echo "$r1" | grep -q "^ERR" && echo "$r2" | grep -q "^ERR" && echo "$r3" | grep -q "^ERR" && echo "$r4" | grep -q "^ERR" \
+          && echo "$r5" | grep -q "src=B" && echo "$r5" | grep -q "shift=3" && echo 1 || echo 0) "src=E・shift=16・A1.shift・tint=0.03 が ERR、src=B shift=3 は通る（$(echo $r1 | tr -d "\n") / $(echo $r3 | tr -d "\n")）"
+}
+
+t_g21cli() {  # proj024 3c: 受け側の s45client で 2G-1 の偽物から acquire(20)。A0 だけを数えて時間切れにならない・手元の溜めは 15 個（keep 500 × 4096 / 131072）・軸は 131072 個の昇順
+  echo "== g21cli"; srv g21cli --g21
+  local r=$(timeout 40 python3 - $PORTC $PORTD <<'EOF'
+import sys, numpy as np
+from s45client import S45
+s = S45("127.0.0.1", ctrl_port=int(sys.argv[1]), data_port=int(sys.argv[2]))
+try:
+    d = s.acquire(20, src="B")
+    sp, f = d.spec("A0"), d.freq("A0")
+    c = s.check()
+    print(f"{sp.shape[0]}:{sp.shape[1]}:{f.size}:{int(np.all(np.diff(f) > 0))}:{c['unexplained']}:{c['crc_bad']}")
+finally:
+    s.close()
+EOF
+)
+  stop_srv
+  judge $([ "$r" = "15:131072:131072:1:0:0" ] && echo 1 || echo 0) "手元のダンプ:ch:軸:昇順:説明のない欠け:CRC $r（期待 15:131072:131072:1:0:0）"
+}
+
 case "${1:-all}" in
-  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1; t_load; t_tpjump; t_idle; t_wide; t_widep; t_widesnap ;;
+  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1; t_load; t_tpjump; t_idle; t_wide; t_widep; t_widesnap; t_g21; t_g21p; t_g21cli ;;
   *) "t_$1" ;;
 esac
 if [ $NG = 0 ]; then echo "test_fake: 全部通過"; else echo "test_fake: NG $NG 件"; exit 1; fi

@@ -79,7 +79,8 @@ class Check:
             key = (d["adc"], d["win"], d.get("fmt", 0))
             if ver == 2:
                 self._f32_pair(d)
-            L = 2048 if d.get("kind") == 2 else 4096 << (d["ns"] - 1)     # proj023: SLICE（kind 2）のフレームは 2048 ビート（ns の欄は log2 B）
+            kd = d.get("kind")
+            L = 2048 if kd == 2 else d["nch"] // 8 if kd == 1 else 4096 << (d["ns"] - 1)   # proj023: SLICE は 2048 ビート。proj024: FULL は nch / 8（2G-1 は 16384）
             if key in self.k and self.k[key][2] == self.epoch:
                 k0, t0, _ = self.k[key]
                 if d["k"] != k0 + 1:

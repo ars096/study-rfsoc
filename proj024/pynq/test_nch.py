@@ -7,6 +7,7 @@
 
 - v2 の SPEC を s45proto で pack して decode し、nch 4096（DDC・SLICE）・131072（2G-1 の FULL）で軸の長さ・差・2047 番目を見る
 - nch 4096 の v2・v1 は、土台（1ebc92c の s45client.freq）の式と配列が一致すること
+- 3c: 手元の溜めの上限 keep_of・acquire が数える窓 active_keys（2G-1 は A0 だけ）。陽性対照では 8 窓を数える土台の形で落ちる
 """
 import sys
 
@@ -65,5 +66,14 @@ for ns in (1, 3, 6):
     d = v1(ns, 3000.0)
     judge(np.array_equal(axis(d), base_freq(d)) and axis(d).size == 4096, f"v1 ns {ns}: 4096 ch・土台の式と配列が一致")
 
+# proj024 3c: 手元の溜めの上限（keep_of）と、acquire が数える窓（active_keys）
+from s45client import keep_of, active_keys, KEYS
+judge(keep_of(500, 4096) == 500 and keep_of(500, 131072) == 15 and keep_of(100, 131072) == 8,
+      f"keep_of: 4096 ch 500・131072 ch {keep_of(500, 131072)}（期待 15）・下限 8")
+import s45acq as A
+ev = dict(ev="START", wins=[dict(key=A.win_key(j), **cf) for j, cf in enumerate(A.g21_cfgs(A.default_settings_g21()))])
+ak = active_keys(ev) if not POS else list(KEYS)
+judge(ak == ["A0"], f"active_keys（2G-1）: {ak}（期待 ['A0']）")
+judge(active_keys(None) == list(KEYS), "active_keys: START の EVENT が無ければ 8 窓")
 print("結果: 全部通過" if not ng else f"結果: 不合格（{len(ng)}）")
 sys.exit(1 if ng else 0)

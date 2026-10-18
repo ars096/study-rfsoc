@@ -110,6 +110,39 @@ def wide_cfgs(st):
     return out
 
 
+# ---- proj024: 2G-1（FULL の流れ 1 本、131072 ch、BIT_KIND 11）
+G_NCH, G_FRAME = 131072, 16384
+G_PL_NACC = BASE_BEATS // G_FRAME          # 160（PL のダンプ = BASE 10.24 ms）
+G_DS_BEATS = 1                             # D_S（RTL の遅れ）。proj024 2e: FULL の DUMP_T はデータの T より 1 ビート後（axis_sel4 の 1 段）。RAW は 0
+G_DF_HZ = W_FS_MHZ * 1e6 / (2 * G_NCH)     # 15,625 Hz（fs / N、N = 262144）
+
+
+def g_if_mhz(c):
+    """FULL の ch c の IF（ナイキストゾーン 2。Wide の w_if_mhz の B 1 と同じ形）"""
+    return W_FS_MHZ - np.asarray(c, np.float64) * (G_DF_HZ / 1e6)
+
+
+def default_settings_g21():
+    return dict(kind="g21", tint=0.04096, cfg=0, fmt="f32", src=0, shift=7, wins=[dict() for _ in range(4 * NW)])
+
+
+def check_g21(st):
+    if st.get("src") not in range(4):
+        raise ValueError(f"src {st.get('src')}（A〜D = 0〜3）")
+    if st.get("shift") not in range(16):
+        raise ValueError(f"shift {st.get('shift')}（0..15）")
+
+
+def g21_cfgs(st):
+    """START の設定（窓 8 本の枠。A0 = FULL の流れ、残りは空）。送る i ↔ ch c = G_NCH − 1 − i（IF の昇順）"""
+    n_sum = check_tint(st["tint"])
+    out = [dict(kind="full", src=st["src"], shift=st["shift"], active=True, nacc=n_sum * G_PL_NACC, n_sum=n_sum, pl_nacc=G_PL_NACC,
+                bundle=1, g=0, ns=0, nch=G_NCH, if_mhz=float(g_if_mhz(G_NCH - 1 - 2047)), df_hz=G_DF_HZ)]
+    for _ in range(4 * NW - 1):
+        out.append(dict(kind="none", active=False, bundle=0, n_sum=1, pl_nacc=0, nacc=0, ns=0, g=0, shift=0))
+    return out
+
+
 def win_key(j):
     i, w = divmod(j, NW)
     return f"{'ABCD'[i]}{w}"
@@ -1036,6 +1069,289 @@ class FakeWideBackend(FakeBackend):
         return super().poll_win(j)
 
 
+# ================================================================ proj024: 2G-1（FULL の流れ 1 本、131072 ch）
+class G21Backend(HwBackend):
+    """2G-1（BIT_KIND 11）の裏。コア 1 個（ADC_A）の FULL の流れ（s 0、SRC で 4 ADC から選ぶ）を窓 A0 に置く（残りの 7 窓は空）。
+    TP は FULL の TP（流れの 0x100〜、SRC の ADC。D-12）を欄 src に、コアの TP（コアの ADC）を欄 core.adc に（src と同じなら使わない）。
+    束ね・時刻・リングは HwBackend・WideBackend と同じ。SNAP は RAW の流れ（s 1、0x4400。自分の SRC を持つ、D-14）"""
+
+    def open(self):
+        import spectrometer as S
+        import timetest as T
+        import window as W
+        import timebase as TB
+        import s45core as SC
+        self.S, self.T, self.W, self.TB, self.SC = S, T, W, TB, SC
+        from pynq import Overlay
+        import xrfdc                               # Overlay() より前に import する（VERSIONS.md）
+        S.setup_clocks(self.o.clkin, self.o.ref)
+        self.lmx = None
+        self.ol = Overlay(self.o.bitfile)
+        if not isinstance(self.ol.rfdc, xrfdc.RFdc):
+            raise RuntimeError("RFDC に xrfdc のドライバが当たっていない")
+        S.check_tiles(self.ol.rfdc, 2)
+        time.sleep(self.o.settle)
+        self.cores, tmm = SC.discover(self.ol, bit_kind=SC.BIT_KIND_G21, ncore=1, bit_rev_min=1)
+        self.tc = TB.TimeCore(tmm)
+        c0 = self.cores[0]
+        self.core = c0
+        self.wms = [c0.m]
+        fs = c0.full()
+        if [x.s for x in fs] != [0]:
+            raise RuntimeError(f"{c0.name} の FULL の流れが s = 0 の 1 本でない（{[x.s for x in fs]}）")
+        self.fst = fs[0]
+        for a, want in ((SC.S_NCH, G_NCH), (SC.S_FRAME_BEATS, G_FRAME)):
+            if self.fst.rd(a) != want:
+                raise RuntimeError(f"FULL の流れの {a:#x} が {self.fst.rd(a)}（期待 {want}）")
+        self.wins = [self.fst]                     # 窓 j = 0 だけ（poll_win は j ≠ 0 を見ない）
+        prm = int(c0.m.read(W.A_BASE + S.R_TP_PARAM)) & 0xFFFFFFFF
+        if prm != S.TP_PARAM_EXPECT:
+            raise RuntimeError(f"コアの TP_PARAM {prm:08x}（期待 {S.TP_PARAM_EXPECT:08x}）")
+        self.ftp = _WinTp(c0.m, self.fst.base)     # FULL の TP のレジスタ（流れのブロックの 0x100〜 = コアの 0x100〜 と同じ並び）
+        self.tc.configure(src=self.o.path, tol=1)
+        self.tb = TB.Timebase(self.tc, path=self.o.path)
+        self.TpStream = make_tp_reader(S)
+        self.ids = dict(win=f"{self.fst.rd(SC.S_SID):08x}", adc=f"{c0.if_id:08x}", time=f"{self.tc.rd(0x00):08x}",
+                        proj=f"{c0.proj:08x}", kind="g21", lmx_vco="7864.32", lmx_pwr="31")
+        self.clock = Clock(None, {})
+        self._open_ring()
+        self.ids["read"] = "ring"
+        self.bit_kind = c0.bit_kind
+        self.anchor()
+
+    def _open_ring(self):
+        import plring as PR
+        SC = self.SC
+        c0 = self.core
+        if (c0.caps & 3) != 3:
+            raise RuntimeError(f"CAPS の [0]〜[1]（レコード・TP）が無い（{c0.caps:#x}）")
+        rip = getattr(self.ol, "s45_ring_0", None)
+        if rip is None:
+            raise RuntimeError("ol.s45_ring_0 が無い")
+        self.ring = PR.Ring(rip.mmio, getattr(self.o, "ring_mib", 32) << 20)
+        self.ring.enable(True)
+        self.jmap = {(c0.adc, 0): 0}
+        self.amap = {}                             # TP の欄は start で決める（src による）
+        self.q = [collections.deque() for _ in range(4 * NW)]
+        self.raws = c0.raw()
+        self.full = SC.snap_stream(self.cores)     # SNAP の流れ = RAW（s 1）
+        if self.full.kind != SC.KIND_RAW or self.full.s != 1:
+            raise RuntimeError(f"RAW の流れが s 1 に無い（{self.full.name}）")
+        self.fkey = (c0.adc, self.full.s)
+        self.log(f"リング: BASE {self.ring.base:#x} / SIZE {self.ring.size}（2G-1: FULL 1 本・1 MiB のレコード）")
+
+    def poll_win(self, j):
+        if j != 0:
+            return None
+        return super().poll_win(j)
+
+    def pump(self):
+        """リングを [R, W) まで読み、SPEC は窓 A0 の列へ、TP は FULL の TP（s 0）とコアの TP（s 0xFF）をそれぞれの欄へ"""
+        self.n_pump += 1
+        t0 = time.perf_counter()
+        recs = self.ring.read()
+        t1 = time.perf_counter()
+        c0 = self.core.adc
+        for core, s, seq, hw, pay, crc_ok, tail_ok in recs:
+            if not (crc_ok and tail_ok):
+                self.ring_crc += 1
+                continue
+            if core != c0:
+                continue
+            ty = int(hw[0]) >> 40 & 0xFF
+            if ty == TYPE_SPEC and s == 0:
+                self.q[0].append((seq, hw, pay))
+            elif ty == TYPE_TP and self.running:
+                i = self.tp_slot.get(s)
+                if i is not None:
+                    self.tps[i].feed(seq, int(hw[5]) & 0xFFFFFFFF, pay, TP_REC_K)
+        self.last_pump = (t1 - t0, time.perf_counter() - t1)
+        return len(recs)
+
+    def _rec_off(self):
+        SC = self.SC
+        for st in [self.fst] + self.raws:
+            st.wr(SC.S_REC_CTRL, 0)
+        self.core.wr(TP_REC_CTRL, TP_REC_K << 8)
+        self.fst.wr(TP_REC_CTRL, TP_REC_K << 8)
+
+    def disarm(self):
+        SC, T, W = self.SC, self.T, self.W
+        self.fst.wr(SC.S_CTRL, W_CTRL_DISARM)
+        self.core.m.write(W.A_BASE + T.RA_TP_CTRL, T.TP_DISARM)
+
+    def _arm_tc(self, sa):
+        try:
+            self.tc.arm(sa)
+        except Exception:
+            self.tc.wr(0x08, self.TB.TimeCore.CTRL_CANCEL)
+            self.disarm()
+            raise
+
+    def start(self, st, at_beat, force):
+        """STOP・REC 0 → SRC・SHIFT・CFG → ARM_WRST（tint の格子）→ SRC の読み返し → N_ACC 160・REC ALL・FULL の TP・コアの TP →
+        ARM_RUN（FULL の TP は FULL の RUN で走る）と コアの TP_ARM を tint の格子で"""
+        SC, T, W = self.SC, self.T, self.W
+        if self.clock.ok:
+            try:
+                self.tb.check()
+            except Exception as e:
+                self.clock.ok, self.clock.err = False, str(e)
+        if not self.clock.ok and not force:
+            raise RuntimeError("時刻を答えられない（錨が無い・PPS が来ていない）。ANCHOR か force=1")
+        self.disarm()
+        check_g21(st)
+        self.tint_beats = check_tint(st["tint"]) * BASE_BEATS
+        if self.core.base_beats != BASE_BEATS:
+            raise RuntimeError(f"コアの BASE_BEATS {self.core.base_beats}（{BASE_BEATS} を期待）")
+        self.cfgs = g21_cfgs(st)
+        cf = self.cfgs[0]
+        fst = self.fst
+        fst.wr(SC.S_CTRL, 1 << 1)                  # STOP
+        fst.wr(SC.S_REC_CTRL, 0)
+        fst.wr(SC.S_SRC, cf["src"]); fst.wr(SC.S_SHIFT, cf["shift"]); fst.wr(SC.S_CFG, st["cfg"])
+        fst.wr(SC.S_CTRL, W_CTRL_ARMWRST)
+        sa_w = self.grid_after(self.now_beat() + BEATS_PER_SEC // 2)
+        self._arm_tc(sa_w)
+        self._wait_fired(5.0)
+        time.sleep(0.01)
+        got = fst.rd(SC.S_SRC)
+        if got != (0x8000_0000 | cf["src"]):
+            raise RuntimeError(f"WRST の後の SRC {got:#010x}（書いた {cf['src']}。期待 {0x8000_0000 | cf['src']:#010x}）")
+        if fst.rd(SC.S_NCH) != G_NCH or fst.rd(SC.S_FRAME_BEATS) != G_FRAME:
+            raise RuntimeError(f"NCH {fst.rd(SC.S_NCH)}・FRAME_BEATS {fst.rd(SC.S_FRAME_BEATS)}")
+        fst.wr(SC.S_NACC, cf["pl_nacc"]); fst.wr(SC.S_NDUMP, 0)
+        fst.wr(SC.S_REC_CTRL, REC_ALL)
+        fst.wr(T.RA_TP_N, TP_N)                    # FULL の TP（流れの 0x100）
+        fst.wr(TP_REC_CTRL, (TP_REC_K << 8) | 1)
+        self.use_core_tp = cf["src"] != self.core.adc
+        cm = self.core.m
+        cm.write(W.A_BASE + T.RA_TP_N, TP_N)
+        cm.write(TP_REC_CTRL, (TP_REC_K << 8) | (1 if self.use_core_tp else 0))
+        self._drain()
+        sa = self.grid_after(max(at_beat or 0, self.now_beat() + BEATS_PER_SEC // 2))
+        fst.wr(SC.S_CTRL, (1 << 8) | W_SID_CTRL_ARMRUN)
+        if self.use_core_tp:
+            cm.write(W.A_BASE + T.RA_TP_CTRL, T.TP_ARM)
+        self._arm_tc(sa)
+        self.sa = sa
+        self.armed = True
+        return sa
+
+    def begin(self):
+        S, T, W, SC = self.S, self.T, self.W, self.SC
+        fst, cf = self.fst, self.cfgs[0]
+        rd64 = lambda a: fst.rd(a) | (fst.rd(a + 4) << 32)
+        runts = [rd64(SC.S_RUN_T)] + ([T.tp_run_t(self.core.m)] if self.use_core_tp else [])
+        bad = [i for i, t in enumerate(runts) if t != self.sa + 1]
+        if fst.rd(SC.S_RUN_SHIFT) != cf["shift"]:
+            raise RuntimeError(f"RUN_SHIFT {fst.rd(SC.S_RUN_SHIFT)}（書いた値 {cf['shift']}）")
+        run_f0 = rd64(SC.S_RUN_F0)
+        self.seq = [fst.rd(SC.S_SEQ)] + [0] * (4 * NW - 1)
+        self.tps = [_EmptyTp() for _ in range(4)]
+        self.anch = [None] * 4
+        self.tp_slot = {}
+        ftf0 = self.ftp.rd(S.R_TP_F0_LO) | (self.ftp.rd(S.R_TP_F0_HI) << 32)
+        if ftf0 != run_f0 * (G_FRAME // 512):
+            raise RuntimeError(f"FULL の TP の F0 {ftf0}（FULL の RUN_F0 {run_f0} × 32 = {run_f0 * 32} を期待）")
+        src = cf["src"]
+        self.tps[src] = self.TpStream(self.ftp, TP_N, ftf0)
+        self.tp_slot[0] = src
+        self.tp_kind = {src: "full"}
+        if self.use_core_tp:
+            a = self.core.adc
+            tp = _WinTp(self.core.m, W.A_BASE)
+            tf0 = tp.rd(S.R_TP_F0_LO) | (tp.rd(S.R_TP_F0_HI) << 32)
+            self.tps[a] = self.TpStream(tp, TP_N, tf0)
+            self.anch[a] = self._tanch(self.core.m)
+            self.tp_slot[0xFF] = a
+            self.tp_kind[a] = "core"
+        self.gap0 = int(self.core.m.read(W.A_BASE + T.RA_GAP))
+        self.running = True
+        return dict(run_t_bad=bad)
+
+    def tp_time(self, i, f):
+        if self.tp_kind.get(i) == "full":
+            return f * 512 - G_DS_BEATS              # 小フレーム f の頭（K_F 0）。FULL のデータは DUMP_T より 1 ビート前（2e）
+        return super().tp_time(i, f)
+
+    def snap(self, adc, n, nacc, timeout=5.0):
+        """RAW の流れで（IDLE のときだけ。Acq._snap が見る）"""
+        return self._snap_ring(adc, n, nacc, timeout)
+
+    def stop(self):
+        SC = self.SC
+        if not self.running:
+            self.disarm()
+            self.tc.wr(0x08, self.TB.TimeCore.CTRL_CANCEL)
+            self._rec_off()
+            return []
+        self.fst.wr(SC.S_CTRL, 1 << 1)
+        self.pump()
+        self._rec_off()
+        self.running = False
+        out = []
+        for i, k in sorted(self.tp_kind.items()):
+            if k != "core":
+                out.append(dict(adc=i, tp="full"))
+                continue
+            try:
+                af1, at1 = self._tanch(self.core.m)
+                af, at = self.anch[i]
+                gap1 = int(self.core.m.read(self.W.A_BASE + self.T.RA_GAP))
+                out.append(dict(adc=i, tp="core", anch_dev=(at1 - at) - (af1 - af) * 512, gap=gap1 - self.gap0))
+            except Exception as e:
+                out.append(dict(adc=i, err=str(e)))
+        return out
+
+
+class _EmptyTp:
+    """使わない TP の欄（Acq は 4 欄を回す）"""
+
+    def __init__(self):
+        self.buf = np.zeros(0, P.TP_E); self.n = 0; self.lost = 0; self.bad_seq = 0; self.bad_flag = 0; self.bad_nfr = 0
+        self.n_ovr = 0; self.total = 0; self.started = False; self.overflow = 0; self.rec_lost = 0
+
+
+class FakeG21Backend(FakeBackend):
+    """PL なしの 2G-1（偽物は束ねない: ダンプ = tint。中身の形・鍵・IF の軸・DUMP_T の進み 16384·nacc・TP の欄を受け側で確かめる）"""
+
+    def open(self):
+        super().open()
+        rng = np.random.default_rng(2)
+        self.base = [rng.integers(1 << 40, 1 << 41, G_NCH, dtype=np.uint64)] + [None] * (4 * NW - 1)   # 窓 A0 だけ
+
+    def start(self, st, at_beat, force):
+        if not self.clock.ok and not force:
+            raise RuntimeError("時刻を答えられない（錨が無い・PPS が来ていない）。ANCHOR か force=1")
+        check_g21(st)
+        self.cfgs = g21_cfgs(st)
+        cf = self.cfgs[0]
+        cf.update(bundle=0, n_sum=1, pl_nacc=cf["nacc"])
+        self.cfg = st["cfg"]
+        self.tint_beats = int(round(st["tint"] * BEATS_PER_SEC))
+        self.sa = self.grid_after(max(at_beat or 0, self.now_beat() + BEATS_PER_SEC // 2))
+        self.tp_use = {cf["src"], 0}               # FULL の TP（src）とコアの TP（A。src = A なら 1 本）
+        return self.sa
+
+    def begin(self):
+        r = super().begin()
+        for i in range(4):
+            if i not in self.tp_use:
+                self.tps[i] = _EmptyTp()
+        return r
+
+    def poll_win(self, j):
+        if j != 0:
+            return None
+        return super().poll_win(0)
+
+    def poll_tp(self, i):
+        if i not in self.tp_use:
+            return self.tps[i]
+        return super().poll_tp(i)
+
+
 # ================================================================ 取得の本体
 class Acq:
     IDLE, ARMED, RUN, ERROR = "IDLE", "ARMED", "RUN", "ERROR"
@@ -1043,7 +1359,10 @@ class Acq:
     def __init__(self, conn, ring, opts):
         self.conn, self.ring, self.o = conn, ring, opts
         self.wide = bool(getattr(opts, "wide", False))               # proj023: SAM45-Wide（SLICE の流れ）
-        self.st = default_settings_wide() if self.wide else default_settings()
+        self.g21 = bool(getattr(opts, "g21", False))                 # proj024: 2G-1（FULL の流れ 1 本）
+        if self.wide and self.g21:
+            raise SystemExit("--wide と --g21 は同時に使えない")
+        self.st = default_settings_g21() if self.g21 else default_settings_wide() if self.wide else default_settings()
         self.state = self.IDLE
         self.seq = 0
         self.drop = dict(n=0, first=None, last=None, pending=None)
@@ -1141,6 +1460,14 @@ class Acq:
                     return dict(ok=False, code="STATE", msg=f"{self.state} の間は SET できない（STOP の後に）")
                 st = self.st
                 new = dict(tint=st["tint"], cfg=st["cfg"], fmt=st.get("fmt", "f32"), wins=[dict(w) for w in st["wins"]])
+                if self.g21:
+                    new.update(kind="g21", src=st["src"], shift=st["shift"])
+                    for k, v in cmd["kv"].items():
+                        self._set1_g21(new, k, v)
+                    check_tint(new["tint"])
+                    check_g21(new)
+                    self.st = new
+                    return dict(ok=True)
                 if self.wide:
                     new["kind"] = "wide"
                     for k, v in cmd["kv"].items():
@@ -1182,6 +1509,33 @@ class Acq:
         except Exception as e:
             self.log(traceback.format_exc())
             return dict(ok=False, code="FAIL", msg=f"{type(e).__name__}: {e}")
+
+    def _set1_g21(self, new, k, v):
+        """proj024: tint・fmt・cfg と、src（FULL の入力の ADC: A〜D か 0〜3。次の WRST で効く）・shift（RUN で効く）。
+        A0.src・A0.shift・all.shift も同じ（流れは A0 の 1 本だけ。A1〜D1 は ERR）"""
+        if k in ("tint", "fmt", "cfg"):
+            return self._set1(new, k, v)
+        name, _, field = k.partition(".")
+        if field:
+            if name.upper() not in ("A0", "ALL") or (name.upper() == "ALL" and field != "shift"):
+                raise ValueError(f"知らない設定 {k}（2G-1 の流れは A0 の 1 本: src・shift・A0.src・A0.shift・all.shift）")
+        else:
+            field = name
+        if field == "src":
+            u = str(v).upper()
+            if u in ("A", "B", "C", "D"):
+                new["src"] = "ABCD".index(u)
+            elif u in ("0", "1", "2", "3"):
+                new["src"] = int(u)
+            else:
+                raise ValueError(f"{k}: src は A〜D（0〜3）")
+        elif field == "shift":
+            x = int(v)
+            if x not in range(16):
+                raise ValueError(f"{k}: SHIFT は 0..15")
+            new["shift"] = x
+        else:
+            raise ValueError(f"知らない設定 {k}（tint・fmt・cfg・src・shift）")
 
     def _set1_wide(self, new, k, v):
         """proj023: tint・fmt・cfg と、A.b / A0.b（束ね B、コアで 1 つ）・A.shift / A0.shift（コアで 1 つ）・A0.s0 / A0.ch0（流れの最初の ch）。all.b・all.shift も"""
@@ -1375,6 +1729,9 @@ class Acq:
         if cf.get("kind") == "slice":
             self._spec_record_slice(j, m, spec, cf, h)
             return
+        if cf.get("kind") == "full":
+            self._spec_record_full(j, m, spec, cf, h)
+            return
         utc = self.be.clock.utc_ns(m["t"], cf["ns"], j // NW)
         if self.proto == 2:
             self._spec_record2(j, m, spec, cf, h, utc)
@@ -1431,6 +1788,29 @@ class Acq:
                                 m["t"], utc, P.BASE_NS, cf["if_mhz"], cf["df_hz"])
             self._put(P.T_SPEC, [hd, data], P.crc32(hd, data))
         self.h_or |= int(m["h"]); self.fl_or |= int(m["flags"]); self.sat += int(m["sat"])   # Wide の FLAGS は全部が異常
+
+    def _spec_record_full(self, j, m, spec, cf, h):
+        """proj024: 2G-1 の FULL の SPEC（s45proto v2、kind 1）。ns の欄 0（B 1）・nch 131072。中身は IF の昇順（ch c の逆順、送る i ↔ c = 131071 − i）。
+        if_mhz = 送る 2047 番目の IF・df = 15.625 kHz。utc_ns = beat_utc(dump_t) − adc_to_core[src] − (D_S ＋ 1.5·L)、L = 16384・D_S = 1"""
+        src = cf["src"]
+        utc = self.be.clock.utc_ns(m["t"], None, src)
+        if utc:
+            utc -= ((G_DS_BEATS + 3 * G_FRAME // 2) * 125) // 32
+        raw = np.ascontiguousarray(np.asarray(spec, np.uint64)[::-1])
+        fm = self.st.get("fmt", "f32")
+        for f in (("u64", "f32") if fm == "both" else (fm,)):
+            if f == "u64":
+                data, code = raw, P.FMT_RAW
+            else:
+                data, code = P.f32_round(raw), P.FMT_F32
+                if self.f32_trunc:
+                    up = data.astype(np.float64) > raw.astype(np.float64)
+                    data[up] = np.nextafter(data[up], np.float32(0))
+            hd = P.SPEC2_H.pack(j // NW, j % NW, src, 1, 0, cf["shift"], code, int(getattr(self.be, "bit_kind", 11)),
+                                raw.size, int(cf["n_sum"]), m["cfg"], m["k"], cf["nacc"], m["sat"], m["flags"], h, 0, 0,
+                                m["t"], utc, P.BASE_NS, cf["if_mhz"], cf["df_hz"])
+            self._put(P.T_SPEC, [hd, data], P.crc32(hd, data))
+        self.h_or |= int(m["h"]); self.fl_or |= int(m["flags"]); self.sat += int(m["sat"])
 
     def _bdrop(self, j, d):
         """束を捨てた（INTERFACE 5.1 の 4）。EVENT は最初の 20 回まで（止まりの後に窓ごとに続くので）"""
@@ -1528,7 +1908,9 @@ class Acq:
     # ---- 本体
     def run(self):
         self._rt()
-        if self.wide:
+        if self.g21:
+            self.be = (FakeG21Backend if self.o.fake else G21Backend)(self.o, self.log)
+        elif self.wide:
             self.be = (FakeWideBackend if self.o.fake else WideBackend)(self.o, self.log)
         else:
             self.be = (FakeBackend if self.o.fake else HwBackend)(self.o, self.log)
