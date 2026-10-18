@@ -533,6 +533,22 @@ RAW: SRC 1・N_ACC 64・N_DUMP 2・REC ALL → RUN / FULL: SRC 2・SHIFT 4・N_A
 - 次の手（LESSONS の「既定で閉じなければ IMPL=Performance_Explore」）: **`make build IMPL=Performance_Explore`**（build-PE/）。proj023 は既定 −0.008 → PE +0.001 で閉じた。
   今回は −0.110 で 1 桁大きく、塊が記憶のカスケードの段の不足なので、PE で閉じなければ RTL で段を足す（積分器の読みに 1 段・和を 1 段受けてから書く／PFB の履歴の読みに 1 段、または cascade_height を下げる）。RTL を変えるなら 2b・2c 以降の sim を回し直す
 
+**ビルド 3・4 回目（2026-10-18、RTL・build.tcl は b71d23a のまま、戦略だけを変えて 2 本を並べた）**
+
+| | 戦略 | WNS / WHS | 負の経路 | 判定 |
+|---|---|---|---|---|
+| build-PE/ | Performance_Explore | **+0.0018 ns** / +0.0097 ns | 0 | **閉じた**（実機に載せられる .bit） |
+| build-PETO/ | Performance_ExtraTimingOpt | −0.218 ns | 113 本（全部 PFB の履歴） | 閉じない（既定より悪い） |
+
+- build-PE の照合・ROM の BRAM（係数 7.5・ひねり係数 11.0）・資源（LUT 22.2 %・BRAM 62.3 %・URAM 60 %・DSP 924）は 2 回目と同じ。BUILD_TAG s45_core_0 0x50c00000
+- sha256: proj024.bit `fdb04d804fb50b30afd66f1ba56a45b3bf1929e5d2d4a7cc3a2016faba714dd8` / proj024.hwh `e98a0f2e40f7151ed8b2fe3e0526cccc3b04e3398b012fa8acb7617b6f77bc3f`
+- 余裕は 1.8 ps しかない（proj023 のビルド 11 の +0.7 ps と同じ程度）。同じ RTL の作り直しは WNS まで再現するので、この .bit を正にして進める。RTL を変えるときは、
+  積分器の URAM の読み（合成の警告: under-pipelined）と PFB の履歴の BRAM のカスケードに段を足して、余裕を作ってから変える
+- **見落とし: CRITICAL WARNING [BD 41-759] が 2〜4 回目のどれにもあった**（各ログに 3 回）。s45_ring_0 の使っていない入口（s1〜s3 の tvalid・rec_drop1〜3）を Vivado が 0 に縛った。
+  s45_ring は NIN 1 で入口をマスクする（INM）ので動作は変わらないが、proj023 には無かった種類（4 本とも使っていた）。
+  **build.tcl の「run の CRITICAL WARNING」は run の runme.log しか読まず、BD を組むときの警告（vivado.log の本体）を拾っていなかった**。2 回目の予言「CRITICAL WARNING は proj023 と同じ種類だけ」は、見張りの穴で当たりに見えていた → 外れに改める。
+  次に作り直すとき: 空いた入口を xlconstant で縛る（proj021 の full_tie と同じ）・vivado.log の本体の CRITICAL WARNING も拾う
+
 ### 1a. g21_coef — 予言（走らせる前に書く、2026-10-17）
 
 tb（`sim/tb_g21_coef.v`）: 1 フレーム 16384 ビート ＋ 次のフレームの頭 512 ビート、途中 2 か所で有効を 3 クロック落とす。判定は `sim/check_g21.py coef`。
@@ -691,7 +707,8 @@ proj023 の会話からの引き継ぎの「4. 2G で初めて決めること」
 - [ ] RTL の proj は SAM45-Wide を YATSUGATAKE にマージした後に。D-9・D-10・D-11 はそのとき INTERFACE.md・BITS.md と一緒に
 - [x] RTL の手順 1a〜2d（引き継ぎの 7. で、マージを待たずに部品と単体の sim から）。2d で g21_core（FULL の流れ・1 MiB のレコード・FULL の TP）まで（2026-10-17）
 - [x] 2e g21_s45_core（コア 1 個: 共通・FULL・RAW、axis_sel4 × 2、D-14）（2026-10-18）
-- [ ] 2f build.tcl・ブロックデザイン（build.tcl を書いた。Vivado サーバのビルド待ち）→ 3. PS → 4. 実機
+- [x] 2f build.tcl・ブロックデザイン（2026-10-18）: 既定の戦略は −0.110 ns、**Performance_Explore で +0.0018 ns で閉じた**（build-PE/）
+- [ ] 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）→ 4. 実機
 
 ## 公開について
 

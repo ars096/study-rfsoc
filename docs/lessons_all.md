@@ -96,6 +96,8 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 - 共有の ROM の番地を出さないコアの出口は「どこにもつながっていない」を照合する（在ってはいけない側。「無いピン」に OK と言わない陽性対照も）（proj023）
 
 ### 合成ログの見張り
+- CRITICAL WARNING は run の runme.log だけでなく vivado.log の本体（BD を組む・validate のとき）も拾う。— proj024 の build.tcl は runme.log しか読まず、BD 41-759（s45_ring の空いた入口を 0 に縛った）を 3 回のビルドで見落とした。入口の数が変わる作り（コアの数を減らした bit）で出る（proj024 2f）
+- 大きな記憶をどこに置くか（URAM か BRAM か）は合成が決める。URAM の合計が足りなければ黙って BRAM に回り、深いカスケードがタイミングの塊になる。見積もりでは記憶ごとの置き場所を数え、ビルドの後に段ごとの RAMB/URAM の数で照らす（proj024 2f: PFB の履歴が URAM 40 個ぶん → BRAM 306 タイル）
 - 自作のセルの OOC のログに Synth 8-3848（ドライバの無いネット）があれば止める（Xilinx の IP の run は対象外）。— wide_s45_core の s_axi_arready の駆動漏れを 4 コアぶん警告していたのに拾わず、PS は別のレジスタを読んでいた（proj023）
 - `$readmemh` の hex は絶対パスで CONFIG に渡し、生成されたラッパの `.COEF_FILE("…")`・OOC ログの Synth 8-4445・配置後の ROM の BRAM 数（予言の半分以上）で照合する。— OOC は run のディレクトリで走るので相対名は届かない。読めないと ROM が 0 になり BRAM が消えるだけ（proj023）
 - URAM（URAM288）は初期値を持てないので ROM は BRAM に置く（proj023）

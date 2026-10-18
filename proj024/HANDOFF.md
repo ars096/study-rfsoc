@@ -13,7 +13,7 @@
 
 ## 1. 今どこにいるか
 
-2G-1（1 ADC × 262144 点、131072 ch、BIT_KIND 11）の RTL の**手順 2e まで済み**。全部、単体の sim で模型と bit 単位で一致し、陽性対照は落ちた。
+2G-1（1 ADC × 262144 点、131072 ch、BIT_KIND 11）の**手順 2f（.bit）まで済み**。全部、単体の sim で模型と bit 単位で一致し、陽性対照は落ちた。
 
 | 手順 | 部品 | sim | 状態 |
 |---|---|---|---|
@@ -26,21 +26,19 @@
 | 2c | `src/g21/g21_spec.v`（分光の本体、流れ 1 本）。**2d で SHIFT を RUN で取り込むように直した** | `make sim-g21s`（1 本 4 分前後） | 済み（2d で回し直した） |
 | 2d | `src/g21/g21_core.v`（FULL の流れのブロック・SPEC のレコード 1 MiB・FULL の TP・SRC）＋ rec_fr の NCH・tp_core の F0_EXT | `make sim-recfr`・`make sim-g21core`（1 本 10〜18 分） | 済み |
 | 2e | `src/g21/g21_s45_core.v`（コア 1 個: core_cmn ＋ g21_core（s 0）＋ raw_core（s 1、0x4400）＋ rec_arb。axis_sel4 は外に 2 個、D-14） | `make sim-g21s45`（2 本で 20 分前後） | 済み |
-| **2f** | `build.tcl`（proj023 を写して直した）・`src/board/`・`make build` | Vivado サーバ（1 時間前後） | **ビルド待ち**（build.tcl は書いた。予言は README の 2f） |
+| 2f | `build.tcl`（proj023 を写して直した）・`src/board/`・`make build` | Vivado サーバ（1 時間前後） | 済み: **build-PE/（Performance_Explore、WNS +0.0018 ns）が実機に載せる .bit**。既定の戦略は −0.110 ns |
 
 写し元は **567fda2**（proj023 の RTL の凍結）。`src/common/` は 567fda2 の proj023/src/common を写したもの。直すときは 2G の側で直す。
 2d で `src/common/` を 2 つ直した（rec_fr の NCH・tp_core の F0_EXT と宣言の位置）。どちらも既定の引数では 567fda2 と同じ振る舞い（rec_fr は sim-recfr で確かめた）。Wide に戻すかはマージのときに決める。
 
-## 2. 次にやること（2f のビルド）
+## 2. 次にやること（3. PS → 4. 実機）
 
-- **Vivado サーバで `make build`**（`cd ~/git/rfsoc && git pull && cd proj024 && make build`。PC で push してから）。予言は README の 2f
-  - 読むもの: `build/vivado.log` の ERROR・「結線の照合」・「ROM の BRAM」・「FFT IP の資源」・`TIMING (確定)`・run の CRITICAL WARNING（proj023 のビルド 11 と同じ種類だけか）
-  - 照合で止まったら、止めた照合の行を README に写してから直す（照合が正しいのか、照合が間違っているのかを先に決める）
-  - 閉じなければ `build/neg_paths_groups.rpt` を見てから `make build IMPL=Performance_Explore`（build-PE/ に出る）
-- build.tcl は Vivado を通していない（この会話の環境には Vivado が無い。tclsh で括弧の閉じだけ確かめた）。**最初のビルドは build.tcl の誤りで止まりうる**。止まった行とログを持って直す
-- その後: 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）/ 4. 実機
+- **3. PS**: specd の FULL（NCH 131072・1 MiB のレコード）、取得を C に（D-11、Python 1 本では 102.4 MB/s が回らない）。リングの大きさ（INTERFACE 8. の 11 の前半）
+- **4. 実機**: build-PE/ の proj024.bit・.hwh（sha256 は README）。`scp build-PE/proj024.bit build-PE/proj024.hwh …`（**build/ の閉じていない .bit と取り違えない**）
 - PS への注意（2d・2e で分かった）: **FULL の SHIFT は RUN で効く**。FULL の TP は流れのブロックの 0x100〜（レコードの s = 0）。RAW は s = 1（0x4400）で、自分の SRC を持つ（FULL と同じ ADC を見るなら両方に書く）。
   TP の DUMP_T とデータの T のずれは経路ごと（コアの TP +1・FULL −1・RAW 0 ビート）→ D_S の表に
+- 次に .bit を作り直すとき（急がない）: s45_ring_0 の空いた入口を xlconstant で縛る（BD 41-759）・build.tcl で vivado.log の本体の CRITICAL WARNING も拾う・
+  積分器の URAM の読みと PFB の履歴の BRAM のカスケードに段を足して余裕を作る（今は 1.8 ps。RTL を変えたら 2b・2c 以降の sim を回し直す）
 
 各手順は今までと同じ型で: **予言を README に書いてから走らせる → 結果と当たり・外れを書く → INDEX の proj024 の行を更新 → コミット**。
 

@@ -55,6 +55,7 @@ proj001〜023 で踏んだ穴と、次以降の proj でも従う決まりを 1 
 - Vivado 2024.1 は OOC・synth_1・impl_1 で終わり際に落ちる（segfault・tcmalloc・Stack limit。毎回違う run）。落ちた印のある run と、それに依って始まらなかった run だけを 2 回まで回し直す（proj012〜015・023）
 - run は名前の文字列で持ち、その場で `[get_runs $n]` を渡す。dcp を読むときは `set proj` の名前で 1 個に絞る（glob しない）。— 同じ build/ に残っていた古い proj の dcp を読み、取り違えた（proj015・021）
 - 速度グレードの検証用ビルドの .bit を実機に載せない。BUILD_TAG の指紋（速度グレード・プリセットの有無）を PS が読む。指紋に commit やビルド時刻を入れない（配置が組み替わり、同じ RTL の作り直しが WNS まで再現しなくなる）（proj011・021）
+- CRITICAL WARNING は runme.log だけでなく vivado.log の本体（BD を組むとき）も拾う。— BD 41-759 を 3 回のビルドで見落とした（proj024 2f）
 - → 全部: docs/lessons_all.md の「Vivado・build.tcl の見張り」
 
 ## タイミングの定石（`-1`・256 MHz）
