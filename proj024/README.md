@@ -717,6 +717,11 @@ YATSUGATAKE の `sw/pynq/`（M5a: 較正の鍵を (BIT_KIND, BIT_REV) に・M5b:
 **3e 結果（2026-10-18、ボード、`bench_ps.py --only m2`）: 予言どおり**。CmaTotal 131,072 kB（128 MiB）・CmaFree 119,272 kB。allocate は 16・32・64 MiB が取れ、**128 MiB は取れない**（BO allocation failed: std::bad_alloc）。proj021 の M-2（2026-10）と同じ。
 → 2G-1 のリングの上限は 1 個の allocate で 64 MiB（63 BASE ≒ 0.65 s）。4.1 の目安（1 s）には届かない
 
+**3. の決め（2026-10-18、西村さん）**:
+- **D-11 の取得の分: C にせず Python 1 本で進める**。4. の長い運転で loop_slow・リングの DROP・REC_LATE が 0 でなければ考え直す（そのときは記録の 5.4 ms / 束が最初の塊）
+- **D-15: 2G-1 のリングは 64 MiB**（allocate の上限、63 BASE ≒ 0.65 s）。`specd.py --ring-mib` の既定は bit ごと（2G-1 は 64、Fine・Wide は 32 のまま）。INTERFACE 4.1 の目安（1 s）は 2G で読み替える（INTERFACE.md の変更案の 10）
+- 19 試験（test_fake.sh）と test_nch.py は、この決めを入れた後に全部 OK（2026-10-18）
+
 ### 1a. g21_coef — 予言（走らせる前に書く、2026-10-17）
 
 tb（`sim/tb_g21_coef.v`）: 1 フレーム 16384 ビート ＋ 次のフレームの頭 512 ビート、途中 2 か所で有効を 3 クロック落とす。判定は `sim/check_g21.py coef`。
@@ -856,6 +861,8 @@ proj023 の会話からの引き継ぎの「4. 2G で初めて決めること」
 7. 2.5 の FULL の行に足すとよいこと（2d）: 2G-1 の FULL の TP は 512 ビートの小フレームを T の格子で数え、F0 は FULL の RUN_F0 × 32（TP のレコードの DUMP_F0 は小フレームの番号）
 8. **6. の FULL（kind 1）の SPEC v2 の読み方**（2026-10-18、3b）: SLICE と同じ形にする — 中身は IF の昇順（ゾーン 2 では FFT の ch の逆順）・**if_mhz = 送る 2047 番目の ch の IF**（nch によらず 2047）・df_hz = fs / N（2G-1 は 15.625 kHz）。受け側は IF(i) = if_mhz ＋ (i − 2047)·df のまま（s45client.if_axis）
 9. **5.2 の D_S の表に 2G-1 の行**（2026-10-18、3c）: FULL（SPEC・FULL の TP）は **D_S = +1 ビート**（DUMP_T はデータの T より 1 ビート後、axis_sel4 の 1 段）・RAW 0・コアの TP は Wide と同じ。D_eff = D_S ＋ 1.5·L、L = 16384（≒ 96 µs）。specd は G_DS_BEATS = 1 で引く。DUMP_T の進みの照合は kind 1 で L = nch / 8
+10. **4.1 のリングの目安を 2G で読み替える**（2026-10-18、3e・D-15）: PYNQ の allocate は 1 個 64 MiB まで（CmaTotal 128 MiB）。2G-1 は 64 MiB（≒ 0.65 s）。3d で見た PS の最長の止まり（≒ 62 ms）の 10 倍
+11. **8. の 4 の「2G は Python 1 本では回らない（94 %）」を改める**（3d）: 今の読み口（範囲の invalidate）で 2G-1 は平均 61〜66 %。C は見送り（D-11 の取得の分）。94 % は proj021 M-5（全体の invalidate の疑い）の数
 
 ## 結論・次にやること
 
@@ -878,7 +885,7 @@ proj023 の会話からの引き継ぎの「4. 2G で初めて決めること」
 - [x] RTL の手順 1a〜2d（引き継ぎの 7. で、マージを待たずに部品と単体の sim から）。2d で g21_core（FULL の流れ・1 MiB のレコード・FULL の TP）まで（2026-10-17）
 - [x] 2e g21_s45_core（コア 1 個: 共通・FULL・RAW、axis_sel4 × 2、D-14）（2026-10-18）
 - [x] 2f build.tcl・ブロックデザイン（2026-10-18）: 既定の戦略は −0.110 ns、**Performance_Explore で +0.0018 ns で閉じた**（build-PE/）
-- [ ] 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）→ 4. 実機。**3a（proj023/pynq を 1ebc92c から写し、ID を proj024 に）・3b（受け側の軸を記録の nch から）・3c（G21Backend・FakeG21Backend・specd --g21、PL なしの 3 試験）は済み**（2026-10-18）。3d 1 回目: **平均 6.48 ms / 10.24 ms（63 %）で Python 1 本で回る**（予言 100〜125 % は外れ）。3 回目で裾の素性が分かった（最大 61 ms は malloc の mmap のページフォルトの嵐 → mallopt で消える。束の周 10.3 ms は記録そのものの重さ）。**C は見送りの案**
+- [ ] 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）→ 4. 実機。**3a（proj023/pynq を 1ebc92c から写し、ID を proj024 に）・3b（受け側の軸を記録の nch から）・3c（G21Backend・FakeG21Backend・specd --g21、PL なしの 3 試験）は済み**（2026-10-18）。3d 1 回目: **平均 6.48 ms / 10.24 ms（63 %）で Python 1 本で回る**（予言 100〜125 % は外れ）。3 回目で裾の素性が分かった（最大 61 ms は malloc の mmap のページフォルトの嵐 → mallopt で消える。束の周 10.3 ms は記録そのものの重さ）。**C は見送り・リングは 64 MiB と決めた（D-11・D-15）。3. は済み、次は 4. 実機**
 
 ## 公開について
 

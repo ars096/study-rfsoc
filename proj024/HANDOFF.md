@@ -39,7 +39,9 @@
 ## 2. 次にやること（3. PS → 4. 実機）
 
 - **（2026-10-18 昼の会話）3. PS を始めた**: 土台は **proj023/pynq の追跡 56 個を 1ebc92c から `pynq/` に写した**（西村さんの決め。YATSUGATAKE の M5a・M5b はマージのとき）。
-  3a（ID を 2G-1 に）・3b（s45client の軸を記録の nch から。s45proto は直す所なし。`python3 test_nch.py`）は済み。3c（G21Backend・FakeG21Backend・`specd.py --g21`、test_fake.sh に g21・g21p・g21cli）も済み。**次は 3d 取得の速さ**（1 MiB のレコードの Python の道をボードで 1 呼び出しずつ測ってから C にするかを決める。ボードの順番は西村さんと）。実機の道で最初に確かめることは README の 3c 結果の最後。
+  3a（ID を 2G-1 に）・3b（s45client の軸を記録の nch から。s45proto は直す所なし。`python3 test_nch.py`）は済み。3c（G21Backend・FakeG21Backend・`specd.py --g21`、test_fake.sh に g21・g21p・g21cli）・3d（取得の速さ: Python 1 本で平均 61〜66 %、C は見送り）・3e（リング 64 MiB）も済み（西村さんの決め: D-11 の取得の分・D-15）。
+  **次は 4. 実機**: build-PE/ の proj024.bit・.hwh を載せて `specd.py --g21 --clkin 0 --ref 10`。最初に確かめることは README の 3c 結果の最後（SRC の読み返し・FULL の TP の F0 = RUN_F0 × 32・RUN_T・ch → IF・D_S）。
+  ボードは共有。使う前に西村さんと順番を決める。測る道具は `pynq/bench_g21.py`（PL なし）と test_fake.sh（19 試験）
   test_fake.sh はこの PC のコンピュータ側のシェルで回る（numpy あり）が、**呼び出しが返ると裏のプロセスが止まる**ので `all` は入らない。試験の名前を 7〜8 個ずつ並べて 3 回に分ける
 
 - **3. PS**: specd の FULL（NCH 131072・1 MiB のレコード）、取得を C に（D-11、Python 1 本では 102.4 MB/s が回らない）。リングの大きさ（INTERFACE 8. の 11 の前半）

@@ -106,6 +106,8 @@ proj001〜023 で踏んだ穴と、次以降の proj でも従う決まりを 1 
 - 時刻は整数 ns で引き算してから float にする（float64 の UTC ns は 256 ns 刻み）。較正定数は bit の ID と対にして持ち、一致しなければ適用を拒否する（proj007・008・021）
 - A53 の Python の速さはボードで 1 呼び出しずつ測る（PC の見積もりの 10 倍遅い）。長い記録をリストに溜めない（proj013・021）
 - specd は起動のたびに SET し、GET・STATUS を確かめてから START。LOAD は spawn で起こし、通し番号を続ける（proj019・021）
+- 1 MiB 級の numpy の配列を周ごとに作る取得では、glibc の mmap の閾値（既定 128 KiB）を上げる（`s45acq.malloc_tune`、mallopt）。— 周ごとに mmap・munmap とゼロ埋めのページフォルトが起き、400 周に 1 回 57 ms の嵐になった。60 ms 級の跳ねは初めて触るページのある周に出る（proj024 3d）
+- PS の量は今の読み口（範囲の invalidate）で測る。— proj021 M-5 の「Python 1 本 ≒ 114 MB/s」はバッファ全体を毎回 invalidate していた疑いで、2G-1 の 1 MiB / 10.24 ms は予言 100〜125 % に対し実測 61〜63 %（proj024 3d）
 - → 全部: docs/lessons_all.md の「PS・PYNQ」
 
 ## 実機・測定

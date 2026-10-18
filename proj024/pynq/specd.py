@@ -647,7 +647,7 @@ def main():
     p.add_argument("--posctl-f32-trunc", action="store_true", help="陽性対照: v2 の float32 を最も近い値でなく 0 へ切り捨てる（fmt=both の照合が落ちる）")
     p.add_argument("--read", default="ring", choices=("ring",),
                    help="proj021 2-3a: PL からの読み口（ring = PL が書くリングのレコード。2-2d で axi = 仮の読み窓の道は外した）")
-    p.add_argument("--ring-mib", type=int, default=32, help="PL が書くリングの大きさ [MiB]（--read ring）")
+    p.add_argument("--ring-mib", type=int, default=None, help="PL が書くリングの大きさ [MiB]（既定: 32、2G-1 は 64 = allocate の上限。proj024 3e）")
     p.add_argument("--posctl-ring-stall", type=float, default=0.0, help="陽性対照: RUN の 100 周目にこの秒数リングを読まない")
     p.add_argument("--no-tp-jump", action="store_true", help="B2 の TP の跳ねの見張りを止める（1 周の重さの比べ用）")
     p.add_argument("--posctl-tp-jump", type=int, default=0, help="陽性対照（B2）: 偽物の TP のこの倍数の個を ×1.05（+0.21 dB）にする")

@@ -135,6 +135,15 @@ def g_if_mhz(c):
     return W_FS_MHZ - np.asarray(c, np.float64) * (G_DF_HZ / 1e6)
 
 
+G_RING_MIB = 64                            # proj024 3e（西村さん、2026-10-18）: allocate の上限 64 MiB = 63 BASE ≒ 0.65 s（INTERFACE 4.1 の 1 s は 2G で読み替え）
+
+
+def ring_mib_of(o, default):
+    """--ring-mib（指定が無ければ bit ごとの既定）"""
+    v = getattr(o, "ring_mib", None)
+    return default if v is None else int(v)
+
+
 def default_settings_g21():
     return dict(kind="g21", tint=0.04096, cfg=0, fmt="f32", src=0, shift=7, wins=[dict() for _ in range(4 * NW)])
 
@@ -446,7 +455,7 @@ class HwBackend:
         rip = getattr(self.ol, "s45_ring_0", None)
         if rip is None:
             raise RuntimeError("ol.s45_ring_0 が無い（2-2a 以降の .bit ではない）")
-        self.ring = PR.Ring(rip.mmio, getattr(self.o, "ring_mib", 32) << 20)
+        self.ring = PR.Ring(rip.mmio, ring_mib_of(self.o, 32) << 20)
         self.ring.enable(True)
         self.jmap = {(self.cores[c.adc].adc, c.widx): j for j, c in enumerate(self.wins)}   # レコードの core = CORE_PORT の ADC
         self.amap = {c.adc: i for i, c in enumerate(self.cores)}
@@ -916,7 +925,7 @@ class WideBackend(HwBackend):
         rip = getattr(self.ol, "s45_ring_0", None)
         if rip is None:
             raise RuntimeError("ol.s45_ring_0 が無い")
-        self.ring = PR.Ring(rip.mmio, getattr(self.o, "ring_mib", 32) << 20)
+        self.ring = PR.Ring(rip.mmio, ring_mib_of(self.o, 32) << 20)
         self.ring.enable(True)
         self.jmap = {(st.core.adc, st.s): j for j, st in enumerate(self.wins)}
         self.amap = {c.adc: i for i, c in enumerate(self.cores)}
@@ -1141,7 +1150,7 @@ class G21Backend(HwBackend):
         rip = getattr(self.ol, "s45_ring_0", None)
         if rip is None:
             raise RuntimeError("ol.s45_ring_0 が無い")
-        self.ring = PR.Ring(rip.mmio, getattr(self.o, "ring_mib", 32) << 20)
+        self.ring = PR.Ring(rip.mmio, ring_mib_of(self.o, G_RING_MIB) << 20)
         self.ring.enable(True)
         self.jmap = {(c0.adc, 0): 0}
         self.amap = {}                             # TP の欄は start で決める（src による）

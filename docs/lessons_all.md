@@ -248,6 +248,15 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 - 時刻は整数 ns（625/768 の整数演算）で扱い、差は整数で引いてから float にする（float64 の UTC ns は 256 ns 刻みで、閉ループ試験が偽通過した）（proj007・008・021）
 - timebase の CAL と tp_cal.json は bit の ID を鍵にし、新しい bit は「未較正」で足して F-2 で埋める（proj020・023）
 
+### 取得の速さ（proj024 3d、2G-1 の 1 MiB のレコード / 10.24 ms、`pynq/bench_g21.py`）
+- 本物の関数（plring.Ring.read・Bundler・Acq._spec_record_full・s45ring.put）を PL なしで通して測る。1 BASE の平均 6.2〜6.7 ms（61〜66 %）。内訳: 読み（範囲の invalidate・1 MiB の CRC・写し）3.65 ms・束ねの和 1.25 ms・記録（逆順・float32・CRC・溜まり）5.4〜5.9 ms / 束。束を閉じる周は 10.3〜10.8 ms で 10.24 ms をわずかに越え、次の周で取り戻す
+- 予言は平均 100〜125 %（proj021 M-5 の 114 MB/s から）で外れた。M-5 はバッファ全体を毎回 invalidate していた疑い（確かめていない）
+- 最大 55〜62 ms の跳ねが 400 周に 1 回。1 回目は束ねの最初の写し（`np.array(spec)`、1 MiB）の中で 57.5 ms・ページフォルト 224。mallopt（M_MMAP_THRESHOLD 32 MiB・M_TRIM_THRESHOLD 1 GiB）で、その周は消えた。
+  4 回目は溜まり（共有メモリ）の初めて触るページの周に出た。GC を止めても変わらない。原因は確定していない
+- **まれな事象を 1 回の試行で「消えた」と読まない**: 3b（環境変数の mallopt）で最大 11.5 ms になったのを「消えた」と読み、4 回目で同じ大きさの跳ねが別の周に出た
+- 台本の要約の誤り: 「1 束あたり」の平均を、束を作らない周の数 µs まで含めて取っていた（`sp[sp > 0]`）。4 分の 1 の値が出て、内訳が合わないことの説明に 1 回使った。要約は周ごとの値（json）と照らす
+- 終わりの Segmentation fault（1 回）: freebuffer の後も pyxrt の bo を握る lambda とバッファの参照を残していた疑い。bo を先に手放して出なくなった（1 回だけの観測）
+
 ### 実行
 - ボードのスクリプトは root で動かす（`sudo` なら `sudo -E $(which python3)`。素の sudo は venv を外れる）（proj004）
 
