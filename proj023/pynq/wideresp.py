@@ -32,6 +32,10 @@ X0, X1, STEP = 8740.0, 8798.0, 0.125         # 細かい ch の単位
 REF_X = 8769.0                               # 繰り返して測る点（4 本とも中心の近く）
 
 
+# ボードの numpy（1.21 前後）には trapezoid が無い（2.0 で trapz から改名）。両方で動くように
+_trapz = getattr(np, "trapezoid", None) or np.trapz
+
+
 def log(*a):
     print(*a, flush=True)
 
@@ -58,7 +62,7 @@ def metrics(u, g):
     ur = float(np.interp(th, [d[r], d[r - 1]], [u[r], u[r - 1]]))
     ul = float(np.interp(th, [d[l], d[l + 1]], [u[l], u[l + 1]]))
     k = np.abs(u) <= 5
-    return dict(half_p=hp, half_m=hm, w3=ur - ul, enbw=float(np.trapezoid(g[k], u[k])), umin=float(u.min()), umax=float(u.max()))
+    return dict(half_p=hp, half_m=hm, w3=ur - ul, enbw=float(_trapz(g[k], u[k])), umin=float(u.min()), umax=float(u.max()))
 
 
 def analyze(path):
