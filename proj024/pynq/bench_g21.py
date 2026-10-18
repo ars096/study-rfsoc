@@ -5,6 +5,7 @@
     sudo -E $(which python3) bench_g21.py                 # ボード（pynq.allocate のバッファ・範囲の invalidate）。結果は runs/bench_g21.json
     python3 bench_g21.py --no-pynq --bases 40             # PYNQ の無い計算機で道具の動きだけ確かめる（numpy のバッファ）
     sudo -E $(which python3) bench_g21.py --corrupt 50    # 陽性対照: 50 個に 1 個のレコードの中身を 1 バイト壊す → CRC の不一致 = レコード数 / 50
+    MALLOC_MMAP_THRESHOLD_=33554432 MALLOC_TRIM_THRESHOLD_=1073741824 python3 bench_g21.py   # 3d 3 回目: 1 MiB の配列を mmap で取らせない
 
 **PL は使わない**（Overlay を載せない）。リングの中身は PS が書いた試験の値で、s45_ring のレジスタの代わりに W を手で進める。
 通すもの（本物の関数）:
@@ -21,6 +22,7 @@ import argparse
 import gc
 import json
 import os
+import resource
 import time
 import types
 import zlib
@@ -151,6 +153,8 @@ def main():
     if not a.gc:
         gc.collect(); gc.freeze(); gc.disable()                      # specd の Acq.run と同じ
     t_rd, t_bu, t_sp, t_all = [], [], [], []
+    flt = []                                                          # 3d 3 回目: 周ごとのページフォルト（minor）の数
+    t_bu_k, t_sp_k = [], []                                           # 周ごとの和・記録（レコードが無い周は 0）
     crc_bad = tail_bad = nrec = nspec = 0
     pos = 0
     t0_beat = 1000 * a.n_sum * A.BASE_BEATS + 1                   # specd の START_AT は tint の格子（DUMP_T = START_AT ＋ 1）。格子に乗せないと最初の束が欠ける
@@ -172,6 +176,7 @@ def main():
             if sh.used() > sh.cap // 2:
                 sh.skip_all()                                         # 送り出しの代わりに空にする（時間に入れない）
 
+            f0 = resource.getrusage(resource.RUSAGE_SELF).ru_minflt
             ta = time.perf_counter()
             recs = ring.read()
             tb = time.perf_counter()
@@ -190,7 +195,10 @@ def main():
                 td = time.perf_counter()
                 t_bu.append(tc - tb); t_sp.append(td - tc)
             te = time.perf_counter()
+            flt.append(resource.getrusage(resource.RUSAGE_SELF).ru_minflt - f0)
             t_rd.append(tb - ta); t_all.append(te - ta)
+            t_bu_k.append(tc - tb if recs else 0.0)
+            t_sp_k.append(td - tc if recs else 0.0)
     finally:
         ring.a64 = ring.a8 = ring.u8 = None
         if ring.buf is not None:
@@ -210,11 +218,26 @@ def main():
                spec_mean_per_bundle=float(sp[sp > 0].mean()) if (sp > 0).any() else 0.0)
     print(f"2G-1 の 1 BASE（1 MiB のレコード 1 個、{a.bases} 個・n_sum {a.n_sum}・fmt {a.fmt}・{'pynq.allocate' if a.pynq else 'numpy'}）:")
     print(f"  合計  平均 {res['all_mean']:6.2f} ms・p99 {res['all_p99']:6.2f}・最大 {res['all_max']:6.2f} ms（10.24 ms の {100 * res['load']:.0f} %）GC {'止めた' if not a.gc else '動く'}")
-    print(f"  裾    最大は {res['max_at']} 番目・最初の {a.warm} を除いた最大 {res['max_after_warm']:.2f} ms・10.24 ms を越えた BASE {res['slow']}（番目: {res['slow_at']}）")
+    print(f"  裾    最大は {res['max_at']} 番目・最初の {a.warm} を除いた最大 {res['max_after_warm'] if res['max_after_warm'] is None else round(res['max_after_warm'], 2)} ms・10.24 ms を越えた BASE {res['slow']}（番目: {res['slow_at']}）")
     print(f"  内訳  リングの読み（invalidate・CRC・写し）{res['read_mean']:.2f} ms / 束ねの和 {res['bund_mean']:.2f} ms / "
           f"記録（逆順・float32・CRC・溜まり）1 束あたり {res['spec_mean_per_bundle']:.2f} ms（{a.n_sum} BASE に 1 回）")
     print(f"  レコード {nrec}・SPEC の記録 {nspec}（期待 {a.bases // a.n_sum if not a.corrupt else '壊したぶん少ない'}）・"
           f"CRC の不一致 {crc_bad}・尾の不一致 {tail_bad}・溜まりの DROP {acq.drop['n']}")
+    fl = np.array(flt)
+    kk = np.arange(al.size) % a.n_sum
+    res["by_phase"] = {int(q): dict(n=int((kk == q).sum()), all_mean=float(al[kk == q].mean()), all_max=float(al[kk == q].max()),
+                                    read_mean=float(rd[kk == q].mean()), bund_mean=float(ms(t_bu_k)[kk == q].mean()),
+                                    spec_mean=float(ms(t_sp_k)[kk == q].mean()), flt_mean=float(fl[kk == q].mean()),
+                                    slow=int((al[kk == q] > base_ms).sum())) for q in range(a.n_sum)}
+    res["flt_total"] = int(fl.sum())
+    res["per_base"] = dict(all=al.round(3).tolist(), read=rd.round(3).tolist(), bund=ms(t_bu_k).round(3).tolist(),
+                           spec=ms(t_sp_k).round(3).tolist(), flt=fl.tolist())
+    res["malloc_env"] = {k: v for k, v in os.environ.items() if k.startswith("MALLOC_")}
+    print(f"  周の位相（k mod {a.n_sum}、{a.n_sum - 1} が束を閉じる周）ごと: 平均 ms / 最大 / 読み / 和 / 記録 / ページフォルト / 越えた数")
+    for q, v in res["by_phase"].items():
+        print(f"    {q}: {v['all_mean']:6.2f} / {v['all_max']:6.2f} / {v['read_mean']:5.2f} / {v['bund_mean']:5.2f} / {v['spec_mean']:5.2f} / "
+              f"{v['flt_mean']:7.1f} / {v['slow']}")
+    print(f"  ページフォルトの合計 {res['flt_total']}・MALLOC_* {res['malloc_env'] or 'なし'}")
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     with open(a.out, "w") as f:
         json.dump(res, f, indent=1)
