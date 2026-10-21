@@ -1,7 +1,7 @@
 # proj023 — SAM45-Wide の RTL（PFB T = 4 ＋ 16 レーンの全帯域 FFT 32768 点 ＋ ch の束ね 1 / 2 / 4 ＋ SLICE、インターフェース v2 の上で）
 
 日付: 2026-10-14（起こし）
-状態: 進行中（手順 0・1 済み、次は手順 2）
+状態: **成功**（2026-10-21 に閉じた。移植元はタグ `proj023-m0`、下の「移植元と閉じたときの値」）
 
 ## 目的
 
@@ -125,11 +125,11 @@ proj022 で模型と資源の見積もりまで設計したものを RTL にし�
        2c-1. `wide_chain.v`（ひねり係数 ＋ cmul・dft16・SHIFT と飽和・電力・束ね）と共有のひねり係数 ROM ＋ 単体の sim（A2 の後半）（2026-10-14 済み）
        2c-2. 積分器・切り出し・帳簿（`wide_acc.v`・`wide_spec.v`）、IP の行動模型を 2048 点に（`lane_fft_w_model.v`）、PFB → IP → 鎖 → 積分をつないだ sim（A1'・A2・B・C）（2026-10-14 済み。Vivado サーバで回し直して同じ結果）
        2c-3. `wide_core.v`: wide_spec を AXI4-Lite の流れのブロック（INTERFACE 2.5 の SLICE）× 2・FFT_N の口・ARM_WRST / ARM_RUN・DUMP_H・SPEC のレコード（rec_fr）で包む（2026-10-14 済み。Vivado サーバでも通過）
-   2d. フレームの頭（D-2）・起動の口・4 ADC の共有（S-W3、陽性対照つき）
+   2d. フレームの頭（D-2）・起動の口・4 ADC の共有（S-W3、陽性対照つき）→ **sim では行わず、実機（V2-f・IP の位相）で代えた**（2026-10-21、西村さんが決めた）
 3. ビルドまで。2 つに分ける:
    3a. コアの RTL: `core_cmn.v`（win_core からコアの共通だけを抜く・FFT_N 0x80）・`wide_s45_core.v`（core_cmn ＋ wide_core ＋ RAW ＋ レコードの束ね）＋ sim（2026-10-14 済み、作業用の環境で）
    3b. build.tcl（窓と win_fft を外し、lane_fft_w（2048 点固定）・wide_s45_core × 4・共有の ROM 2 つ・ID を D-5 に）（2026-10-14 書いた。2026-10-15 のビルド 5 回目で WNS +0.034 ns、B-1 合格）
-4. ← **次はここ** 実機（H-1〜H-4）
+4. 実機（H-1〜H-4、2026-10-21 に全部済み）
 
 ## やったこと
 
@@ -635,6 +635,44 @@ PL なしで、模型（model/bin_resp.py）から作った掃引で通過・中
 - 陽性対照: (B − 1)/(2B) を落とした軸で、B 2・4 の半 ch の両側が大きく食い違う（模型では 0 / −55・0 / −61 dB）
 - 外れるとしたら: IP の丸め（模型は IP の中を倍精度で計算）が −3 dB の付近に効くこと（効いても ±0.005 dB 程度の見込み）、アナログの傾き（±3.5 MHz で 0.01 dB 程度）
 
+### 移植元と閉じたときの値（タグ `proj023-m0`、2026-10-21）
+
+**移植元**: study-rfsoc のタグ **`proj023-m0`**（この表を書いた commit）。bit はビルドに効くファイル（`src/`・`build.tcl`・`clocks/`・`Makefile`・`program.tcl`）が **567fda2** のときのビルド 11（`IMPL=Performance_Explore`、`build-PE/`）。
+その後のビルドに効くファイルの変更は ffed941 の Makefile（`sim-wds` の目標を足しただけ）で、ほかは PS・sim・文書。2G の RTL の proj は 567fda2 の RTL を写す元にする（「RTL の凍結」）。
+値は Vivado サーバの `build-PE/` の報告（`utilization.rpt`・`cdc.rpt`・`net_check.rpt`・`vivado.log` の「TIMING (確定)」）から写した。
+
+| 項目 | 値 |
+|---|---|
+| bit | `build-PE/proj023.bit` 34,437,476 B・2026-10-17 01:58（JST）にビルド |
+| bit の sha256 | `473911e59baa87fc8bff43d15e4791bd90d9cfd0cf2d4900898bd0218a3c5178`（Vivado サーバの `build-PE/`・ボードで同じ。Vivado サーバの側は 2026-10-21 に確かめ直した） |
+| hwh の sha256 | `32759af1f59ff04fc6041977442a2029abc6c056b6aaa67ebf48b6c5a7bf769a`（同じ） |
+| ID | BIT_KIND 1・BIT_REV 1・PROJ 0x0023_0100。IF_ID 0x0201_0101（コア 4）・0x0201_0102（time_core_0）。CAPS 3・NSTREAM 3 / 2 / 2 / 2。BUILD 0x50c0000i（コア i） |
+| WNS / WHS（`-1`、Performance_Explore） | **+0.000716 ns / +0.009500 ns**（timing summary の表示は +0.001 / +0.010） |
+| LUT | 255,211（60.01 %） |
+| FF | 492,722（57.93 %） |
+| DSP | 2,720（63.67 %） |
+| BRAM タイル | 817.5（75.69 %。RAMB36 305・RAMB18 1,025） |
+| URAM | 40（50.00 %） |
+| `report_cdc` | CDC-3 Info 105・CDC-6 Warning 5・CDC-15 Warning 3,137（ほかの分類 0）。**proj021-m0 と同じ件数**（窓を外して Wide にしても、新しいクロックの乗り換えは無い） |
+| 結線の照合 | `net_check.rpt` 問題 0・陽性対照 (a)〜(g) OK（ビルド 11） |
+| ビルドに効くファイルの未コミットの変更 | なし（Vivado サーバの `git status`、2026-10-21） |
+
+**判定の範囲**（この bit と 6b777bf 以後の PS で）:
+- 通過: B-1（WNS ≧ 0）・S-W1・S-W2（sim-wch・sim-wsp・sim-wco・sim-ws45）・H-1・H-2・H-3（V2-a 相当・V2-b・V2-e・V2-f。V2-c は外した）・H-4・SNAP・D_S（sim-wds）・F-2
+- **S-W3（4 ADC の起動をずらした sim と、その陽性対照）は sim では行っていない**（実機で代えて閉じる。2026-10-21、西村さんが決めた）。1 コアのフレームの頭（DUMP_T = K_F ＋ 2048·DUMP_F0）は sim-wsp・sim-wco の C 層で、4 ADC がそろうことは実機で見た: V2-f の r = 2·G が 7 本・Overlay 4 回で同じ、IP の入口の位相が 4 コアで同じ（Overlay 5 回）、coef_mis が立ったことが無い
+- **S-W4 は sim-ring・sim-raw だけ**（rec_fr の W7HI の後、2026-10-14）。sim-regmap・sim-t4adc・sim-tsys は SAM45-Fine のコア（win_core・s45_core）の試験台で wide_s45_core を通らないので、proj023 では回していない。Wide のコアの番地と自己記述は sim-ws45 と実機の `wide.py --list` で見た
+
+**YATSUGATAKE に移すときに入れるもの**:
+- timebase.CAL[0x0023_0100]（F-2、proj026 の (b) の形）: **pps_det_ns ≒ 71.5**（LPF の分）・**adc_to_core_ns = M ＋ 71.5**（A 143.0・B 142.9・C 141.5・D 141.4 ns）。proj023 の timebase.py には入れていない（未較正のまま）
+- SLICE の D_eff = 1.5·L = 3072 ビート（D_S = 0、INTERFACE 5.2 に入れ済み）
+
+**未解決のまま閉じるもの**:
+- H-1 の C0（B 4）の半 ch の両側の差 0.036 dB（B 0.017・B 1 0.004〜0.009 で、B が大きいほど大きい）。SG を温めても縮まず、漂いでは説明できない。両側とも ±0.02 の中
+- ビルド 10（9589032）で C・D の IP の出口の位相がコア 0 と違った件。ひねり係数 ROM はコアごとにしたので、どちらの読みでも正しく動く。作り直したら起動の見張り（0x20C・0x210）で 4 コアの位相を記録する
+- タイミングの余裕 +0.7 ps（作り直しても閉じる保証は無い。正本は上の bit そのもの）
+
+**記録**: `runs/h1a.h1.npz`（H-1 の 1 回目）・`pynq/v2b.json`・`pynq/v2bp.json`（V2-b と陽性対照の受け側）・`pynq/snap23.snap.npz`（SNAP の実機）。H-1 の 2 回目 `h1b.h1.npz` と F-2 の `f2_23a`・`f2_23b` はボードに残っている
+
 ## 結論・次にやること
 
 - [x] 手順 1: D-1〜D-7（上）
@@ -703,7 +741,7 @@ PL なしで、模型（model/bin_resp.py）から作った掃引で通過・中
 - [x] 手順 4h: H-1 の道具 `wideresp.py`（PL なしで模型の掃引を通した）
 - [x] H-1 の実機（2026-10-21、2 回目で通過。1 回目は道具の誤り（B 1 の繰り返しの点）と SG の温まりで NG → 直して `--warm 300`）。C0 の半 ch の両側の差 0.036 dB は未解明
 - [x] 後で: F-2（配線 P、widef2.py）→ 2026-10-21 に済み
-- [ ] 閉じる: proj023-m0 のタグと表（西村さんの判断で）
+- [x] 閉じる: proj023-m0 のタグと表（2026-10-21、西村さんが決めた。上の「移植元と閉じたときの値」）
 
 ## 公開について
 
