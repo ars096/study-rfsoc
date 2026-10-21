@@ -1,0 +1,4 @@
+# 受け手の IP アドレスが入る（公開前スキャンで止まる）
+runs/*.status.txt
+# F-2 の生サンプル（README と runs/f2_*.txt に値を残す）
+runs/f2_*.npz

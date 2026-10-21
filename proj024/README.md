@@ -758,6 +758,14 @@ YATSUGATAKE の `sw/pynq/`（M5a: 較正の鍵を (BIT_KIND, BIT_REV) に・M5b:
 - 床の中央値 2.13（ノイズソース OFF の ADC の床、SHIFT 7）。予言の「SHIFT 7 で CW が飽和しないか」は飽和 0
 
 **4c 長い運転**（4a・4b の後に、時間を決めて）: `START n=0` で 30 分。STATUS を 1 分ごと。予言: loop_slow 0・drop 0・ring の drop・REC_LATE 0・miss 0。1 つでも 0 でなければ D-11（C は見送り）を考え直す
+**4c の結果（2026-10-21 15:20〜15:51、配線 N/S・ノイズソース ON・PATT 13 dB・TP −31.3〜−31.4 dBFS、src A・SHIFT 7）: 通過（D-11 は見直さない）**
+- 受け（この PC、`--out` なし）: SPEC 44,021・TP 44,022・22.07 GB・CRC 0・欠け 0・説明のない欠け 0・逆戻り 0・kgap 0・tdev 0・照合 通過
+- STATUS（1 分ごと 30 回 ＋ STOP の後、`runs/g21_4c.status.txt`）: 30 分を通して **miss・drop・loop_slow・pl_drop・pl_crc・pl_err・r_bad・tp_lost・tp_rec_lost・skip 0**、
+  loop_max 15.11 ms（最初の 1 分から動かない）・loop_p99 12.3 → 11.3 ms・buf_used ≦ 2.5 MB・pl_peak 3.1 MB・health 0・flags 0
+- STOP の後の bdrop 1 は、止めたときの束ねの途中の分（s45acq の `_bdrop` の why "STOP"、EVENT を出さない作り）。運転の間は 0
+- TP_JUMP は 30 分で 306 回（EVENT 99 個）。ノイズソースの入力の跳ね（判定に入れない）
+- **予言: 当たり**。Python 1 本の取得（D-11）・リング 64 MiB（D-15）で 30 分の取りこぼし 0。送り出し ≒ 12.3 MB/s も 30 分続いた
+
 **4d D_S**: proj023 の F-2 の道具（RAW の流れ）で adc_to_core を測り、FULL の D_S = +1 ビートを確かめる。手順は 4c の後に書く
 
 ### 1a. g21_coef — 予言（走らせる前に書く、2026-10-17）
