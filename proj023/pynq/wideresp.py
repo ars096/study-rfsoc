@@ -29,7 +29,10 @@ STREAMS = {"A0": (1, 6720, 2048), "B0": (2, 2336, 2048), "C0": (4, 0, 2192), "D0
 MODEL = {1: dict(half=-3.001, w3=1.0008, enbw=1.0103), 2: dict(half=-3.010, w3=1.0000, enbw=1.0081), 4: dict(half=-3.010, w3=1.0000, enbw=1.0081)}
 TOL = dict(half=0.02, w3=0.005, enbw=0.005, drift=0.02)
 X0, X1, STEP = 8740.0, 8798.0, 0.125         # 細かい ch の単位
-REF_X = 8769.0                               # 繰り返して測る点（4 本とも中心の近く）
+REF_X = 8769.0                               # 繰り返して測る点: B 2・B 4 の中心の近く（u = +0.25・−0.125）
+REF_X1 = 8768.0                              # B 1 の中心（u = 0）。2026-10-21: REF_X は B 1 では隣の ch（u = +1、床から 14 dB）で、
+                                             # 繰り返しの揺れが床の雑音で 0.4 dB になった → B 1 は REF_X1 で見る
+REF_OF = {1: "pref1", 2: "pref", 4: "pref"}
 
 
 # ボードの numpy（1.21 前後）には trapezoid が無い（2.0 で trapz から改名）。両方で動くように
@@ -90,11 +93,17 @@ def analyze(path):
             elif b > 1:
                 log(f"      {tag}: 半 ch {m['half_p']:+.3f} / {m['half_m']:+.3f} dB → {'NG（よい）' if not okh else '**OK と出た（陽性対照が効いていない）**'}")
                 ok &= not okh
-        r = z["pref"][:, j] - z["poff"][j]
+        rk = REF_OF[b]
+        if rk not in z.files:
+            log(f"      中心の繰り返し: この記録には B {b} の中心（細かい ch {REF_X1}）の繰り返しが無い（2026-10-21 より前の道具）→ 判定できない")
+            ok = False
+            continue
+        r = z[rk][:, j] - z["poff"][j]
         dr = float(db(r.max()) - db(r.min()))
         okd = dr <= TOL["drift"]
         ok &= okd
-        log(f"      中心の近く（細かい ch {REF_X}）の繰り返し {len(r)} 回の揺れ {dr:.3f} dB（≦ {TOL['drift']}）: {'OK' if okd else 'NG'}")
+        rx = REF_X1 if rk == "pref1" else REF_X
+        log(f"      中心の近く（細かい ch {rx}）の繰り返し {len(r)} 回の揺れ {dr:.3f} dB（≦ {TOL['drift']}）・最初から最後 {float(db(r[-1]) - db(r[0])):+.3f} dB: {'OK' if okd else 'NG'}")
     log(f"P_off の最初と最後の差（的の ch）: " + " / ".join(f"{k} {float(db(z['poff_end'][j]) - db(z['poff_beg'][j])):+.3f} dB" for j, k in enumerate(keys)))
     log(f"結果（H-1）: {'通過' if ok else '失敗'}")
     return ok
@@ -114,6 +123,7 @@ def main():
     p.add_argument("--ndump", type=int, default=2)
     p.add_argument("--shift", type=int, default=7)
     p.add_argument("--sg-settle", type=float, default=0.05)
+    p.add_argument("--warm", type=float, default=0.0, help="掃引の前に SG を REF_X で温める [s]（2026-10-21 から 300 を勧める）")
     p.add_argument("--out", default="h1")
     a = p.parse_args()
     if a.analyze:
@@ -147,21 +157,28 @@ def main():
         poff_beg = np.array(grab())
         sg.set_freq_mhz(if_of_fine(xs[0])); sg.set_dbm(a.dbm); sg.set_output(True)
         log(f"H-1: {len(xs)} 点（細かい ch {X0}〜{X1}、刻み {STEP}）・SG {a.dbm:+.1f} dBm・N_ACC {a.nacc} × {a.ndump}")
-        P, Pref = [], []
+        if a.warm > 0:
+            # 2026-10-21: SG の出力を入れた直後の数分、出力が −0.08 dB ずつ下がった（B 2・B 4 の繰り返しが同じ形でそろった）→ 先に温める
+            sg.set_freq_mhz(if_of_fine(REF_X)); sg.set_output(True)
+            log(f"SG を {a.warm:.0f} s 温める（{a.dbm:+.1f} dBm）"); time.sleep(a.warm)
+            sg.set_freq_mhz(if_of_fine(xs[0]))
+        P, Pref, Pref1 = [], [], []
         t0 = time.time()
         for n, x in enumerate(xs):
             if n % 64 == 0:
                 sg.set_freq_mhz(if_of_fine(REF_X)); time.sleep(a.sg_settle); Pref.append(grab())
+                sg.set_freq_mhz(if_of_fine(REF_X1)); time.sleep(a.sg_settle); Pref1.append(grab())
             sg.set_freq_mhz(if_of_fine(x)); time.sleep(a.sg_settle)
             P.append(grab())
             if n % 50 == 0:
                 log(f"  {n:>4}/{len(xs)} 細かい ch {x:.3f}（IF {if_of_fine(x):.6f} MHz）: " + " ".join(f"{k} {v:.4g}" for k, v in zip(keys, P[-1]))
                     + f"（{time.time() - t0:.0f} s）")
         sg.set_freq_mhz(if_of_fine(REF_X)); time.sleep(a.sg_settle); Pref.append(grab())
+        sg.set_freq_mhz(if_of_fine(REF_X1)); time.sleep(a.sg_settle); Pref1.append(grab())
         sg.set_output(False)
         time.sleep(0.2)
         poff_end = np.array(grab())
-        np.savez(a.out + ".h1.npz", x=xs, keys=np.array(keys), p=np.array(P), pref=np.array(Pref),
+        np.savez(a.out + ".h1.npz", x=xs, keys=np.array(keys), p=np.array(P), pref=np.array(Pref), pref1=np.array(Pref1),
                  poff=(poff_beg + poff_end) / 2, poff_beg=poff_beg, poff_end=poff_end, dbm=a.dbm, sg=sg.state().get("idn", ""))
         log(f"記録: {a.out}.h1.npz（{time.time() - t0:.0f} s）")
         rc = 0 if analyze(a.out + ".h1.npz") else 1

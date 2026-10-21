@@ -737,10 +737,25 @@ YATSUGATAKE の `sw/pynq/`（M5a: 較正の鍵を (BIT_KIND, BIT_REV) に・M5b:
   - STATUS（STOP の後）: miss 0・kgap 0・bdrop 0・r_bad 0・**loop_slow 0**・drop 0・ring の drop 0・tp_lost 0・tp_bad 0。loop_max は 3d の bench から 12 ms 前後（まれに 60 ms 級）
   - 自信が低い所: 床の絶対の高さ（SHIFT 7 の床が何 LSB² か。模型の σ からは出していない）・health / flags の OR（PPS が来ていなければ health に [0]）
 
+**4a の結果（2026-10-21 13:11〜13:13、proj026 のボード作業のチャットで）: 全部通過**
+- 構成: ボードの `~/proj024/`（proj024.bit の sha256 `fdb04d80…714dd8` をボードで照らして一致）。入力はノイズソース → 2 分配器 A → PATT 13 dB → BPF 2.1〜3.9 GHz → 2 分配器 B → ATT 3 dB → 4 分配器 → ADC（2026-10-21 に分配器を ZFRSC-42-S+・ZFRSC-4-842-S+ に交換、1PPS・10 MHz の入口に LPF。proj026）。
+  **TP −30.9 dBFS**（同じ PATT 13 dB で M6 の −12.5 dBFS より ≒ 18 dB 低い。分配器の交換による）
+- 起動: ID adc 020b0101・time 020b0102・proj 00240100（予言どおり）。START が通った（G21Backend の照合が全部通った）。RUN_T の WARN なし
+- `runs/g21_4a1.s45`（src A）: SPEC 200・CRC 0・欠け 0・照合 通過。g21cw 全部通過（kind 1・nch 131072・nacc 640・shift 7・DUMP_T の進み 10485760・DUMP_K 1 ずつ）。
+  **床の中央値 1.81e3**（1 % 3.1 は BPF の外の ch・99 % 3.3e3）。TP の ADC {A}。STATUS: miss・drop・loop_slow・pl_drop・tp_lost 0、loop_max 15.2 ms・p99 12.6 ms・pl_peak 3.1 MB
+- `runs/g21_4a2.s45`（src C）: 同じく全部通過、床の中央値 1.75e3、**TP の ADC {A, C}**（コアの TP 8,020・FULL の TP 8,010、どちらも −30.9 dBFS）。loop_max 16.0 ms・p99 13.5 ms
+- 予言の「自信が低い所」: 床の絶対の高さは SHIFT 7・−30.9 dBFS で 1.8e3 LSB²（1 フレームあたり）
+
 **4b ch → IF（SG の CW）**: E8257D（ボードと同じ 10 MHz）→ **0 dBm ＋ 固定減衰器 20 dB**（ADC の入口で −20 dBm ≒ −26 dBFS。LESSONS の「−10 dBm 以下は unleveled」を避ける）→ SMA の ADC_A、`SET src=A`。
   周波数は ch の中心で、試験音の約束（fs/64・k·fs/8・n × 163.84 MHz）を避けた **3000.25 MHz**（ch c 70128 → 送る i 60943）と **2500.5 MHz**（c 102112 → i 28959）。向きの取り違え（昇順か）を 2 点で見る
 - 予言: 2 点とも **CW が見えている（ピーク / 中央値 ≧ 30 dB）・ピークの番号が期待と一致・軸の値と SG の差 0 Hz（ch の中心）**。隣の ch は PFB（T 4）でピークより 50 dB 以上下
 - 自信が低い所: SHIFT 7 で CW が飽和しないか（sat の和を見る。飽和したら SHIFT を上げて取り直し、そのことを書く）
+
+**4b の結果（2026-10-21 14:46、配線 N/S: SG → 2 分配器 A → PATT 0 dB → 2 分配器 B → ATT 3 dB → 4 分配器 → ADC、ノイズソース OFF）: 全部通過**
+- SG +9 dBm（固定減衰器なし。ADC で TP −26.09 / −26.46 dBFS、予言の −26 dBFS どおり）。`runs/g21_4b_3000.25.s45`・`runs/g21_4b_2500.5.s45`（各 SPEC 50・CRC 0・欠け 0・sat 0・miss 0）
+- g21cw: **3000.25 MHz → 送る番号 60943（期待どおり）・軸と SG の差 0.0 Hz・ピーク / 中央値 84.9 dB**／**2500.5 MHz → 28959・0.0 Hz・84.6 dB**。隣の ch −52.0〜−52.4 dB（予言「50 dB 以上下」）、±2〜3 ch は −56.9〜−58.9 dB
+- 陽性対照 `--posctl`（軸の向きを取り違える）は 3000.25 MHz で軸 1159.75 MHz と出て**不合格**（落ちるべきところで落ちた）
+- 床の中央値 2.13（ノイズソース OFF の ADC の床、SHIFT 7）。予言の「SHIFT 7 で CW が飽和しないか」は飽和 0
 
 **4c 長い運転**（4a・4b の後に、時間を決めて）: `START n=0` で 30 分。STATUS を 1 分ごと。予言: loop_slow 0・drop 0・ring の drop・REC_LATE 0・miss 0。1 つでも 0 でなければ D-11（C は見送り）を考え直す
 **4d D_S**: proj023 の F-2 の道具（RAW の流れ）で adc_to_core を測り、FULL の D_S = +1 ビートを確かめる。手順は 4c の後に書く
