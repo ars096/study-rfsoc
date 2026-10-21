@@ -298,7 +298,7 @@ class Clock:
         if not self.ok:
             return 0
         a, c = self.tb._anchor, self.tb.cal
-        t = a["utc_sec"] * 10**9 + int(_b2ns(int(beat) - a["stamp"])) - int(round(c["pps_det_ns"] or 0))
+        t = a["utc_sec"] * 10**9 + int(_b2ns(int(beat) - a["stamp"])) + int(round(c["pps_det_ns"] or 0))   # pps_det は足す（2026-10-21、test_cal_b.py）
         v = c["adc_to_core_ns"]
         t -= int(round((v.get(adc) if isinstance(v, dict) else v) or 0))
         if ns is not None and ns in self.wd:
@@ -309,12 +309,13 @@ class Clock:
         """utc_ns(beat, None, adc) を配列で（TP の区切り）"""
         a, c = self.tb._anchor, self.tb.cal
         v = c["adc_to_core_ns"]
-        off = a["utc_sec"] * 10**9 - int(round(c["pps_det_ns"] or 0)) - int(round((v.get(adc) if isinstance(v, dict) else v) or 0))
+        off = a["utc_sec"] * 10**9 + int(round(c["pps_det_ns"] or 0)) - int(round((v.get(adc) if isinstance(v, dict) else v) or 0))
         return off + _b2ns(np.asarray(beats, np.int64) - a["stamp"])
 
     def beat_of_utc_ns(self, utc_ns):
         a = self.tb._anchor
-        return a["stamp"] + ((int(utc_ns) - a["utc_sec"] * 10**9) * 32) // 125
+        p = int(round(self.tb.cal["pps_det_ns"] or 0))      # beat_utc_ns の逆
+        return a["stamp"] + ((int(utc_ns) - a["utc_sec"] * 10**9 - p) * 32) // 125
 
 
 # ================================================================ TP のリングの読み手（記録を溜めず、TP_FLUSH ごとに渡す）

@@ -235,7 +235,8 @@ class Timebase:
         """ビート `beat`（time_core の T）がコアに入った時刻の UTC（整数 ns）。遅れの補正はしない（`sample_utc_ns`）。"""
         self.check()
         a = self._anchor
-        return a["utc_sec"] * 10**9 + beats_to_ns(int(beat) - a["stamp"]) - int(round(self.cal["pps_det_ns"] or 0))
+        # スタンプは本当の縁より pps_det 後 → ビートの時刻は pps_det を足す（2026-10-21 まで引いていた。YATSUGATAKE と同じ直し、test_cal_b.py）
+        return a["utc_sec"] * 10**9 + beats_to_ns(int(beat) - a["stamp"]) + int(round(self.cal["pps_det_ns"] or 0))
 
     def _a2c(self, adc):
         v = self.cal["adc_to_core_ns"]
