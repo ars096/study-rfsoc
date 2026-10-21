@@ -1,0 +1,223 @@
+{
+ "summary": {
+  "spec": 1952,
+  "tp": 980,
+  "event": 3,
+  "snap": 0,
+  "mb": 31.9,
+  "crc_bad": 0,
+  "gaps": 0,
+  "declared": 0,
+  "unexplained": 0,
+  "seq_back": 0,
+  "dup": 0,
+  "kgap": 0,
+  "tdev": 0,
+  "tp_gap": 0,
+  "health": "0x0",
+  "sat": 0,
+  "flags": "0x0",
+  "last_seq": 2935,
+  "ver": {
+   "2": 2935
+  },
+  "f32_pairs": 0,
+  "f32_bad": 0,
+  "f32_maxulp": 0.0
+ },
+ "events": [
+  {
+   "ev": "START",
+   "start_at": 4823449600,
+   "utc_ns": 1792546748511279866,
+   "n": 244,
+   "forced": false,
+   "version": "proj019-0.2",
+   "proto": 2,
+   "fmt": "f32",
+   "ids": {
+    "win": "02030000",
+    "adc": "02020301",
+    "time": "02020302",
+    "proj": "00210200",
+    "usr": "8eba3480",
+    "lmx_vco": "7864.32",
+    "lmx_pwr": "3",
+    "read": "ring"
+   },
+   "tint": 0.04096,
+   "cfg": 0,
+   "tp_cal": null,
+   "wins": [
+    {
+     "key": "A0",
+     "adc": 0,
+     "win": 0,
+     "if_mhz": 3200.0,
+     "ns": 1,
+     "shift": 4,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "A1",
+     "adc": 0,
+     "win": 1,
+     "if_mhz": 2432.0,
+     "ns": 1,
+     "shift": 4,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "B0",
+     "adc": 1,
+     "win": 0,
+     "if_mhz": 3200.0,
+     "ns": 1,
+     "shift": 4,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "B1",
+     "adc": 1,
+     "win": 1,
+     "if_mhz": 2432.0,
+     "ns": 1,
+     "shift": 4,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "C0",
+     "adc": 2,
+     "win": 0,
+     "if_mhz": 3200.0,
+     "ns": 1,
+     "shift": 4,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "C1",
+     "adc": 2,
+     "win": 1,
+     "if_mhz": 2432.0,
+     "ns": 1,
+     "shift": 4,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "D0",
+     "adc": 3,
+     "win": 0,
+     "if_mhz": 3200.0,
+     "ns": 1,
+     "shift": 4,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    },
+    {
+     "key": "D1",
+     "adc": 3,
+     "win": 1,
+     "if_mhz": 2432.0,
+     "ns": 1,
+     "shift": 4,
+     "nacc": 2560,
+     "g": 4,
+     "bundle": 1,
+     "n_sum": 4,
+     "pl_nacc": 640
+    }
+   ]
+  },
+  {
+   "ev": "TP_JUMP",
+   "adc": 2,
+   "t_beat": 4955570794,
+   "utc_ns": 1792546749027378279,
+   "n": 4,
+   "db": 0.1909,
+   "step_db": 0.0,
+   "sigma_db": 0.0258,
+   "ovr": false
+  },
+  {
+   "ev": "STOP",
+   "why": "n に達した",
+   "dumps": [
+    244,
+    244,
+    244,
+    244,
+    244,
+    244,
+    244,
+    244
+   ],
+   "miss": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "tp": [
+    9770,
+    9770,
+    9770,
+    9770
+   ],
+   "tp_info": [
+    {
+     "adc": 0,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 1,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 2,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 3,
+     "anch_dev": 0,
+     "gap": 0
+    }
+   ],
+   "err": null
+  }
+ ]
+}

@@ -1,0 +1,28 @@
+xrfclk.xrfclk.set_ref_clks(lmk_freq=245.76, lmx_freq=491.52)   ← 出荷時の設定
+LMK のレジスタファイル : /usr/local/share/pynq-venv/lib/python3.10/site-packages/xrfclk/LMK04828_245.76.txt  (136 語)
+  出荷時 0x0147 = 0x1A  → CLKin_SEL_MODE = 1
+クロック源 : CLKin0（CLK_IN の SMA と推定。**要実測**）
+  基準 10.0 MHz / R = 125 / 位相比較 80 kHz / PLL1_N = 2000 → VCXO 160.0 MHz
+  差し替えたレジスタ:
+    0x0147  0x1A → 0x0A
+LMK04828 に 136 語を書いた（xrfclk.xrfclk.xrfclk._write_LMK_regs × 1 個）
+  PLL1 のロックを待つ: 2.0 s
+LMX2594 に 113 語を書き直した（xrfclk.xrfclk.xrfclk._write_LMX_regs × 2 個 / LMX2594_491.52.txt）
+
+**ボードの PLL1 ロック LED を見ること。**
+  消えていれば基準が来ていない（ケーブル・レベル・CLKin の取り違え）。
+  点いていても外部基準が効いている証拠にはならない。判定は ppm で行う。
+Overlay: proj021.bit
+Tile 226: PLLLockStatus = 2（2 = locked）
+Tile 224: PLLLockStatus = 2（2 = locked）
+ch 0（ADC_A = Tile 226 / blocks[1]）: SamplingFreq 4.096 GSPS / NyquistZone = 2
+ch 1（ADC_B = Tile 226 / blocks[0]）: SamplingFreq 4.096 GSPS / NyquistZone = 2
+ch 2（ADC_C = Tile 224 / blocks[1]）: SamplingFreq 4.096 GSPS / NyquistZone = 2
+ch 3（ADC_D = Tile 224 / blocks[0]）: SamplingFreq 4.096 GSPS / NyquistZone = 2
+T-0: PPS の間隔を 30.0 秒（TRIG・COMP の両系統）
+  EPOCH 1 / 状態 {'pending': False, 'late': False, 'far': False, 'fired': False, 'anchored': False, 'trig_alive': True, 'comp_alive': True, 'pol': 0, 'src': 0}
+  trig: 29 個 / 間隔 − 1 秒: 平均 +0.000 / 最小 +0 / 最大 +0 ビート（1 ビート = 3.906 ns。29 秒で +0 ビート = +0.0000 ppb）
+  comp: 29 個 / 間隔 − 1 秒: 平均 +0.000 / 最小 -1 / 最大 +1 ビート（1 ビート = 3.906 ns。29 秒で +0 ビート = +0.0000 ppb）
+  GLITCH trig 0 / comp 0 / BAD 0 / MISS 0 / EPOCH 1 → 1
+T-0: 通過
+総合: 通過
