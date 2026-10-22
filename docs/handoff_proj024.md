@@ -5,7 +5,7 @@
 
 ## 1. 約束（どの会話でも同じ）
 
-- コミット: `git -c user.name="Atsushi Nishimura" -c user.email="atsushi.nishimura@nao.ac.jp" commit`、メッセージは日本語、末尾は `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` だけ。
+- コミット: `git -c user.name="<作者>" -c user.email="<作者のアドレス>" commit`（作者は直前のコミットと同じにする。アドレスは本文に書かない）、メッセージは日本語、末尾は `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` だけ。
   **Claude-Session の行・URL は入れない。push はしない（西村さんがする）**。status・log は `git --no-optional-locks`
 - リポジトリ（study-rfsoc）は公開。**ホスト名・SG やボードのアドレス・個人のパス・Host ID・データの口の相手の IP を書かない**（「Vivado サーバ」と書く）。コミットの前に公開の確かめ（grep）
 - ボードのコマンドは root で `python3 xxx.py …`。ボードは `$B`、SG は `$SG`（`--sg $SG`）。送るのは `scp build-PE/projNNN.bit build-PE/projNNN.hwh pynq/*.py xilinx@$B:~/projNNN/` の形

@@ -89,7 +89,7 @@
 
 ## 5. 約束（どの会話でも同じ。docs/handoff_proj024.md の 1. と同じ）
 
-- コミット: `git -c user.name="Atsushi Nishimura" -c user.email="atsushi.nishimura@nao.ac.jp" commit`、メッセージは日本語、末尾は `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` だけ。
+- コミット: `git -c user.name="<作者>" -c user.email="<作者のアドレス>" commit`（作者は直前のコミットと同じにする。アドレスは本文に書かない）、メッセージは日本語、末尾は `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` だけ。
   **Claude-Session の行・URL は入れない。push はしない**。status・log は `git --no-optional-locks`。コミットの前に公開の確かめ（ホームのパス・IP アドレス・ホスト名・メールなどの grep）
 - INTERFACE.md・BITS.md は proj023 の会話の持ち物（D-9・D-10 は入った）。LESSONS.md・docs/lessons_all.md は足すだけ
 - Vivado サーバとボードは共有。使う前に西村さんと順番を決める
