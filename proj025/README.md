@@ -5,7 +5,7 @@
 写したもの（fa0b230 の proj024 から、2026-10-18）: `model/g2_model.py`（そのまま）・`model/g21_fixed.py` → `model/g22_fixed.py`・
 `tools/gen_g21_tables.py` → `tools/gen_g22_tables.py`・`src/common/cmul.v`・`src/common/dft16.v`（そのまま）・
 `src/g21/g21_{coef,tw,pfb,pfb_core,chain}.v` → `src/g22/g22_*.v`・`sim/tb_g21_{coef,tw,pfb,chain}.v`・`sim/check_g21.py` → `*_g22*`
-状態: 進行中（段階 A は済み: 模型 M・部品 1a〜1d の単体の sim・2 コアの組み方 E-1〜E-6 の決定（2026-10-21）。段階 B は 2G-1 の実機の最初の確かめの後）
+状態: 進行中（段階 A は済み: 模型 M・部品 1a〜1d の単体の sim・2 コアの組み方 E-1〜E-6 の決定（2026-10-21）。**段階 B を 2026-10-22 にタグ proj024-m0 から始めた**）
 
 着手の前に [`../LESSONS.md`](../LESSONS.md) を全部読む（知見の全部は [`../docs/lessons_all.md`](../docs/lessons_all.md)）。
 
@@ -132,10 +132,39 @@ sim は作業用のクラウドの環境の Icarus Verilog（oss-cad-suite 2024-
 BRAM ≒ 70 %（2G-1 の 62 % ＋ レーン FFT の差 +72 ＋ ひねり係数 ROM の 2 個目）・URAM は 2G-1 と同じ程度（積分器の総量は同じ 12.6 Mbit）。
 タイミングは 2G-1 の既定の戦略で −0.110 ns（積分器の URAM と PFB の履歴の BRAM のカスケード）だった。2G-2 は 1 個あたりの記憶の深さが半分なので、カスケードは短くなる見込み
 
+## 段階 B（2026-10-22 から。写し元はタグ **proj024-m0** = 6c4ad09）
+
+写し元: study-rfsoc のタグ `proj024-m0`（2G-1 を閉じた commit 6c4ad09。ビルドに効くファイルは b71d23a と同じ）。
+段階 A の部品（`src/g22/g22_{coef,tw,pfb,pfb_core,chain}.v`）の写し元 fa0b230 から proj024-m0 までに、proj024 の `src/` は変わっていない（`git diff --stat fa0b230 proj024-m0 -- proj024/src` が空）ので、段階 A の部品はそのまま使う。
+
+### B0. 写す（2026-10-22）
+
+写したもの（proj024-m0 の proj024 から。追跡しているファイルだけを `git show` で）:
+- `src/common/`（33 個。cmul.v・dft16.v は段階 A で写したものと同じ中身なので上書きしていない）・`src/board/`（3 個）・`tools/ip_impl.tcl`・`ip_survey.tcl`・`pynq/`（60 個）: **そのまま**
+- `src/g21/g21_{acc,spec,core,s45_core}.v` → `src/g22/g22_*.v`、`sim/{lane_fft_g21_model,tb_g21_acc,tb_g21_spec,tb_g21_core,tb_g21_s45,tb_g21_ds,tb_lane_g21}.v` → `*g22*`、`build.tcl`: **名前（g21 → g22、G21 → G22）だけを置き換えた**。長さ・ID・コアの数はまだ 2G-1 のまま（2a〜2f で直す）
+- `sim/rec_fr_ref.v`・`tb_recfr_eq.v`: そのまま（rec_fr の NCH の等価性の sim）
+- `sim/check_g22.py`: 段階 A の 1a〜1d の分はそのまま、proj024-m0 の 2a〜4d-2 の判定（lane・acc・spec・core・s45・ds）を名前だけ置き換えて足した
+
+写していないもの: `model/g21_fixed.py`（2G-2 は段階 A の `g22_fixed.py`）・`tools/gen_g21_tables.py`・`estimate.py`・`HANDOFF.md`・`runs/`。Makefile は 2a で proj024-m0 の目標を足す
+
+### 段階 B の手順（proj024 の 2a〜4d と同じ並び。各手順は 予言 → 結果 → 当たり・外れ → INDEX → コミット）
+
+| | もの | 2G-1 から変わること |
+|---|---|---|
+| 2a | `sim/lane_fft_g22_model.v`（レーン FFT 8192 点・bit 反転順の行動模型。tready の下げ・halt を引き継ぐ） | 長さ 8192（k1 13 bit）、出口 Y 28 bit |
+| 2b | `g22_acc`（FULL の積分器、8 銀行 × 8192 × 48 bit × 2 面） | 行 8192、ch c = k1 + 8192·k2 |
+| 2c | `g22_spec`（PFB → レーン FFT × 16 → 鎖 → 積分器） | フレーム 8192 ビート、bit 反転の幅 13 |
+| 2d | `g22_core`（FULL の流れ 1 本、SPEC のレコード 512 KiB・FULL の TP） | NCH 65536・FRAME_BEATS 8192、DUMP_T = K_F ＋ 8192·DUMP_F0、N_ACC 320 |
+| 2e | `g22_s45_core`（コア 1 個ぶん: core_cmn ＋ g22_core ＋ RAW（コア 0 だけ）＋ rec_arb） | **RAW を引数で外せるように**（E-5）、BIT_KIND 10・PROJ 0x0025_0100 |
+| 2f | `build.tcl`（**s45_core_0・_1** の 2 セル、axis_sel4 はコアの FULL ごと ＋ RAW、結線の照合を 2 コアに） | Wide（proj023）の形に戻す（E-1）。BD 41-759 を xlconstant で、vivado.log の本体の CRITICAL WARNING も拾う（LESSONS、proj024 2f） |
+| 3 | PS（`G22Backend`、FULL 2 本 × 512 KiB / 10.24 ms） | 流れが 2 本 |
+| 4 | 実機 4a 立ち上げ・4b ch → IF・4c 30 分・4d F-2・D_eff。**2 コアに同じ ADC の陽性対照**（E-4） | 2 コアの同等 |
+
 ## 結論・次にやること
 
 - [x] 0. 写す（2026-10-18）
 - [x] M. 模型（2026-10-18、全部通過。予言の外れ 2 つは理由を書いた）
 - [x] 1a〜1d. 部品の単体の sim（2026-10-18、全部通過・陽性対照 6 本は落ちた）
 - [x] 2 コアの論点を E-1〜E-6 に並べた（2026-10-18）→ **全部勧めのとおりに決定**（2026-10-21、西村さん）
-- [ ] 段階 B（2G-1 の実機の最初の確かめの後）
+- [x] 段階 B の B0: proj024-m0 から写した（2026-10-22）
+- [ ] 段階 B の 2a〜2f・3・4
