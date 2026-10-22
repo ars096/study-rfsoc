@@ -273,7 +273,7 @@ def lane(outdir, tblog, stalled):
     x = lane_x().reshape(3, F.M)
     ref = [np.fft.fft(x[f].astype(np.float64)) for f in range(3)]
     rows = [l.split() for l in open(os.path.join(outdir, "lane.txt"))]
-    br = F.bitrev(np.arange(F.M), 14)
+    br = F.bitrev(np.arange(F.M), F.KB)
     order_ok = len(rows) == 3 * F.M
     nd = nexact = 0
     dmax = 0
@@ -296,7 +296,7 @@ def lane(outdir, tblog, stalled):
     nst, ntu, ntm = (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else (-1, -1, -1)
     ymax = max(np.abs(r.real).max() for r in ref)
     print(f"check lane: {len(rows)} 行（期待 {3 * F.M}）・並び（bit 反転順の XK_INDEX・TLAST）{'OK' if order_ok else 'NG'}・"
-          f"floor(x + 0.5) と一致 {nexact}・違う {nd}・|RTL − DFT| の最大 {dmax:.3f}・|Y| の最大 {ymax:.0f}（29 bit ≦ 2^28 = 268435456）")
+          f"floor(x + 0.5) と一致 {nexact}・違う {nd}・|RTL − DFT| の最大 {dmax:.3f}・|Y| の最大 {ymax:.0f}（28 bit ≦ 2^27 = 134217728）")
     print(f"check lane: 流し始めた後に tready で待った {nst} クロック（下げを入れた: {stalled}）・TLAST の事象 {ntu} / {ntm}")
     ok = order_ok and dmax < 1.0 and ntu == 0 and ntm == 0 and ((nst > 0) == bool(stalled))
     print("結果: 全部通過" if ok else "結果: 不合格")
@@ -329,7 +329,7 @@ def acc(outdir):
                 v = int(vs)
             except ValueError:
                 v = None
-            e = int(exp[c >> 14, c & (F.M - 1)])
+            e = int(exp[c >> F.KB, c & (F.M - 1)])
             if v != e:
                 nbad += 1
                 if first is None:
@@ -344,14 +344,14 @@ def acc(outdir):
     return ok
 
 
-SPEC_NB = 10 * 16384
+SPEC_NB = 10 * 8192
 
 
 def spec_x():
-    """2c の刺激: T のビートごとの 16 サンプル（int、長さ SPEC_NB·16）。CW 100（ch 40000）＋ 雑音 σ 100"""
+    """2c の刺激: T のビートごとの 16 サンプル（int、長さ SPEC_NB·16）。CW 100（ch 20000）＋ 雑音 σ 100"""
     rng = np.random.default_rng(3)
     n = np.arange(SPEC_NB * 16)
-    return np.clip(np.round(100 * np.cos(2 * np.pi * 40000 * n / F.N) + rng.normal(0, 100, n.size)), -8192, 8191).astype(np.int64)
+    return np.clip(np.round(100 * np.cos(2 * np.pi * 20000 * n / F.N) + rng.normal(0, 100, n.size)), -8192, 8191).astype(np.int64)
 
 
 def spec_gen(outdir):
@@ -373,7 +373,7 @@ def spec(outdir, tblog, shift):
     ndump, flags, c_shift, ipq, nstall, f_first, nrd = (int(m.group(1)), int(m.group(2), 16), int(m.group(3)), m.group(4),
                                                          int(m.group(5)), int(m.group(6)), int(m.group(7)))
     x = spec_x()
-    b0 = f_first * F.M                                      # PFB のフレーム 0 の最初のビート（T = 16384·f_first、K_F 0）
+    b0 = f_first * F.M                                      # PFB のフレーム 0 の最初のビート（T = 8192·f_first、K_F 0）
     xs = x[b0 * 16:]
     nfr = len(xs) // F.N
     ok = True
@@ -410,7 +410,7 @@ def spec(outdir, tblog, shift):
             cur[0][p, k] = sx((w >> (64 * p)) & ((1 << 32) - 1), 32)
             cur[1][p, k] = sx((w >> (64 * p + 32)) & ((1 << 32) - 1), 32)
         cur[2].append(k)
-    br = list(F.bitrev(np.arange(F.M), 14))
+    br = list(F.bitrev(np.arange(F.M), F.KB))
     full = [fr for fr in frames if fr[2] == br]
     print(f"check spec A2: IP の出口のフレーム {len(frames)}（bit 反転順で揃った {len(full)}）")
     lo, hi = -(1 << 17), (1 << 17) - 1
@@ -441,9 +441,9 @@ def spec(outdir, tblog, shift):
         nbad = int(np.sum(got != exp))
         # B: 電力 ≒ |X|² / (16·2^SHIFT)²
         fx = sum(np.abs(core_fft(yfl[j])) ** 2 for j in js) / (16.0 * 2 ** shift) ** 2
-        gc = np.array([float(got[c >> 14, c & (F.M - 1)]) for c in range(F.N // 2)])
-        cw = 10 * np.log10(gc[40000] / fx[40000])
-        mask = np.abs(np.arange(F.N // 2) - 40000) > 3
+        gc = np.array([float(got[c >> F.KB, c & (F.M - 1)]) for c in range(F.N // 2)])
+        cw = 10 * np.log10(gc[20000] / fx[20000])
+        mask = np.abs(np.arange(F.N // 2) - 20000) > 3
         mask[:8] = False
         fl = np.median(gc[mask]) / np.median(fx[mask])
         print(f"check spec {dname}: seq {hd['seq']}・dk {hd['dk']}・df0 {hd['df0']}・dn {hd['dn']}・面 {hd['plane']}・"
@@ -539,26 +539,26 @@ def core(outdir, tblog):
             MAGIC | (1 << 32) | (1 << 40) | (CORE_RC << 48) | (CORE_SID << 56),
             hd["seq"] | (hd["dk"] << 32),
             f0,
-            F.M * f0,                                                   # DUMP_T = K_F ＋ 16384·DUMP_F0（K_F 0）
-            18 | (0 << 8) | (CORE_SHIFT << 16) | (0 << 24) | (0 << 32) | (2 << 40) | (0 << 48),   # DUMP_H 0・src 2
+            F.M * f0,                                                   # DUMP_T = K_F ＋ 8192·DUMP_F0（K_F 0）
+            17 | (0 << 8) | (CORE_SHIFT << 16) | (0 << 24) | (0 << 32) | (2 << 40) | (0 << 48),   # DUMP_H 0・src 2
             hd["dn"] | (hd["dsat"] << 32),
             0x00C0FFEE | (0 << 32),
-            (F.M * 8 * 8) | (0 << 32),                                  # 1 MiB・KIND に固有 0
+            (F.M * 8 * 8) | (0 << 32),                                  # 512 KiB・KIND に固有 0
         ]
         hbad = [i for i in range(8) if w[i] != eh[i]]
-        ebody = [int(exp[c >> 14, c & (F.M - 1)]) for c in range(8 * F.M)]
+        ebody = [int(exp[c >> F.KB, c & (F.M - 1)]) for c in range(8 * F.M)]
         nb = sum(1 for a, b in zip(body, ebody) if a != b) + abs(len(body) - len(ebody))
         first = next((c for c, (a, b) in enumerate(zip(body, ebody)) if a != b), None)
         print(f"check core SPEC: 語 {len(w)}（期待 {8 + 8 * F.M}）・tuser {tu}・頭の違う語 {hbad}"
               + "".join(f"（語 {i}: {w[i]:016x} / 期待 {eh[i]:016x}）" for i in hbad)
               + f"・中身の模型と違う ch {nb}" + (f"（最初 ch {first}: {body[first]} / 期待 {ebody[first]}）" if first is not None else ""))
         ok &= tu == 0 and len(w) == 8 + 8 * F.M and not hbad and nb == 0
-    # ---- TP のレコード（RUN の F0 × 32 から 16 小フレームの区切り × 4）----
+    # ---- TP のレコード（RUN の F0 × 16 から 16 小フレームの区切り × 4。2G-1 は × 32）----
     x = spec_x().reshape(-1, 16)
     x2 = (x.astype(np.int64) ** 2).sum(axis=1)                       # ビートごとの Σx²
-    tf0 = 32 * hd["df0"]
+    tf0 = (F.M // 512) * hd["df0"]
     nfull, nbad_it, hdr_bad, aligned = 0, 0, 0, False
-    # 捨てた TP のレコード: SEQ（最初の個の TP_WP）の飛びから数える。tb は TP を 2 フレームに 1 レコードに詰めたので、1 MiB の SPEC が出口を
+    # 捨てた TP のレコード: SEQ（最初の個の TP_WP）の飛びから数える。tb は TP を 2 フレームに 1 レコードに詰めたので、512 KiB の SPEC が出口を
     # 塞ぐ間（≒ 15 万クロック）に TP の溜め 2 面が溢れて捨てる（実際の 10.24 ms ごとなら 20 倍の余裕）。捨てた数 = TP_REC_LATE = rec_drop を照らす
     gap_items = sum((b[1][1] & 0xFFFFFFFF) - ((a[1][1] & 0xFFFFFFFF) + (a[1][5] & 0xFFFFFFFF)) for a, b in zip(tp_r, tp_r[1:]))
     for tu, w in tp_r:
@@ -588,10 +588,10 @@ def core(outdir, tblog):
     # ---- レジスタ ----
     er = {"SRC_pre": 0x80000000, "SRC": 0x80000002, "WRST_CFG": 0x00C0FFEE, "RUN_SHIFT0": 7, "RUN_SHIFT1": CORE_SHIFT,
           "RUN_F0": hd["df0"], "TP_F0": tf0, "TP_NEFF": CORE_TPN,
-          "SID": 0x02010000 | (CORE_SID << 8), "PARAM": 0x00400012, "FLAGS": 0, "SEQ": 1, "NCH": 131072, "FRAME_BEATS": 16384,
+          "SID": 0x02010000 | (CORE_SID << 8), "PARAM": 0x00400011, "FLAGS": 0, "SEQ": 1, "NCH": 65536, "FRAME_BEATS": 8192,
           "DUMP_K": hd["dk"], "DUMP_F0": hd["df0"], "DUMP_N": hd["dn"], "DUMP_SAT": hd["dsat"],
           "DUMP_T_LO": (F.M * hd["df0"]) & 0xFFFFFFFF, "DUMP_T_HI": (F.M * hd["df0"]) >> 32, "DUMP_H": 0, "DUMP_CFG": 0x00C0FFEE,
-          "NFFT_MM": 0x1212, "REC_CTRL": 1, "REC_LATE": 0, "BUILD_TAG": 0x20240d00}
+          "NFFT_MM": 0x1111, "REC_CTRL": 1, "REC_LATE": 0, "BUILD_TAG": 0x20240d00}
     rbad = [(k, regs.get(k), v) for k, v in er.items() if regs.get(k) != v]
     print(f"check core レジスタ: {len(er)} 個・違う {len(rbad)}" + "".join(f"（{k}: {g if g is None else hex(g)} / 期待 {hex(v)}）" for k, g, v in rbad)
           + f"・CTRL {regs.get('CTRL', 0):08x}")
@@ -662,8 +662,8 @@ def s45(outdir, tblog):
     ok &= all(((w[0] >> 48) & 0xFF) == 0 and (w[0] & 0xFFFFFFFFFF) == (MAGIC | (1 << 32)) for _, w in recs)
 
     # ---- レジスタ（番地の振り分け）----
-    er = {"IF_ID": 0x020B0101, "PROJ": 0x00240100, "NSTREAM": 2, "FFT_N": 0, "SID0": 0x02010000, "SID1": 0x02040100, "SID_none": 0,
-          "NCH0": 131072, "NCH1": 0, "SRC0": 0x80000002, "SRC1": 0x80000001, "SEQ0": 1, "SEQ1": 2, "FLAGS0": 0, "FLAGS1": 0}
+    er = {"IF_ID": 0x020A0101, "PROJ": 0x00250100, "NSTREAM": 2, "FFT_N": 0, "SID0": 0x02010000, "SID1": 0x02040100, "SID_none": 0,
+          "NCH0": 65536, "NCH1": 0, "SRC0": 0x80000002, "SRC1": 0x80000001, "SEQ0": 1, "SEQ1": 2, "FLAGS0": 0, "FLAGS1": 0}
     rbad = [(k, regs.get(k), v) for k, v in er.items() if regs.get(k) != v]
     print(f"check s45 レジスタ: {len(er)} 個・違う {len(rbad)}" + "".join(f"（{k}: {g if g is None else hex(g)} / 期待 {hex(v)}）" for k, g, v in rbad))
     ok &= not rbad
@@ -693,7 +693,7 @@ def s45(outdir, tblog):
         exp += (qr * qr + qi * qi).astype(object)
     if spec_r:
         tu, w = spec_r[0]
-        ebody = [int(exp[c >> 14, c & (F.M - 1)]) for c in range(8 * F.M)]
+        ebody = [int(exp[c >> F.KB, c & (F.M - 1)]) for c in range(8 * F.M)]
         nb = sum(1 for a, b in zip(w[8:], ebody) if a != b) + abs(len(w) - 8 - len(ebody))
         src = (w[4] >> 40) & 0xFF
         print(f"check s45 SPEC: 語 {len(w)}・DUMP_F0 {w[2]}・DUMP_T {w[3]}・src {src}・中身の模型と違う ch {nb}")
@@ -712,8 +712,8 @@ def s45(outdir, tblog):
         ok &= nit >= 4 and nbad == 0 and found == [pred]
         res[name] = found
     ft0 = [w[2] for _, w in ftp_r]
-    print(f"check s45 FULL の TP の F0: {sorted(ft0)[:6]}…（期待 {32 * hd['df0']} がある）")
-    ok &= (32 * hd["df0"]) in ft0
+    print(f"check s45 FULL の TP の F0: {sorted(ft0)[:6]}…（期待 {(F.M // 512) * hd['df0']} がある）")
+    ok &= ((F.M // 512) * hd["df0"]) in ft0
     # ---- SNAP（RAW、ADC 1）: 語 j = サンプル 4j〜4j+3。予言のずれ 0（DUMP_T = データの T）----
     nsb = 0
     for tu, w in snap_r:
@@ -743,12 +743,12 @@ def s45(outdir, tblog):
 def ds(outdir, posctl=False):
     """インパルスごとに:
       T_raw  = RAW の SNAP のレコードの DUMP_T ＋ そのサンプルのビート（(i) だけ。F-2 が adc_to_core を測る道）
-      T_full = K_F ＋ 16384·g ＋ m。m はレーン p の IP の出口の位置（単独のサンプルなら Y[k1] = y·e^{−2πi k1 m / 16384}）、
+      T_full = K_F ＋ 8192·g ＋ m。m はレーン p の IP の出口の位置（単独のサンプルなら Y[k1] = y·e^{−2πi k1 m / 8192}）、
                g はそのサンプルが入ったフレームのラベル（4 つの出口 g..g＋3 の y が、模型の PFB（F.pfb_int）の 4 タップと**全部一致**する g）
       見るもの: (1) RAW: T_raw = tb が ADC に入れた T（2e のずれ 0 をインパルスで）。(ii) は RAW に写らないので T_raw = tb の T とする
                (2) **D_S = T_full − T_raw が全部のインパルスで同じ値で、+1**（通常）/ 0（陽性対照: FULL の口に axis_sel4 の段が無い）
-               (3) 位相 m がフレームの境目（16383・0）を通った
-               (4) 実効の区間の重心: 係数 c² の重心が矩形より 1.5·L（24,576 ビート）前"""
+               (3) 位相 m がフレームの境目（8191・0）を通った
+               (4) 実効の区間の重心: 係数 c² の重心が矩形より 1.5·L（12,288 ビート）前"""
     meta = {}
     for line in open(os.path.join(outdir, "meta.txt")):
         k, v = line.split()
@@ -851,7 +851,7 @@ def ds(outdir, posctl=False):
     J(bad == 0 and len(ds_) == len(imps), f"FULL: インパルス {len(ds_)} 個とも、4 つの出口の y が模型の PFB の 4 タップと一致し、位置 m がそろった（NG {bad}）")
     nstray = sum(1 for k in lanes if k not in used)
     J(nstray == 0, f"FULL: インパルスに対応しない 0 でない出口（フレーム × レーン）{nstray}")
-    J(16383 in ms and 0 in ms, f"フレームの境目（m = 16383・0）を通った（m の集合 {sorted(set(ms))}）")
+    J((F.M - 1) in ms and 0 in ms, f"フレームの境目（m = {F.M - 1}・0）を通った（m の集合 {sorted(set(ms))}）")
     one = len(set(ds_)) == 1
     J(one, f"D_S がどのインパルスでも同じ（{sorted(set(ds_))}）")
     ok1 = J(one and ds_[0] == 1, f"**D_S = {ds_[0] if ds_ else None} ビート**（期待 +1: FULL は axis_sel4 の 1 段の後で同じクロックの T、RAW は 1 クロック前の T）")

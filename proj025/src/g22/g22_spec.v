@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //
-// g22_spec — 2G-1 の分光の本体（1 ADC、FULL の流れ 1 本）。proj024 手順 2c。AXI・レコードは持たない（外の g22_core が包む。2d）
+// g22_spec — 2G-2 の分光の本体（コア 1 個ぶん: 1 ADC、FULL の流れ 1 本）。proj025 手順 2c。AXI・レコードは持たない（外の g22_core が包む。2d）
 //
-// src/common/wide_spec.v（567fda2）を写して直したもの:
-//   入力（axis_sel4 で選んだ ADC。D-8）→ 起動の見張り → g22_pfb（PFB T = 4、係数の補間を中に持つ）→ lane_fft_g22 × 16（IP、16384 点・
+// proj024（proj024-m0）の g21_spec を 8192 ビートのフレームに縮めたもの。g21_spec は src/common/wide_spec.v（567fda2）を写して直したもの:
+//   入力（axis_sel4 で選んだ ADC。D-8）→ 起動の見張り → g22_pfb（PFB T = 4、係数の補間を中に持つ）→ lane_fft_g22 × 16（IP、8192 点・
 //   bit 反転順）→ g22_chain（＋ g22_tw、ひねり係数の積）→ g22_acc（全 ch の積分器、URAM）
-//   - コアは 1 個なので、係数・ひねり係数はコアの中（Wide の「共有の ROM」と配りの 1 段 coef_q・tw_q は無い）
-//   - フレームは 16384 ビート: m = (T − K_F) mod 16384、fa = ⌊(T − K_F) / 16384⌋。F0 の格子は 32 フレーム（2.048 ms、GF_L2 = 5。M-6）
+//   - 係数・ひねり係数はコアの中（Wide の「共有の ROM」と配りの 1 段 coef_q・tw_q は無い）。2G-2 はコアが 2 個で、ROM もコアごとに 1 組（E-2・E-3）
+//   - フレームは 8192 ビート: m = (T − K_F) mod 8192、fa = ⌊(T − K_F) / 8192⌋。F0 の格子は **64 フレーム**（2.048 ms、GF_L2 = 6）
 //   - 流れは 1 本（KIND 1 FULL）。帳簿は wide_spec の流れごとの形を NS = 1 で残した。束ね・S0 は無い
 //   - **SHIFT は RUN で取り込む**（2d で直した。INTERFACE 2.5 の FULL の約束・spec_core と同じ。2c までは Wide（SLICE）を写して WRST で取り込んでいた。
 //     RUN の F0 は 2 格子（≧ 32 フレーム）先なので、鎖の途中のフレームは積まない。WRST は SHIFT を変えない）
-//   - 出口は bit 反転順: フレームの最初の k1 は 0、最後は 16383（bitrev(16383) = 16383）。fs = (k1 == 0)、最後の行 = (k1 == 16383)
+//   - 出口は bit 反転順: フレームの最初の k1 は 0、最後は 8191（bitrev(8191) = 8191）。fs = (k1 == 0)、最後の行 = (k1 == 8191)
 //   - flags[6]（出口の k1 の飛び）は「次の k1 = bitrev(bitrev(k1) + 1)」で見る。flags[7]（積分器の書き込みの衝突）は起きない形なので 0
-// DUMP_T = K_F ＋ 16384·DUMP_F0（コアの入口でのそのダンプの最初のビートの T）。
+// DUMP_T = K_F ＋ 8192·DUMP_F0（コアの入口でのそのダンプの最初のビートの T）。
 //
 // ---- 異常フラグ（粘着。flags_clr で消す。並びは wide_spec と同じ）----
 //   [0] coef_mis / [1] tw_mis / [2] 口を開けた後に入力が途切れた / [3] IP の 16 レーンの valid・k1 が揃わない / [4] IP の TLAST の事象 /
@@ -21,11 +21,11 @@
 `timescale 1ns / 1ps
 
 module g22_spec #(
-    parameter integer K_F           = 0,       // フレームの頭の位相（T ≡ K_F mod 16384）
+    parameter integer K_F           = 0,       // フレームの頭の位相（T ≡ K_F mod 8192）
     parameter integer ST_N          = 16384,   // 起動の見張り（クロック）。0 = 見張らない
     parameter integer SHIFT_DEFAULT = 7,
     parameter integer FW            = 48,
-    parameter integer GF_L2         = 5,       // 格子のフレーム数の log2（32 フレーム = 2.048 ms）。sim では小さくして待ちを縮める
+    parameter integer GF_L2         = 6,       // 格子のフレーム数の log2（64 フレーム = 2.048 ms）。sim では小さくして待ちを縮める
     parameter LO_FILE = "g22_coef_lo.hex",
     parameter HI_FILE = "g22_coef_hi.hex",
     parameter TA_FILE = "g22_tw_a.hex",
@@ -60,24 +60,24 @@ module g22_spec #(
     output reg  [31:0]       dsat,
     output reg               rd_plane,
     // 読み出し（凍った面）
-    input  wire [16:0]       rd_c,
+    input  wire [15:0]       rd_c,
     output wire [63:0]       rd_d,
     // 診断
     output wire [15:0]       dbg_pfb_sat,
     output wire              dbg_have_first,
     output wire [15:0]       dbg_ipq,          // {待たされたクロック数（8 bit で飽和）, 2'b0, 待ち行列の語数}
-    output wire [31:0]       dbg_ip_ph,        // {2'b0, 入口の位相[29:16], 2'b0, 出口の位相[13:0]}
+    output wire [31:0]       dbg_ip_ph,        // {3'b0, 入口の位相[28:16], 3'b0, 出口の位相[12:0]}
     output wire [15:0]       dbg_ip_st,        // 最初に IP が受けてから初めて待たされるまでのクロック（飽和）
     // sim の記録用（IP の出口）
     output wire [16*64-1:0]  dbg_ip_tdata,
-    output wire [13:0]       dbg_ip_k1,
+    output wire [12:0]       dbg_ip_k1,
     output wire              dbg_ip_v
 );
     localparam integer NL = 16;
 
-    function [13:0] brev14(input [13:0] n);
+    function [12:0] brev13(input [12:0] n);
         integer b;
-        begin for (b = 0; b < 14; b = b + 1) brev14[13 - b] = n[b]; end
+        begin for (b = 0; b < 13; b = b + 1) brev13[12 - b] = n[b]; end
     endfunction
 
     // ---- 入力と T を 1 段受ける ----
@@ -86,8 +86,8 @@ module g22_spec #(
     reg [63:0]  t_loc;
     always @(posedge clk) begin d_loc <= s_tdata; v_loc <= s_tvalid; t_loc <= t_in; end
     wire [63:0] tk = t_loc - K_F;
-    wire [13:0] m_now = tk[13:0];
-    assign fa_now = tk[14 +: FW];
+    wire [12:0] m_now = tk[12:0];
+    assign fa_now = tk[13 +: FW];
 
     // ---- 起動の見張り（wide_spec と同じ。IP の 16 レーンの tready も見る）----
     wire [NL-1:0] ln_s_tready;
@@ -107,7 +107,7 @@ module g22_spec #(
     wire              p_v = v_loc && go;
     wire [16*15-1:0]  y;
     wire              y_v, y_first, coef_mis;
-    wire [13:0]       y_m;
+    wire [12:0]       y_m;
     wire [1:0]        y_fr;
     wire [15:0]       pfb_sat;
     g22_pfb #(.LO_FILE(LO_FILE), .HI_FILE(HI_FILE)) u_pfb (.clk(clk), .rst(rst), .s_tdata(d_loc), .s_tvalid(p_v), .s_m(m_now),
@@ -122,7 +122,7 @@ module g22_spec #(
     wire           q_pop = q_v && ip_ready;
     wire [4:0]     q_idx = q_n[4:0] - 5'd1;
 `ifdef IPQ_POSCTL
-    wire [15*NL:0] q_out = {y_m == 14'd16383, y};
+    wire [15*NL:0] q_out = {y_m == 13'd8191, y};
     wire           q_vin = y_v;
 `else
     wire [15*NL:0] q_out = q_sr[q_idx];
@@ -132,7 +132,7 @@ module g22_spec #(
     integer qi;
     always @(posedge clk) begin
         if (y_v) begin
-            q_sr[0] <= {y_m == 14'd16383, y};
+            q_sr[0] <= {y_m == 13'd8191, y};
             for (qi = 1; qi < QD; qi = qi + 1) q_sr[qi] <= q_sr[qi - 1];
         end
     end
@@ -149,19 +149,19 @@ module g22_spec #(
     wire [NL-1:0]    ln_m_tvalid, ln_m_tlast, ln_ev_fs, ln_ev_unexp, ln_ev_miss, ln_ev_halt;
     wire [NL*64-1:0] ln_m_tdata;
     wire [NL*16-1:0] ln_m_tuser;
-    reg [13:0] ph_in, ph_out;
+    reg [12:0] ph_in, ph_out;
     reg        ph_in_v, st_seen;
     reg [15:0] st_at;
     always @(posedge clk) begin
-        if (rst) begin ph_in <= 14'd0; ph_out <= 14'd0; ph_in_v <= 1'b0; st_seen <= 1'b0; st_at <= 16'd0; end
+        if (rst) begin ph_in <= 13'd0; ph_out <= 13'd0; ph_in_v <= 1'b0; st_seen <= 1'b0; st_at <= 16'd0; end
         else begin
             if (q_pop && !ph_in_v) begin ph_in_v <= 1'b1; ph_in <= m_now; end
             if (!st_seen && q_v && !ip_ready) st_seen <= 1'b1;
             else if (ph_in_v && !st_seen && st_at != 16'hFFFF) st_at <= st_at + 16'd1;
-            if (ln_m_tvalid[0] && ln_m_tuser[13:0] == 14'd0) ph_out <= m_now;
+            if (ln_m_tvalid[0] && ln_m_tuser[12:0] == 13'd0) ph_out <= m_now;
         end
     end
-    assign dbg_ip_ph = {2'd0, ph_in, 2'd0, ph_out};
+    assign dbg_ip_ph = {3'd0, ph_in, 3'd0, ph_out};
     assign dbg_ip_st = st_at;
 
     // PFB に入った最初のフレームの番号
@@ -169,7 +169,7 @@ module g22_spec #(
     reg [FW-1:0] f_first;
     always @(posedge clk) begin
         if (rst) begin have_first <= 1'b0; f_first <= {FW{1'b0}}; end
-        else if (p_v && !have_first && m_now == 14'd0) begin have_first <= 1'b1; f_first <= fa_now; end
+        else if (p_v && !have_first && m_now == 13'd0) begin have_first <= 1'b1; f_first <= fa_now; end
     end
 
     // ---- レーン FFT（IP）× 16 ----
@@ -193,24 +193,24 @@ module g22_spec #(
     assign dbg_ip_tdata   = ln_m_tdata;
     assign dbg_pfb_sat    = pfb_sat;
     assign dbg_have_first = have_first;
-    assign dbg_ip_k1      = ln_m_tuser[13:0];
+    assign dbg_ip_k1      = ln_m_tuser[12:0];
     assign dbg_ip_v       = ln_m_tvalid[0];
 
     // ---- 鎖（＋ ひねり係数の積）----
-    wire [16*29-1:0] yr, yi;
+    wire [16*28-1:0] yr, yi;
     generate
         for (p = 0; p < NL; p = p + 1) begin : g_y
-            assign yr[29*p +: 29] = ln_m_tdata[64*p      +: 29];
-            assign yi[29*p +: 29] = ln_m_tdata[64*p + 32 +: 29];
+            assign yr[28*p +: 28] = ln_m_tdata[64*p      +: 28];
+            assign yi[28*p +: 28] = ln_m_tdata[64*p + 32 +: 28];
         end
     endgenerate
-    wire [13:0]  tw_addr, tw_k1, pk1;
+    wire [12:0]  tw_addr, tw_k1, pk1;
     wire [575:0] tw;
     g22_tw #(.A_FILE(TA_FILE), .B_FILE(TB_FILE)) u_tw (.clk(clk), .addr(tw_addr), .tw(tw), .k1_out(tw_k1));
     wire [8*37-1:0] pw;
     wire            pv, tw_mis;
     wire [3:0]      psat;
-    g22_chain u_chain (.clk(clk), .rst(rst), .y_re(yr), .y_im(yi), .y_k1(ln_m_tuser[13:0]), .y_v(ln_m_tvalid[0]),
+    g22_chain u_chain (.clk(clk), .rst(rst), .y_re(yr), .y_im(yi), .y_k1(ln_m_tuser[12:0]), .y_v(ln_m_tvalid[0]),
                        .tw_addr(tw_addr), .tw(tw), .tw_k1(tw_k1), .shift(c_shift),
                        .p(pw), .p_v(pv), .p_k1(pk1), .p_sat(psat), .tw_mis(tw_mis));
 
@@ -220,9 +220,9 @@ module g22_spec #(
         else if (cmd_run && !cmd_wrst) c_shift <= w_shift;
     end
 
-    // ---- 出口のフレームの番号（bit 反転順: 最初の k1 = 0、最後の k1 = 16383）----
-    wire          fs = pv && (pk1 == 14'd0);
-    wire          ls = pv && (pk1 == 14'd16383);
+    // ---- 出口のフレームの番号（bit 反転順: 最初の k1 = 0、最後の k1 = 8191）----
+    wire          fs = pv && (pk1 == 13'd0);
+    wire          ls = pv && (pk1 == 13'd8191);
     reg           have_fo;
     wire [FW-1:0] fo_now = have_fo ? fo + 1'b1 : f_first;
 
@@ -315,17 +315,17 @@ module g22_spec #(
                    .rd_c(rd_c), .rd_plane(rd_plane), .rd_d(rd_d));
 
     // ---- 異常フラグ ----
-    reg [13:0] k1_exp;
+    reg [12:0] k1_exp;
     reg        k1_seen;
     reg        f_lane;
     integer li;
     always @* begin
         f_lane = (ln_m_tvalid != {NL{1'b0}}) && (ln_m_tvalid != {NL{1'b1}});
         for (li = 1; li < NL; li = li + 1)
-            if (ln_m_tvalid[li] && ln_m_tuser[16*li +: 14] != ln_m_tuser[13:0]) f_lane = 1'b1;
+            if (ln_m_tvalid[li] && ln_m_tuser[16*li +: 13] != ln_m_tuser[12:0]) f_lane = 1'b1;
     end
     wire [7:0] f_now = {1'b0,
-                        k1_seen && ln_m_tvalid[0] && ln_m_tuser[13:0] != k1_exp,
+                        k1_seen && ln_m_tvalid[0] && ln_m_tuser[12:0] != k1_exp,
                         q_ovf || (q_vin && ln_s_tready != {NL{1'b0}} && ln_s_tready != {NL{1'b1}})
 `ifdef IPQ_POSCTL
                         || (q_vin && !ip_ready)
@@ -337,8 +337,8 @@ module g22_spec #(
                         tw_mis,
                         coef_mis};
     always @(posedge clk) begin
-        if (rst) begin k1_seen <= 1'b0; k1_exp <= 14'd0; end
-        else if (ln_m_tvalid[0]) begin k1_seen <= 1'b1; k1_exp <= brev14(brev14(ln_m_tuser[13:0]) + 14'd1); end
+        if (rst) begin k1_seen <= 1'b0; k1_exp <= 13'd0; end
+        else if (ln_m_tvalid[0]) begin k1_seen <= 1'b1; k1_exp <= brev13(brev13(ln_m_tuser[12:0]) + 13'd1); end
         if (rst || flags_clr) flags <= 8'd0;
         else flags <= flags | f_now;
     end

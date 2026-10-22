@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //
-// lane_fft_g22 の振る舞いモデル（**シミュレーション専用。合成しない**）。proj024 手順 2a: proj023（567fda2）の sim/lane_fft_w_model.v
-// （2048 点・自然順）を、2G-1 のレーン FFT（**16384 点・固定長・bit 反転順**）に写したもの。
+// lane_fft_g22 の振る舞いモデル（**シミュレーション専用。合成しない**）。proj025 手順 2a: proj024（proj024-m0）の sim/lane_fft_g21_model.v
+// （16384 点・bit 反転順。proj023 の lane_fft_w_model.v を写したもの）を、2G-2 のレーン FFT（**8192 点**・固定長・bit 反転順）に縮めたもの。
 //
 // 実機では build.tcl が Xilinx FFT IP を lane_fft_g22 の名前で生成する（手順 2f）。**モデルが守る約束**（IP の設定と対。S-1・S-2 の設定）:
-//   - 16384 点・固定長・順変換・unscaled（入力 15 bit を 16 bit に符号拡張、出力 29 bit = 15 + 14 を 32 bit に符号拡張）
-//   - **bit 反転順で出力**し、m_axis_data_tuser[13:0] に XK_INDEX（= そのサンプルの本当の k1。出る順は 0, 8192, 4096, …）を載せる
+//   - 8192 点・固定長・順変換・unscaled（入力 15 bit を 16 bit に符号拡張、出力 28 bit = 15 + 13 を 32 bit に符号拡張）
+//   - **bit 反転順で出力**し、m_axis_data_tuser[12:0] に XK_INDEX（= そのサンプルの本当の k1。出る順は 0, 4096, 2048, …）を載せる
 //   - realtime・TLAST の検査・入力の途切れ（halt）・リセットの後の tready の遅れ・FFT_STALL_AT（流し始めの 1 回の tready の下げ）は lane_fft_w_model と同じ
 // 値は倍精度で計算した DFT を丸めたもの（floor(x + 0.5)）。**IP と bit 単位では一致しない**（自作部分の照合は、この出力を記録して模型に通す。Wide と同じ）。
-// 出力待ちのフレーム数 QF は 4（16384 点 × 16 レーンで記憶を食うため。lane_fft_w_model は 16）。
+// 出力待ちのフレーム数 QF は 4（proj024 の lane_fft_g21_model と同じ。lane_fft_w_model は 16）。
 `timescale 1ns / 1ps
 
 module lane_fft_g22 #(
@@ -33,8 +33,8 @@ module lane_fft_g22 #(
     output reg         event_tlast_missing,
     output reg         event_data_in_channel_halt
 );
-    localparam integer M = 16384;
-    localparam integer LM = 14;
+    localparam integer M = 8192;
+    localparam integer LM = 13;
     localparam integer QF = 4;              // 出力待ちのフレーム数の上限（lane_fft_w_model は 16）
     real PI;
     real ct [0:M-1];
@@ -162,7 +162,7 @@ module lane_fft_g22 #(
                 t_k  = kb;
                 m_axis_data_tvalid <= 1'b1;
                 m_axis_data_tdata  <= {t_im[31:0], t_re[31:0]};
-                m_axis_data_tuser  <= {2'd0, t_k[13:0]};
+                m_axis_data_tuser  <= {3'd0, t_k[12:0]};
                 m_axis_data_tlast  <= (q_r % M) == M-1;
                 q_r = q_r + 1;
             end else begin

@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //
-// tb_g22_ds — 2G-1 の FULL の流れの遅れ D_eff = D_S ＋ 1.5·L（INTERFACE 5.2）を出す sim（proj024 手順 4d-2）。proj023 の tb_wide_ds の形
+// tb_g22_ds — 2G-2 の FULL の流れの遅れ D_eff = D_S ＋ 1.5·L（INTERFACE 5.2）を出す sim（proj025 4d-2。proj024 の tb_g21_ds を L 8192 に）。proj023 の tb_wide_ds の形
 //
-// 問い: 同じ ADC のサンプルに、FULL（g22_spec のフレームの区切り T ≡ K_F mod 16384）と RAW（F-2 が adc_to_core を測る道）が付ける T の差
+// 問い: 同じ ADC のサンプルに、FULL（g22_spec のフレームの区切り T ≡ K_F mod 8192）と RAW（F-2 が adc_to_core を測る道）が付ける T の差
 //       D_S = T_full − T_raw（ビート）。2e の予言は +1（FULL は axis_sel4 の 1 段の後で同じクロックの T を付け、RAW は 1 クロック前の T を付ける）。
 // 配線はブロックデザインと同じ: ADC 4 本 → axis_sel4 × 2（FULL 用・RAW 用、出口 1 段）→ g22_s45_core。FULL も RAW も SRC 2（ADC_C）。
 //   -DDS_POSCTL: FULL の口に ADC 2 を axis_sel4 を通さず直に入れる（陽性対照: D_S が 0 に動き、+1 の判定だけが落ちるはず）
 // 刺激: ADC 2 だけ、0 の上に孤立した 1 サンプル（14 bit で A = 8000、レーン p）。ほかの ADC は 0。
 //   (i)  RAW の新しいダンプの頭のフレーム（SNAP に写る 512 ビート）の中に 1 個。RAW の T と照らす
-//   (ii) その 5 フレーム後より後で、FULL のフレームの位相 m = (T − K_F) mod 16384 が境目（16383・0・16382・1 の順）になる T に 1 個。RAW には写らない
-//   RAW の N_ACC は 385 フレーム（197,120 ビート = 12.03 FULL フレーム）: (i) と (ii) の PFB の 4 フレームの足が重ならない
+//   (ii) その 5 フレーム後より後で、FULL のフレームの位相 m = (T − K_F) mod 8192 が境目（8191・0・8190・1 の順）になる T に 1 個。RAW には写らない
+//   RAW の N_ACC は 193 フレーム（98,816 ビート = 12.06 FULL フレーム。2G-1 は 385 = 12.03 フレーム）: (i) と (ii) の PFB の 4 フレームの足が重ならない
 // K_F 777（2e は 0。0 でない K_F で、フレームの区切りの位相を確かめる）
 // 出力: $(OUT)/imp.txt   「imp T_imp lane kind」（tb が ADC 2 に入れたビートの T。kind 0 = (i)、1 = (ii)）
 //       $(OUT)/lanes.txt IP の出口の 0 でない値「r k1 p re im」（r は出口のフレームの通し番号、ラベルは f_first ＋ r）
@@ -18,10 +18,10 @@
 `timescale 1ns / 1ps
 module tb_g22_ds;
     localparam integer KF    = 777;
-    localparam integer L     = 16384;
+    localparam integer L     = 8192;
     localparam integer NIMP  = `NIMP;              // (i) と (ii) の組の数 × 2
     localparam integer A16   = 8000 * 4;           // 14 bit の 8000 を ADC の 16 bit に
-    localparam integer RAWN  = 385;
+    localparam integer RAWN  = 193;
 
     reg clk = 0;
     always #1.953 clk = ~clk;
@@ -93,7 +93,7 @@ module tb_g22_ds;
     initial begin fip = -1; nrec = 0; nzl = 0; end
     always @(posedge clk) begin
         if (u.u_full.dbg_ip_v) begin
-            if (u.u_full.dbg_ip_k1 == 14'd0) fip = fip + 1;
+            if (u.u_full.dbg_ip_k1 == 13'd0) fip = fip + 1;
             for (p = 0; p < 16; p = p + 1) begin
                 vre = u.u_full.dbg_ip_tdata[64*p +: 32];
                 vim = u.u_full.dbg_ip_tdata[64*p + 32 +: 32];
@@ -117,12 +117,12 @@ module tb_g22_ds;
     integer targets [0:7];
     integer btg [0:3];
     initial begin
-        targets[0] = 16383; targets[1] = 0; targets[2] = 1; targets[3] = 16382;
-        targets[4] = 8191; targets[5] = 8192; targets[6] = 5; targets[7] = 16376;
-        btg[0] = 16383; btg[1] = 0; btg[2] = 16382; btg[3] = 1;
+        targets[0] = 8191; targets[1] = 0; targets[2] = 1; targets[3] = 8190;
+        targets[4] = 4095; targets[5] = 4096; targets[6] = 5; targets[7] = 8184;
+        btg[0] = 8191; btg[1] = 0; btg[2] = 8190; btg[3] = 1;
         nimp = 0;
     end
-    function integer ph(input integer tt);         // FULL のフレームの位相 m = (T − K_F) mod 16384（T > K_F の範囲で使う）
+    function integer ph(input integer tt);         // FULL のフレームの位相 m = (T − K_F) mod 8192（T > K_F の範囲で使う）
         ph = (tt - KF) % L;
     endfunction
     always @(posedge clk) begin
@@ -163,10 +163,10 @@ module tb_g22_ds;
         repeat (6) @(posedge clk);
         @(negedge clk); rstn = 1;
         repeat (8) @(posedge clk);
-        // FULL（s 0）: SRC 2 → WRST。RUN はしない（SPEC のレコードは 1 MiB で RAW の SNAP を待たせるので出さない。区切りの T は IP の出口で見る）
+        // FULL（s 0）: SRC 2 → WRST。RUN はしない（SPEC のレコードは 512 KiB で RAW の SNAP を待たせるので出さない。区切りの T は IP の出口で見る）
         axi_wr(16'h4028, 32'd2);
         axi_wr(16'h4008, 32'h0000_1000);
-        // RAW（s 1）: SRC 2 → WRST・N_ACC 385・N_DUMP 0（続ける）・REC ALL → RUN
+        // RAW（s 1）: SRC 2 → WRST・N_ACC 193・N_DUMP 0（続ける）・REC ALL → RUN
         axi_wr(16'h4428, 32'd2);
         axi_wr(16'h4408, 32'h0000_1000);
         axi_wr(16'h440C, RAWN);

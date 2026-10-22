@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //
-// g22_s45_core — 2G-1 の ADC のコア（INTERFACE 2.2。コアは 1 個）。proj024 手順 2e。src/common/wide_s45_core.v（567fda2）を写した
+// g22_s45_core — 2G-2 の ADC のコア（INTERFACE 2.2。**コアは 2 個**: s45_core_0（RAW = 1）・s45_core_1（RAW = 0））。proj025 手順 2e。
+// proj024（proj024-m0）の g21_s45_core を写し、長さを 2G-2 に・RAW を引数で外せるように（E-5、wide_s45_core の RAW と同じ形）した。
+// g21_s45_core は src/common/wide_s45_core.v（567fda2）を写したもの
 //
 // 中身:
-//   - core_cmn（コアの共通 2.4: IF_ID（BIT_KIND 11）・NSTREAM 2・ギアボックスの制御・コアの TP・TANCH）。入力はこのコアの ADC（s_axis）。
+//   - core_cmn（コアの共通 2.4: IF_ID（BIT_KIND 10）・NSTREAM 2（RAW = 0 のコアは 1）・ギアボックスの制御・コアの TP・TANCH）。入力はこのコアの ADC（s_axis）。
 //     0x80 FFT_N は 0（SLICE の流れが無い）
 //   - g22_core（FULL の流れ s = 0）。入力は s_axis_full = 外の axis_sel4 が 4 ADC から選んだもの。選ぶのは g22_core の SRC（full_sel）
-//   - raw_core（RAW の流れ s = 1、D-13）。入力は s_axis_raw = 外の**もう 1 個の** axis_sel4 が選んだもの。選ぶのは raw_core の SRC（raw_sel）。
+//   - raw_core（RAW の流れ s = 1、D-13。**RAW = 1 のコア（コア 0）だけ**、E-5）。入力は s_axis_raw = 外の**もう 1 個の** axis_sel4 が選んだもの。選ぶのは raw_core の SRC（raw_sel）。
 //     **D-14（2026-10-18、西村さん）: RAW の入力も SRC で選んだ ADC**。FULL と RAW はそれぞれ自分の SRC（流れのブロックの 0x28）で選ぶ
 //   - AXI4-Lite の 1 → 3 の振り分け（wide_s45_core と同じ取り引き 1 つずつ・全部レジスタで受け渡す形）
 //   - レコードの束ね（rec_arb: コアの TP・g22_core（SPEC と FULL の TP）・SNAP（RAW））
-// ブロックデザインには module reference で `s45_core_0` として置く（PS はセルの名前でコアを見つける）。全部が DSP ドメイン（256 MHz）。
-// 係数・ひねり係数の ROM は g22_core（g22_spec）の中。
+// ブロックデザインには module reference で `s45_core_0`・`s45_core_1` として置く（PS はセルの名前でコアを見つける）。全部が DSP ドメイン（256 MHz）。
+// 係数・ひねり係数の ROM は g22_core（g22_spec）の中なので、**コアごとに 1 組**（E-2・E-3）。
 //
 // **axis_sel4 の出口は 1 段のレジスタなので、FULL・RAW の入口のサンプルは T より 1 ビート遅れる**（x[T − 1] が T のビートに来る）。
 // Wide の SLICE の流れは自分の ADC を直に受けていたので、ここが Wide と違う。時刻の補正（D_S）に入る定数（sim で確かめる）
@@ -19,7 +21,7 @@
 // ---- 番地（コアの 64 KiB）----
 //   0x0000–0x3FFF → core_cmn（0x0000–0x00FF 共通・0x0100– コアの TP のレジスタ・0x2000– TP のリング）
 //   0x4000–0x43FF → g22_core（流れ 0 のブロック。FULL の TP は 0x4100–）
-//   0x4400–0x47FF → raw_core（流れ 1 のブロック）。他は 0 を返す
+//   0x4400–0x47FF → raw_core（流れ 1 のブロック。RAW = 1 のコアだけ）。他は 0 を返す
 
 `timescale 1ns / 1ps
 
@@ -27,16 +29,17 @@ module g22_s45_core #(
     parameter integer BUILD_TAG          = 0,
     parameter integer TPN_DEFAULT        = 512,
     parameter integer GB_K_RST           = 2,
-    parameter integer BIT_KIND           = 11,
+    parameter integer BIT_KIND           = 10,
     parameter integer BIT_REV            = 1,
-    parameter integer PROJ               = 2359552,   // = 0x0024_0100（10 進で書く）
+    parameter integer PROJ               = 2425088,   // = 0x0025_0100（10 進で書く）
     parameter integer CORE_PORT          = 0,
     parameter integer BASE_BEATS         = 2621440,
     parameter integer K_F                = 0,
     parameter integer ST_N               = 16384,
-    parameter integer GF_L2              = 5,
-    parameter integer N_ACC_DEFAULT      = 160,       // 10.24 ms（16384 ビート × 160）
+    parameter integer GF_L2              = 6,         // 64 フレーム = 2.048 ms
+    parameter integer N_ACC_DEFAULT      = 320,       // 10.24 ms（8192 ビート × 320）
     parameter integer SHIFT_DEFAULT      = 7,
+    parameter integer RAW                = 1,         // 1 = RAW の流れを持つ（コア 0）。0 = 持たない（コア 1、E-5）
     parameter integer RAW_N_ACC_DEFAULT  = 5120,      // 10.24 ms（RAW のフレーム 512 ビート）
     parameter LO_FILE = "g22_coef_lo.hex",
     parameter HI_FILE = "g22_coef_hi.hex",
@@ -114,7 +117,7 @@ module g22_s45_core #(
     function automatic [1:0] dst(input [15:0] a);
         dst = (a[15:14] == 2'd0)        ? 2'd0 :
               (a[15:10] == 6'b010000)   ? 2'd1 :
-              (a[15:10] == 6'b010001)   ? 2'd2 : 2'd3;
+              (RAW != 0 && a[15:10] == 6'b010001) ? 2'd2 : 2'd3;
     endfunction
     wire take_w = (st == S_IDLE) && s_axi_awvalid && s_axi_wvalid;
     wire take_r = (st == S_IDLE) && s_axi_arvalid && !take_w;
@@ -155,7 +158,7 @@ module g22_s45_core #(
     wire        c_drop, r_drop;
     wire [1:0]  g_drop;
     core_cmn #(.BUILD_TAG(BUILD_TAG), .TP(1), .TPN_DEFAULT(TPN_DEFAULT), .GB_K_RST(GB_K_RST), .BIT_KIND(BIT_KIND),
-               .BIT_REV(BIT_REV), .PROJ(PROJ), .CORE_PORT(CORE_PORT), .NSTREAM(2), .BASE_BEATS(BASE_BEATS)) u_cmn (
+               .BIT_REV(BIT_REV), .PROJ(PROJ), .CORE_PORT(CORE_PORT), .NSTREAM(RAW != 0 ? 2 : 1), .BASE_BEATS(BASE_BEATS)) u_cmn (
         .aclk(aclk), .aresetn(rstn_l), .s_axis_tdata(s_axis_tdata), .s_axis_tvalid(s_axis_tvalid),
         .s_axi_awaddr(q_addr), .s_axi_awvalid(d_aw && q_dst == 2'd0), .s_axi_awready(awr[0]),
         .s_axi_wdata(q_wdata), .s_axi_wvalid(d_aw && q_dst == 2'd0), .s_axi_wready(wr_[0]),
@@ -181,18 +184,27 @@ module g22_s45_core #(
         .m_axis_rec_tdata(g_d), .m_axis_rec_tvalid(g_v), .m_axis_rec_tready(g_r), .m_axis_rec_tlast(g_l), .m_axis_rec_tuser(g_u),
         .rec_drop(g_drop), .dbg_ip_tdata(), .dbg_ip_k1(), .dbg_ip_v());
 
-    // ---- RAW の流れ 1（D-13・D-14）----
-    raw_core #(.N_ACC_DEFAULT(RAW_N_ACC_DEFAULT), .SID_S(1), .REC_CORE(CORE_PORT % 16)) u_raw (
-        .aclk(aclk), .aresetn(rstn_l),
-        .s_axis_tdata(s_axis_raw_tdata), .s_axis_tvalid(s_axis_raw_tvalid), .s_axis_tready(s_axis_raw_tready),
-        .s_axi_awaddr({6'd0, q_addr[9:0]}), .s_axi_awprot(3'd0), .s_axi_awvalid(d_aw && q_dst == 2'd2), .s_axi_awready(awr[2]),
-        .s_axi_wdata(q_wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(d_aw && q_dst == 2'd2), .s_axi_wready(wr_[2]),
-        .s_axi_bresp(), .s_axi_bvalid(bv[2]), .s_axi_bready(d_b && q_dst == 2'd2),
-        .s_axi_araddr({6'd0, q_addr[9:0]}), .s_axi_arprot(3'd0), .s_axi_arvalid(d_ar && q_dst == 2'd2), .s_axi_arready(arr[2]),
-        .s_axi_rdata(rd[2]), .s_axi_rresp(), .s_axi_rvalid(rv[2]), .s_axi_rready(d_r && q_dst == 2'd2),
-        .t_in(t_in), .go_in(go_in), .tev_in(tev_in), .src_sel(raw_sel),
-        .m_axis_rec_tdata(r_d), .m_axis_rec_tvalid(r_v), .m_axis_rec_tready(r_r), .m_axis_rec_tlast(r_l),
-        .m_axis_rec_tuser(r_u), .rec_drop(r_drop));
+    // ---- RAW の流れ 1（D-13・D-14。RAW = 1 のコアだけ、E-5）----
+    generate
+        if (RAW != 0) begin : g_raw
+            raw_core #(.N_ACC_DEFAULT(RAW_N_ACC_DEFAULT), .SID_S(1), .REC_CORE(CORE_PORT % 16)) u_raw (
+                .aclk(aclk), .aresetn(rstn_l),
+                .s_axis_tdata(s_axis_raw_tdata), .s_axis_tvalid(s_axis_raw_tvalid), .s_axis_tready(s_axis_raw_tready),
+                .s_axi_awaddr({6'd0, q_addr[9:0]}), .s_axi_awprot(3'd0), .s_axi_awvalid(d_aw && q_dst == 2'd2), .s_axi_awready(awr[2]),
+                .s_axi_wdata(q_wdata), .s_axi_wstrb(4'hF), .s_axi_wvalid(d_aw && q_dst == 2'd2), .s_axi_wready(wr_[2]),
+                .s_axi_bresp(), .s_axi_bvalid(bv[2]), .s_axi_bready(d_b && q_dst == 2'd2),
+                .s_axi_araddr({6'd0, q_addr[9:0]}), .s_axi_arprot(3'd0), .s_axi_arvalid(d_ar && q_dst == 2'd2), .s_axi_arready(arr[2]),
+                .s_axi_rdata(rd[2]), .s_axi_rresp(), .s_axi_rvalid(rv[2]), .s_axi_rready(d_r && q_dst == 2'd2),
+                .t_in(t_in), .go_in(go_in), .tev_in(tev_in), .src_sel(raw_sel),
+                .m_axis_rec_tdata(r_d), .m_axis_rec_tvalid(r_v), .m_axis_rec_tready(r_r), .m_axis_rec_tlast(r_l),
+                .m_axis_rec_tuser(r_u), .rec_drop(r_drop));
+        end else begin : g_noraw
+            // 番地 0x4400– は dst 3（0 を返す）に落ちるので、この口は使われない。wide_s45_core の g_noraw と同じ形で縛る
+            assign awr[2] = 1'b1; assign wr_[2] = 1'b1; assign bv[2] = 1'b1; assign arr[2] = 1'b1; assign rv[2] = 1'b1; assign rd[2] = 32'd0;
+            assign s_axis_raw_tready = 1'b1; assign raw_sel = 2'd0;
+            assign r_d = 64'd0; assign r_v = 1'b0; assign r_l = 1'b0; assign r_u = 1'b0; assign r_drop = 1'b0;
+        end
+    endgenerate
 
     // ---- レコードの束ね（コアの TP・SPEC と FULL の TP・SNAP）→ s45_ring ----
     rec_arb #(.N(3)) u_arb (.clk(aclk), .rst(rst),

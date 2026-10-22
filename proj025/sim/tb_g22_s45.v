@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// tb_g22_s45 — g22_s45_core の単体（proj024 手順 2e）。ブロックデザインと同じく、ADC 4 本・axis_sel4 × 2（FULL と RAW、出口 1 段）を外に置く。
+// tb_g22_s45 — g22_s45_core の単体（proj025 手順 2e。proj024 の tb_g21_s45 を 2G-2 の長さに。コア 0（RAW = 1）の 1 個だけ）。ブロックデザインと同じく、ADC 4 本・axis_sel4 × 2（FULL と RAW、出口 1 段）を外に置く。
 // ADC: 0・1・3 は式（check_g22.py の adc_x と同じ）、2 は 2c の x.hex（T < NB、その後は 0）。コアの ADC は 0（s_axis は直に）。
 // AXI4-Lite（コアの 16 bit の番地）で: 共通・流れのブロックの読み / RAW: SRC 1 → WRST・N_ACC 64・N_DUMP 2・REC ALL → RUN /
 //   FULL: SRC 2 → WRST・SHIFT 4・N_ACC 2・N_DUMP 1・REC ALL・TP_N 16・TP_REC 4 個 / コアの TP: TP_N 16・TP_REC 4 個・TP_RUN →
@@ -7,7 +7,7 @@
 // 記録: IP の出口（ip.txt）・ダンプ（dump1.txt）・レコード（rec.txt）・レジスタ（regs.txt）・rec_drop の和。判定は check_g22.py s45
 `timescale 1ns / 1ps
 module tb_g22_s45;
-    localparam integer NB = 10 * 16384;
+    localparam integer NB = 10 * 8192;
     reg clk = 0;
     always #1.953 clk = ~clk;
     reg rstn = 0;
@@ -79,7 +79,7 @@ module tb_g22_s45;
         .rec_drop(rec_drop));
 
     integer fi, fr, fg, fdmp, k, ndump = 0, nspec = 0, nrec = 0, ndrop = 0;
-    reg [383:0] snap [0:16383];
+    reg [383:0] snap [0:8191];
     always @(negedge clk) rec_r <= ($random % 8) != 0;
     always @(posedge clk) begin
         if (u.u_full.dbg_ip_v) $fwrite(fi, "%0d %h\n", u.u_full.dbg_ip_k1, u.u_full.dbg_ip_tdata);
@@ -98,12 +98,12 @@ module tb_g22_s45;
     end
     always @(posedge clk) if (u.u_full.commit) begin
         #0.1;
-        for (k = 0; k < 16384; k = k + 1)
+        for (k = 0; k < 8192; k = k + 1)
             snap[k] = u.u_full.rd_plane ? u.u_full.u_spec.u_acc.g_pl[1].mem[k] : u.u_full.u_spec.u_acc.g_pl[0].mem[k];
         fdmp = $fopen({`OUT, "/dump1.txt"}, "w");
         $fwrite(fdmp, "# seq %0d dk %0d df0 %0d dn %0d dsat %0d plane %0d f_first %0d\n",
                 u.u_full.seq, u.u_full.dk, u.u_full.df0, u.u_full.dn, u.u_full.dsat, u.u_full.rd_plane, u.u_full.u_spec.f_first);
-        for (k = 0; k < 16384; k = k + 1) $fwrite(fdmp, "%h\n", snap[k]);
+        for (k = 0; k < 8192; k = k + 1) $fwrite(fdmp, "%h\n", snap[k]);
         $fclose(fdmp);
         ndump = ndump + 1;
     end
@@ -190,5 +190,5 @@ module tb_g22_s45;
                  ndump, nspec, nrec, full_sel, raw_sel, ndrop, u.u_full.flags);
         $finish;
     end
-    initial begin #(3.906 * 40 * 16384); $display("tb_g22_s45: 時間切れ（ダンプ %0d・SPEC のレコード %0d）", ndump, nspec); $finish; end
+    initial begin #(3.906 * 40 * 8192); $display("tb_g22_s45: 時間切れ（ダンプ %0d・SPEC のレコード %0d）", ndump, nspec); $finish; end
 endmodule
