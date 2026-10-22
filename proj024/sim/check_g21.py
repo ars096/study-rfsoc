@@ -13,6 +13,7 @@
     python3 sim/check_g21.py spec <sim の出力ディレクトリ> <tb のログ> <SHIFT>
     python3 sim/check_g21.py core <sim の出力ディレクトリ> <tb のログ>        （2d。入力は spec-gen の x.hex）
     python3 sim/check_g21.py s45 <sim の出力ディレクトリ> <tb のログ>         （2e。ADC 2 は spec-gen の x.hex、0・1・3 は adc_x の式）
+    python3 sim/check_g21.py ds <sim の出力ディレクトリ> [posctl]             （4d-2。tb_g21_ds の D_S・D_eff）
     python3 sim/check_g21.py lane <sim の出力ディレクトリ> <tb のログ> <tready の下げを入れたか 0|1>
     python3 sim/check_g21.py chain <sim の出力ディレクトリ> <tb のログ> <SHIFT>
 成否は最後の「結果:」の行で読む（make の成功を信用しない）。
@@ -739,6 +740,136 @@ def s45(outdir, tblog):
     return ok
 
 
+# ---- 4d-2: FULL の流れの遅れ D_eff = D_S ＋ 1.5·L（tb_g21_ds、proj023 の check_ds と同じ形）----
+def ds(outdir, posctl=False):
+    """インパルスごとに:
+      T_raw  = RAW の SNAP のレコードの DUMP_T ＋ そのサンプルのビート（(i) だけ。F-2 が adc_to_core を測る道）
+      T_full = K_F ＋ 16384·g ＋ m。m はレーン p の IP の出口の位置（単独のサンプルなら Y[k1] = y·e^{−2πi k1 m / 16384}）、
+               g はそのサンプルが入ったフレームのラベル（4 つの出口 g..g＋3 の y が、模型の PFB（F.pfb_int）の 4 タップと**全部一致**する g）
+      見るもの: (1) RAW: T_raw = tb が ADC に入れた T（2e のずれ 0 をインパルスで）。(ii) は RAW に写らないので T_raw = tb の T とする
+               (2) **D_S = T_full − T_raw が全部のインパルスで同じ値で、+1**（通常）/ 0（陽性対照: FULL の口に axis_sel4 の段が無い）
+               (3) 位相 m がフレームの境目（16383・0）を通った
+               (4) 実効の区間の重心: 係数 c² の重心が矩形より 1.5·L（24,576 ビート）前"""
+    meta = {}
+    for line in open(os.path.join(outdir, "meta.txt")):
+        k, v = line.split()
+        meta[k] = int(v)
+    imps = [(int(a), int(b), int(c)) for _, a, b, c in (l.split() for l in open(os.path.join(outdir, "imp.txt")))]
+    KF, ff, A = meta["KF"], meta["f_first"], meta["A"]
+    ok = True
+    ng = []
+
+    def J(cond, msg):
+        print(("OK  " if cond else "NG  ") + msg)
+        if not cond:
+            ng.append(msg)
+        return cond
+
+    J(meta["flags"] == 0 and meta["full_sel"] == 2 and meta["raw_sel"] == 2,
+      f"flags {meta['flags']:02x}・full_sel {meta['full_sel']}・raw_sel {meta['raw_sel']}（期待 0・2・2）")
+    J(meta["nimp"] == len(imps) and len(imps) >= 4, f"インパルス {len(imps)} 個（tb の数 {meta['nimp']}）")
+    # ---- RAW ----
+    recs, _tail = _records(os.path.join(outdir, "rec.txt"))
+    hits = []
+    nsnap = 0
+    for _tu, w in recs:
+        if ((w[0] >> 40) & 0xFF, w[0] >> 56) != (4, 1):
+            continue
+        nsnap += 1
+        dt = w[3]
+        for jw, x in enumerate(w[8:8 + 2048]):
+            if x == 0:
+                continue
+            for q in range(4):
+                vv = (x >> (16 * q)) & 0xFFFF
+                if vv:
+                    s_ = 4 * jw + q
+                    hits.append((dt + s_ // 16, s_ % 16, vv - 65536 if vv >= 32768 else vv))
+    imp_i = [x for x in imps if x[2] == 0]
+    traw = {}
+    for t_imp, p, _k in imp_i:
+        h = [x for x in hits if x[1] == p and abs(x[0] - t_imp) < 600]
+        if len(h) == 1 and h[0][2] == 4 * A:
+            traw[t_imp] = h[0][0]
+    J(len(hits) == len(imp_i) and len(traw) == len(imp_i),
+      f"RAW: SNAP {nsnap} 個に写ったインパルス {len(hits)} 個（(i) は {len(imp_i)} 個）、値はどれも 16 bit の {4 * A}")
+    J(all(traw[t] == t for t in traw), "RAW: T_raw = tb が ADC に入れた T（ずれ 0）: " + ", ".join(f"{traw[t] - t:+d}" for t in sorted(traw)))
+    # ---- FULL: IP の出口 ----
+    lanes = {}
+    nx = 0
+    for line in open(os.path.join(outdir, "lanes.txt")):
+        r, k1, p, re_, im_ = line.split()
+        if re_ == "x":
+            nx += 1
+            continue
+        lanes.setdefault((int(r), int(p)), {})[int(k1)] = int(re_) + 1j * int(im_)
+    J(nx == 0, f"IP の出口に x・z の値 {nx}")
+    used = set()
+    c = F.coef_interp()
+    ds_, ms, rows, bad = [], [], [], 0
+    for t_imp, p, kind in imps:
+        g0 = (t_imp - KF) // F.M
+        got = {}
+        for (r, pp), d in lanes.items():
+            lab = ff + r
+            if pp != p or not (g0 - 1 <= lab <= g0 + 5):        # 足は g..g＋3（g は g0 か g0 ＋ 1）。±6 では前のインパルスの足が同じレーンに入る（4d-2 の 1 回目）
+                continue
+            Y = np.zeros(F.M, dtype=complex)
+            for k1, val in d.items():
+                Y[k1] = val
+            yr = np.fft.ifft(Y)
+            m = int(np.argmax(np.abs(yr)))
+            y0 = int(round(yr[m].real))
+            if y0 != 0:
+                got[lab] = (y0, m)
+                used.add((r, pp))
+        mset = {m for _, m in got.values()}
+        if len(mset) != 1:
+            bad += 1
+            rows.append(f"T_imp {t_imp}: 出口の位置がそろわない {sorted(got.items())}")
+            continue
+        m = mset.pop()
+        x = np.zeros(7 * F.N, np.int64)
+        x[3 * F.N + 16 * m + p] = A
+        y, _ = F.pfb_int(x, c)
+        pt = [int(y[3 + k][16 * m + p]) for k in range(4)]
+        g = None
+        for gc in range(min(got) - 3, min(got) + 1):
+            if {gc + k: pt[k] for k in range(4) if pt[k] != 0} == {lab: yv for lab, (yv, _) in got.items()}:
+                g = gc
+        if g is None:
+            bad += 1
+            rows.append(f"T_imp {t_imp}: 4 タップの値が模型と合う g が無い（出口 {[(k, v[0]) for k, v in sorted(got.items())]}、模型 {pt}）")
+            continue
+        t_full = KF + F.M * g + m
+        t_raw = traw.get(t_imp, t_imp) if kind == 0 else t_imp
+        ds_.append(t_full - t_raw)
+        ms.append(m)
+        rows.append(f"T_imp {t_imp}（{'(i) RAW' if kind == 0 else '(ii) 境目'}）レーン {p:2d}: FULL のフレーム {g} の m {m:5d} → T_full {t_full}・"
+                    f"T_raw {t_raw}・D_S {t_full - t_raw:+d}（タップ {pt}）")
+    for x_ in rows:
+        print("  " + x_)
+    J(bad == 0 and len(ds_) == len(imps), f"FULL: インパルス {len(ds_)} 個とも、4 つの出口の y が模型の PFB の 4 タップと一致し、位置 m がそろった（NG {bad}）")
+    nstray = sum(1 for k in lanes if k not in used)
+    J(nstray == 0, f"FULL: インパルスに対応しない 0 でない出口（フレーム × レーン）{nstray}")
+    J(16383 in ms and 0 in ms, f"フレームの境目（m = 16383・0）を通った（m の集合 {sorted(set(ms))}）")
+    one = len(set(ds_)) == 1
+    J(one, f"D_S がどのインパルスでも同じ（{sorted(set(ds_))}）")
+    ok1 = J(one and ds_[0] == 1, f"**D_S = {ds_[0] if ds_ else None} ビート**（期待 +1: FULL は axis_sel4 の 1 段の後で同じクロックの T、RAW は 1 クロック前の T）")
+    w = c.astype(np.float64) ** 2
+    cen = float((w * np.arange(len(c))).sum() / w.sum())
+    d_pfb = (3 * F.N + (F.N - 1) / 2.0 - cen) / 16
+    J(abs(d_pfb - 1.5 * F.M) < 1e-6, f"実効の区間の重心: 矩形より {d_pfb:.6f} ビート前（1.5·L = {1.5 * F.M:.0f}）")
+    print(f"D_eff（FULL）= D_S ＋ 1.5·L = {int(round(ds_[0] + d_pfb)) if one and ds_ else None} ビート")
+    if posctl:
+        ok = (not ok1) and one and ds_ and ds_[0] == 0 and len(ng) == 1
+        print(f"結果: 全部通過（陽性対照が落ちるべきところで落ちた: D_S {ds_[0]:+d}）" if ok else "結果: 不合格（陽性対照が落ちなかった・ほかも落ちた）")
+        return ok
+    ok = not ng
+    print("結果: 全部通過" if ok else f"結果: 不合格（NG {len(ng)} 件）")
+    return ok
+
+
 if __name__ == "__main__":
     what = sys.argv[1]
     if what == "coef":
@@ -765,6 +896,8 @@ if __name__ == "__main__":
         pfb_gen(sys.argv[2]); sys.exit(0)
     if what == "pfb":
         sys.exit(0 if pfb(sys.argv[2], sys.argv[3]) else 1)
+    if what == "ds":
+        sys.exit(0 if ds(sys.argv[2], len(sys.argv) > 3 and sys.argv[3] == "posctl") else 1)
     if what == "tw":
         sys.exit(0 if tw(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None) else 1)
     sys.exit(2)

@@ -36,7 +36,7 @@ VVP           ?= vvp
 # survey の OOC 合成を同時に走らせる数（9 個）
 JOBS ?= 9
 
-.PHONY: model estimate survey s2 gen build sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane sim-g21a sim-g21s sim-recfr sim-g21core sim-g21s45 clean
+.PHONY: model estimate survey s2 gen build sim-g21ds sim-g21c sim-g21t sim-g21p sim-g21ch sim-lane sim-g21a sim-g21s sim-recfr sim-g21core sim-g21s45 clean
 
 # 模型（numpy だけ）。M-1〜M-6。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -216,6 +216,25 @@ sim-g21s45:
 	for v in $(G21S45_V); do printf '%-14s %s\n' "g21s45_$$v" "$$(grep '結果:' $(SIMDIR)/g21s45_$$v/check.log || echo '結果の行が無い')"; done
 	@grep -q '結果: 全部通過' $(SIMDIR)/g21s45_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g21s45_drop/check.log \
 	  && echo "sim-g21s45: 全部通過（陽性対照は落ちた）" || (echo "sim-g21s45: NG"; exit 1)
+
+# 4d-2. FULL の流れの遅れ D_eff = D_S ＋ 1.5·L（tb_g21_ds、proj023 の sim-wds の形）。ADC 4 本・axis_sel4 × 2 はブロックデザインと同じく外に、
+#       FULL・RAW とも SRC 2。インパルスを (i) RAW のダンプの頭・(ii) フレームの境目に G21DS_NIMP 個（組の数 × 2）。
+#       ふつうと陽性対照（-DDS_POSCTL: FULL の口に axis_sel4 の段が無い → D_S が 0 に動き、+1 の判定だけが落ちるべき）の 2 本を同時に
+G21DS_RTL  := $(filter-out sim/tb_g21_s45.v,$(G21S45_RTL)) sim/tb_g21_ds.v
+G21DS_NIMP ?= 8
+G21DS_V    ?= normal posctl
+.PHONY: sim-g21ds
+sim-g21ds:
+	@for v in $(G21DS_V); do \
+	  o=$(SIMDIR)/g21ds_$$v; mkdir -p $$o; d="-DFFT_STALL_AT=3 -DNIMP=$(G21DS_NIMP)"; pc=""; \
+	  [ $$v = posctl ] && d="$$d -DDS_POSCTL" && pc=posctl; \
+	  ( $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -DLO=\"src/g21/g21_coef_lo.hex\" -DHI=\"src/g21/g21_coef_hi.hex\" \
+	      -DTA=\"src/g21/g21_tw_a.hex\" -DTB=\"src/g21/g21_tw_b.hex\" -o $$o/tb $(G21DS_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	    $(PYTHON) sim/check_g21.py ds $$o $$pc > $$o/check.log 2>&1 ) & \
+	done; wait; \
+	for v in $(G21DS_V); do printf '%-14s %s\n' "g21ds_$$v" "$$(grep '結果:' $(SIMDIR)/g21ds_$$v/check.log || echo '結果の行が無い')"; done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g21ds_normal/check.log && grep -q '結果: 全部通過（陽性対照' $(SIMDIR)/g21ds_posctl/check.log \
+	  && echo "sim-g21ds: 全部通過（陽性対照は落ちた）" || (echo "sim-g21ds: NG"; exit 1)
 
 clean:
 	rm -rf build build-* .Xil *.jou *.log
