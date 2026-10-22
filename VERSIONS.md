@@ -11,6 +11,7 @@
 | Vivado | 2023.2 と 2024.1 を併設 | proj001 は 2023.2、**proj002 以降は 2024.1**（BSP と PYNQ v3.1 が前提とする版）。2026-09-16 に 2024.1 で `get_parts` / `get_board_parts` が通ることを確認 |
 | PYNQ image | v3.1.1 (Carlisle) | 2026-09-16 にカードを新規作成し、ボード上で `pynq.__version__` = 3.1.1 を確認。Vivado 2024.1 と整合。**旧 v3.0.1 カードは温存してある** |
 | Board files | RealDigitalOrg/RFSoC4x2-BSP `board_files/rfsoc4x2/1.0` | commit **`40e6814a3b62eead76e41a29fdabc43030f89b6c`**（2025-09-24）。proj002 のビルドが実際に使って成功した版。**Vivado のインストールツリーの外に clone し、`board.repoPaths` で指す** |
+| Icarus Verilog（RTL の sim） | oss-cad-suite **2024-10-18**（`iverilog -V` = 13.0 (devel) s20221226-556-gd8c3c51ab） | 2026-10-22 から PC の作業用ディレクトリに展開して使う（`.bashrc` には足さず、`make IVERILOG=… VVP=…` で絶対パスを渡す）。`-V` は ivlpp・ivl の版を取れないと言うが、コンパイルと実行には影響しない。proj024 は 14.0 devel、proj025 段階 A も 13.0 devel |
 | Part | `xczu48dr-ffvg1517-2-e` | 根拠: BSP board_files の宣言値 |
 
 ### PYNQ イメージの版

@@ -220,6 +220,23 @@ sim-g22s45:
 	@grep -q '結果: 全部通過' $(SIMDIR)/g22s45_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g22s45_drop/check.log \
 	  && echo "sim-g22s45: 全部通過（陽性対照は落ちた）" || (echo "sim-g22s45: NG"; exit 1)
 
+# 2e-2. コア 2 個（s45_core_0 RAW = 1・s45_core_1 RAW = 0）に同じ ADC（SRC 2）を入れ、ダンプが bit 単位で同じか（E-4 の sim 版）・RAW = 0 のコアの形。
+#       ふつうと陽性対照（-DX2_DLY: コア 1 の FULL の口に 1 段多い。違うべき）の 2 本を同時に。判定は tb の中（「結果:」の行）
+G22X2_RTL := $(filter-out sim/tb_g22_s45.v,$(G22S45_RTL)) sim/tb_g22_x2.v
+G22X2_V ?= normal dly
+.PHONY: sim-g22x2
+sim-g22x2:
+	@o0=$(SIMDIR)/g22s_in; mkdir -p $$o0; [ -f $$o0/x.hex ] || $(PYTHON) sim/check_g22.py spec-gen $$o0; \
+	for v in $(G22X2_V); do \
+	  o=$(SIMDIR)/g22x2_$$v; mkdir -p $$o; ln -sf ../g22s_in/x.hex $$o/x.hex; d="-DFFT_STALL_AT=3"; \
+	  [ $$v = dly ] && d="$$d -DX2_DLY"; \
+	  ( $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -DLO=\"src/g22/g22_coef_lo.hex\" -DHI=\"src/g22/g22_coef_hi.hex\" \
+	      -DTA=\"src/g22/g22_tw_a.hex\" -DTB=\"src/g22/g22_tw_b.hex\" -o $$o/tb $(G22X2_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1 ) & \
+	done; wait; \
+	for v in $(G22X2_V); do printf '%-14s %s\n' "g22x2_$$v" "$$(grep '結果:' $(SIMDIR)/g22x2_$$v/tb.log || echo '結果の行が無い')"; done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g22x2_normal/tb.log && grep -q '結果: 不合格' $(SIMDIR)/g22x2_dly/tb.log \
+	  && echo "sim-g22x2: 全部通過（陽性対照は落ちた）" || (echo "sim-g22x2: NG"; exit 1)
+
 # 4d-2. FULL の流れの遅れ D_eff = D_S ＋ 1.5·L（tb_g22_ds、proj023 の sim-wds の形）。ADC 4 本・axis_sel4 × 2 はブロックデザインと同じく外に、
 #       FULL・RAW とも SRC 2。インパルスを (i) RAW のダンプの頭・(ii) フレームの境目に G22DS_NIMP 個（組の数 × 2）。
 #       ふつうと陽性対照（-DDS_POSCTL: FULL の口に axis_sel4 の段が無い → D_S が 0 に動き、+1 の判定だけが落ちるべき）の 2 本を同時に

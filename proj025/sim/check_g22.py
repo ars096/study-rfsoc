@@ -439,8 +439,9 @@ def spec(outdir, tblog, shift):
         exp = sum(pw_fr[j].astype(object) for j in js)
         esat = sum(sat_fr[j] for j in js)
         nbad = int(np.sum(got != exp))
-        # B: 電力 ≒ |X|² / (16·2^SHIFT)²
-        fx = sum(np.abs(core_fft(yfl[j])) ** 2 for j in js) / (16.0 * 2 ** shift) ** 2
+        # B: 電力 ≒ |X|² / (2^(D1+2)·2^SHIFT)²（Y の丸め 2^D1 × ひねり係数 2^16 / cmul の SH 2^18 = 1/4）。
+        #    2G-1 は D1 = 2 で 16。2G-2 は D1 = 1 で 8（proj025 2c の 1 回目は 16 のままで、CW・床とも +6.02 dB で落ちた）
+        fx = sum(np.abs(core_fft(yfl[j])) ** 2 for j in js) / (float(1 << (F.D1 + 2)) * 2 ** shift) ** 2
         gc = np.array([float(got[c >> F.KB, c & (F.M - 1)]) for c in range(F.N // 2)])
         cw = 10 * np.log10(gc[20000] / fx[20000])
         mask = np.abs(np.arange(F.N // 2) - 20000) > 3

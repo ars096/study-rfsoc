@@ -126,7 +126,7 @@ module tb_g22_ds;
         ph = (tt - KF) % L;
     endfunction
     always @(posedge clk) begin
-        if (rstn && nimp < NIMP && u.u_raw.n_start && t > 64'd0 && (nimp == 0 || t > t_imp[1])) begin
+        if (rstn && nimp < NIMP && u.g_raw.u_raw.n_start && t > 64'd0 && (nimp == 0 || t > t_imp[1])) begin
             base = t[31:0] + 8;
             cand = -1;
             for (j = 0; j < 8 && cand < 0; j = j + 1) begin
