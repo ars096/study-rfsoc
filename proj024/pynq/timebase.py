@@ -43,8 +43,11 @@ CAL = {
     #   proj021 の値は持ち込まない（proj017 → 020 → 021 と同じ方針）。H-3 の前に F-2（RAW の流れ = コア 0 の s 2）で測る
     # proj024（2G-1、PROJ 0x0024_0100）: ギアボックス・time_core の RTL は 567fda2（proj023 のビルド 11）と同じだが、別の Overlay・別の配置なので
     #   proj023 の値は持ち込まない。F-2（RAW の流れ = s 1、SRC で ADC を選ぶ）で測る
-    0x0024_0100: dict(pps_det_ns=0.0, adc_to_core_ns=None, bound_ns=50,
-                      source="proj024: 未較正（F-2 で測る）"),
+    0x0024_0100: dict(pps_det_ns=71.5, adc_to_core_ns={0: 140.3, 1: 140.6, 2: 141.3, 3: 141.3}, bound_ns=50,
+                      source="proj024 4d-1 の F-2（2026-10-22、配線 P・1PPS の入口に LPF BLP-10.7+）: RAW の流れ（s 1、SRC で ADC を選ぶ）の生サンプルで "
+                             "1PPS の縁がコアに入った T − スタンプを 4 ADC、ケーブルを A↔D・B↔C に入れ替えて 2 回（f2_24a・f2_24b2。f2_24b は σ で NG、"
+                             "Overlay を載せ直して回し直した）。M = A 68.8・B 69.1・C 69.8・D 69.8 ns。proj026 の (b): pps_det_ns = LPF の分 71.5、"
+                             "adc_to_core_ns = M ＋ 71.5（LPF を外したら pps_det_ns を 0 に）"),
     0x0023_0100: dict(pps_det_ns=0.0, adc_to_core_ns=None, bound_ns=50,
                       source="proj023: 未較正（F-2 で測る。見込みは proj021 2-5 の 146〜148 ns）"),
     # proj021 手順 2-1: 鍵を time_core の PROJ（0x5C）に替えた（ID の 0x00 は IF_ID = bit の種類と版だけになった）。

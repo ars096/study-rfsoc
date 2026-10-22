@@ -1,0 +1,109 @@
+  EVENT seq 1: {"ev": "START", "start_at": 4875878400, "utc_ns": 1792563698649020758, "n": 0, "forced": false, "version": "proj024-0.1", "proto": 2, "fmt": "f32", "ids": {"win": "02010000", "adc": "020b0101", "time": "020b0102", "proj": "00240100", "kind": "g21", "lmx_vco": "7864.32", "lmx_pwr": "31", "read": "rin
+  EVENT seq 3331: {"ev": "TP_JUMP", "adc": 0, "t_beat": 22332571647, "utc_ns": 1792563766839228754, "n": 1, "db": -0.0214, "step_db": 0.0, "sigma_db": 0.00227, "ovr": false}
+  EVENT seq 3358: {"ev": "TP_JUMP", "adc": 0, "t_beat": 22467575807, "utc_ns": 1792563767366588754, "n": 1, "db": -0.014, "step_db": 0.0, "sigma_db": 0.00227, "ovr": false}
+  EVENT seq 3385: {"ev": "TP_JUMP", "adc": 0, "t_beat": 22601269247, "utc_ns": 1792563767888828754, "n": 1, "db": -0.0143, "step_db": 0.0, "sigma_db": 0.00215, "ovr": false}
+  EVENT seq 3412: {"ev": "TP_JUMP", "adc": 0, "t_beat": 22739681279, "utc_ns": 1792563768429500754, "n": 1, "db": -0.0158, "step_db": 0.0, "sigma_db": 0.00215, "ovr": false}
+  EVENT seq 3491: {"ev": "TP_JUMP", "adc": 0, "t_beat": 23142072319, "utc_ns": 1792563770001340754, "n": 1, "db": -0.0163, "step_db": -0.0, "sigma_db": 0.00206, "ovr": false}
+  EVENT seq 3605: {"ev": "TP_JUMP", "adc": 0, "t_beat": 23740809215, "utc_ns": 1792563772340156754, "n": 1, "db": 0.0301, "step_db": 0.0, "sigma_db": 0.00217, "ovr": false}
+  EVENT seq 4485: {"ev": "TP_JUMP", "adc": 0, "t_beat": 28345106431, "utc_ns": 1792563790325692754, "n": 1, "db": 0.0147, "step_db": 0.0, "sigma_db": 0.00222, "ovr": false}
+  EVENT seq 4492: {"ev": "TP_JUMP", "adc": 0, "t_beat": 28380495871, "utc_ns": 1792563790463932754, "n": 1, "db": 0.014, "step_db": 0.0, "sigma_db": 0.00222, "ovr": false}
+  EVENT seq 5271: {"ev": "TP_JUMP", "adc": 0, "t_beat": 32461029375, "utc_ns": 1792563806403516754, "n": 1, "db": 0.0171, "step_db": 0.0, "sigma_db": 0.00213, "ovr": false}
+  EVENT seq 7162: {"ev": "TP_JUMP", "adc": 0, "t_beat": 42365091839, "utc_ns": 1792563845091260754, "n": 1, "db": 0.0163, "step_db": 0.0, "sigma_db": 0.00219, "ovr": false}
+  EVENT seq 7165: {"ev": "TP_JUMP", "adc": 0, "t_beat": 42371645439, "utc_ns": 1792563845116860754, "n": 1, "db": 0.0193, "step_db": 0.0001, "sigma_db": 0.00219, "ovr": false}
+  EVENT seq 7166: {"ev": "TP_JUMP", "adc": 0, "t_beat": 42378461183, "utc_ns": 1792563845143484754, "n": 1, "db": 0.0286, "step_db": 0.0, "sigma_db": 0.00219, "ovr": false}
+  EVENT seq 7169: {"ev": "TP_JUMP", "adc": 0, "t_beat": 42391830527, "utc_ns": 1792563845195708754, "n": 1, "db": 0.03, "step_db": 0.0, "sigma_db": 0.00219, "ovr": false}
+  EVENT seq 7172: {"ev": "TP_JUMP", "adc": 0, "t_beat": 42398384127, "utc_ns": 1792563845221308754, "n": 2, "db": 0.0176, "step_db": 0.0, "sigma_db": 0.00219, "ovr": false}
+  EVENT seq 7175: {"ev": "TP_JUMP", "adc": 0, "t_beat": 42405199871, "utc_ns": 1792563845247932754, "n": 1, "db": 0.0257, "step_db": -0.0, "sigma_db": 0.00219, "ovr": false}
+  EVENT seq 7176: {"ev": "TP_JUMP", "adc": 0, "t_beat": 42412015615, "utc_ns": 1792563845274556754, "n": 1, "db": 0.0209, "step_db": 0.0, "sigma_db": 0.00219, "ovr": false}
+  EVENT seq 7181: {"ev": "TP_JUMP", "adc": 0, "t_beat": 42425647103, "utc_ns": 1792563845327804754, "n": 1, "db": 0.0133, "step_db": 0.0, "sigma_db": 0.00221, "ovr": false}
+  EVENT seq 7182: {"ev": "TP_JUMP", "adc": 0, "t_beat": 42432987135, "utc_ns": 1792563845356476754, "n": 1, "db": 0.0168, "step_db": 0.0, "sigma_db": 0.00221, "ovr": false}
+  EVENT seq 7185: {"ev": "TP_JUMP", "adc": 0, "t_beat": 42439802879, "utc_ns": 1792563845383100754, "n": 1, "db": 0.0247, "step_db": 0.0, "sigma_db": 0.00221, "ovr": false}
+  EVENT seq 7188: {"ev": "TP_JUMP", "adc": 0, "t_beat": 42446356479, "utc_ns": 1792563845408700754, "n": 1, "db": 0.0179, "step_db": 0.0, "sigma_db": 0.00221, "ovr": false}
+  EVENT seq 8721: {"ev": "TP_JUMP", "adc": 0, "t_beat": 50480545791, "utc_ns": 1792563876792252754, "n": 1, "db": 0.0175, "step_db": 0.0, "sigma_db": 0.00235, "ovr": false}
+  EVENT seq 11088: {"ev": "TP_JUMP", "adc": 0, "t_beat": 62884413439, "utc_ns": 1792563925244860754, "n": 1, "db": 0.0172, "step_db": 0.0, "sigma_db": 0.00212, "ovr": false}
+  EVENT seq 11093: {"ev": "TP_JUMP", "adc": 0, "t_beat": 62904598527, "utc_ns": 1792563925323708754, "n": 1, "db": 0.0203, "step_db": 0.0, "sigma_db": 0.00212, "ovr": false}
+  EVENT seq 12904: {"ev": "TP_JUMP", "adc": 0, "t_beat": 72399192063, "utc_ns": 1792563962411964754, "n": 1, "db": 0.0165, "step_db": 0.0, "sigma_db": 0.00213, "ovr": false}
+  EVENT seq 12911: {"ev": "TP_JUMP", "adc": 0, "t_beat": 72432746495, "utc_ns": 1792563962543036754, "n": 1, "db": 0.0143, "step_db": 0.0, "sigma_db": 0.00213, "ovr": false}
+  EVENT seq 12915: {"ev": "TP_JUMP", "adc": 0, "t_beat": 72452931583, "utc_ns": 1792563962621884754, "n": 1, "db": 0.0158, "step_db": 0.0, "sigma_db": 0.00213, "ovr": false}
+  EVENT seq 13669: {"ev": "TP_JUMP", "adc": 0, "t_beat": 76387450879, "utc_ns": 1792563977991100754, "n": 1, "db": -0.0152, "step_db": -0.0, "sigma_db": 0.00223, "ovr": false}
+  EVENT seq 13978: {"ev": "TP_JUMP", "adc": 0, "t_beat": 78011695103, "utc_ns": 1792563984335804754, "n": 1, "db": 0.0143, "step_db": 0.0, "sigma_db": 0.00213, "ovr": false}
+  EVENT seq 14349: {"ev": "TP_JUMP", "adc": 0, "t_beat": 79952084991, "utc_ns": 1792563991915452754, "n": 1, "db": 0.0224, "step_db": 0.0, "sigma_db": 0.00209, "ovr": false}
+  EVENT seq 14352: {"ev": "TP_JUMP", "adc": 0, "t_beat": 79958900735, "utc_ns": 1792563991942076754, "n": 1, "db": 0.0129, "step_db": 0.0, "sigma_db": 0.00209, "ovr": false}
+  EVENT seq 14355: {"ev": "TP_JUMP", "adc": 0, "t_beat": 79965454335, "utc_ns": 1792563991967676754, "n": 1, "db": 0.0148, "step_db": 0.0, "sigma_db": 0.00209, "ovr": false}
+      300 s: {"spec": 7251, "tp": 7250, "event": 32, "snap": 0, "mb": 3635.4, "crc_bad": 0, "gaps": 0, "declared": 0, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 14533, "ver": {"2": 14533}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+  EVENT seq 15684: {"ev": "TP_JUMP", "adc": 0, "t_beat": 86925901823, "utc_ns": 1792564019156924754, "n": 3, "db": 0.0371, "step_db": 0.0, "sigma_db": 0.00224, "ovr": false}
+  EVENT seq 15685: {"ev": "TP_JUMP", "adc": 0, "t_beat": 86931144703, "utc_ns": 1792564019177404754, "n": 2, "db": 0.0367, "step_db": 0.0, "sigma_db": 0.00224, "ovr": false}
+  EVENT seq 15688: {"ev": "TP_JUMP", "adc": 0, "t_beat": 86937698303, "utc_ns": 1792564019203004754, "n": 3, "db": 0.0212, "step_db": 0.0, "sigma_db": 0.00224, "ovr": false}
+  EVENT seq 15689: {"ev": "TP_JUMP", "adc": 0, "t_beat": 86942941183, "utc_ns": 1792564019223484754, "n": 3, "db": 0.019, "step_db": 0.0, "sigma_db": 0.00224, "ovr": false}
+  EVENT seq 15696: {"ev": "TP_JUMP", "adc": 0, "t_beat": 86976495615, "utc_ns": 1792564019354556754, "n": 1, "db": 0.0188, "step_db": 0.0, "sigma_db": 0.00224, "ovr": false}
+  EVENT seq 15699: {"ev": "TP_JUMP", "adc": 0, "t_beat": 86981214207, "utc_ns": 1792564019372988754, "n": 2, "db": 0.0196, "step_db": 0.0, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 15702: {"ev": "TP_JUMP", "adc": 0, "t_beat": 86988029951, "utc_ns": 1792564019399612754, "n": 2, "db": 0.0201, "step_db": 0.0, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 15703: {"ev": "TP_JUMP", "adc": 0, "t_beat": 86993272831, "utc_ns": 1792564019420092754, "n": 1, "db": 0.0194, "step_db": 0.0, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 15710: {"ev": "TP_JUMP", "adc": 0, "t_beat": 87024467967, "utc_ns": 1792564019541948754, "n": 2, "db": 0.0166, "step_db": 0.0, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 15711: {"ev": "TP_JUMP", "adc": 0, "t_beat": 87029710847, "utc_ns": 1792564019562428754, "n": 2, "db": 0.0157, "step_db": 0.0, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 15714: {"ev": "TP_JUMP", "adc": 0, "t_beat": 87036526591, "utc_ns": 1792564019589052754, "n": 1, "db": 0.0155, "step_db": 0.0, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 15717: {"ev": "TP_JUMP", "adc": 0, "t_beat": 87041507327, "utc_ns": 1792564019608508754, "n": 2, "db": 0.0183, "step_db": -0.0, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 15718: {"ev": "TP_JUMP", "adc": 0, "t_beat": 87048323071, "utc_ns": 1792564019635132754, "n": 1, "db": 0.0202, "step_db": 0.0, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 15721: {"ev": "TP_JUMP", "adc": 0, "t_beat": 87053828095, "utc_ns": 1792564019656636754, "n": 1, "db": 0.0164, "step_db": 0.0, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 16514: {"ev": "TP_JUMP", "adc": 0, "t_beat": 91206189055, "utc_ns": 1792564035876796754, "n": 1, "db": 0.0132, "step_db": 0.0, "sigma_db": 0.00213, "ovr": false}
+  EVENT seq 16520: {"ev": "TP_JUMP", "adc": 0, "t_beat": 91236597759, "utc_ns": 1792564035995580754, "n": 1, "db": 0.0164, "step_db": -0.0001, "sigma_db": 0.00213, "ovr": false}
+  EVENT seq 17441: {"ev": "TP_JUMP", "adc": 0, "t_beat": 96065290239, "utc_ns": 1792564054857660754, "n": 1, "db": 0.0196, "step_db": 0.0, "sigma_db": 0.0022, "ovr": false}
+  EVENT seq 17445: {"ev": "TP_JUMP", "adc": 0, "t_beat": 96077086719, "utc_ns": 1792564054903740754, "n": 1, "db": 0.0234, "step_db": 0.0, "sigma_db": 0.0022, "ovr": false}
+  EVENT seq 17456: {"ev": "TP_JUMP", "adc": 0, "t_beat": 96127418367, "utc_ns": 1792564055100348754, "n": 1, "db": 0.0171, "step_db": 0.0, "sigma_db": 0.0022, "ovr": false}
+  EVENT seq 17459: {"ev": "TP_JUMP", "adc": 0, "t_beat": 96139214847, "utc_ns": 1792564055146428754, "n": 1, "db": 0.0157, "step_db": 0.0, "sigma_db": 0.0022, "ovr": false}
+  EVENT seq 17468: {"ev": "TP_JUMP", "adc": 0, "t_beat": 96175652863, "utc_ns": 1792564055288764754, "n": 1, "db": 0.0143, "step_db": 0.0, "sigma_db": 0.00222, "ovr": false}
+  EVENT seq 20510: {"ev": "TP_JUMP", "adc": 0, "t_beat": 112131047423, "utc_ns": 1792564117614524754, "n": 1, "db": 0.0228, "step_db": 0.0, "sigma_db": 0.00213, "ovr": false}
+  EVENT seq 20514: {"ev": "TP_JUMP", "adc": 0, "t_beat": 112137863167, "utc_ns": 1792564117641148754, "n": 1, "db": 0.0151, "step_db": 0.0, "sigma_db": 0.00213, "ovr": false}
+  EVENT seq 20517: {"ev": "TP_JUMP", "adc": 0, "t_beat": 112144416767, "utc_ns": 1792564117666748754, "n": 1, "db": 0.0132, "step_db": 0.0, "sigma_db": 0.00213, "ovr": false}
+  EVENT seq 20522: {"ev": "TP_JUMP", "adc": 0, "t_beat": 112167747583, "utc_ns": 1792564117757884754, "n": 1, "db": 0.0215, "step_db": 0.0, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 20527: {"ev": "TP_JUMP", "adc": 0, "t_beat": 112187932671, "utc_ns": 1792564117836732754, "n": 1, "db": 0.0231, "step_db": 0.0001, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 20528: {"ev": "TP_JUMP", "adc": 0, "t_beat": 112194486271, "utc_ns": 1792564117862332754, "n": 2, "db": 0.0167, "step_db": 0.0, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 20531: {"ev": "TP_JUMP", "adc": 0, "t_beat": 112201302015, "utc_ns": 1792564117888956754, "n": 1, "db": 0.0199, "step_db": 0.0, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 20534: {"ev": "TP_JUMP", "adc": 0, "t_beat": 112208642047, "utc_ns": 1792564117917628754, "n": 1, "db": 0.0206, "step_db": 0.0, "sigma_db": 0.00228, "ovr": false}
+  EVENT seq 21263: {"ev": "TP_JUMP", "adc": 0, "t_beat": 116023885823, "utc_ns": 1792564132820924754, "n": 1, "db": 0.0252, "step_db": 0.0, "sigma_db": 0.00225, "ovr": false}
+  EVENT seq 21266: {"ev": "TP_JUMP", "adc": 0, "t_beat": 116037255167, "utc_ns": 1792564132873148754, "n": 1, "db": 0.0179, "step_db": 0.0, "sigma_db": 0.00225, "ovr": false}
+  EVENT seq 21267: {"ev": "TP_JUMP", "adc": 0, "t_beat": 116043808767, "utc_ns": 1792564132898748754, "n": 1, "db": 0.015, "step_db": 0.0, "sigma_db": 0.00225, "ovr": false}
+  EVENT seq 21270: {"ev": "TP_JUMP", "adc": 0, "t_beat": 116050624511, "utc_ns": 1792564132925372754, "n": 1, "db": 0.0194, "step_db": 0.0, "sigma_db": 0.00225, "ovr": false}
+  EVENT seq 21273: {"ev": "TP_JUMP", "adc": 0, "t_beat": 116057440255, "utc_ns": 1792564132951996754, "n": 1, "db": 0.0155, "step_db": 0.0, "sigma_db": 0.00225, "ovr": false}
+  EVENT seq 21274: {"ev": "TP_JUMP", "adc": 0, "t_beat": 116063993855, "utc_ns": 1792564132977596754, "n": 1, "db": 0.0173, "step_db": 0.0, "sigma_db": 0.00225, "ovr": false}
+  EVENT seq 21279: {"ev": "TP_JUMP", "adc": 0, "t_beat": 116077625343, "utc_ns": 1792564133030844754, "n": 1, "db": 0.0184, "step_db": 0.0001, "sigma_db": 0.00225, "ovr": false}
+  EVENT seq 21280: {"ev": "TP_JUMP", "adc": 0, "t_beat": 116085489663, "utc_ns": 1792564133061564754, "n": 1, "db": 0.0209, "step_db": 0.0, "sigma_db": 0.00219, "ovr": false}
+  EVENT seq 21285: {"ev": "TP_JUMP", "adc": 0, "t_beat": 116105674751, "utc_ns": 1792564133140412754, "n": 1, "db": 0.0162, "step_db": 0.0, "sigma_db": 0.00219, "ovr": false}
+  EVENT seq 21792: {"ev": "TP_JUMP", "adc": 0, "t_beat": 118752542719, "utc_ns": 1792564143479740754, "n": 1, "db": 0.0363, "step_db": 0.0, "sigma_db": 0.00218, "ovr": false}
+  EVENT seq 21793: {"ev": "TP_JUMP", "adc": 0, "t_beat": 118759096319, "utc_ns": 1792564143505340754, "n": 1, "db": 0.0232, "step_db": 0.0, "sigma_db": 0.00218, "ovr": false}
+  EVENT seq 21796: {"ev": "TP_JUMP", "adc": 0, "t_beat": 118765649919, "utc_ns": 1792564143530940754, "n": 2, "db": 0.0192, "step_db": 0.0, "sigma_db": 0.00218, "ovr": false}
+  EVENT seq 21799: {"ev": "TP_JUMP", "adc": 0, "t_beat": 118772727807, "utc_ns": 1792564143558588754, "n": 2, "db": 0.0389, "step_db": 0.0, "sigma_db": 0.00218, "ovr": false}
+  EVENT seq 21800: {"ev": "TP_JUMP", "adc": 0, "t_beat": 118779543551, "utc_ns": 1792564143585212754, "n": 1, "db": 0.0738, "step_db": 0.0, "sigma_db": 0.00218, "ovr": false}
+  EVENT seq 21803: {"ev": "TP_JUMP", "adc": 0, "t_beat": 118786097151, "utc_ns": 1792564143610812754, "n": 2, "db": 0.03, "step_db": 0.0, "sigma_db": 0.00218, "ovr": false}
+  EVENT seq 21806: {"ev": "TP_JUMP", "adc": 0, "t_beat": 118792912895, "utc_ns": 1792564143637436754, "n": 2, "db": 0.0519, "step_db": 0.0, "sigma_db": 0.00218, "ovr": false}
+  EVENT seq 21807: {"ev": "TP_JUMP", "adc": 0, "t_beat": 118799466495, "utc_ns": 1792564143663036754, "n": 2, "db": 0.0601, "step_db": 0.0, "sigma_db": 0.00218, "ovr": false}
+  EVENT seq 21810: {"ev": "TP_JUMP", "adc": 0, "t_beat": 118806282239, "utc_ns": 1792564143689660754, "n": 1, "db": 0.0309, "step_db": 0.0, "sigma_db": 0.00218, "ovr": false}
+  EVENT seq 21813: {"ev": "TP_JUMP", "adc": 0, "t_beat": 118813097983, "utc_ns": 1792564143716284754, "n": 1, "db": 0.0442, "step_db": 0.0, "sigma_db": 0.00218, "ovr": false}
+  EVENT seq 21814: {"ev": "TP_JUMP", "adc": 0, "t_beat": 118819913727, "utc_ns": 1792564143742908754, "n": 1, "db": 0.0515, "step_db": 0.0, "sigma_db": 0.00218, "ovr": false}
+  EVENT seq 21819: {"ev": "TP_JUMP", "adc": 0, "t_beat": 118833283071, "utc_ns": 1792564143795132754, "n": 2, "db": 0.0434, "step_db": -0.0001, "sigma_db": 0.00218, "ovr": false}
+  EVENT seq 22421: {"ev": "TP_JUMP", "adc": 0, "t_beat": 121998409727, "utc_ns": 1792564156158908754, "n": 1, "db": 0.0246, "step_db": 0.0, "sigma_db": 0.00205, "ovr": false}
+  EVENT seq 22425: {"ev": "TP_JUMP", "adc": 0, "t_beat": 122004963327, "utc_ns": 1792564156184508754, "n": 1, "db": 0.0177, "step_db": 0.0, "sigma_db": 0.00205, "ovr": false}
+  EVENT seq 22428: {"ev": "TP_JUMP", "adc": 0, "t_beat": 122011779071, "utc_ns": 1792564156211132754, "n": 1, "db": 0.0255, "step_db": -0.0, "sigma_db": 0.00205, "ovr": false}
+  EVENT seq 22429: {"ev": "TP_JUMP", "adc": 0, "t_beat": 122018332671, "utc_ns": 1792564156236732754, "n": 2, "db": 0.0242, "step_db": 0.0, "sigma_db": 0.00205, "ovr": false}
+  EVENT seq 22434: {"ev": "TP_JUMP", "adc": 0, "t_beat": 122031964159, "utc_ns": 1792564156289980754, "n": 1, "db": 0.0351, "step_db": -0.0, "sigma_db": 0.00205, "ovr": false}
+  EVENT seq 22435: {"ev": "TP_JUMP", "adc": 0, "t_beat": 122038517759, "utc_ns": 1792564156315580754, "n": 2, "db": 0.038, "step_db": 0.0, "sigma_db": 0.00205, "ovr": false}
+  EVENT seq 22438: {"ev": "TP_JUMP", "adc": 0, "t_beat": 122045333503, "utc_ns": 1792564156342204754, "n": 1, "db": 0.0407, "step_db": 0.0, "sigma_db": 0.00205, "ovr": false}
+  EVENT seq 22439: {"ev": "TP_JUMP", "adc": 0, "t_beat": 122052149247, "utc_ns": 1792564156368828754, "n": 1, "db": 0.0159, "step_db": 0.0, "sigma_db": 0.00205, "ovr": false}
+  EVENT seq 22442: {"ev": "TP_JUMP", "adc": 0, "t_beat": 122058702847, "utc_ns": 1792564156394428754, "n": 1, "db": 0.018, "step_db": 0.0, "sigma_db": 0.00205, "ovr": false}
+  EVENT seq 22447: {"ev": "TP_JUMP", "adc": 0, "t_beat": 122074955775, "utc_ns": 1792564156457916754, "n": 2, "db": 0.019, "step_db": -0.0, "sigma_db": 0.00205, "ovr": false}
+  EVENT seq 22448: {"ev": "TP_JUMP", "adc": 0, "t_beat": 122081771519, "utc_ns": 1792564156484540754, "n": 1, "db": 0.0212, "step_db": 0.0, "sigma_db": 0.00205, "ovr": false}
+  EVENT seq 23493: {"ev": "TP_JUMP", "adc": 0, "t_beat": 127551930367, "utc_ns": 1792564177852348754, "n": 2, "db": 0.0256, "step_db": 0.0, "sigma_db": 0.00216, "ovr": false}
+  EVENT seq 23496: {"ev": "TP_JUMP", "adc": 0, "t_beat": 127558483967, "utc_ns": 1792564177877948754, "n": 2, "db": 0.0245, "step_db": 0.0, "sigma_db": 0.00216, "ovr": false}
+  EVENT seq 23497: {"ev": "TP_JUMP", "adc": 0, "t_beat": 127565299711, "utc_ns": 1792564177904572754, "n": 3, "db": 0.0922, "step_db": 0.0, "sigma_db": 0.00216, "ovr": false}
+  EVENT seq 23500: {"ev": "TP_JUMP", "adc": 0, "t_beat": 127571853311, "utc_ns": 1792564177930172754, "n": 2, "db": 0.0668, "step_db": 0.0, "sigma_db": 0.00216, "ovr": false}
+  EVENT seq 23503: {"ev": "TP_JUMP", "adc": 0, "t_beat": 127578669055, "utc_ns": 1792564177956796754, "n": 2, "db": 0.0717, "step_db": -0.0001, "sigma_db": 0.00216, "ovr": false}
+  EVENT seq 23504: {"ev": "TP_JUMP", "adc": 0, "t_beat": 127585222655, "utc_ns": 1792564177982396754, "n": 2, "db": 0.0397, "step_db": 0.0, "sigma_db": 0.00216, "ovr": false}
+  EVENT seq 23507: {"ev": "TP_JUMP", "adc": 0, "t_beat": 127598854143, "utc_ns": 1792564178035644754, "n": 1, "db": 0.0828, "step_db": 0.0, "sigma_db": 0.00216, "ovr": false}
+      600 s: {"spec": 14575, "tp": 14574, "event": 100, "snap": 0, "mb": 7307.3, "crc_bad": 0, "gaps": 0, "declared": 0, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 29249, "ver": {"2": 29249}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      900 s: {"spec": 21899, "tp": 21898, "event": 100, "snap": 0, "mb": 10979.3, "crc_bad": 0, "gaps": 0, "declared": 0, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 43897, "ver": {"2": 43897}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1200 s: {"spec": 29223, "tp": 29222, "event": 100, "snap": 0, "mb": 14651.2, "crc_bad": 0, "gaps": 0, "declared": 0, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 58545, "ver": {"2": 58545}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1500 s: {"spec": 36548, "tp": 36547, "event": 100, "snap": 0, "mb": 18323.6, "crc_bad": 0, "gaps": 0, "declared": 0, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 73195, "ver": {"2": 73195}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1800 s: {"spec": 43872, "tp": 43871, "event": 100, "snap": 0, "mb": 21995.6, "crc_bad": 0, "gaps": 0, "declared": 0, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 87843, "ver": {"2": 87843}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+  EVENT seq 88144: {"ev": "STOP", "why": "命令", "dumps": [44021, 0, 0, 0, 0, 0, 0, 0], "miss": [0, 0, 0, 0, 0, 0, 0, 0], "tp": [1760870, 0, 0, 0], "tp_info": [{"adc": 0, "tp": "full"}], "err": null}
+まとめ: {"spec": 44021, "tp": 44022, "event": 101, "snap": 0, "mb": 22070.3, "crc_bad": 0, "gaps": 0, "declared": 0, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 88144, "ver": {"2": 88144}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+照合: 通過
