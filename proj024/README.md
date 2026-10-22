@@ -3,7 +3,7 @@
 日付: 2026-10-17（起こし）
 土台: study-rfsoc の commit **ed48627**（proj023 からの引き継ぎ [`docs/handoff_proj024.md`](../docs/handoff_proj024.md) を足した commit）。proj023 の部品はまだ写していない（模型の原型と応答の物差しは proj022 の `wide_model.py` から写した）
 RTL の写し元: **567fda2**（proj023 のビルド 11 で凍結した RTL。`src/common/` を 2026-10-17 に写した。引き継ぎの 7.）
-状態: 進行中（模型 M-1〜M-7・見積もり E-1・S-1 は済み。D-1・D-2（仮）・D-3・D-7 を決めた（2026-10-17）。作る順は 2G-1 から。D-5（積）・D-8（SRC で選ぶ）も決めた。M-8 で新しい部品を bit 単位に。S-2: 16384 点の IP は -1・256 MHz で余裕あり。残りは RTL の proj を Wide のマージの後に）
+状態: **成功**（2026-10-22 に閉じた。2G-1 の bit・PS・実機の判定まで。移植元はタグ `proj024-m0`、下の「移植元と閉じたときの値」。2G-2・2G-4 は proj025 以降）
 
 着手の前に [`../LESSONS.md`](../LESSONS.md) を全部読む（知見の全部は [`../docs/lessons_all.md`](../docs/lessons_all.md)）。
 
@@ -1002,6 +1002,48 @@ proj023 の会話からの引き継ぎの「4. 2G で初めて決めること」
 10. **4.1 のリングの目安を 2G で読み替える**（2026-10-18、3e・D-15）: PYNQ の allocate は 1 個 64 MiB まで（CmaTotal 128 MiB）。2G-1 は 64 MiB（≒ 0.65 s）。3d で見た PS の最長の止まり（≒ 62 ms）の 10 倍
 11. **8. の 4 の「2G は Python 1 本では回らない（94 %）」を改める**（3d）: 今の読み口（範囲の invalidate）で 2G-1 は平均 61〜66 %。C は見送り（D-11 の取得の分）。94 % は proj021 M-5（全体の invalidate の疑い）の数
 
+### 移植元と閉じたときの値（タグ `proj024-m0`、2026-10-22）
+
+**移植元**: study-rfsoc のタグ **`proj024-m0`**（この節を書いた commit）。bit はビルドに効くファイル（`src/`・`build.tcl`・`Makefile`）が **b71d23a** のときのビルド 3（`IMPL=Performance_Explore`、`build-PE/`）。
+その後のビルドに効くファイルの変更は 2a3e0b3 の Makefile（`sim-g21ds` の目標を足しただけ）で、ほかは PS・sim・文書。proj025（2G-2）の段階 B は、このタグからコア・build.tcl・PS を写す。
+値は Vivado サーバの `build-PE/` の報告（`utilization.rpt`・`cdc.rpt`・`net_check.rpt`・`vivado.log` の「TIMING (確定)」）から写した（2026-10-22）。
+
+| 項目 | 値 |
+|---|---|
+| bit | `build-PE/proj024.bit` 34,437,476 B・2026-10-18 にビルド |
+| bit の sha256 | `fdb04d804fb50b30afd66f1ba56a45b3bf1929e5d2d4a7cc3a2016faba714dd8`（Vivado サーバの `build-PE/`・ボードで同じ。2026-10-22 に両方で確かめ直した） |
+| hwh の sha256 | `e98a0f2e40f7151ed8b2fe3e0526cccc3b04e3398b012fa8acb7617b6f77bc3f` |
+| ID | BIT_KIND 11（2G-1）・BIT_REV 1・PROJ 0x0024_0100。IF_ID 0x020B_0101（コア 1）・0x020B_0102（time_core_0）。BUILD_TAG s45_core_0 0x50c00000・time_core_0 0x50900000 |
+| WNS / WHS（`-1`、Performance_Explore） | **+0.001759 ns / +0.009675 ns** |
+| LUT | 94,345（22.18 %） |
+| FF | 178,346（20.97 %） |
+| DSP | 924（21.63 %）: レーン FFT 528・PFB 144・鎖 144・ひねり係数 60・TP 24 × 2 |
+| BRAM タイル | 673（62.31 %。RAMB36 359・RAMB18 628）。PFB の履歴 306.5 |
+| URAM | 48（60.00 %、積分器） |
+| `report_cdc` | CDC-3 Info 60・CDC-6 Warning 2・CDC-15 Warning 3,137（ほかの分類 0）。CDC-15 は proj023-m0 と同じ数（RFDC の中）、CDC-3・CDC-6 はコアが 1 個なので少ない |
+| 結線の照合 | `net_check.rpt` 照合した行 119・問題 0・陽性対照 (a)〜(i) OK |
+| ビルドに効くファイルの未コミットの変更 | なし（Vivado サーバの `git status`、2026-10-22） |
+
+**判定の範囲**（この bit と c333a77 以後の PS で）:
+- 通過: 模型 M-1〜M-8・S-1・S-2・RTL の単体の sim（1a〜2e、sim-recfr）・ビルド（B-1 相当、PE で閉じた）・3. PS（test_fake 19 試験・test_nch・bench_g21）・
+  4a 立ち上げ・4b ch → IF・4c 30 分の運転・4d-1 F-2・4d-2 D_eff（sim-g21ds）
+- 2G-1 で行っていないもの: V2-c（Wide と同じく外した）・H-1 相当の ch の応答の掃引（ch の応答は M-2 の模型と 2c の bit 単位の照合で、実機は 4b の隣の ch −52 dB だけ）
+
+**YATSUGATAKE に移すときに入れるもの**:
+- timebase.CAL[0x0024_0100]（4d-1、proj026 の (b)）: pps_det_ns 71.5・adc_to_core_ns A 140.3・B 140.6・C 141.3・D 141.3（**proj024 の timebase.py には入れ済み**。proj023 と違う）
+- D_eff（FULL）= D_S ＋ 1.5·L = 1 ＋ 24,576 = **24,577 ビート**（specd の `G_DS_BEATS = 1`・L 16384）
+- PS の決め: 取得は Python 1 本（D-11）・リング 64 MiB（D-15）・取得の起動で mallopt（3d）
+- docs/spec に入れる変更案（上の「INTERFACE.md・BITS.md の変更案」）: 1〜3 は 1674a83 で入り ADR 0021 で YATSUGATAKE に移った。**4・5・7〜11 はまだ**（9 は 4d-2 で sim で確かめた値）
+- s45client.acquire の「8 窓の最小で数える」穴（3c）: proj024 は直した。**proj023（Wide の B 4）には残っている**ので、Wide を移すときに直す
+
+**未解決のまま閉じるもの**:
+- タイミングの余裕 +1.8 ps（作り直しても閉じる保証は無い。正本は上の bit そのもの）。次に RTL を触るときは、積分器の URAM の読み（合成の警告 Synth 8-6013: under-pipelined）と PFB の履歴の BRAM のカスケードに段を足してから
+- CRITICAL WARNING [BD 41-759]（s45_ring_0 の使っていない入口を 0 に縛った。動作は変わらない）と、それを build.tcl の見張りが拾っていなかったこと（vivado.log の本体を読まない）。次に作り直すとき xlconstant で縛り、見張りも直す
+- 3d の 60 ms 級の跳ね（≒ 400 BASE に 1 回、初めて触るページのある周）。原因は確定していない。4c の 30 分では loop_max 15 ms で出なかった
+- 4c の TP_JUMP 306 回はノイズソースの入力の跳ね（判定に入れていない）
+
+**記録**: `runs/` の .s45（4a・4b）は .gitignore で追跡しない（大きい。Vivado サーバの `runs/` にある）。追跡しているのは `runs/g21_4c.*`（STATUS の受け側の番地は `<host>`）・`runs/f2_24a`・`f2_24b`・`f2_24b2` の .f2.json・`runs/bench_g21_3a.json`・`3b.json`。.npz は追跡しない
+
 ## 結論・次にやること
 
 **今の結論（S-1 の前）**: 2G は**記憶が律速**。PFB の履歴・積分器・レーン FFT の中の記憶が取り合い、何も工夫しないとどの案も入らない。
@@ -1019,14 +1061,15 @@ proj023 の会話からの引き継ぎの「4. 2G で初めて決めること」
 - [x] M-8: 2G-1 の新しい部品（係数の補間・ひねり係数の積・Y の丸め）を `model/g21_fixed.py` に bit 単位で、表の生成の道具 `tools/gen_g21_tables.py`（2026-10-17）
 - [ ] 2G-1 の資源の引き締め（Wide の束ね・切り出しの LUT を除く）: **見送り**。ビルド 11 の階層の資源は `u_wide` の段までで切り出せない。2G-1（コア 1 個）では 0.5 % 未満で効かない。2G-4 の前に、Wide のビルドで階層を深くして測る
 - [x] S-2: 16384 点の FFT IP 1 個の OOC の配置配線（2026-10-17）。`-1`・256 MHz で WNS +1.885 ns（Default）、物差しの 2048 点と同じ程度。陽性対照（400 MHz）は組み方の誤りで負にならず、1.5 ns に直した
-- [ ] RTL の proj は SAM45-Wide を YATSUGATAKE にマージした後に。D-9・D-10・D-11 はそのとき INTERFACE.md・BITS.md と一緒に
+- [x] ~~RTL の proj は SAM45-Wide を YATSUGATAKE にマージした後に~~ → 引き継ぎの 7. でマージを待たずに proj024 の中で RTL まで進めた（2026-10-17）。D-9・D-10 は 1674a83 で入れた。D-11 は 3. で決めた
 - [x] RTL の手順 1a〜2d（引き継ぎの 7. で、マージを待たずに部品と単体の sim から）。2d で g21_core（FULL の流れ・1 MiB のレコード・FULL の TP）まで（2026-10-17）
 - [x] 2e g21_s45_core（コア 1 個: 共通・FULL・RAW、axis_sel4 × 2、D-14）（2026-10-18）
 - [x] 2f build.tcl・ブロックデザイン（2026-10-18）: 既定の戦略は −0.110 ns、**Performance_Explore で +0.0018 ns で閉じた**（build-PE/）
-- [ ] 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）→ 4. 実機。**3a（proj023/pynq を 1ebc92c から写し、ID を proj024 に）・3b（受け側の軸を記録の nch から）・3c（G21Backend・FakeG21Backend・specd --g21、PL なしの 3 試験）は済み**（2026-10-18）。3d 1 回目: **平均 6.48 ms / 10.24 ms（63 %）で Python 1 本で回る**（予言 100〜125 % は外れ）。3 回目で裾の素性が分かった（最大 61 ms は malloc の mmap のページフォルトの嵐 → mallopt で消える。束の周 10.3 ms は記録そのものの重さ）。**C は見送り・リングは 64 MiB と決めた（D-11・D-15）。3. は済み、次は 4. 実機**
+- [x] 3. PS（specd の FULL・NCH 131072、取得を C に: D-11）→ 4. 実機。**3a（proj023/pynq を 1ebc92c から写し、ID を proj024 に）・3b（受け側の軸を記録の nch から）・3c（G21Backend・FakeG21Backend・specd --g21、PL なしの 3 試験）は済み**（2026-10-18）。3d 1 回目: **平均 6.48 ms / 10.24 ms（63 %）で Python 1 本で回る**（予言 100〜125 % は外れ）。3 回目で裾の素性が分かった（最大 61 ms は malloc の mmap のページフォルトの嵐 → mallopt で消える。束の周 10.3 ms は記録そのものの重さ）。**C は見送り・リングは 64 MiB と決めた（D-11・D-15）。3. は済み、次は 4. 実機**
 - [x] 4. 実機 4a 立ち上げ・4b ch → IF・4c 30 分の運転（2026-10-21）
 - [x] 4d-1 F-2（2026-10-22）: widef2.py を 2G-1 に直し、LPF ありで M = 68.8〜69.8 ns。CAL[0x0024_0100] を proj026 の (b) で
 - [x] 4d-2 SPEC の D_eff = D_S ＋ 1.5·L を sim で（2026-10-22、`make sim-g21ds`）: D_S = +1・D_eff = 24,577 ビート（96.004 µs）、K_F 777 でも。陽性対照は D_S 0 で落ちた。**4. 実機は全部済み**
+- [x] **閉じた**（2026-10-22）。移植元はタグ `proj024-m0`（上の「移植元と閉じたときの値」）。次は proj025（2G-2）の段階 B を、このタグから写して別の会話で
 
 ## 公開について
 
