@@ -1,0 +1,238 @@
+{
+ "summary": {
+  "spec": 404,
+  "tp": 120,
+  "event": 2,
+  "snap": 0,
+  "mb": 101.3,
+  "crc_bad": 0,
+  "gaps": 0,
+  "declared": 0,
+  "unexplained": 0,
+  "seq_back": 0,
+  "dup": 0,
+  "kgap": 0,
+  "tdev": 0,
+  "tp_gap": 0,
+  "health": "0x0",
+  "sat": 0,
+  "flags": "0x0",
+  "last_seq": 526,
+  "ver": {
+   "2": 526
+  },
+  "f32_pairs": 0,
+  "f32_bad": 0,
+  "f32_maxulp": 0.0
+ },
+ "events": [
+  {
+   "ev": "START",
+   "start_at": 2000158720,
+   "utc_ns": 1792731305714781857,
+   "n": 200,
+   "forced": false,
+   "version": "proj025-0.1",
+   "proto": 2,
+   "fmt": "f32",
+   "ids": {
+    "win": "02010000/02010000",
+    "adc": "020a0101",
+    "time": "020a0102",
+    "proj": "00250100",
+    "kind": "g22",
+    "lmx_vco": "7864.32",
+    "lmx_pwr": "31",
+    "read": "ring"
+   },
+   "tint": 0.01024,
+   "cfg": 0,
+   "tp_cal": null,
+   "wins": [
+    {
+     "key": "A0",
+     "adc": 0,
+     "win": 0,
+     "kind": "full",
+     "core": 0,
+     "src": 2,
+     "shift": 7,
+     "active": true,
+     "nacc": 320,
+     "n_sum": 1,
+     "pl_nacc": 320,
+     "bundle": 1,
+     "g": 0,
+     "ns": 0,
+     "nch": 65536,
+     "frame": 8192,
+     "ds": 1,
+     "if_mhz": 2112.0,
+     "df_hz": 31250.0
+    },
+    {
+     "key": "A1",
+     "adc": 0,
+     "win": 1,
+     "kind": "none",
+     "active": false,
+     "bundle": 0,
+     "n_sum": 1,
+     "pl_nacc": 0,
+     "nacc": 0,
+     "ns": 0,
+     "g": 0,
+     "shift": 0
+    },
+    {
+     "key": "B0",
+     "adc": 1,
+     "win": 0,
+     "kind": "full",
+     "core": 1,
+     "src": 3,
+     "shift": 7,
+     "active": true,
+     "nacc": 320,
+     "n_sum": 1,
+     "pl_nacc": 320,
+     "bundle": 1,
+     "g": 0,
+     "ns": 0,
+     "nch": 65536,
+     "frame": 8192,
+     "ds": 1,
+     "if_mhz": 2112.0,
+     "df_hz": 31250.0
+    },
+    {
+     "key": "B1",
+     "adc": 1,
+     "win": 1,
+     "kind": "none",
+     "active": false,
+     "bundle": 0,
+     "n_sum": 1,
+     "pl_nacc": 0,
+     "nacc": 0,
+     "ns": 0,
+     "g": 0,
+     "shift": 0
+    },
+    {
+     "key": "C0",
+     "adc": 2,
+     "win": 0,
+     "kind": "none",
+     "active": false,
+     "bundle": 0,
+     "n_sum": 1,
+     "pl_nacc": 0,
+     "nacc": 0,
+     "ns": 0,
+     "g": 0,
+     "shift": 0
+    },
+    {
+     "key": "C1",
+     "adc": 2,
+     "win": 1,
+     "kind": "none",
+     "active": false,
+     "bundle": 0,
+     "n_sum": 1,
+     "pl_nacc": 0,
+     "nacc": 0,
+     "ns": 0,
+     "g": 0,
+     "shift": 0
+    },
+    {
+     "key": "D0",
+     "adc": 3,
+     "win": 0,
+     "kind": "none",
+     "active": false,
+     "bundle": 0,
+     "n_sum": 1,
+     "pl_nacc": 0,
+     "nacc": 0,
+     "ns": 0,
+     "g": 0,
+     "shift": 0
+    },
+    {
+     "key": "D1",
+     "adc": 3,
+     "win": 1,
+     "kind": "none",
+     "active": false,
+     "bundle": 0,
+     "n_sum": 1,
+     "pl_nacc": 0,
+     "nacc": 0,
+     "ns": 0,
+     "g": 0,
+     "shift": 0
+    }
+   ]
+  },
+  {
+   "ev": "STOP",
+   "why": "n に達した",
+   "dumps": [
+    202,
+    0,
+    202,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "miss": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "tp": [
+    2110,
+    2110,
+    2100,
+    2100
+   ],
+   "tp_info": [
+    {
+     "adc": 0,
+     "tp": "core",
+     "core": 0,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 1,
+     "tp": "core",
+     "core": 1,
+     "anch_dev": 0,
+     "gap": 0
+    },
+    {
+     "adc": 2,
+     "tp": "full",
+     "core": 0
+    },
+    {
+     "adc": 3,
+     "tp": "full",
+     "core": 1
+    }
+   ],
+   "err": null
+  }
+ ]
+}
