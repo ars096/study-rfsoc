@@ -638,6 +638,7 @@ def main():
     p.add_argument("--path", default="trig", choices=("trig", "comp"))
     p.add_argument("--cpu", type=int, default=3, help="取得のプロセスを固定する CPU（-1 で固定しない）")
     p.add_argument("--rt", type=int, default=10, help="取得のプロセスの SCHED_FIFO の優先度（0 で使わない）")
+    p.add_argument("--fast", action="store_true", help="proj029 1: 2G の SPEC の記録（FULL）の中身と CRC を C で（libs45fast.so、build_fast.sh で作る）")
     p.add_argument("--loop-log-ms", type=float, default=0, help="proj025 4c: 1 周がこの ms を越えたら内訳をログに（最大 300 周。0 = tint を越えた周だけ、今までどおり）")
     p.add_argument("--loop-sleep", type=float, default=0.003, help="読み出しの 1 周の後に寝る秒数（proj017 F-4 と同じ 3 ms）")
     p.add_argument("--boot-timeout", type=float, default=120.0)

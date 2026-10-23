@@ -1747,6 +1747,10 @@ class Acq:
         self.posctl = dict(corrupt=opts.posctl_corrupt, gap=opts.posctl_gap)
         self.proto = int(getattr(opts, "proto", P.VERSION))          # proj021 2-3c: 送る版（1 = 今までの v1）
         self.f32_trunc = bool(getattr(opts, "posctl_f32_trunc", False))
+        self.fast = None                                            # proj029 1: --fast で SPEC の記録（FULL）の中身と CRC を C で（s45fast）
+        if getattr(opts, "fast", False):
+            import s45fast
+            self.fast = s45fast
         self.hist = np.zeros(1001, np.int64)      # 1 周の時間（0.1 ms 刻み、100 ms で頭打ち）
         self.cal = getattr(opts, "tp_cal", None)    # TP の dBm の較正（s45cal、specd が起動時に読む）。bit の ID は open の後で照らす
         self.cal_msg = "較正ファイルが無い" if self.cal is None else "未確認"
@@ -2218,8 +2222,24 @@ class Acq:
         utc = self.be.clock.utc_ns(m["t"], None, src)
         if utc:
             utc -= ((cf.get("ds", G_DS_BEATS) + 3 * cf.get("frame", G_FRAME) // 2) * 125) // 32
-        raw = np.ascontiguousarray(np.asarray(spec, np.uint64)[::-1])
         fm = self.st.get("fmt", "f32")
+        if self.fast is not None:
+            # proj029 1: 逆順・float32 への丸め・CRC を C の 1 回のなめで（出す bytes は下の Python の道と同じ。test_s45fast.py で照合）
+            F = self.fast
+            spec = np.asarray(spec, np.uint64)
+            for f in (("u64", "f32") if fm == "both" else (fm,)):
+                code = P.FMT_RAW if f == "u64" else P.FMT_F32
+                hd = P.SPEC2_H.pack(j // NW, j % NW, src, 1, 0, cf["shift"], code, int(getattr(self.be, "bit_kind", 11)),
+                                    spec.size, int(cf["n_sum"]), m["cfg"], m["k"], cf["nacc"], m["sat"], m["flags"], h, 0, 0,
+                                    m["t"], utc, P.BASE_NS, cf["if_mhz"], cf["df_hz"])
+                if f == "u64":
+                    data, crc = F.spec_u64(spec, hd)
+                else:
+                    data, crc = F.spec_f32(spec, hd, posctl=F.PC_TRUNC if self.f32_trunc else 0)
+                self._put(P.T_SPEC, [hd, data], crc)
+            self.h_or |= int(m["h"]); self.fl_or |= int(m["flags"]); self.sat += int(m["sat"])
+            return
+        raw = np.ascontiguousarray(np.asarray(spec, np.uint64)[::-1])
         for f in (("u64", "f32") if fm == "both" else (fm,)):
             if f == "u64":
                 data, code = raw, P.FMT_RAW
@@ -2360,6 +2380,8 @@ class Acq:
                     f"{a} K {c['k_db']:+.2f}{' 暫定' if c.get('provisional') else ''}" for a, c in sorted(self.cal["adc"].items())) + "）")
         if (self.g21 or self.g22) and not getattr(self.o, "no_malloc_tune", False):
             self.log(malloc_tune()[1])               # proj024 3d: 2G-1 の 1 MiB の配列（Fine・Wide の道は今までどおり）
+        if self.fast is not None:
+            self.log(f"SPEC の記録（FULL）は C（s45fast、CRC {'命令' if self.fast.HW_CRC else '表'}）")
         gc.collect(); gc.freeze(); gc.disable()
         self.conn.send(dict(ok=True, ids=self.be.ids, version=VERSION))
         self.log(f"準備完了（{'偽物' if self.o.fake else '実機'}、ID {self.be.ids}）")

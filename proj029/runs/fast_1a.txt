@@ -1,0 +1,42 @@
+# proj029 1a: ボード（aarch64、CPU 3・chrt -f 50）。2026-10-23、西村さんが打った出力の写し（プロンプトの行は外した）
+# bash build_fast.sh
+gcc (Ubuntu 11.2.0-19ubuntu1) 11.2.0
+libs45fast.so: CRC: 命令
+# chrt -f 50 python3 test_s45fast.py --bench 1000 --cpu 3 --out fast_1a.json
+mallopt M_MMAP_THRESHOLD 33554432・M_TRIM_THRESHOLD 1073741824: OK
+CRC: 命令（aarch64）
+OK  crc32 = zlib.crc32（位置 0〜8・長さ 0〜4096・初期値の続き）  外れ []
+OK  n 65536 f32 = _spec_record_full  不一致 0 か所・CRC 一致
+OK  n 65536 u64 = _spec_record_full  不一致 0 か所・CRC 一致
+OK  n 65536 f32（fmt f32）= _spec_record_full  不一致 0 か所・CRC 一致
+OK  n 65536 f32 out を渡す  不一致 0 か所・CRC 一致
+OK  n 65536 p1 1 ch だけ変える → 不一致  不一致 1 か所 最初 53190・CRC 不一致
+OK  n 65536 p1 不一致は 1 か所・位置 n−1−ch  [53190]
+OK  n 65536 p2 0 への切り捨て → 不一致  不一致 32754 か所 最初 0・CRC 不一致
+OK  n 65536 p2 の C = Python の f32_trunc（陽性対照どうしが同じもの）  不一致 0 か所・CRC 一致
+OK  n 65536 p3 逆順にしない → 不一致  不一致 65536 か所 最初 0・CRC 不一致
+OK  n 65536 p3 u64 逆順にしない → 不一致  不一致 65536 か所 最初 0・CRC 不一致
+OK  n 65536 p4 2^53 → 両方が拒否  Python 'u64 が 2^53 以上（float64 で厳密でない）'・C 'u64 が 2^53以上（float64 で厳密でない）'
+OK  n 131072 f32 = _spec_record_full  不一致 0 か所・CRC 一致
+OK  n 131072 u64 = _spec_record_full  不一致 0 か所・CRC 一致
+OK  n 131072 f32（fmt f32）= _spec_record_full  不一致 0 か所・CRC 一致
+OK  n 131072 f32 out を渡す  不一致 0 か所・CRC 一致
+OK  n 131072 p1 1 ch だけ変える → 不一致  不一致 1 か所 最初 118726・CRC 不一致
+OK  n 131072 p1 不一致は 1 か所・位置 n−1−ch  [118726]
+OK  n 131072 p2 0 への切り捨て → 不一致  不一致 65049 か所 最初 0・CRC 不一致
+OK  n 131072 p2 の C = Python の f32_trunc（陽性対照どうしが同じもの）  不一致 0 か所・CRC 一致
+OK  n 131072 p3 逆順にしない → 不一致  不一致 131072 か所 最初 0・CRC 不一致
+OK  n 131072 p3 u64 逆順にしない → 不一致  不一致 131072 か所 最初 0・CRC 不一致
+OK  n 131072 p4 2^53 → 両方が拒否  Python 'u64 が 2^53 以上（float64 で厳密でない）'・C 'u64 が 2^53以上（float64 で厳密でない）'
+時間（ms、1000 回、nch 65536、CPU 3）:  中央値 / 平均 / p99 / 最大
+  py_record           1.937    2.043    2.109   53.768
+  py_rev              0.156    0.159    0.181    0.267
+  py_f32_round        0.759    0.816    0.827   48.577
+  py_crc32            0.750    0.752    0.763    0.790
+  c_spec_f32_out      0.557    0.614    0.592   52.315
+  c_spec_f32_new      0.575    0.625    0.604   48.335
+  c_crc32_256k        0.155    0.155    0.166    0.229
+  c_nop               0.003    0.003    0.003    0.019
+  ring_put            0.116    0.245    0.660    0.796
+比（Python の記録 / C、中央値）: 3.5 倍
+判定: OK

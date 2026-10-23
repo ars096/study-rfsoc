@@ -2,15 +2,17 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # proj018 — PL なし（specd.py --fake）での通信・溜まり・照合の試験と陽性対照。どこの Linux でも回る（numpy だけ）
 #   bash test_fake.sh all          # 全部（≒ 2 分）
+#   FAST=--fast bash test_fake.sh all   # proj029: 2G の SPEC の記録を C で
 #   bash test_fake.sh basic|corrupt|gap|drop|skip|reconnect|stall
 # 判定は各試験の最後の「判定: OK / NG」。全部の終わりに「test_fake: 全部通過」
 cd "$(dirname "$0")"
 OUT=${OUT:-/tmp/s45test}; mkdir -p "$OUT"
 PORTC=${PORTC:-51100}; PORTD=${PORTD:-51101}
 NG=0
+FAST=${FAST:-}    # proj029 1: FAST=--fast bash test_fake.sh で、2G の SPEC の記録を C の道（s45fast）で通す
 
 srv() {   # srv <名前> <specd の追加の引数...>
-  python3 specd.py --fake --cpu -1 --rt 0 --ctrl-port $PORTC --data-port $PORTD "${@:2}" > "$OUT/$1.specd.log" 2>&1 &
+  python3 specd.py --fake --cpu -1 --rt 0 --ctrl-port $PORTC --data-port $PORTD $FAST "${@:2}" > "$OUT/$1.specd.log" 2>&1 &
   SP=$!
   for i in $(seq 50); do python3 -c "import socket; socket.create_connection(('127.0.0.1', $PORTC)).close()" 2>/dev/null && return; sleep 0.1; done
   echo "サーバーが起動しない"; cat "$OUT/$1.specd.log"; exit 1
