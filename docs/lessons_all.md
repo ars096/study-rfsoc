@@ -268,6 +268,21 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 - 台本の要約の誤り: 「1 束あたり」の平均を、束を作らない周の数 µs まで含めて取っていた（`sp[sp > 0]`）。4 分の 1 の値が出て、内訳が合わないことの説明に 1 回使った。要約は周ごとの値（json）と照らす
 - 終わりの Segmentation fault（1 回）: freebuffer の後も pyxrt の bo を握る lambda とバッファの参照を残していた疑い。bo を先に手放して出なくなった（1 回だけの観測）
 
+### 取得の C 化（proj029、2G-2 の tint 10.24 ms、1 BASE 13.4 → 6.2 ms）
+- **台（同じ配列を何度もなめる）の時間を、実機の周に当てない**: 台では 512 KiB の配列が L2 に載ったままで、Python の記録 1 本は 1.94 ms（実機の周では 3.7 ms）。台の比（Python / C 3.5 倍）で 1 BASE を見積もると外れる。実機の周の段の時間（specd の `--loop-log-ms 0.1`・`tools/loopsum.py`）で測る（proj029 1a・1b）
+- **短い運転（2 秒）は、溜まり（256 MiB の共有メモリ）を一巡する前で、定常を測っていない**: 51 MB/s では最初の ≒ 5 秒は put のたびに新しいページ（256 KiB = 64 ページのフォルトとゼロ埋め）で、put が 0.12 → 0.81 ms / 本。proj025 追補 5・proj029 1b・1c は定常より 1 BASE あたり ≒ 1.2 ms 重かった。
+  `--prefault`（取得と送り出しの両方のプロセスで全ページを起動時に触る。ページ表はプロセスごと）で起動に寄せた。フォルトは `resource.getrusage(RUSAGE_SELF).ru_minflt` を周ごと・put ごとに数えて確かめる（proj029 1c・1d）
+- **numpy の `v[:] = v` は同じ場所への写しなので書かない**（ページを触らない）。prefault の 1 回目はこれで効いておらず、フォルトの数え（64 / 本のまま）で捕まった。`v[:] = v.copy()` にした（proj029 1d）
+- CRC-32: `zlib.crc32` は A53 で ≒ 350 MB/s（CRC 命令を使わない）。ARMv8 の `__crc32d`（`-march=armv8-a+crc`、CRC32C 系ではない）は ≒ 1.7 GB/s。PL の尾の CRC・s45proto の CRC とも IEEE の多項式で同じ命令が使える（proj029 1a）
+- u64 → float32 は `(float)(double)u`（u < 2^53 なら double は厳密で丸めは 1 回）で Python の `P.f32_round` と bit で同じ。陽性対照に 0 への切り捨て（`f32_trunc` と同じ形）を C にも置き、Python の切り捨てと bytes まで同じことも確かめる（proj029 1a）
+- **PL のリングの上のレコードを写さずに渡すなら、R は使い終えるまで進めない**（`plring.Ring.read(lazy)` は R_R を書かず `release()` で進める）。その周で使い切れなかった分は写して CRC を照らしてから R を進め、R を進めた後にリングの上を指すものを残さない。
+  PL の CRC は記録を作る同じなめで取り、合わなければ記録を出さずに ring_crc・miss を数える（今までの道と同じ数え方）。invalidate（`bo.sync`、1 BASE に ≒ 1 MiB）は重くなかった（リングの読み 3.8 → 0.7 ms）（proj029 2）
+- PL なしでリングの道を試すには、PL の形のレコード（頭・中身・尾の MAGIC_E と CRC、PAD）を numpy の配列に書き、本物の `Ring.read`・pump・poll_win・release に通す（`pynq/test_ring_fast.py`）。壊したレコード・写すときの壊れ・端をまたぐ PAD を陽性対照に（proj029 2）
+- RT の throttling（`sched_rt_runtime_us` 950000 / 1000000）: SCHED_FIFO で CPU を休みなく使う台は 1 s に 1 回 ≒ 50 ms 止まる見込み（台の最大 48〜54 ms と合う。消えることは未確認）。specd は周ごとに 3 ms 寝るので普段は当たらない（proj029 1a）
+- 長い運転で受けを後から繋ぐと、51 MB/s では 256 MiB の溜まりが ≒ 5 秒で満ちて捨てる（30 分の運転で受けが 29 秒後に繋がり 6947 件、最初の 1 分だけ）。**受けを先に起こし、`--seconds` を運転より長く**する（START の前に切れる穴は秒数を長くすれば当たらない）（proj029 4）
+- 取得の 1 周の遅い周（30 分で 44 回）は、TP の吐き出し（Python、5〜7 ms）が窓の記録と同じ周に重なった周。次の周で追いつく（proj029 4）
+- 止めたときの `multiprocessing.resource_tracker` の KeyError（`/psm_…`・leaked semaphore）は proj029 の specd で毎回出る。運転には効いていない（原因は未確認）
+
 ### 実行
 - ボードのスクリプトは root で動かす（`sudo` なら `sudo -E $(which python3)`。素の sudo は venv を外れる）（proj004）
 - 道具を別の bit の proj に写したら、**開き方が写し元の bit の決め打ちでないか**を読む（discover の BIT_KIND・流れの s・CAL の鍵・既定の .bit の名前）。widef2.py は wide.open_board（BIT_KIND 1 と SLICE を要求）を呼んでいて、2G-1 では起動で止まるところだった（proj024 4d-1）

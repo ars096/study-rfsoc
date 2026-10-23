@@ -112,6 +112,9 @@ proj001〜023 で踏んだ穴と、次以降の proj でも従う決まりを 1 
 - specd は起動のたびに SET し、GET・STATUS を確かめてから START。LOAD は spawn で起こし、通し番号を続ける（proj019・021）
 - 1 MiB 級の numpy の配列を周ごとに作る取得では、glibc の mmap の閾値（既定 128 KiB）を上げる（`s45acq.malloc_tune`、mallopt）。— 周ごとに mmap・munmap とゼロ埋めのページフォルトが起き、400 周に 1 回 57 ms の嵐になった。60 ms 級の跳ねは初めて触るページのある周に出る（proj024 3d）
 - PS の量は今の読み口（範囲の invalidate）で測る。— proj021 M-5 の「Python 1 本 ≒ 114 MB/s」はバッファ全体を毎回 invalidate していた疑いで、2G-1 の 1 MiB / 10.24 ms は予言 100〜125 % に対し実測 61〜63 %（proj024 3d）
+- 取得の速さは実機の周の段の時間（`--loop-log-ms`）で測る。同じ配列をなめる台は L2 に載って実機の半分に出る。**2 秒の運転は溜まり 256 MiB の一巡の前**で、put ごとにページフォルト（64 / 本）が乗る → `--prefault`、フォルトは `ru_minflt` で数える（proj029 1a〜1d）
+- PL のリングの上のレコードを写さずに使うなら、R は使い終えるまで進めない（`Ring.read(lazy)` → `release()`）。使い切れない分は写して CRC を照らしてから進める。PL の CRC は記録を作る同じなめで取る（proj029 2）
+- 2G の tint 10.24 ms は `--prefault --fast --fast-ring` で 1 BASE 6.2 ms（61 %）。どれも既定は切ってある。51 MB/s の受けは NIC（≒ 27 MB/s）を越えるので、長い運転の受けはボードの上で先に起こす（proj029）
 - → 全部: docs/lessons_all.md の「PS・PYNQ」
 
 ## 実機・測定
