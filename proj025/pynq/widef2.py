@@ -3,6 +3,8 @@
 """proj023 手順 4f — F-2（ADC → コアの遅れ adc_to_core、timebase.CAL）を SAM45-Wide の .bit で
 （proj024 4d: 2G-1（BIT_KIND 11、コア 1 個）に直した。RAW は コア 0 の s 1（0x4400）、入口は raw_sel（axis_sel4）で 4 ADC から選ぶ（D-14）。
  開き方は s45acq の G21Backend と同じ（discover(bit_kind=11, ncore=1)）。CAL の鍵は 0x0024_0100。測り方・合格の線は proj023 と同じ）
+（proj025 4d: 2G-2（BIT_KIND 10、コア 2 個）に直した。RAW はコア 0 だけが持つ（s 1、コア 1 は RAW なし・NSTREAM 1）ので snap_stream はそのまま 1 本。
+ 開き方は G22Backend と同じ（discover(bit_kind=10, ncore=2)）。CAL の鍵は 0x0025_0100。直したのは開き方・鍵・既定の .bit だけ）
 
 timetest.py --t2 の (a)（RAW の流れの生サンプルで 1PPS の縁を見る）を Wide に移したもの。Wide には DDC の窓が無いので、
 窓の (b) の代わりに**陽性対照 (p)**: 同じ手順で RAW のフレームを縁の 2 フレーム（1,024 ビート）前に置き、縁が写らない（最大 / σ < 20）ことを見る。
@@ -41,7 +43,7 @@ NS_PER_BEAT = 3.90625
 
 
 def open_board(a):
-    """wide.open_board と同じ手順で、2G-1 の .bit を開く（wide.open_board は BIT_KIND 1 と SLICE の流れを要求するので使わない）"""
+    """wide.open_board と同じ手順で、2G-2 の .bit を開く（proj024 は 2G-1）（wide.open_board は BIT_KIND 1 と SLICE の流れを要求するので使わない）"""
     import spectrometer as S
     S.setup_clocks(a.clkin, a.ref)
     from pynq import Overlay
@@ -55,7 +57,7 @@ def open_board(a):
 
 
 def open_raw(ol):
-    cores, tmm = SC.discover(ol, bit_kind=SC.BIT_KIND_G21, ncore=1, bit_rev_min=1)
+    cores, tmm = SC.discover(ol, bit_kind=SC.BIT_KIND_G22, ncore=2, bit_rev_min=1)      # proj025: 2G-2（proj024 は G21・ncore 1）
     fs = SC.snap_stream(cores)
     if fs.kind != SC.KIND_RAW or fs.s != 1:
         raise SC.S45Error(f"RAW の流れが s 1 に無い（{fs.name}・kind {fs.kind}）")
@@ -138,14 +140,14 @@ def combine(paths):
         cal["ABCD"[adc]] = round(m * NS_PER_BEAT, 1)
         log(f"  {'ABCD'[adc]}: " + " / ".join(f"{x['mean']:+.2f}（σ {x['std']:.2f}・{x['n']}/{x['n_trial']}・(p) で見えた {x['p_seen']}）" for x in v)
             + f" → M = {m:.2f} ビート = **{m * NS_PER_BEAT:.1f} ns**・2 回の差 {d:.2f}（≦ 1）: {'OK' if good else 'NG'}")
-    log(f"timebase.CAL[{SC.PROJ_G21:#011_x}] の M（LPF ありなら (b): adc_to_core_ns = M ＋ LPF の分、pps_det_ns = LPF の分）: {cal}")
+    log(f"timebase.CAL[{SC.PROJ_G22:#011_x}] の M（LPF ありなら (b): adc_to_core_ns = M ＋ LPF の分、pps_det_ns = LPF の分）: {cal}")
     log(f"結果（F-2）: {'通過' if ok else '失敗'}")
     return ok
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--bitfile", default="proj024.bit")
+    p.add_argument("--bitfile", default="proj025.bit")
     p.add_argument("--clkin", default="stock")
     p.add_argument("--ref", type=float, default=10.0)
     p.add_argument("--settle", type=float, default=5.0)

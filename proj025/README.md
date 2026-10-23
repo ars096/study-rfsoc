@@ -416,8 +416,18 @@ sim の環境: oss-cad-suite 2024-10-18（Icarus 13.0 devel、VERSIONS.md）。2
   2G の dt 10.24 ms を使うなら、取得の C 化（proj024 3d で見送ったもの）かプロセスを分けるかを決める必要がある（**持ち越し、西村さんの判断**）。今の 2G-2 の運転は tint 40.96 ms で進める
 
 
-**4d F-2（adc_to_core）**: proj024 の `widef2.py` を 2G-2 の開き方（`discover(bit_kind=10, ncore=2)`、RAW はコア 0 の s 1）に直してから、手順と予言を書く。
-D_eff = 12,289 ビートは 4d-2 の sim で済み（実機では測れない: 1 ビートはパワースペクトルに出ない）
+**4d F-2（adc_to_core）— 手順と予言（2026-10-23、測る前に書く）**
+- 道具: `pynq/widef2.py` を 2G-2 に直した（開き方を `discover(bit_kind=10, ncore=2)`・CAL の鍵 0x0025_0100・既定の .bit proj025.bit。RAW はコア 0 だけが持つので `snap_stream` はそのまま 1 本）。
+  測り方・合格の線は proj024 と同じ。PL なしの確かめ: import・`edge_of`（縁を入れた合成 → 添字 2000・最大 / σ 172、縁なし → 3.9）
+- 配線 P（proj024 4d-1 と同じ）: 1PPS を分配して PPS Clk と ADC_A〜D に、LPF は分配器の後の PPS Clk の枝だけ。specd を止めて、ボードで root:
+  `widef2.py --clkin 0 --ref 10 --adc 0,1,2,3 --out f2_25a` → ADC のケーブルを A↔D・B↔C に入れ替えて `--out f2_25b` → `--combine f2_25a.f2.json f2_25b.f2.json`
+- 予言:
+  - 起動: 照合が通る（BIT_KIND 10・コア 2 個・RAW がコア 0 の s 1 の 1 本）。RAW の SRC の読み返しが書いた ADC
+  - (a) 4 ADC × 5 試行とも縁が見える（最大 / σ ≧ 20）・1 回の中の σ ≦ 0.4 ビート・2 回の差 ≦ 1 ビート。(p) 4 ADC × 5 試行とも縁が見えない
+  - **M ≒ 69 ns（64〜75 ns）**: ギアボックス・axis_sel4・RAW の RTL は proj024（M = A 68.8・B 69.1・C 69.8・D 69.8 ns、LPF あり）と同じで、別の Overlay・配置なので ±5 ns。タイルの向きは予言しない
+  - 自信が低い所: PPS のスタンプの 1 ビートの跳ねで σ が 0.4 を越える（proj024 4d-1 の 2 回目）。**越えたら Overlay を載せ直して回し直し、そのことを書く**（LESSONS、測る前に決めておく）
+- 結果は (b) の形で: CAL[0x0025_0100] の pps_det_ns 71.5（LPF の分）のまま、adc_to_core_ns = M ＋ 71.5 を入れ、「未較正」を外す
+- D_eff = 12,289 ビート（D_S ＋ 1.5·L）は 4d-2 の sim で済み（実機では測れない: 1 ビートはパワースペクトルに出ない）
 
 ## 結論・次にやること
 
