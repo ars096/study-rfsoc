@@ -104,10 +104,13 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 - OOC で DSP を数えるときは report_utilization の表から読む。— `ARITHMETIC.DSP.*` は DSP48E2 1 個を 9 個に数えた（proj015）
 - 共有の ROM の配りに足した段は `dont_touch` を付け、残った FF の数を build.tcl で数える（0 なら DSP に吸われた）（proj023）
 
+- `ram_style = "ultra"` の溢れは、コアごとに別の OOC の run だと run の中では見えない。合成はデバイス全体の URAM の数を知らず、place_design の前の DRC UTLZ-1 で初めて止まる。コアを複数にするときは URAM・BRAM の総数をビルドの前に足し算する。— 2G-1（コア 1 個）は 1 つの run の中で溢れが見えて合成が BRAM に回していたが、2G-2（2 コア）は 44 × 2 = 88 > 80 で止まった（proj025 2f）
+
 ### Vivado が落ちる
 - Vivado 2024.1 は OOC・synth_1・impl_1 で終わり際に落ちる（`Abnormal program termination (11)`・tcmalloc abort (6)・Synth 8-7098 Stack limit。毎回違う run）。runme.log の `^ERROR` では見えないので落ちた印を探し、落ちた run と、それに依って始まらなかった run（runme.log が無い）だけを 2 回まで回し直す（JOBS 8）。`wait_on_run` の Tcl のエラーは catch で受ける（proj012〜015・023）
 - run は名前の文字列で持ち、その場で `[get_runs $n]` を渡す（proj015）
 - 負の経路の塊の集計は build.tcl の中で設計を開いたまま出す。— `make worst-paths` で配置後の dcp を開くと segfault した（proj023）
+- 親の Vivado も落ちる。impl_1 が write_bitstream まで完走した直後の `open_run impl_1` で segfault（hs_err: `HANENetlist::copyAttrsToAttrMap`）し、後段の照合と build/ への写しが 1 つも走らなかった。run の外なので、落ちた run の回し直しでは拾えない。**後段を別ファイル（build_post.tcl）にし、既存の xpr を開いて後段だけを回す口（`make post`、RESUME=1）を持つ**。再開は create_project -force を通らないこと・NEEDS_REFRESH・.bit より新しい src が無いことを照合する。回し直しは 3 分で、落ちなかった（proj025 2f）
 - dcp は glob でなく `set proj` の名前で 1 個に絞る。ビルドのディレクトリに古い proj の成果物を残さない。— 古い proj020.runs の dcp を読んで取り違えた（proj021）
 
 ### 再現性

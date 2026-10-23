@@ -234,6 +234,29 @@ sim の環境: oss-cad-suite 2024-10-18（Icarus 13.0 devel、VERSIONS.md）。2
 - ビルド 2 の予言: URAM 48（60 %、積分器だけ）・BRAM ≒ 66〜72 %（2G-1 の 62 % ＋ レーン FFT 16 個ぶん ＋ ROM 1 組ぶん）・DSP ≒ 37 %・LUT 35〜41 %。
   タイミングの負の経路は 2G-1 と同じく PFB の履歴の BRAM のカスケード（深さ半分で 4 段前後）と積分器の URAM（2 段）。WNS −0.15〜+0.15 ns のまま
 
+**ビルド 2（2026-10-22、`make build`・既定の戦略・`-1`、96605ab）: 完走し、閉じた — WNS +0.046 ns / WHS +0.010 ns**
+- impl_1 は 22:20 に write_bitstream まで完走したが、**親の Vivado が直後の `open_run impl_1` で落ちた**（`hs_err_pid15990.log`: `HANENetlist::copyAttrsToAttrMap`、signal 11）。
+  run の外の落ち方なので、build.tcl の回し直し（落ちた印のある run だけ）では拾えない。後段（1PPS のピン・ROM の BRAM・CDC・build/ への写し・TIMING の判定）が 1 つも走らず、build/ に .bit が無かった
+- **再開の口を足した**: build.tcl の `open_run impl_1` から後を `build_post.tcl` に切り出し（中身は一字も変えていない。diff で確かめた）、
+  `make post`（RESUME=1）で既存の xpr を開いて後段だけを回す。**create_project -force を通らない**。照合: part・synth_1 と impl_1 の PROGRESS と NEEDS_REFRESH・
+  .bit より新しい src/ のファイルが無いこと（在ってはいけない側）。ログは `build/vivado_post.log`（元の vivado.log を残す）。通常の `make build` は最後で build_post.tcl を source するだけで、振る舞いは変わらない
+- `make post`（22:58〜23:01、open_run は 3 分）は落ちずに後段が全部通った。RESUME の行の .bit の sha256 は build/ に写したものと同じ
+
+| | 結果 | 予言 | |
+|---|---|---|---|
+| タイミング | **WNS +0.046 ns / WHS +0.010 ns**（既定の戦略で閉じた。上位 5 本はどれも clk_out2（256 MHz）の中） | −0.15〜+0.15 ns | 当たり |
+| URAM | 48（60 %、積分器 24 × 2） | 48 | 当たり |
+| BRAM | 759.5 タイル（70.3 %）。PFB 1 コア 153.5・RAW 7.5 | 66〜72 % | 当たり |
+| LUT | 37.1 % | 35〜41 % | 当たり |
+| DSP | **1,848（43.3 %）**: 1 コア 924 = レーン FFT 528・PFB 144・鎖 144・ひねり係数 60・TP 24 × 2 | 1,580〜1,620 | **外れ** |
+| ROM の BRAM | 係数 4.0・ひねり係数 11.5（両コアとも） | 4・12〜16 | 係数は当たり、ひねり係数は下に 0.5 外れ |
+| CDC | CDC-3 Info 75・CDC-6 Warning 3・CDC-15 Warning 3,137（ほかの分類 0） | | proj023（4 コア 105・5）・proj024（1 コア 60・2）と同じ線に乗る: CDC-3 = 45 ＋ 15 × コア、CDC-6 = 1 ＋ コア、CDC-15 は RFDC の中で一定 |
+| 1PPS | pps_trig AH13・pps_comp AJ13（LVCMOS18） | | 照合を通った |
+
+- DSP の外れ: 1 コアの 924 は **2G-1（proj024 の 1 コア）の実測と内訳まで同じ**。レーン FFT は 8192 点でも 16384 点でも 1 個 33（S-1）。予言は E-1 の見積もり「コア 1 個 ≒ 800」から引いていて、手元にあった 2G-1 の実測 924 を使っていなかった
+- sha256: proj025.bit `de3ee45395a393c91c4cbacf0e21a9e1e5cc0f25ff4a00bf76bacb3a9cf30bf9` / proj025.hwh `e568364b32bb65ab817ec68951adb3e401217e0fd697d07250a6b0854e218682`
+- 実機に載せるのは **build/ の proj025.bit・.hwh**（ビルド 2 を `make post` で写したもの）
+
 ## 結論・次にやること
 
 - [x] 0. 写す（2026-10-18）
@@ -243,4 +266,5 @@ sim の環境: oss-cad-suite 2024-10-18（Icarus 13.0 devel、VERSIONS.md）。2
 - [x] 段階 B の B0: proj024-m0 から写した（2026-10-22）
 - [x] 段階 B の 2a〜2e・2e-2・4d-2 の sim（2026-10-22、全部通過・陽性対照は全部落ちた）
 - [x] 2f の build.tcl を 2 コアに（2026-10-22、Vivado では未実行）
-- [ ] 2f のビルド（Vivado サーバ。順番を決めてから）・3 PS・4 実機
+- [x] 2f のビルド（2026-10-22、ビルド 2 が既定の戦略で閉じた。WNS +0.046 ns。親の Vivado が open_run で落ち、`make post` で後段を回した）
+- [ ] 3 PS・4 実機

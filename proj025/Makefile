@@ -44,7 +44,7 @@ VVP           ?= vvp
 # survey の OOC 合成を同時に走らせる数
 JOBS ?= 9
 
-.PHONY: model gen s2 survey build sim-all sim-g22c sim-g22t sim-g22p sim-g22ch sim-lane sim-g22a sim-g22s sim-recfr sim-g22core sim-g22s45 clean
+.PHONY: model gen s2 survey build post sim-all sim-g22c sim-g22t sim-g22p sim-g22ch sim-lane sim-g22a sim-g22s sim-recfr sim-g22core sim-g22s45 clean
 
 # 模型（numpy だけ）。M-a〜d。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -66,6 +66,11 @@ s2:
 build:
 	mkdir -p $(OUTDIR)
 	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(BUILD_JOBS)
+
+# 2f ビルド 2 で足した: impl_1 は完走したのに、後段（open_run 〜 照合・CDC・build/ への写し）で親の Vivado が落ちたときの再開。
+# 合成・実装はやり直さない（build.tcl の RESUME=1 → build_post.tcl）。.bit より新しいソースがあれば止まる。ログは別名（元の vivado.log を残す）
+post:
+	RESUME=1 $(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado_post.log -source build.tcl -tclargs $(BUILD_JOBS)
 
 # Vivado サーバ: レーン FFT の OOC 合成（S-1）。ライセンスが要る。結果は build-survey/survey.txt
 # proj023 のビルドと重ならないときに回す（同じサーバ。壊れはしないが互いに遅くなる）
