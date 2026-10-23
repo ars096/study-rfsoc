@@ -1,0 +1,2 @@
+まとめ: {"spec": 0, "tp": 0, "event": 0, "snap": 0, "mb": 0.0, "crc_bad": 0, "gaps": 0, "declared": 0, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": null, "ver": {}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+照合: 通過

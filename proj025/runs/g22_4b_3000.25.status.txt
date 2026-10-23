@@ -1,0 +1,2 @@
+> STATUS
+OK state=IDLE time_ok=1 start_at=273856593920 dumps=50 miss=0 kgap=0 tp=2010,2010,0,0 tp_lost=0 tp_bad=0 tp_ovr=0 tp_jump=0,0,0,0 tp_dbfs=-26.18,-25.92,-31.29,-31.17 tp_dbm=-,-,-,- sat=0 loop_max_ms=13.36 loop_p99_ms=13.2 seq=3603 drop=0 forced=0 health=0x0000 flags=0x000 buf_used_mb=0 buf_cap_mb=256 data_client=none send=on sent=3603 acked=3603 inflight=0 sent_mb=403 skip=0 data_drop=01:14:14_<host>_受け側が閉じた pl_dumps=400 bdrop=0 r_bad=0 bund_r=1048576,-,1048576,-,-,-,-,- loops=161 loop_max_at=27 loop_slow=0 pl_drop=0 pl_crc=0 pl_peak=4646720 pl_err=0 tp_rec_lost=0

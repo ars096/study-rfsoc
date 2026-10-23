@@ -1,0 +1,4 @@
+> ID
+OK version=proj025-0.1 win_id=02010000/02010000 adc_id=020a0101 time_id=020a0102 lmx_vco=7864.32 lmx_pwr=31 adcs=4 nw=2 fake=0 proto=2
+> STATUS
+OK state=IDLE time_ok=1 start_at=- dumps=0 miss=0 kgap=0 tp= tp_lost=0 tp_bad=0 tp_ovr=0 tp_jump=0,0,0,0 tp_dbfs=-,-,-,- tp_dbm=-,-,-,- sat=0 loop_max_ms=0 loop_p99_ms=0 seq=0 drop=0 forced=0 health=0x0000 flags=0x000 buf_used_mb=0 buf_cap_mb=256 data_client=none send=off sent=0 acked=0 inflight=0 sent_mb=0 skip=0 data_drop=00:56:33_<host>_受け側が閉じた pl_dumps=0 bdrop=0 r_bad=0 bund_r=-,-,-,-,-,-,-,- loops=0 loop_max_at=0 loop_slow=0 pl_drop=0 pl_crc=0 pl_peak=0 pl_err=0 tp_rec_lost=0

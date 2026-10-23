@@ -5,7 +5,7 @@
 写したもの（fa0b230 の proj024 から、2026-10-18）: `model/g2_model.py`（そのまま）・`model/g21_fixed.py` → `model/g22_fixed.py`・
 `tools/gen_g21_tables.py` → `tools/gen_g22_tables.py`・`src/common/cmul.v`・`src/common/dft16.v`（そのまま）・
 `src/g21/g21_{coef,tw,pfb,pfb_core,chain}.v` → `src/g22/g22_*.v`・`sim/tb_g21_{coef,tw,pfb,chain}.v`・`sim/check_g21.py` → `*_g22*`
-状態: 進行中（段階 A は済み: 模型 M・部品 1a〜1d の単体の sim・2 コアの組み方 E-1〜E-6 の決定（2026-10-21）。**段階 B を 2026-10-22 にタグ proj024-m0 から始めた**）
+状態: **成功（2026-10-23 に閉じた。移植元はタグ proj025-m0、下の「移植元と閉じたときの値」）**。以下は経過: 進行中（段階 A は済み: 模型 M・部品 1a〜1d の単体の sim・2 コアの組み方 E-1〜E-6 の決定（2026-10-21）。**段階 B を 2026-10-22 にタグ proj024-m0 から始めた**）
 
 着手の前に [`../LESSONS.md`](../LESSONS.md) を全部読む（知見の全部は [`../docs/lessons_all.md`](../docs/lessons_all.md)）。
 
@@ -394,7 +394,7 @@ sim の環境: oss-cad-suite 2024-10-18（Icarus 13.0 devel、VERSIONS.md）。2
 - TP_JUMP は 30 分で A 11・B 10・C 3・D 1 回（ノイズソースの入力の跳ね。判定に入れない、2G-1 の 4c と同じ扱い）
 - **D-11（Python 1 本の取得）・D-15（リング 64 MiB）は 2G-2 でも見直さない**（tint 40.96 ms で 30 分の取りこぼし 0）
 
-**4c の 1 周の内訳（`--loop-log-ms 20`、`runs/g22_4c.specd.log`）: 予言は外れ（内訳は一方に寄らない）。29 ms の正体は「1 周が 2 BASE を抱える」形**
+**4c の 1 周の内訳（`--loop-log-ms 20`、`runs/g22_4c.specd.log`。追跡しない）: 予言は外れ（内訳は一方に寄らない）。29 ms の正体は「1 周が 2 BASE を抱える」形**
 - ログは上限の 300 周に達した（最初の 840 周 ≒ 18 秒のうちの 300 周。それより後は数えていない。p99 20.6 ms なので 20 ms を越える周は 30 分続いている）
 - 20 ms を越えた周の内訳（中央値 / 最大）: リングの読み 9.4 / 11.6・振り分け 2.8 / 13.5・**窓の記録 8.6 / 11.0**・TP 3.3 / 3.8（TP の吐き出しのある 232 周）・時刻 0.0 ms。
   **一方には寄らず**、読み ≒ 4 割・記録 ≒ 4 割・TP ≒ 1.5 割。窓の記録は その周の SPEC の記録の本数で 0 本 3.4・1 本 6.4・2 本 8.8 ms（束ねの足し算 ＋ 1 本 ≒ 2.7 ms）。
@@ -444,6 +444,53 @@ sim の環境: oss-cad-suite 2024-10-18（Icarus 13.0 devel、VERSIONS.md）。2
   2 回の差 0.74〜0.99（線 ≦ 1）の大半はこのずれで、ケーブルの入れ替えの効きではない。M の確かさは Overlay ごとに ±0.5 ビート（±2 ns）程度と読む
 - `timebase.py` の CAL[0x0025_0100] を (b) の形で埋めた: **pps_det_ns 71.5・adc_to_core_ns = M ＋ 71.5 = {A 141.1・B 141.3・C 140.5・D 140.5}**（「未較正」を外した）。ボードの写しは次に specd を起こす前に送り直す
 
+### 移植元と閉じたときの値（タグ `proj025-m0`、2026-10-23）
+
+**移植元**: study-rfsoc のタグ **`proj025-m0`**（この節を書いた commit）。bit はビルドに効くファイル（`src/`・`build.tcl`・`Makefile`）が **96605ab** のときのビルド 2（既定の戦略、`build/`）。
+その後のビルドに効くファイルの変更は dc418b9 の `build.tcl` → `build_post.tcl` の切り出しと Makefile の `post`（中身は一字も変えていない。diff で確かめた）だけで、ほかは PS・文書。
+後段（照合・CDC・`build/` への写し）は、親の Vivado が `open_run` で落ちたので `make post` で回した（2f のビルド 2）。値は `build/` の報告（`utilization.rpt`・`cdc.rpt`・`net_check.rpt`・`vivado_post.log` の「TIMING (確定)」）から写した
+
+| 項目 | 値 |
+|---|---|
+| bit | `build/proj025.bit` 34,437,476 B・2026-10-22 にビルド |
+| bit の sha256 | `de3ee45395a393c91c4cbacf0e21a9e1e5cc0f25ff4a00bf76bacb3a9cf30bf9`（Vivado サーバの `build/`・ボードで同じ。2026-10-23 に照らした） |
+| hwh の sha256 | `e568364b32bb65ab817ec68951adb3e401217e0fd697d07250a6b0854e218682` |
+| ID | BIT_KIND 10（2G-2）・BIT_REV 1・PROJ 0x0025_0100。IF_ID 0x020A_0101（コア 0・1）・0x020A_0102（time_core_0）。BUILD_TAG s45_core_0 0x50c00000・s45_core_1 0x50c00001・time_core_0 0x50900000。コア 1 は RAW なし（NSTREAM 1） |
+| WNS / WHS（`-1`、既定の戦略） | **+0.046356 ns / +0.009520 ns** |
+| LUT | 157,965（37.14 %） |
+| FF | 301,204（35.41 %） |
+| DSP | 1,848（43.26 %）: 1 コア 924 = レーン FFT 528・PFB 144・鎖 144・ひねり係数 60・TP 24 × 2（2G-1 の 1 コアと同じ） |
+| BRAM タイル | 759.5（70.32 %。RAMB36 373・RAMB18 773）。PFB 1 コア 153.5・RAW 7.5 |
+| URAM | 48（60.00 %、積分器 24 × 2） |
+| `report_cdc` | CDC-3 Info 75・CDC-6 Warning 3・CDC-15 Warning 3,137（ほかの分類 0）。CDC-3 = 45 ＋ 15 × コア・CDC-6 = 1 ＋ コア（proj023・proj024 と同じ線）、CDC-15 は RFDC の中 |
+| 結線の照合 | `net_check.rpt` 照合した行 132・問題 0・陽性対照 (a)〜(k) OK |
+| ビルドに効くファイルの未コミットの変更 | なし（Vivado サーバの `git status`、2026-10-23） |
+
+**判定の範囲**（この bit と f3af4a8 以後の PS で）:
+- 通過: 模型 M・部品の単体の sim（1a〜1d）・2a〜2e・2e-2（2 コア）・4d-2 の sim・ビルド（既定の戦略で閉じた）・3. PS（test_fake 23 試験・test_nch）・
+  4a 立ち上げ（**E-4: 2 コアに同じ ADC で 2 窓が bit 単位で同じ**）・4b ch → IF・4c 30 分の運転・4d F-2
+- 2G-2 で行っていないもの: V2-c（Wide・2G-1 と同じく外した）・H-1 相当の ch の応答の掃引（ch の応答は模型と 2c の bit 単位の照合で、実機は 4b の隣の ch −52 dB だけ）・
+  tint 10.24 ms（n_sum 1）の運転
+
+**YATSUGATAKE に移すときに入れるもの**:
+- timebase.CAL[0x0025_0100]（4d、(b)）: pps_det_ns 71.5・adc_to_core_ns A 141.1・B 141.3・C 140.5・D 140.5（**proj025 の timebase.py には入れ済み**）
+- D_eff（FULL）= D_S ＋ 1.5·L = 1 ＋ 12,288 = **12,289 ビート**（specd の `G2_DS_BEATS = 1`・L 8192、4d-2 の sim）
+- PS の決め: **窓 A0・B0 = コア 0・1 の FULL**（窓 j = 2·コア ＋ s の枠のまま）・**src・shift はコアごと**（2 コアに同じ ADC も可）・
+  **TP の欄の割り付け**（`g22_tp_slots`: コア 0 の FULL → src0、コア 1 の FULL → src1（空いていれば）、コア c のコアの TP → c（空いていれば））・取得は Python 1 本（D-11）・リング 64 MiB（D-15）・mallopt
+- docs/spec の変更案（ここでは study-rfsoc の INTERFACE.md・BITS.md を書き換えていない）: 上の窓の鍵・SET のキー・TP の欄の割り付けを 2G-2 の行として。2G-1（窓 A0 の 1 本）と並べて書く
+- build の見張り: 後段を `build_post.tcl` に分け `make post` で回し直せる形、複数コアの URAM・BRAM の総数を事前に足すこと（LESSONS に足した）
+- 診断: specd の `--loop-log-ms`（1 周の内訳）
+
+**未解決のまま閉じるもの**:
+- **tint 10.24 ms（BITS.md の 2G の dt、n_sum 1）は Python 1 本では回らない見込み**（4c: TP 4 本で 1 BASE の処理 ≒ 8.7 ms = 85 %、記録が 4 倍になると越える）。
+  取得を C にするか・プロセスを分けるか・2G は tint 40.96 ms で運用するか（**西村さんの判断**。2G-1 にも同じことが言えるかは 2G-1 の TP の本数で余裕が違う）
+- タイミングの余裕 +46 ps（作り直しで閉じる保証は無い。正本は上の bit そのもの）。親の Vivado が `open_run impl_1` で落ちた原因は分かっていない（1 回だけ）
+- F-2 の Overlay ごとの共通のずれ ≒ 1 ビート（M の確かさ ±2 ns）。4c の 1 周の内訳のログは最初の 18 秒（300 周）しか残っていない
+- 4b の ADC の床が A と B で 0.8 dB 違う（ノイズソース OFF。判定に入れていない）
+
+**記録**: `runs/` の .s45（4a・4b）・.npz は追跡しない（.s45 は .gitignore、.npz は大きい。Vivado サーバの `runs/` にある）。
+追跡しているのは `runs/g22_4*.json`・`*.status.txt`・`*.recv.txt`・`g22_4a0.id.txt`・`f2_25*.f2.json`・`f2_25.combine.txt`（**受け側の番地は `<host>` に置き換えた**）。4c の 1 周の内訳のログ `g22_4c.specd.log` は .gitignore（`*.log`）で追跡しない（Vivado サーバの `runs/` にある。集計は上の 4c の節）
+
 ## 結論・次にやること
 
 - [x] 0. 写す（2026-10-18）
@@ -456,3 +503,4 @@ sim の環境: oss-cad-suite 2024-10-18（Icarus 13.0 devel、VERSIONS.md）。2
 - [x] 2f のビルド（2026-10-22、ビルド 2 が既定の戦略で閉じた。WNS +0.046 ns。親の Vivado が open_run で落ち、`make post` で後段を回した）
 - [x] 3 PS（2026-10-23、3a ID・3c G22Backend。test_fake 23 試験が全部 OK。3b は proj024 で済み、3d は 4 の loop_max で見る）
 - [x] 4 実機（2026-10-23、4a〜4d 全部通過。予言の外れは 4a の loop_max と 4c の内訳の寄り方。tint 10.24 ms は Python 1 本では回らない見込み = 持ち越し）
+- [x] 閉じた（2026-10-23、タグ proj025-m0。持ち越し: tint 10.24 ms の取得の決め・YATSUGATAKE への移植）
