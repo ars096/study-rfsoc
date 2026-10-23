@@ -6,7 +6,11 @@
 `timescale 1ns/1ps
 `default_nettype none
 module tb_ddr_tg;
+`ifdef AW33
     localparam integer AW = 33;
+`else
+    localparam integer AW = 32;                // 実機の MIG（8 Gb × 4 = 4 GiB）
+`endif
     localparam integer MEMB = 4096;            // 模型の拍の数（256 KiB）
     reg clk = 0;
     always #1.667 clk = ~clk;                  // 300 MHz

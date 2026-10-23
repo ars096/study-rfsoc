@@ -7,8 +7,9 @@
 1. **ddr_tg より先に clk_mon（pl_clk0 の側、MIG のクロックに依らない）を読む**: 参照クロック（200 MHz）と UI クロック（≒ 300 MHz）が
    回っているか、UI のリセットが明けたか、MIG の較正（init_calib_complete）が済んだか。どれかが駄目なら ddr_tg に触らずに止まる
    （2026-10-23 の 1 回目: 較正の前に ddr_tg を読み、応答が返らず PS ごと止まった）。それから ddr_tg の ID（0x02800001）を照らす
-2. 容量: 区間 A（0 番地）と B（4 GiB 番地）に違う SEED で書き、A を読む（4 GB なら B が A に折り返して全部が不一致）
-3. 8 GiB 全体を書いて読み返す（誤り 0 を確かめる）
+2. 容量: 区間 A（0 番地）と B（2 GiB 番地）に違う SEED で書き、A・B を読む（4 GiB の全体が折り返さずに使えれば両方 0）
+   MIG は実物の部品（8 Gb × 16、アドレス 32 bit = 4 GiB）。S-2e までは 16 Gb の設定で、4 GiB 番地が 0 番地に折り返していた
+3. 4 GiB 全体を書いて読み返す（誤り 0、拍数が範囲どおり）
 4. 帯域: BL 16・64・256 拍 × 書きだけ・読みだけ・両方同時、各 1 s（UI クロックの拍で数える）
 5. 本番の形: 書き 4.68 GB/s ＋ 読み 4.77 GB/s を同時に 10 s（速さの上限 WR_RATE・RD_RATE）。達した速さ ≧ 99.9 % と誤り 0
    （ddr_tg の許可は BL + 2 拍で頭打ちなので、DDR が追いつかないと許可が捨てられ、達した速さが目標を下回る。
@@ -88,7 +89,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bit", default="proj028.bit")
     ap.add_argument("--out", default="ddr_bw.json")
-    ap.add_argument("--quick", action="store_true", help="8 GiB の全体の書き読みを省く")
+    ap.add_argument("--quick", action="store_true", help="4 GiB の全体の書き読みを省く")
     a = ap.parse_args()
     from pynq import Overlay, MMIO
     ol = Overlay(a.bit)
@@ -152,20 +153,22 @@ def main():
     # 2. 容量
     S = 64 << 20
     tg.run(True, False, 0, S, 0xAAAA0001, one=True)
-    tg.run(True, False, 4 * GIB, S, 0xBBBB0002, one=True)
+    tg.run(True, False, 2 * GIB, S, 0xBBBB0002, one=True)
     ra = tg.run(False, True, 0, S, 0xAAAA0001, one=True)
-    rb = tg.run(False, True, 4 * GIB, S, 0xBBBB0002, one=True)
-    cap = "8 GB" if ra["rd_err"] == 0 and rb["rd_err"] == 0 else ("4 GB（折り返し）" if ra["rd_err"] == S // BEAT else "不明")
+    rb = tg.run(False, True, 2 * GIB, S, 0xBBBB0002, one=True)
+    cap = "4 GB" if ra["rd_err"] == 0 and rb["rd_err"] == 0 else ("2 GB（折り返し）" if ra["rd_err"] == S // BEAT else "不明")
     print("容量: A の不一致 %d / %d 拍・B の不一致 %d → %s" % (ra["rd_err"], S // BEAT, rb["rd_err"], cap))
     res["capacity"] = dict(a_err=ra["rd_err"], b_err=rb["rd_err"], beats=S // BEAT, verdict=cap)
-    top = 8 * GIB if cap == "8 GB" else 4 * GIB
+    top = 4 * GIB if cap == "4 GB" else 2 * GIB
 
     # 3. 全体
     if not a.quick:
         w = tg.run(True, False, 0, top, 0x5EED0003, one=True)
         r = tg.run(False, True, 0, top, 0x5EED0003, one=True)
-        print("全体 %d GiB: 書き %.2f GB/s・読み %.2f GB/s・不一致 %d・FLAGS %d"
-              % (top // GIB, w["wr_gbs"], r["rd_gbs"], r["rd_err"], w["flags"] | r["flags"]))
+        nb = top // BEAT
+        print("全体 %d GiB: 書き %.2f GB/s・読み %.2f GB/s・不一致 %d・FLAGS %d・拍数 書き %d 読み %d（期待 %d、%s）"
+              % (top // GIB, w["wr_gbs"], r["rd_gbs"], r["rd_err"], w["flags"] | r["flags"], w["wr_beats"], r["rd_beats"], nb,
+                 "○" if w["wr_beats"] == nb and r["rd_beats"] == nb else "×"))
         res["full"] = dict(w=w, r=r)
 
     # 4. 帯域

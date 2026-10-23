@@ -17,7 +17,7 @@
 //   0x70/74 FIRST_ERR_ADDR（最初の不一致の番地）
 `default_nettype none
 module ddr_tg #(
-    parameter integer AW = 33,
+    parameter integer AW = 32,                      // MIG の AXI のアドレスの幅（8 Gb × 4 = 4 GiB で 32。2026-10-23 の実機の容量）
     parameter integer IDW = 4,                      // MIG の AXI の ID の幅（C0.DDR4_AxiIDWidth の既定）
     parameter [31:0]  ID = 32'h0280_0001
 ) (
@@ -107,7 +107,7 @@ module ddr_tg #(
     reg        r_wen, r_ren, r_one;
     reg  [7:0] r_bl;
     reg  [16:0] r_wrate, r_rrate;
-    reg  [AW-1:0] r_base, r_size;
+    reg  [63:0] r_base, r_size;                    // 64 bit で持つ（AW 32 で範囲がちょうど 4 GiB = 2^32 でも表せるように）
     reg  [31:0] r_seed, r_dur;
     wire wr_go = s_axi_awvalid && s_axi_wvalid && !s_axi_bvalid && !rst;
     assign s_axi_awready = wr_go;
@@ -124,7 +124,7 @@ module ddr_tg #(
         if (rst) begin
             s_axi_bvalid <= 1'b0;
             r_wen <= 1'b0; r_ren <= 1'b0; r_one <= 1'b0; r_bl <= 8'd255; r_wrate <= 17'd65536; r_rrate <= 17'd65536;
-            r_base <= {AW{1'b0}}; r_size <= {AW{1'b0}}; r_seed <= 32'd0; r_dur <= 32'd0;
+            r_base <= 64'd0; r_size <= 64'd0; r_seed <= 32'd0; r_dur <= 32'd0;
         end else begin
             if (s_axi_bvalid && s_axi_bready) s_axi_bvalid <= 1'b0;
             if (wr_go) s_axi_bvalid <= 1'b1;
@@ -134,9 +134,9 @@ module ddr_tg #(
                 6'h03: r_wrate <= (s_axi_wdata[16:0] > 17'd65536) ? 17'd65536 : s_axi_wdata[16:0];
                 6'h04: r_rrate <= (s_axi_wdata[16:0] > 17'd65536) ? 17'd65536 : s_axi_wdata[16:0];
                 6'h05: r_base[31:0] <= {s_axi_wdata[31:6], 6'd0};
-                6'h06: r_base[AW-1:32] <= s_axi_wdata[AW-33:0];
+                6'h06: r_base[63:32] <= s_axi_wdata;
                 6'h07: r_size[31:0] <= {s_axi_wdata[31:6], 6'd0};
-                6'h08: r_size[AW-1:32] <= s_axi_wdata[AW-33:0];
+                6'h08: r_size[63:32] <= s_axi_wdata;
                 6'h09: r_seed <= s_axi_wdata;
                 6'h0A: r_dur <= s_axi_wdata;
                 default: ;
@@ -155,20 +155,20 @@ module ddr_tg #(
     reg  [24:0] wtok, rtok;
     wire [24:0] tcap = {r_bl, 16'd0} + 25'd65536 + 25'd65536;   // ≒ (BL + 2) 拍
     // ---- 書き手 ----
-    reg  [BA-1:0] aw_beat, w_beat;                 // 次に出す AW の拍の番地（範囲の中の位置）・次に出す W の拍の番地
+    reg  [BA:0]   aw_beat, w_beat;                 // 次に出す AW・W の拍の範囲の中の位置（範囲が 2^BA 拍ちょうどでも数えられるよう 1 bit 広い）
     reg  [7:0]    w_cnt;
     reg  [3:0]    aw_out;                          // AW を出して W を出し終えていないバースト
     reg  [3:0]    b_out;                           // W を出し終えて B を待つバースト
     reg           wr_wrapped, w_wrapped;
-    wire [BA-1:0] size_b = r_size[AW-1:6];
+    wire [BA:0]   size_b = r_size[AW:6];
     wire [BA-1:0] base_b = r_base[AW-1:6];
-    wire [BA-1:0] bl1 = {{(BA-8){1'b0}}, r_bl} + {{(BA-1){1'b0}}, 1'b1};
+    wire [BA:0]   bl1 = {{(BA-7){1'b0}}, r_bl} + 1'b1;
     wire aw_room = (aw_out + b_out) < OUTS;
     wire aw_can = r_wen && !(r_one && wr_wrapped) && aw_room && !done && calib;   // MIG の較正が済むまで出さない
     wire w_tok  = (r_wrate == 17'd65536) || (wtok >= 25'd65536);
     assign m_axi_wvalid = (aw_out != 4'd0) && w_tok;
     assign m_axi_wlast  = (w_cnt == r_bl);
-    assign m_axi_wdata  = pat(base_b + w_beat, r_seed);
+    assign m_axi_wdata  = pat(base_b + w_beat[BA-1:0], r_seed);
     assign m_axi_wstrb  = {64{1'b1}};
     assign m_axi_awlen = r_bl; assign m_axi_awsize = 3'd6; assign m_axi_awburst = 2'b01;
     assign m_axi_bready = 1'b1;
@@ -177,7 +177,7 @@ module ddr_tg #(
     wire b_fire  = m_axi_bvalid;
     always @(posedge clk) begin
         if (rst || start) begin
-            m_axi_awvalid <= 1'b0; aw_beat <= {BA{1'b0}}; w_beat <= {BA{1'b0}}; w_cnt <= 8'd0;
+            m_axi_awvalid <= 1'b0; aw_beat <= {(BA+1){1'b0}}; w_beat <= {(BA+1){1'b0}}; w_cnt <= 8'd0;
             aw_out <= 4'd0; b_out <= 4'd0; wr_wrapped <= 1'b0; wtok <= 25'd0;
         end else begin
             // 許可
@@ -186,16 +186,16 @@ module ddr_tg #(
             // AW
             if (aw_fire) begin
                 m_axi_awvalid <= 1'b0;
-                if (aw_beat + bl1 >= size_b) begin aw_beat <= {BA{1'b0}}; wr_wrapped <= 1'b1; end
+                if (aw_beat + bl1 >= size_b) begin aw_beat <= {(BA+1){1'b0}}; wr_wrapped <= 1'b1; end
                 else aw_beat <= aw_beat + bl1;
             end else if (!m_axi_awvalid && aw_can) begin
                 m_axi_awvalid <= 1'b1;
-                m_axi_awaddr  <= {base_b + aw_beat, 6'd0};
+                m_axi_awaddr  <= {base_b + aw_beat[BA-1:0], 6'd0};
             end
             // W
             if (w_fire) begin
                 w_cnt  <= m_axi_wlast ? 8'd0 : w_cnt + 8'd1;
-                w_beat <= (w_beat + 1'b1 >= size_b) ? {BA{1'b0}} : w_beat + 1'b1;
+                w_beat <= (w_beat + 1'b1 >= size_b) ? {(BA+1){1'b0}} : w_beat + 1'b1;
             end
             aw_out <= aw_out + (aw_fire ? 4'd1 : 4'd0) - ((w_fire && m_axi_wlast) ? 4'd1 : 4'd0);
             b_out  <= b_out + ((w_fire && m_axi_wlast) ? 4'd1 : 4'd0) - (b_fire ? 4'd1 : 4'd0);
@@ -204,7 +204,7 @@ module ddr_tg #(
     assign wr_busy = m_axi_awvalid || aw_out != 4'd0 || b_out != 4'd0;
 
     // ---- 読み手 ----
-    reg  [BA-1:0] ar_beat, r_beat;
+    reg  [BA:0]   ar_beat, r_beat;
     reg  [3:0]    ar_out;                          // AR を出して最後の R を受けていないバースト
     reg           rd_wrapped;
     wire r_tok  = (r_rrate == 17'd65536) || (rtok >= {r_bl, 16'd0} + 25'd65536);
@@ -219,25 +219,25 @@ module ddr_tg #(
     reg  [BA-1:0] rq_a;
     always @(posedge clk) begin
         if (rst || start) begin
-            m_axi_arvalid <= 1'b0; ar_beat <= {BA{1'b0}}; r_beat <= {BA{1'b0}}; ar_out <= 4'd0; rd_wrapped <= 1'b0; rtok <= 25'd0;
+            m_axi_arvalid <= 1'b0; ar_beat <= {(BA+1){1'b0}}; r_beat <= {(BA+1){1'b0}}; ar_out <= 4'd0; rd_wrapped <= 1'b0; rtok <= 25'd0;
             rq_v <= 1'b0;
         end else begin
             if (ar_fire && r_rrate != 17'd65536) rtok <= ((rtok + r_rrate > tcap) ? tcap : rtok + r_rrate) - ({r_bl, 16'd0} + 25'd65536);
             else if (r_ren) rtok <= (rtok + r_rrate > tcap) ? tcap : rtok + r_rrate;
             if (ar_fire) begin
                 m_axi_arvalid <= 1'b0;
-                if (ar_beat + bl1 >= size_b) begin ar_beat <= {BA{1'b0}}; rd_wrapped <= 1'b1; end
+                if (ar_beat + bl1 >= size_b) begin ar_beat <= {(BA+1){1'b0}}; rd_wrapped <= 1'b1; end
                 else ar_beat <= ar_beat + bl1;
             end else if (!m_axi_arvalid && ar_can) begin
                 m_axi_arvalid <= 1'b1;
-                m_axi_araddr  <= {base_b + ar_beat, 6'd0};
+                m_axi_araddr  <= {base_b + ar_beat[BA-1:0], 6'd0};
             end
             ar_out <= ar_out + (ar_fire ? 4'd1 : 4'd0) - ((r_fire && m_axi_rlast) ? 4'd1 : 4'd0);
-            if (r_fire) r_beat <= (r_beat + 1'b1 >= size_b) ? {BA{1'b0}} : r_beat + 1'b1;
+            if (r_fire) r_beat <= (r_beat + 1'b1 >= size_b) ? {(BA+1){1'b0}} : r_beat + 1'b1;
             rq_v <= r_fire;
             rq_d <= m_axi_rdata;
-            rq_e <= pat(base_b + r_beat, r_seed);
-            rq_a <= base_b + r_beat;
+            rq_e <= pat(base_b + r_beat[BA-1:0], r_seed);
+            rq_a <= base_b + r_beat[BA-1:0];
         end
     end
     assign rd_busy = m_axi_arvalid || ar_out != 4'd0;
@@ -284,9 +284,9 @@ module ddr_tg #(
                     6'h03: s_axi_rdata <= {15'd0, r_wrate};
                     6'h04: s_axi_rdata <= {15'd0, r_rrate};
                     6'h05: s_axi_rdata <= r_base[31:0];
-                    6'h06: s_axi_rdata <= {{(64-AW){1'b0}}, r_base[AW-1:32]};
+                    6'h06: s_axi_rdata <= r_base[63:32];
                     6'h07: s_axi_rdata <= r_size[31:0];
-                    6'h08: s_axi_rdata <= {{(64-AW){1'b0}}, r_size[AW-1:32]};
+                    6'h08: s_axi_rdata <= r_size[63:32];
                     6'h09: s_axi_rdata <= r_seed;
                     6'h0A: s_axi_rdata <= r_dur;
                     6'h10: s_axi_rdata <= {28'd0, done, rd_busy, wr_busy, calib};
