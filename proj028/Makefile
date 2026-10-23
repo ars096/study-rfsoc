@@ -41,7 +41,7 @@ export BOARD_REPO PART OUTDIR
 
 PYTHON ?= python3
 
-.PHONY: all prog id timing-check clean model-m1 model-m2 estimate sim-cfft32 s1
+.PHONY: all prog id timing-check clean model-m1 model-m2 estimate sim-cfft32 s1 sim-ddrtg
 
 # 模型 M-1（荒い PFB の原型・タップ数・ポリフェーズの形・トーンの折り返し）。numpy だけ、1 分前後。成否は「結果:」の行
 model-m1:
@@ -64,6 +64,14 @@ S1_JOBS ?= 4
 s1:
 	mkdir -p build-s1
 	$(VIVADO) -mode batch -nojournal -log build-s1/vivado.log -source tools/s1_ooc.tcl -tclargs $(S1_JOBS)
+
+# S-2: 負荷発生器 ddr_tg の単体の sim（AXI4 のメモリの模型）。ふつうと陽性対照（-DALIAS: 4 GB で番地が折り返す模型）を並べて回す。成否は各ログの「結果:」
+sim-ddrtg:
+	mkdir -p build-sim
+	iverilog -g2012 -o build-sim/tb_ddr_tg.vvp tb/tb_ddr_tg.v src/ddr_tg.v
+	iverilog -g2012 -DALIAS -o build-sim/tb_ddr_tg_alias.vvp tb/tb_ddr_tg.v src/ddr_tg.v
+	vvp -n build-sim/tb_ddr_tg.vvp > build-sim/sim_ddrtg.log & vvp -n build-sim/tb_ddr_tg_alias.vvp > build-sim/sim_ddrtg_alias.log & wait
+	@grep "結果:" build-sim/sim_ddrtg.log build-sim/sim_ddrtg_alias.log
 
 # 見積もり E-2・E-3（チップ内の資源・DDR・出口と dt）。表を作るだけ。荒い FFT・MIG・corner turn は仮の値
 estimate:

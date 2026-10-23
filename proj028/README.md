@@ -317,6 +317,27 @@ N_f 131072 は **DSP 42.9 %・BRAM 47.8 %・URAM 47.5 %・LUT 33.9 %・FF 29.4 %
 
 - 外れるとしたら: 両方同時の帯域（MIG の並べ替えの効き、番地の割り付け `ROW_COLUMN_BANK` など）。本番の形が背圧で溢れるなら、corner turn の溜めを深くする（BRAM に余裕はある）か、書きと読みの切り替えをまとめる
 
+### S-2a ddr_tg の単体の sim（`make sim-ddrtg`、2026-10-23）: 通過
+
+`src/ddr_tg.v`（レジスタは冒頭の注釈）を、AW・AR を溜めて wready・rvalid をランダムに落とす AXI4 のメモリの模型（`tb/tb_ddr_tg.v`）で回した。
+
+| 試験 | ふつう | 陽性対照（`-DALIAS`: 4 GB で番地が折り返す模型） |
+|---|---|---|
+| T1 書き 1 周（BL 16、4096 拍） | WR_BEATS 4096・FLAGS 0 | 同じ |
+| T2 読み 1 周 | RD_BEATS 4096・RD_ERR 0 | 同じ |
+| T3 同時（各 1/4 拍、DUR 20000） | WR 5000・RD 4939・誤り 0 | 同じ |
+| T3b 同時・上限なし（BL 256） | WR 15948・RD 8567・誤り 0（模型の待たせ方で決まる） | 同じ |
+| T4 1 bit 化け（陽性対照） | RD_ERR 1・FIRST_ERR_ADDR 6400（拍 100）・FLAGS 1 | 同じ |
+| T5 容量（A = 拍 0・B = 拍 4096 に違う SEED、A を読む） | **RD_ERR 0** | **RD_ERR 4096（全部）** |
+
+途中で 2 つ踏んだ:
+- **試験台の溜めの数え**: 4 bit の差を 32 bit で比べていて、巻き戻りで負になり AW を受けなくなった（DUT ではない）
+- **二重の起動**: 試験台の AXI4-Lite の手続きが ready を negedge で見ていて、bvalid の上下と競合し CTRL を 2 回書いた。DUT は AW を 1 本出した直後に書き手の状態を消し、**余分な AW（257 本に W 256 本）**が出て、T2 の不一致（拍 0 の 16 拍）と T3 の WLAST のずれになった。
+  試験台を posedge で見る手続きに直し、**DUT も走っている間（busy）の起動を受けない**ようにした（途中で状態を消すと AXI の約束を破る。実機の SmartConnect は 2 回書かないが、守りとして）
+- 試験台のラベルに全角文字を入れると iverilog の %s で化ける（判定には効かない。ASCII にした）
+
+OOC 合成（`tools/ooc_rtl.tcl`、`-1`、300 MHz）: **DSP 0・LUT 986・FF 1,388・BRAM 0、合成の WNS +0.581 ns**。Synth 8-3848・CRITICAL WARNING は無い
+
 ## 決めること（西村さんに）
 
 - ~~os と格子~~ → **決定（2026-10-23、西村さん）: os 8/7（M 64、D 56、T_c 27）、M・N_f は 2 のべき乗、dt は 14.336 ms の倍数**（例 71.68 ms = 7 × 10.24 ms）。比べた案: 4/3（DSP 176、dt は 6.144 ms の倍数、DDR 10.9 GB/s）
@@ -350,7 +371,7 @@ N_f 131072 は **DSP 42.9 %・BRAM 47.8 %・URAM 47.5 %・LUT 33.9 %・FF 29.4 %
 
 - os と格子は決めた（os 8/7、dt は 14.336 ms の倍数）。S は 12 に決めた。E-2・E-3 は済み（律速は出口、N = 12.8 M ch/s × dt）。
 - N_f 131072・dt 286.72 ms に決めた。S-1（荒い FFT・MIG・corner turn の溜めの OOC 合成）は済み: N_f 131072 は DSP 42.9 %・BRAM 47.8 %・URAM 47.5 %・LUT 33.9 % で入る見込み
-- 次: S-2（実機で PL DDR4 の実効帯域と容量。作りの案と予言は書いた）の RTL（ddr_tg）と sim → build.tcl → ボードの順番を西村さんと決めて実機 → 荒い段・細かい側の RTL
+- 次: S-2 の build.tcl（PS ＋ MIG ＋ ddr_tg、SmartConnect、XDC は PYNQ の base.xdc の DDR4 の足）→ PS の道具（pynq/ddr_bw.py） → ボードの順番を西村さんと決めて実機 → 荒い段・細かい側の RTL
 - H-0 の残り: 部品は PYNQ の設定から MT40A1G16RC-062E、`-1` で 2400 は IP の設定が通る。容量（4 / 8 GB）は S-2 の実機で
 - 知見: 次の proj でも踏みそうなものを `../docs/lessons_all.md` に足した（要点なら `../LESSONS.md` にも）
 
