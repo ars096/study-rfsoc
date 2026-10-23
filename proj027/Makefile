@@ -5,7 +5,7 @@ PYTHON        ?= python3
 IVERILOG      ?= iverilog
 VVP           ?= vvp
 
-.PHONY: model gen sim-all sim-g24c sim-g24t sim-g24p sim-g24ch clean
+.PHONY: coef-ooc model gen sim-all sim-g24c sim-g24t sim-g24p sim-g24ch clean
 
 # 模型（numpy だけ）。M-a〜d。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -80,3 +80,14 @@ sim-all:
 
 clean:
 	rm -rf build build-* .Xil *.jou *.log runs
+
+# ---- F-2 の測り: g24_coef を 1 個だけ OOC で合成（Vivado。JOBS は最大 8、2026-10-23 西村さん）----
+XILINX_VIVADO ?= /tools/Xilinx/Vivado/2024.1
+VIVADO        := $(XILINX_VIVADO)/bin/vivado
+JOBS          ?= 8
+RULER_REV     := f706170
+coef-ooc:
+	mkdir -p build-ooc/ruler
+	for f in g22_coef.v g22_coef_lo.hex g22_coef_hi.hex; do git --no-optional-locks show $(RULER_REV):proj025/src/g22/$$f > build-ooc/ruler/$$f; done
+	$(VIVADO) -mode batch -nojournal -log build-ooc/vivado.log -source tools/coef_ooc.tcl -tclargs $(JOBS) > /dev/null 2>&1; true
+	@tail -n 5 build-ooc/ooc.txt 2>/dev/null || echo "ooc.txt が無い（build-ooc/vivado.log を読む）"
