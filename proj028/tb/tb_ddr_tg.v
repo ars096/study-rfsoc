@@ -93,6 +93,7 @@ module tb_ddr_tg;
         end
     end
 
+    integer fails = 0;
     // ---- AXI4-Lite の手続き ----
     // ready は posedge の直前の値で見る（negedge で見ると、bvalid の上がり下がりと競合して同じ書き込みを 2 回出した）
     task wr(input [7:0] a, input [31:0] d); begin
@@ -123,7 +124,6 @@ module tb_ddr_tg;
         wr(8'h0C, wrate); wr(8'h10, rrate); wr(8'h28, dur);
     end endtask
 
-    integer fails = 0;
     task expect64(input [8*96-1:0] what, input [63:0] got, input [63:0] lo, input [63:0] hi); begin
         if (got < lo || got > hi) begin $display("  ×  %0s = %0d（期待 %0d〜%0d）", what, got, lo, hi); fails = fails + 1; end
         else $display("  ○  %0s = %0d", what, got);
@@ -131,7 +131,20 @@ module tb_ddr_tg;
 
     reg [63:0] wb, rb, er, cy;
     initial begin
-        repeat (20) @(posedge clk); aresetn = 1; repeat (5) @(posedge clk);
+        // T0 リセット中の読みは受けない（2026-10-23 の実機で、リセット中に AR の握手が成立して応答が返らず PS ごと止まった）
+        repeat (3) @(posedge clk);
+        @(negedge clk); araddr = 8'h00; arvalid = 1;
+        repeat (10) begin @(posedge clk); if (arready === 1'b1) begin $display("  ×  T0: リセット中に arready が立った"); fails = fails + 1; end end
+        @(negedge clk); awaddr = 8'h04; wdata = 0; awvalid = 1; wvalid = 1;
+        repeat (5) begin @(posedge clk); if (awready === 1'b1) begin $display("  ×  T0: リセット中に awready が立った"); fails = fails + 1; end end
+        @(negedge clk); awvalid = 0; wvalid = 0;
+        aresetn = 1;
+        @(posedge clk); while (arready !== 1'b1) @(posedge clk);
+        @(negedge clk); arvalid = 0;
+        while (rvalid !== 1'b1) @(negedge clk);
+        if (rdata !== 32'h0280_0001) begin $display("  ×  T0: リセット明けの読みが %h", rdata); fails = fails + 1; end
+        else $display("T0 リセット中の読みは待たされ、明けてから返った（ID %h）", rdata);
+        @(negedge clk); repeat (5) @(posedge clk);
         rd(8'h00); $display("ID %h", rd_v);
         // T1 書き 1 周（BL 16 拍、256 KiB = 4096 拍）
         $display("T1 書き 1 周");

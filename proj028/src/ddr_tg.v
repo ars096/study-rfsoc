@@ -109,9 +109,10 @@ module ddr_tg #(
     reg  [16:0] r_wrate, r_rrate;
     reg  [AW-1:0] r_base, r_size;
     reg  [31:0] r_seed, r_dur;
-    wire wr_go = s_axi_awvalid && s_axi_wvalid && !s_axi_bvalid;
+    wire wr_go = s_axi_awvalid && s_axi_wvalid && !s_axi_bvalid && !rst;
     assign s_axi_awready = wr_go;
     assign s_axi_wready  = wr_go;
+    // （wr_go と s_axi_arready はリセット中に 0。リセット中に握手が成立すると応答が返らず、PS ごと止まる: 2026-10-23 の実機）
     assign s_axi_bresp   = 2'b00;
     wire [5:0] wa = s_axi_awaddr[7:2];
     wire clr = wr_go && wa == 6'h01 && s_axi_wdata[3];
@@ -163,7 +164,7 @@ module ddr_tg #(
     wire [BA-1:0] base_b = r_base[AW-1:6];
     wire [BA-1:0] bl1 = {{(BA-8){1'b0}}, r_bl} + {{(BA-1){1'b0}}, 1'b1};
     wire aw_room = (aw_out + b_out) < OUTS;
-    wire aw_can = r_wen && !(r_one && wr_wrapped) && aw_room && !done;
+    wire aw_can = r_wen && !(r_one && wr_wrapped) && aw_room && !done && calib;   // MIG の較正が済むまで出さない
     wire w_tok  = (r_wrate == 17'd65536) || (wtok >= 25'd65536);
     assign m_axi_wvalid = (aw_out != 4'd0) && w_tok;
     assign m_axi_wlast  = (w_cnt == r_bl);
@@ -207,7 +208,7 @@ module ddr_tg #(
     reg  [3:0]    ar_out;                          // AR を出して最後の R を受けていないバースト
     reg           rd_wrapped;
     wire r_tok  = (r_rrate == 17'd65536) || (rtok >= {r_bl, 16'd0} + 25'd65536);
-    wire ar_can = r_ren && !(r_one && rd_wrapped) && (ar_out < OUTS) && r_tok && !done;
+    wire ar_can = r_ren && !(r_one && rd_wrapped) && (ar_out < OUTS) && r_tok && !done && calib;
     assign m_axi_arlen = r_bl; assign m_axi_arsize = 3'd6; assign m_axi_arburst = 2'b01;
     assign m_axi_rready = 1'b1;
     wire ar_fire = m_axi_arvalid && m_axi_arready;
@@ -267,7 +268,7 @@ module ddr_tg #(
     end
 
     // ---- 読み出し ----
-    assign s_axi_arready = !s_axi_rvalid;
+    assign s_axi_arready = !s_axi_rvalid && !rst;
     assign s_axi_rresp   = 2'b00;
     wire [63:0] fe64 = {{(64-AW){1'b0}}, first_err};
     always @(posedge clk) begin

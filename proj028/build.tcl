@@ -37,7 +37,9 @@ if {$part_actual ne $part} { puts "ERROR: part が違う（要求 $part・実際
 
 # ---- RTL ----
 add_files [file normalize ./src/ddr_tg.v]
+add_files [file normalize ./src/clk_mon.v]
 add_files -fileset constrs_1 [file normalize ./src/board/ddr4.xdc]
+add_files -fileset constrs_1 [file normalize ./src/board/clk_mon.xdc]
 update_compile_order -fileset sources_1
 
 create_bd_design $bd_name
@@ -124,7 +126,12 @@ set rst_ui [create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset rst_ui]
 #   （1 回目のビルドは設定しようとして CRITICAL WARNING BD 41-737 を出した。値は 1 で正しかった）
 connect_bd_net [get_bd_pins ddr4_0/c0_ddr4_ui_clk] [get_bd_pins rst_ui/slowest_sync_clk]
 connect_bd_net [get_bd_pins ddr4_0/c0_ddr4_ui_clk_sync_rst] [get_bd_pins rst_ui/ext_reset_in]
-connect_bd_net [get_bd_pins ddr4_0/c0_init_calib_complete] [get_bd_pins rst_ui/dcm_locked]
+# dcm_locked は定数 1: ddr_tg の制御の口は UI クロックのリセットが明けたら受ける（較正の終わりまで待たせない）。
+#   DDR への読み書きは ddr_tg の中で calib が立つまで出さない。
+#   （1 回目の実機: dcm_locked = calib で、較正の前の読みが応答を返さず PS ごと止まった。2026-10-23）
+set one [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant one_ui]
+set_property -dict [list CONFIG.CONST_WIDTH 1 CONFIG.CONST_VAL 1] $one
+connect_bd_net [get_bd_pins one_ui/dout] [get_bd_pins rst_ui/dcm_locked]
 
 # ---- ddr_tg ----
 set tg [create_bd_cell -type module -reference ddr_tg ddr_tg_0]
@@ -136,21 +143,38 @@ connect_bd_intf_net [get_bd_intf_pins ddr_tg_0/m_axi] [get_bd_intf_pins ddr4_0/C
 
 # ---- 制御（SmartConnect が乗り換えを持つ。自作の CDC は書かない）----
 set smc [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect smc_ctrl]
-set_property -dict [list CONFIG.NUM_SI 1 CONFIG.NUM_MI 1 CONFIG.NUM_CLKS 2] $smc
+set_property -dict [list CONFIG.NUM_SI 1 CONFIG.NUM_MI 2 CONFIG.NUM_CLKS 2] $smc
 connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins smc_ctrl/aclk] [get_bd_pins zynq_ultra_ps_e_0/maxihpm0_fpd_aclk]
 connect_bd_net [get_bd_pins ddr4_0/c0_ddr4_ui_clk] [get_bd_pins smc_ctrl/aclk1]
 connect_bd_net [get_bd_pins rst_ctrl/interconnect_aresetn] [get_bd_pins smc_ctrl/aresetn]
 connect_bd_intf_net [get_bd_intf_pins zynq_ultra_ps_e_0/M_AXI_HPM0_FPD] [get_bd_intf_pins smc_ctrl/S00_AXI]
 connect_bd_intf_net [get_bd_intf_pins smc_ctrl/M00_AXI] [get_bd_intf_pins ddr_tg_0/s_axi]
 
+# ---- clk_mon（pl_clk0 の側。MIG のクロックに依らずに読める見張り。PS は ddr_tg より先にここを読む）----
+set cm [create_bd_cell -type module -reference clk_mon clk_mon_0]
+connect_bd_net [get_bd_pins zynq_ultra_ps_e_0/pl_clk0] [get_bd_pins clk_mon_0/clk]
+connect_bd_net [get_bd_pins rst_ctrl/peripheral_aresetn] [get_bd_pins clk_mon_0/aresetn]
+connect_bd_net [get_bd_pins bufg_ddr4/BUFG_O] [get_bd_pins clk_mon_0/ref_clk]
+connect_bd_net [get_bd_pins ddr4_0/c0_ddr4_ui_clk] [get_bd_pins clk_mon_0/ui_clk]
+connect_bd_net [get_bd_pins ddr4_0/c0_init_calib_complete] [get_bd_pins clk_mon_0/calib]
+connect_bd_net [get_bd_pins ddr4_0/c0_ddr4_ui_clk_sync_rst] [get_bd_pins clk_mon_0/ui_rst]
+connect_bd_intf_net [get_bd_intf_pins smc_ctrl/M01_AXI] [get_bd_intf_pins clk_mon_0/s_axi]
+
 # ---- 番地 ----
 assign_bd_address
+# assign_bd_address がどちらを 0xA000_0000 に置くかは決まっていないので、先に clk_mon を空いた番地へ動かしてから ddr_tg を置く
+#   （1 回目の作り直しで clk_mon が 0xA000_0000 に置かれ、ddr_tg と重なって BD 41-70 で止まった）
 set seg_tg [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces zynq_ultra_ps_e_0/Data] -filter {NAME =~ *ddr_tg_0*}]
 if {[llength $seg_tg] != 1} { puts "ERROR: ddr_tg_0 の番地の区画が 1 個でない（$seg_tg）"; exit 1 }
-set_property offset 0xA0000000 $seg_tg
+set seg_cm [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces zynq_ultra_ps_e_0/Data] -filter {NAME =~ *clk_mon_0*}]
+if {[llength $seg_cm] != 1} { puts "ERROR: clk_mon_0 の番地の区画が 1 個でない（$seg_cm）"; exit 1 }
+set_property range 4K $seg_cm
+set_property offset 0xA0010000 $seg_cm
 set_property range 4K $seg_tg
+set_property offset 0xA0000000 $seg_tg
+set_property offset 0xA0001000 $seg_cm
 set seg_ddr [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces ddr_tg_0/m_axi] ]
-puts "番地    : ddr_tg_0 = [get_property offset $seg_tg]（[get_property range $seg_tg]）・ddr_tg の m_axi → [get_property range [lindex $seg_ddr 0]]"
+puts "番地    : ddr_tg_0 = [get_property offset $seg_tg]（[get_property range $seg_tg]）・clk_mon_0 = [get_property offset $seg_cm]・ddr_tg の m_axi → [get_property range [lindex $seg_ddr 0]]"
 
 validate_bd_design
 save_bd_design
@@ -170,7 +194,12 @@ set ng 0
 foreach {pin must mustnot} {
     ddr_tg_0/clk     {/ddr4_0/c0_ddr4_ui_clk /smc_ctrl/aclk1 /rst_ui/slowest_sync_clk} {/zynq_ultra_ps_e_0/pl_clk0}
     ddr_tg_0/aresetn {/rst_ui/peripheral_aresetn /ddr4_0/c0_ddr4_aresetn}                {/rst_ctrl/peripheral_aresetn /rst_ctrl/interconnect_aresetn}
-    ddr_tg_0/calib   {/ddr4_0/c0_init_calib_complete /rst_ui/dcm_locked}                 {}
+    ddr_tg_0/calib   {/ddr4_0/c0_init_calib_complete /clk_mon_0/calib}                   {/rst_ui/dcm_locked}
+    rst_ui/dcm_locked {/one_ui/dout}                                                     {/ddr4_0/c0_init_calib_complete}
+    clk_mon_0/clk    {/zynq_ultra_ps_e_0/pl_clk0}                                        {/ddr4_0/c0_ddr4_ui_clk}
+    clk_mon_0/aresetn {/rst_ctrl/peripheral_aresetn}                                     {/rst_ui/peripheral_aresetn}
+    clk_mon_0/ref_clk {/bufg_ddr4/BUFG_O /ddr4_0/c0_sys_clk_i}                           {}
+    clk_mon_0/ui_rst {/ddr4_0/c0_ddr4_ui_clk_sync_rst /rst_ui/ext_reset_in}              {}
     smc_ctrl/aclk    {/zynq_ultra_ps_e_0/pl_clk0}                                        {/ddr4_0/c0_ddr4_ui_clk}
     ddr4_0/sys_rst   {/rst_ctrl/peripheral_reset}                                        {/rst_ui/peripheral_reset}
 } {
@@ -212,6 +241,11 @@ for {set try 1} {$try <= 2 && [get_property PROGRESS [get_runs impl_1]] ne "100%
 if {[get_property PROGRESS [get_runs impl_1]] ne "100%"} { puts "ERROR: impl_1 が完走していない（$projdir の run のログ）"; exit 1 }
 
 open_run impl_1
+
+# ---- clk_mon の同期器の false path が効く相手が在るか（XDC の get_cells が空だと、制約は黙って効かない）----
+set n_sync [llength [get_cells -quiet -hierarchical -filter {NAME =~ */clk_mon_0/inst/s_ref_reg[0] || NAME =~ */clk_mon_0/inst/s_ui_reg[0] || NAME =~ */clk_mon_0/inst/s_cal_reg[0] || NAME =~ */clk_mon_0/inst/s_rst_reg[0]}]]
+puts "clk_mon の同期器の 1 段目: $n_sync 個（期待 4）"
+if {$n_sync != 4} { puts "ERROR: clk_mon.xdc の false path の相手が 4 個でない（セルの名前が変わった？）"; exit 1 }
 
 # ---- 足の配置の読み返し（PYNQ の base.xdc と BSP の 4x2_PL_DDR4.xdc で 115 本とも一致を確かめた足から 5 本）----
 set ng 0

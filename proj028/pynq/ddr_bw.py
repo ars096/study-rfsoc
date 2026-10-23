@@ -4,7 +4,9 @@
 
   sudo python3 ddr_bw.py [--bit proj028.bit] [--out ddr_bw.json] [--quick]
 
-1. 載せた .bit の ID（0x02800001）を照らし、MIG の較正（init_calib_complete）を待つ
+1. **ddr_tg より先に clk_mon（pl_clk0 の側、MIG のクロックに依らない）を読む**: 参照クロック（200 MHz）と UI クロック（≒ 300 MHz）が
+   回っているか、UI のリセットが明けたか、MIG の較正（init_calib_complete）が済んだか。どれかが駄目なら ddr_tg に触らずに止まる
+   （2026-10-23 の 1 回目: 較正の前に ddr_tg を読み、応答が返らず PS ごと止まった）。それから ddr_tg の ID（0x02800001）を照らす
 2. 容量: 区間 A（0 番地）と B（4 GiB 番地）に違う SEED で書き、A を読む（4 GB なら B が A に折り返して全部が不一致）
 3. 8 GiB 全体を書いて読み返す（誤り 0 を確かめる）
 4. 帯域: BL 16・64・256 拍 × 書きだけ・読みだけ・両方同時、各 1 s（UI クロックの拍で数える）
@@ -22,6 +24,7 @@ import time
 F_UI = 1e12 / (833 * 4)              # MIG の UI クロック（tCK 833 ps、4:1）≒ 300.12 MHz
 BEAT = 64                            # 512 bit
 ID_WANT = 0x02800001
+CM_ID = 0x028000C1
 GIB = 1 << 30
 
 R = dict(ID=0x00, CTRL=0x04, BL=0x08, WR_RATE=0x0C, RD_RATE=0x10, BASE_LO=0x14, BASE_HI=0x18, SIZE_LO=0x1C, SIZE_HI=0x20,
@@ -89,9 +92,50 @@ def main():
     a = ap.parse_args()
     from pynq import Overlay, MMIO
     ol = Overlay(a.bit)
+    res = dict(bit=a.bit)
+    # ---- clk_mon（pl_clk0 の側）を先に ----
+    ipc = ol.ip_dict["clk_mon_0"]
+    cm = MMIO(ipc["phys_addr"], ipc["addr_range"])
+    cid = cm.read(0x00)
+    print("clk_mon ID 0x%08x" % cid)
+    if cid != CM_ID:
+        print("ERROR: clk_mon の ID が 0x%08x でない（proj028 S-2 の .bit か確かめる）" % CM_ID)
+        sys.exit(1)
+    win_s = cm.read(0x10) / 100e6                       # pl_clk0 は 100 MHz
+    t0 = time.time()
+    while True:
+        st = cm.read(0x04)
+        if st & 4:
+            break
+        if time.time() - t0 > 5:
+            print("ERROR: clk_mon の窓が回らない（pl_clk0 が来ていない？）")
+            sys.exit(1)
+        time.sleep(0.1)
+    time.sleep(win_s + 0.1)                              # 較正を待つ間に 1 窓ぶん数える
+    t0 = time.time()
+    while True:
+        st = cm.read(0x04)
+        ref_mhz = cm.read(0x08) * 16 / win_s / 1e6
+        ui_mhz = cm.read(0x0C) * 16 / win_s / 1e6
+        calib, ui_rst = st & 1, (st >> 1) & 1
+        if (calib and not ui_rst) or time.time() - t0 > 10:
+            break
+        time.sleep(0.2)
+    print("clk_mon: 参照クロック %.3f MHz・UI クロック %.3f MHz・UI のリセット %s・較正 %s"
+          % (ref_mhz, ui_mhz, "中" if ui_rst else "明け", "済み" if calib else "まだ"))
+    res["clk_mon"] = dict(ref_mhz=ref_mhz, ui_mhz=ui_mhz, ui_rst=ui_rst, calib=calib)
+    if not (190 < ref_mhz < 210):
+        print("ERROR: DDR4 の参照クロック（G13/G12、200 MHz）が来ていない。ddr_tg には触らずに止める")
+        sys.exit(1)
+    if not (290 < ui_mhz < 310) or ui_rst:
+        print("ERROR: MIG の UI クロックが回っていないか、UI のリセットが明けない。ddr_tg には触らずに止める")
+        sys.exit(1)
+    if not calib:
+        print("ERROR: MIG の較正が 10 s で済まない（足・部品の設定・DDR4 の素性を疑う）。ddr_tg には触らずに止める")
+        sys.exit(1)
+    # ---- ここから ddr_tg（UI クロックの側）----
     ipd = ol.ip_dict["ddr_tg_0"]
     tg = TG(MMIO(ipd["phys_addr"], ipd["addr_range"]))
-    res = dict(bit=a.bit)
     idv = tg.r("ID")
     print("ID 0x%08x" % idv)
     if idv != ID_WANT:

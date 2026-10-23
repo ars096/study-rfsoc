@@ -363,7 +363,7 @@ ddr_tg に AXI4 の残りの信号（ID・lock・cache・prot・qos、定数）�
   この値は**つないだピン（MIG の `c0_ddr4_ui_clk_sync_rst`、高で効く）の極性から伝わる read-only**で、.hwh を読むと 1（正しい）だった。
   設定をやめ、validate の後で rst_ui = 1・rst_ctrl = 0 を読み返して違えば止める照合に替えて作り直した（.bit の中身は同じ形。WNS も +0.026289 ns まで同じで再現した）
 - WNS の余裕は小さいが、MIG の中の経路で、自作の論理は関わらない。実機で較正が通るか・誤りが出ないかで見る
-- 成果物（ボードに送るのは build/ だけ。1 回目は build-run1/ に退けた）: `build/proj028.bit` sha256 `b6e89bde…6415aa`・`build/proj028.hwh` `528bd1cf…fdd038`
+- 成果物: S-2b の .bit（sha256 `b6e89bde…6415aa`）は**実機で OS を止めたので使わない**（S-2d で作り直した）
 
 ### S-2c 実機の手順（西村さんがボードの空きを見て回す）
 
@@ -382,6 +382,31 @@ mkdir -p runs && scp xilinx@$B:~/proj028/ddr_bw.json runs/
 
 読むところ: `ID 0x02800001` → `較正: 済み` → `容量:`（8 GB / 4 GB）→ `全体`（不一致 0）→ 帯域の表 → `本番の形`（○・○、不一致 0）。
 ADC の入力・SG は要らない（DDR だけの試験）。Overlay を替えるので、ほかの bit を使っている途中なら終わってから
+
+### S-2d 実機の 1 回目（2026-10-23、西村さん）: **ddr_bw.py の実行中に OS がハング**
+
+- 1 回目の起動は `ModuleNotFoundError: pynq`（ssh にコマンドを直接渡すとログインシェルが読まれず venv に入らない）→ `sudo -i` の中で回す形に直した
+- 2 回目で OS ごと止まった。LESSONS の「MMCM のロック前に AXI4-Lite で読むと SmartConnect が応答を待ち続け、PS ごと止まった」（proj009・021）と同じ形
+- **原因（設計を読んで見つけた。実機では切り分けていない）**: `ddr_tg` の AXI4-Lite は**リセット中も arready = 1** を出していた。
+  `rst_ui` の dcm_locked を `init_calib_complete` にしていたので、較正が済むまで ddr_tg はリセットの中。
+  道具は Overlay の直後（較正を待つ前）に ID を読むので、AR の握手がリセット中に成立し、rvalid はリセットで 0 のまま → **応答が二度と返らない**。
+  参照クロックが来ていない（UI クロックが出ない）場合も同じく止まる（こちらは否定できていない。LMK04828 の設定ファイルの VCO から 200 MHz は作れないので、固定の発振器と見ている）
+- 直したこと:
+  1. ddr_tg・clk_mon の AXI4-Lite は**リセット中に awready・wready・arready を出さない**。sim に T0（リセット中の読みは待たされ、明けてから返る）を足した。
+     **陽性対照: 直す前の形（arready = !rvalid）では T0 が落ちる**ことを確かめた
+  2. rst_ui の dcm_locked は定数 1（ddr_tg の制御の口は UI のリセットが明けたら受ける）。DDR への読み書きは ddr_tg の中で calib が立つまで出さない
+  3. **clk_mon**（`src/clk_mon.v`、pl_clk0 の側、0xA000_1000）: 参照クロック・UI クロックの速さ（f/16 を 2 段の同期器で受けて 1 s の窓で数える）・calib・UI のリセット。
+     MIG のクロックに依らずに読める。`ddr_bw.py` はまずここを読み、参照 200 MHz・UI 300 MHz・リセット明け・較正済みのときだけ ddr_tg に触る（どれか駄目なら原因を出して止まる）。
+     sim: ふつう（参照 2500・UI 3749、期待 2500・3750）と陽性対照（UI を止める: 読みは返り UI_CNT 0）を通過。同期器の 1 段目は `src/board/clk_mon.xdc` で false path、build.tcl で相手が 4 個在るかを照らす
+- **知見**（閉じるときに LESSONS へ）: 自作の AXI4-Lite の口はリセット中に ready を出さない。PS が最初に読むものは、止まりうるクロック（MIG の UI など）の側に置かない
+
+予言（作り直し）: 照合は全部通る・CRITICAL WARNING 0・WNS は +0.02 ns 前後（MIG の中の経路のまま）・LUT +300 程度。
+実機（2 回目）: clk_mon が参照 200.0 MHz・UI 300.1 MHz・較正済みを出し、その後は S-2b の予言どおり
+
+**作り直しの結果（2026-10-23）**: 照合は全部通過（番地 ddr_tg_0 = 0xA000_0000・clk_mon_0 = 0xA000_1000、clk_mon の同期器の 1 段目 4 個）・**CRITICAL WARNING 0・WNS +0.121 ns・WHS +0.006 ns**・LUT 17,484（4.1 %、+290）。
+予言の WNS「+0.02 ns 前後」は外れ（配置の組み替わりで MIG の中の経路が動いた。LESSONS の ±0.1〜0.2 ns の揺れの中）。
+1 回目の作り直しは番地で止まった（`assign_bd_address` が clk_mon を 0xA000_0000 に置き、ddr_tg を置こうとして BD 41-70）→ 先に clk_mon を動かしてから ddr_tg を置く順に直した。
+成果物: `build/proj028.bit` sha256 `7dee0eb7…7eb3c575`・`build/proj028.hwh` `79513a14…4ba7b1178f`（S-2b の .bit は使わない）
 
 ## 決めること（西村さんに）
 

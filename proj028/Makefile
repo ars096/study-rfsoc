@@ -68,7 +68,10 @@ sim-ddrtg:
 	iverilog -g2012 -o build-sim/tb_ddr_tg.vvp tb/tb_ddr_tg.v src/ddr_tg.v
 	iverilog -g2012 -DALIAS -o build-sim/tb_ddr_tg_alias.vvp tb/tb_ddr_tg.v src/ddr_tg.v
 	vvp -n build-sim/tb_ddr_tg.vvp > build-sim/sim_ddrtg.log & vvp -n build-sim/tb_ddr_tg_alias.vvp > build-sim/sim_ddrtg_alias.log & wait
-	@grep "結果:" build-sim/sim_ddrtg.log build-sim/sim_ddrtg_alias.log
+	iverilog -g2012 -o build-sim/tb_clk_mon.vvp tb/tb_clk_mon.v src/clk_mon.v
+	iverilog -g2012 -DNO_UI -o build-sim/tb_clk_mon_noui.vvp tb/tb_clk_mon.v src/clk_mon.v
+	vvp -n build-sim/tb_clk_mon.vvp > build-sim/sim_clkmon.log & vvp -n build-sim/tb_clk_mon_noui.vvp > build-sim/sim_clkmon_noui.log & wait
+	@grep "結果:" build-sim/sim_ddrtg.log build-sim/sim_ddrtg_alias.log build-sim/sim_clkmon.log build-sim/sim_clkmon_noui.log
 
 # 見積もり E-2・E-3（チップ内の資源・DDR・出口と dt）。表を作るだけ。荒い FFT・MIG・corner turn は仮の値
 estimate:
