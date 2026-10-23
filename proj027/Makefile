@@ -5,7 +5,7 @@ PYTHON        ?= python3
 IVERILOG      ?= iverilog
 VVP           ?= vvp
 
-.PHONY: coef-ooc model gen sim-all sim-g24c sim-g24t sim-g24p sim-g24ch clean
+.PHONY: coef-ooc wide-hier model gen sim-all sim-g24c sim-g24t sim-g24p sim-g24ch clean
 
 # 模型（numpy だけ）。M-a〜d。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -91,3 +91,9 @@ coef-ooc:
 	for f in g22_coef.v g22_coef_lo.hex g22_coef_hi.hex; do git --no-optional-locks show $(RULER_REV):proj025/src/g22/$$f > build-ooc/ruler/$$f; done
 	$(VIVADO) -mode batch -nojournal -log build-ooc/vivado.log -source tools/coef_ooc.tcl -tclargs $(JOBS) > /dev/null 2>&1; true
 	@tail -n 5 build-ooc/ooc.txt 2>/dev/null || echo "ooc.txt が無い（build-ooc/vivado.log を読む）"
+
+# ---- Wide の束ね・切り出しの LUT: proj023 ビルド 11 の配線済みチェックポイントを読むだけで開き、階層を深くして数える ----
+wide-hier:
+	mkdir -p build-wide
+	$(VIVADO) -mode batch -nojournal -log build-wide/vivado.log -source tools/wide_hier.tcl > /dev/null 2>&1; true
+	@grep -E 'CLB LUTs:|NG|結果:' build-wide/vivado.log | grep -v '^#' | tail -n 6
