@@ -1,0 +1,346 @@
+  EVENT seq 1: {"ev": "START", "start_at": 2157445120, "utc_ns": 1792734989045001829, "n": 0, "forced": false, "version": "proj025-0.1", "proto": 2, "fmt": "f32", "ids": {"win": "02010000/02010000", "adc": "020a0101", "time": "020a0102", "proj": "00250100", "kind": "g22", "lmx_vco": "7864.32", "lmx_pwr": "31", "re
+  EVENT seq 284: {"ev": "TP_JUMP", "adc": 0, "t_beat": 2401764149, "utc_ns": 1792734989999373036, "n": 1, "db": 3.0651, "step_db": 0.0, "sigma_db": 0.03325, "ovr": false}
+  EVENT seq 286: {"ev": "TP_JUMP", "adc": 1, "t_beat": 2401764149, "utc_ns": 1792734989999373036, "n": 1, "db": 2.4761, "step_db": 0.0, "sigma_db": 0.09016, "ovr": false}
+  EVENT seq 290: {"ev": "TP_JUMP", "adc": 2, "t_beat": 2401763327, "utc_ns": 1792734989999369827, "n": 1, "db": 3.1477, "step_db": 0.0, "sigma_db": 0.03886, "ovr": false}
+  EVENT seq 292: {"ev": "TP_JUMP", "adc": 3, "t_beat": 2401763327, "utc_ns": 1792734989999369827, "n": 1, "db": 2.6772, "step_db": 0.0, "sigma_db": 0.10615, "ovr": false}
+  EVENT seq 576: {"ev": "TP_JUMP", "adc": 0, "t_beat": 2657878837, "utc_ns": 1792734990999821036, "n": 1, "db": 3.0792, "step_db": 0.0, "sigma_db": 0.0337, "ovr": false}
+  EVENT seq 578: {"ev": "TP_JUMP", "adc": 1, "t_beat": 2657878837, "utc_ns": 1792734990999821036, "n": 1, "db": 2.5791, "step_db": 0.0, "sigma_db": 0.09332, "ovr": false}
+  EVENT seq 580: {"ev": "TP_JUMP", "adc": 2, "t_beat": 2657878015, "utc_ns": 1792734990999817827, "n": 1, "db": 3.1615, "step_db": 0.0, "sigma_db": 0.04581, "ovr": false}
+  EVENT seq 582: {"ev": "TP_JUMP", "adc": 3, "t_beat": 2657878015, "utc_ns": 1792734990999817827, "n": 1, "db": 2.4641, "step_db": 0.0, "sigma_db": 0.17992, "ovr": false}
+  EVENT seq 882: {"ev": "TP_JUMP", "adc": 0, "t_beat": 2913731381, "utc_ns": 1792734991999245036, "n": 1, "db": 3.0725, "step_db": 0.0, "sigma_db": 0.03735, "ovr": false}
+  EVENT seq 884: {"ev": "TP_JUMP", "adc": 1, "t_beat": 2913731381, "utc_ns": 1792734991999245036, "n": 1, "db": 2.4981, "step_db": 0.0, "sigma_db": 0.07874, "ovr": false}
+  EVENT seq 886: {"ev": "TP_JUMP", "adc": 2, "t_beat": 2913730559, "utc_ns": 1792734991999241827, "n": 1, "db": 3.1269, "step_db": 0.0, "sigma_db": 0.05381, "ovr": false}
+  EVENT seq 888: {"ev": "TP_JUMP", "adc": 3, "t_beat": 2913730559, "utc_ns": 1792734991999241827, "n": 1, "db": 2.5342, "step_db": 0.0, "sigma_db": 0.10509, "ovr": false}
+  EVENT seq 1078: {"ev": "TP_JUMP", "adc": 0, "t_beat": 3084911413, "utc_ns": 1792734992667917036, "n": 1, "db": 0.2225, "step_db": 0.0, "sigma_db": 0.03423, "ovr": false}
+  EVENT seq 1173: {"ev": "TP_JUMP", "adc": 0, "t_beat": 3169846069, "utc_ns": 1792734992999693036, "n": 1, "db": 3.063, "step_db": 0.0, "sigma_db": 0.03423, "ovr": false}
+  EVENT seq 1175: {"ev": "TP_JUMP", "adc": 1, "t_beat": 3169846069, "utc_ns": 1792734992999693036, "n": 1, "db": 2.691, "step_db": 0.0, "sigma_db": 0.10473, "ovr": false}
+  EVENT seq 1179: {"ev": "TP_JUMP", "adc": 2, "t_beat": 3169845247, "utc_ns": 1792734992999689827, "n": 1, "db": 3.1297, "step_db": 0.0, "sigma_db": 0.05417, "ovr": false}
+  EVENT seq 1181: {"ev": "TP_JUMP", "adc": 3, "t_beat": 3169845247, "utc_ns": 1792734992999689827, "n": 1, "db": 2.5357, "step_db": 0.0, "sigma_db": 0.09802, "ovr": false}
+  EVENT seq 1479: {"ev": "TP_JUMP", "adc": 0, "t_beat": 3425698613, "utc_ns": 1792734993999117036, "n": 1, "db": 3.1087, "step_db": -0.0007, "sigma_db": 0.03791, "ovr": false}
+  EVENT seq 1481: {"ev": "TP_JUMP", "adc": 1, "t_beat": 3425698613, "utc_ns": 1792734993999117036, "n": 1, "db": 2.6019, "step_db": -0.0003, "sigma_db": 0.08564, "ovr": false}
+  EVENT seq 1483: {"ev": "TP_JUMP", "adc": 2, "t_beat": 3425697791, "utc_ns": 1792734993999113827, "n": 1, "db": 3.1516, "step_db": 0.0016, "sigma_db": 0.04084, "ovr": false}
+  EVENT seq 1485: {"ev": "TP_JUMP", "adc": 3, "t_beat": 3425697791, "utc_ns": 1792734993999113827, "n": 1, "db": 2.6256, "step_db": 0.0107, "sigma_db": 0.10729, "ovr": false}
+  EVENT seq 1771: {"ev": "DROP", "from": 1552, "to": 1770, "n": 219}
+  EVENT seq 1772: {"ev": "TP_JUMP", "adc": 0, "t_beat": 3681813301, "utc_ns": 1792734994999565036, "n": 1, "db": 3.0772, "step_db": 0.0, "sigma_db": 0.03959, "ovr": false}
+  EVENT seq 1774: {"ev": "DROP", "from": 1773, "to": 1773, "n": 1}
+  EVENT seq 1775: {"ev": "TP_JUMP", "adc": 1, "t_beat": 3681813301, "utc_ns": 1792734994999565036, "n": 1, "db": 2.7019, "step_db": 0.0, "sigma_db": 0.08946, "ovr": false}
+  EVENT seq 1777: {"ev": "DROP", "from": 1776, "to": 1776, "n": 1}
+  EVENT seq 1780: {"ev": "DROP", "from": 1778, "to": 1779, "n": 2}
+  EVENT seq 2067: {"ev": "DROP", "from": 1781, "to": 2066, "n": 286}
+  EVENT seq 8506: {"ev": "DROP", "from": 2068, "to": 8505, "n": 6438}
+  EVENT seq 8615: {"ev": "TP_JUMP", "adc": 0, "t_beat": 9569829685, "utc_ns": 1792735017999629036, "n": 1, "db": 2.987, "step_db": -0.0022, "sigma_db": 0.0465, "ovr": false}
+  EVENT seq 8617: {"ev": "TP_JUMP", "adc": 1, "t_beat": 9569829685, "utc_ns": 1792735017999629036, "n": 1, "db": 2.5204, "step_db": 0.0006, "sigma_db": 0.06883, "ovr": false}
+  EVENT seq 8619: {"ev": "TP_JUMP", "adc": 2, "t_beat": 9569828863, "utc_ns": 1792735017999625827, "n": 1, "db": 3.1139, "step_db": 0.0013, "sigma_db": 0.03966, "ovr": false}
+  EVENT seq 8621: {"ev": "TP_JUMP", "adc": 3, "t_beat": 9569828863, "utc_ns": 1792735017999625827, "n": 1, "db": 2.6868, "step_db": 0.0048, "sigma_db": 0.08918, "ovr": false}
+  EVENT seq 8907: {"ev": "TP_JUMP", "adc": 0, "t_beat": 9825682229, "utc_ns": 1792735018999053036, "n": 2, "db": 1.7848, "step_db": 0.0, "sigma_db": 0.04738, "ovr": false}
+  EVENT seq 8909: {"ev": "TP_JUMP", "adc": 1, "t_beat": 9825682229, "utc_ns": 1792735018999053036, "n": 2, "db": 1.3832, "step_db": 0.0, "sigma_db": 0.08226, "ovr": false}
+  EVENT seq 8911: {"ev": "TP_JUMP", "adc": 2, "t_beat": 9825681407, "utc_ns": 1792735018999049827, "n": 2, "db": 1.8816, "step_db": 0.0, "sigma_db": 0.04802, "ovr": false}
+  EVENT seq 8913: {"ev": "TP_JUMP", "adc": 3, "t_beat": 9825681407, "utc_ns": 1792735018999049827, "n": 2, "db": 1.5032, "step_db": 0.0, "sigma_db": 0.10217, "ovr": false}
+  EVENT seq 9199: {"ev": "TP_JUMP", "adc": 0, "t_beat": 10081796917, "utc_ns": 1792735019999501036, "n": 1, "db": 3.0868, "step_db": 0.0, "sigma_db": 0.05074, "ovr": false}
+  EVENT seq 9201: {"ev": "TP_JUMP", "adc": 1, "t_beat": 10081796917, "utc_ns": 1792735019999501036, "n": 1, "db": 2.5715, "step_db": 0.0, "sigma_db": 0.07887, "ovr": false}
+  EVENT seq 9203: {"ev": "TP_JUMP", "adc": 2, "t_beat": 10081796095, "utc_ns": 1792735019999497827, "n": 1, "db": 3.0744, "step_db": 0.0, "sigma_db": 0.05175, "ovr": false}
+  EVENT seq 9205: {"ev": "TP_JUMP", "adc": 3, "t_beat": 10081796095, "utc_ns": 1792735019999497827, "n": 1, "db": 2.627, "step_db": 0.0, "sigma_db": 0.08095, "ovr": false}
+  EVENT seq 9503: {"ev": "TP_JUMP", "adc": 0, "t_beat": 10337911605, "utc_ns": 1792735020999949036, "n": 1, "db": 3.0229, "step_db": 0.0, "sigma_db": 0.05054, "ovr": false}
+  EVENT seq 9505: {"ev": "TP_JUMP", "adc": 1, "t_beat": 10337911605, "utc_ns": 1792735020999949036, "n": 1, "db": 2.4003, "step_db": 0.0, "sigma_db": 0.08095, "ovr": false}
+  EVENT seq 9507: {"ev": "TP_JUMP", "adc": 2, "t_beat": 10337910783, "utc_ns": 1792735020999945827, "n": 1, "db": 3.1053, "step_db": 0.0, "sigma_db": 0.05709, "ovr": false}
+  EVENT seq 9509: {"ev": "TP_JUMP", "adc": 3, "t_beat": 10337910783, "utc_ns": 1792735020999945827, "n": 1, "db": 2.5039, "step_db": 0.0, "sigma_db": 0.10303, "ovr": false}
+  EVENT seq 9793: {"ev": "TP_JUMP", "adc": 0, "t_beat": 10593764149, "utc_ns": 1792735021999373036, "n": 1, "db": 3.044, "step_db": 0.0, "sigma_db": 0.05054, "ovr": false}
+  EVENT seq 9795: {"ev": "TP_JUMP", "adc": 1, "t_beat": 10593764149, "utc_ns": 1792735021999373036, "n": 1, "db": 2.5528, "step_db": 0.0, "sigma_db": 0.1003, "ovr": false}
+  EVENT seq 9799: {"ev": "TP_JUMP", "adc": 2, "t_beat": 10593763327, "utc_ns": 1792735021999369827, "n": 1, "db": 3.1164, "step_db": 0.0, "sigma_db": 0.03415, "ovr": false}
+  EVENT seq 9801: {"ev": "TP_JUMP", "adc": 3, "t_beat": 10593763327, "utc_ns": 1792735021999369827, "n": 1, "db": 2.5061, "step_db": 0.0, "sigma_db": 0.13367, "ovr": false}
+  EVENT seq 10098: {"ev": "TP_JUMP", "adc": 0, "t_beat": 10849878837, "utc_ns": 1792735022999821036, "n": 1, "db": 3.0118, "step_db": 0.0019, "sigma_db": 0.06445, "ovr": false}
+  EVENT seq 10100: {"ev": "TP_JUMP", "adc": 1, "t_beat": 10849878837, "utc_ns": 1792735022999821036, "n": 1, "db": 2.3869, "step_db": 0.0011, "sigma_db": 0.08047, "ovr": false}
+  EVENT seq 10102: {"ev": "TP_JUMP", "adc": 2, "t_beat": 10849878015, "utc_ns": 1792735022999817827, "n": 1, "db": 3.1295, "step_db": 0.0013, "sigma_db": 0.04221, "ovr": false}
+  EVENT seq 10104: {"ev": "TP_JUMP", "adc": 3, "t_beat": 10849878015, "utc_ns": 1792735022999817827, "n": 1, "db": 2.5863, "step_db": 0.0033, "sigma_db": 0.10044, "ovr": false}
+  EVENT seq 10389: {"ev": "TP_JUMP", "adc": 0, "t_beat": 11105731381, "utc_ns": 1792735023999245036, "n": 1, "db": 2.9888, "step_db": 0.0, "sigma_db": 0.07322, "ovr": false}
+  EVENT seq 10391: {"ev": "TP_JUMP", "adc": 1, "t_beat": 11105731381, "utc_ns": 1792735023999245036, "n": 1, "db": 2.5222, "step_db": 0.0, "sigma_db": 0.08197, "ovr": false}
+  EVENT seq 10393: {"ev": "TP_JUMP", "adc": 2, "t_beat": 11105730559, "utc_ns": 1792735023999241827, "n": 1, "db": 3.1127, "step_db": 0.0, "sigma_db": 0.03301, "ovr": false}
+  EVENT seq 10395: {"ev": "TP_JUMP", "adc": 3, "t_beat": 11105730559, "utc_ns": 1792735023999241827, "n": 1, "db": 2.5942, "step_db": 0.0, "sigma_db": 0.10642, "ovr": false}
+  EVENT seq 10683: {"ev": "TP_JUMP", "adc": 2, "t_beat": 11361845247, "utc_ns": 1792735024999689827, "n": 1, "db": 3.1225, "step_db": 0.0, "sigma_db": 0.04797, "ovr": false}
+  EVENT seq 10685: {"ev": "TP_JUMP", "adc": 3, "t_beat": 11361845247, "utc_ns": 1792735024999689827, "n": 1, "db": 2.5706, "step_db": 0.0, "sigma_db": 0.08893, "ovr": false}
+  EVENT seq 10697: {"ev": "TP_JUMP", "adc": 0, "t_beat": 11361846069, "utc_ns": 1792735024999693036, "n": 1, "db": 3.0403, "step_db": -0.0028, "sigma_db": 0.05707, "ovr": false}
+  EVENT seq 10699: {"ev": "TP_JUMP", "adc": 1, "t_beat": 11361846069, "utc_ns": 1792735024999693036, "n": 1, "db": 2.4975, "step_db": 0.0003, "sigma_db": 0.09168, "ovr": false}
+  EVENT seq 10987: {"ev": "TP_JUMP", "adc": 0, "t_beat": 11617698613, "utc_ns": 1792735025999117036, "n": 1, "db": 3.0209, "step_db": 0.0, "sigma_db": 0.04239, "ovr": false}
+  EVENT seq 10989: {"ev": "TP_JUMP", "adc": 1, "t_beat": 11617698613, "utc_ns": 1792735025999117036, "n": 1, "db": 2.3756, "step_db": 0.0, "sigma_db": 0.09613, "ovr": false}
+  EVENT seq 10991: {"ev": "TP_JUMP", "adc": 2, "t_beat": 11617697791, "utc_ns": 1792735025999113827, "n": 1, "db": 3.1686, "step_db": 0.0, "sigma_db": 0.0302, "ovr": false}
+  EVENT seq 10993: {"ev": "TP_JUMP", "adc": 3, "t_beat": 11617697791, "utc_ns": 1792735025999113827, "n": 1, "db": 2.5466, "step_db": 0.0, "sigma_db": 0.10619, "ovr": false}
+  EVENT seq 11277: {"ev": "TP_JUMP", "adc": 0, "t_beat": 11873813301, "utc_ns": 1792735026999565036, "n": 1, "db": 3.0681, "step_db": 0.0, "sigma_db": 0.04221, "ovr": false}
+  EVENT seq 11279: {"ev": "TP_JUMP", "adc": 1, "t_beat": 11873813301, "utc_ns": 1792735026999565036, "n": 1, "db": 2.6022, "step_db": 0.0, "sigma_db": 0.10502, "ovr": false}
+  EVENT seq 11283: {"ev": "TP_JUMP", "adc": 2, "t_beat": 11873812479, "utc_ns": 1792735026999561827, "n": 1, "db": 3.1266, "step_db": 0.0, "sigma_db": 0.02745, "ovr": false}
+  EVENT seq 11285: {"ev": "TP_JUMP", "adc": 3, "t_beat": 11873812479, "utc_ns": 1792735026999561827, "n": 1, "db": 2.592, "step_db": 0.0, "sigma_db": 0.10159, "ovr": false}
+  EVENT seq 11581: {"ev": "TP_JUMP", "adc": 0, "t_beat": 12129665845, "utc_ns": 1792735027998989036, "n": 2, "db": 1.8073, "step_db": 0.0, "sigma_db": 0.05349, "ovr": false}
+  EVENT seq 11583: {"ev": "TP_JUMP", "adc": 1, "t_beat": 12129665845, "utc_ns": 1792735027998989036, "n": 2, "db": 1.3707, "step_db": 0.0, "sigma_db": 0.08093, "ovr": false}
+  EVENT seq 11587: {"ev": "TP_JUMP", "adc": 2, "t_beat": 12129665023, "utc_ns": 1792735027998985827, "n": 2, "db": 1.9065, "step_db": 0.0024, "sigma_db": 0.04194, "ovr": false}
+  EVENT seq 11589: {"ev": "TP_JUMP", "adc": 3, "t_beat": 12129665023, "utc_ns": 1792735027998985827, "n": 2, "db": 1.6203, "step_db": -0.0015, "sigma_db": 0.08895, "ovr": false}
+  EVENT seq 11874: {"ev": "TP_JUMP", "adc": 0, "t_beat": 12385780533, "utc_ns": 1792735028999437036, "n": 1, "db": 3.0416, "step_db": 0.0, "sigma_db": 0.04978, "ovr": false}
+  EVENT seq 11876: {"ev": "TP_JUMP", "adc": 1, "t_beat": 12385780533, "utc_ns": 1792735028999437036, "n": 1, "db": 2.4846, "step_db": 0.0, "sigma_db": 0.09597, "ovr": false}
+  EVENT seq 11878: {"ev": "TP_JUMP", "adc": 2, "t_beat": 12385779711, "utc_ns": 1792735028999433827, "n": 1, "db": 3.0979, "step_db": 0.0, "sigma_db": 0.0507, "ovr": false}
+  EVENT seq 11880: {"ev": "TP_JUMP", "adc": 3, "t_beat": 12385779711, "utc_ns": 1792735028999433827, "n": 1, "db": 2.4484, "step_db": 0.0, "sigma_db": 0.11533, "ovr": false}
+  EVENT seq 12177: {"ev": "TP_JUMP", "adc": 0, "t_beat": 12641895221, "utc_ns": 1792735029999885036, "n": 1, "db": 3.037, "step_db": -0.0, "sigma_db": 0.05432, "ovr": false}
+  EVENT seq 12179: {"ev": "TP_JUMP", "adc": 1, "t_beat": 12641895221, "utc_ns": 1792735029999885036, "n": 1, "db": 2.4706, "step_db": 0.0068, "sigma_db": 0.08961, "ovr": false}
+  EVENT seq 12183: {"ev": "TP_JUMP", "adc": 2, "t_beat": 12641894399, "utc_ns": 1792735029999881827, "n": 1, "db": 3.1849, "step_db": 0.0024, "sigma_db": 0.03221, "ovr": false}
+  EVENT seq 12185: {"ev": "TP_JUMP", "adc": 3, "t_beat": 12641894399, "utc_ns": 1792735029999881827, "n": 1, "db": 2.6007, "step_db": 0.0002, "sigma_db": 0.11766, "ovr": false}
+  EVENT seq 12471: {"ev": "TP_JUMP", "adc": 0, "t_beat": 12897747765, "utc_ns": 1792735030999309036, "n": 1, "db": 3.0049, "step_db": 0.0, "sigma_db": 0.05304, "ovr": false}
+  EVENT seq 12473: {"ev": "TP_JUMP", "adc": 1, "t_beat": 12897747765, "utc_ns": 1792735030999309036, "n": 1, "db": 2.4431, "step_db": 0.0, "sigma_db": 0.07882, "ovr": false}
+  EVENT seq 12475: {"ev": "TP_JUMP", "adc": 2, "t_beat": 12897746943, "utc_ns": 1792735030999305827, "n": 1, "db": 3.1379, "step_db": 0.0, "sigma_db": 0.03763, "ovr": false}
+  EVENT seq 12477: {"ev": "TP_JUMP", "adc": 3, "t_beat": 12897746943, "utc_ns": 1792735030999305827, "n": 1, "db": 2.6349, "step_db": 0.0, "sigma_db": 0.08157, "ovr": false}
+  EVENT seq 12763: {"ev": "TP_JUMP", "adc": 0, "t_beat": 13153862453, "utc_ns": 1792735031999757036, "n": 1, "db": 3.0534, "step_db": 0.0, "sigma_db": 0.0643, "ovr": false}
+  EVENT seq 12765: {"ev": "TP_JUMP", "adc": 1, "t_beat": 13153862453, "utc_ns": 1792735031999757036, "n": 1, "db": 2.4555, "step_db": 0.0, "sigma_db": 0.07882, "ovr": false}
+  EVENT seq 12767: {"ev": "TP_JUMP", "adc": 2, "t_beat": 13153861631, "utc_ns": 1792735031999753827, "n": 1, "db": 3.1148, "step_db": 0.0, "sigma_db": 0.03362, "ovr": false}
+  EVENT seq 12769: {"ev": "TP_JUMP", "adc": 3, "t_beat": 13153861631, "utc_ns": 1792735031999753827, "n": 1, "db": 2.5625, "step_db": 0.0, "sigma_db": 0.09298, "ovr": false}
+  EVENT seq 13067: {"ev": "TP_JUMP", "adc": 0, "t_beat": 13409714997, "utc_ns": 1792735032999181036, "n": 1, "db": 3.0672, "step_db": 0.0, "sigma_db": 0.03658, "ovr": false}
+  EVENT seq 13069: {"ev": "TP_JUMP", "adc": 1, "t_beat": 13409714997, "utc_ns": 1792735032999181036, "n": 1, "db": 2.5131, "step_db": 0.0, "sigma_db": 0.07137, "ovr": false}
+  EVENT seq 13071: {"ev": "TP_JUMP", "adc": 2, "t_beat": 13409714175, "utc_ns": 1792735032999177827, "n": 1, "db": 3.1714, "step_db": 0.0, "sigma_db": 0.04116, "ovr": false}
+  EVENT seq 13073: {"ev": "TP_JUMP", "adc": 3, "t_beat": 13409714175, "utc_ns": 1792735032999177827, "n": 1, "db": 2.5564, "step_db": 0.0, "sigma_db": 0.10265, "ovr": false}
+  EVENT seq 13359: {"ev": "TP_JUMP", "adc": 0, "t_beat": 13665829685, "utc_ns": 1792735033999629036, "n": 1, "db": 3.0322, "step_db": 0.0, "sigma_db": 0.03059, "ovr": false}
+  EVENT seq 13361: {"ev": "TP_JUMP", "adc": 1, "t_beat": 13665829685, "utc_ns": 1792735033999629036, "n": 1, "db": 2.6118, "step_db": 0.0, "sigma_db": 0.07118, "ovr": false}
+  EVENT seq 13363: {"ev": "TP_JUMP", "adc": 2, "t_beat": 13665828863, "utc_ns": 1792735033999625827, "n": 1, "db": 3.0313, "step_db": 0.0, "sigma_db": 0.03356, "ovr": false}
+  EVENT seq 13365: {"ev": "TP_JUMP", "adc": 3, "t_beat": 13665828863, "utc_ns": 1792735033999625827, "n": 1, "db": 2.5724, "step_db": 0.0, "sigma_db": 0.1218, "ovr": false}
+  EVENT seq 13553: {"ev": "TP_JUMP", "adc": 0, "t_beat": 13829407541, "utc_ns": 1792735034638605036, "n": 1, "db": 0.2123, "step_db": 0.0, "sigma_db": 0.03437, "ovr": false}
+  EVENT seq 13566: {"ev": "TP_JUMP", "adc": 0, "t_beat": 13845660469, "utc_ns": 1792735034702093036, "n": 1, "db": 0.2211, "step_db": 0.0, "sigma_db": 0.03437, "ovr": false}
+  EVENT seq 13639: {"ev": "TP_JUMP", "adc": 0, "t_beat": 13900186421, "utc_ns": 1792735034915085036, "n": 1, "db": 0.2464, "step_db": 0.0057, "sigma_db": 0.03437, "ovr": false}
+  EVENT seq 13666: {"ev": "TP_JUMP", "adc": 0, "t_beat": 13921682229, "utc_ns": 1792735034999053036, "n": 2, "db": 1.852, "step_db": 0.0069, "sigma_db": 0.03437, "ovr": false}
+  EVENT seq 13668: {"ev": "TP_JUMP", "adc": 1, "t_beat": 13921682229, "utc_ns": 1792735034999053036, "n": 2, "db": 1.4385, "step_db": -0.0001, "sigma_db": 0.08446, "ovr": false}
+  EVENT seq 13670: {"ev": "TP_JUMP", "adc": 2, "t_beat": 13921681407, "utc_ns": 1792735034999049827, "n": 2, "db": 1.854, "step_db": -0.0007, "sigma_db": 0.05418, "ovr": false}
+  EVENT seq 13672: {"ev": "TP_JUMP", "adc": 3, "t_beat": 13921681407, "utc_ns": 1792735034999049827, "n": 2, "db": 1.3994, "step_db": -0.0044, "sigma_db": 0.09415, "ovr": false}
+  EVENT seq 13956: {"ev": "TP_JUMP", "adc": 0, "t_beat": 14177796917, "utc_ns": 1792735035999501036, "n": 1, "db": 2.995, "step_db": 0.0, "sigma_db": 0.05662, "ovr": false}
+  EVENT seq 13958: {"ev": "TP_JUMP", "adc": 1, "t_beat": 14177796917, "utc_ns": 1792735035999501036, "n": 1, "db": 2.5064, "step_db": 0.0, "sigma_db": 0.07766, "ovr": false}
+  EVENT seq 13960: {"ev": "TP_JUMP", "adc": 2, "t_beat": 14177796095, "utc_ns": 1792735035999497827, "n": 1, "db": 3.123, "step_db": 0.0, "sigma_db": 0.05937, "ovr": false}
+  EVENT seq 13962: {"ev": "TP_JUMP", "adc": 3, "t_beat": 14177796095, "utc_ns": 1792735035999497827, "n": 1, "db": 2.599, "step_db": 0.0, "sigma_db": 0.09064, "ovr": false}
+  EVENT seq 14251: {"ev": "TP_JUMP", "adc": 2, "t_beat": 14433910783, "utc_ns": 1792735036999945827, "n": 1, "db": 3.0837, "step_db": 0.0, "sigma_db": 0.05401, "ovr": false}
+  EVENT seq 14253: {"ev": "TP_JUMP", "adc": 3, "t_beat": 14433910783, "utc_ns": 1792735036999945827, "n": 1, "db": 2.4627, "step_db": 0.0, "sigma_db": 0.09874, "ovr": false}
+  EVENT seq 14262: {"ev": "TP_JUMP", "adc": 0, "t_beat": 14433911605, "utc_ns": 1792735036999949036, "n": 1, "db": 2.9346, "step_db": 0.0, "sigma_db": 0.0583, "ovr": false}
+  EVENT seq 14264: {"ev": "TP_JUMP", "adc": 1, "t_beat": 14433911605, "utc_ns": 1792735036999949036, "n": 1, "db": 2.4986, "step_db": 0.0009, "sigma_db": 0.09344, "ovr": false}
+  EVENT seq 14552: {"ev": "TP_JUMP", "adc": 0, "t_beat": 14689764149, "utc_ns": 1792735037999373036, "n": 1, "db": 2.9919, "step_db": 0.0, "sigma_db": 0.05367, "ovr": false}
+  EVENT seq 14554: {"ev": "TP_JUMP", "adc": 1, "t_beat": 14689764149, "utc_ns": 1792735037999373036, "n": 1, "db": 2.4714, "step_db": 0.0, "sigma_db": 0.09258, "ovr": false}
+  EVENT seq 14556: {"ev": "TP_JUMP", "adc": 2, "t_beat": 14689763327, "utc_ns": 1792735037999369827, "n": 1, "db": 3.1026, "step_db": 0.0, "sigma_db": 0.04367, "ovr": false}
+  EVENT seq 14558: {"ev": "TP_JUMP", "adc": 3, "t_beat": 14689763327, "utc_ns": 1792735037999369827, "n": 1, "db": 2.4158, "step_db": 0.0, "sigma_db": 0.10756, "ovr": false}
+  EVENT seq 14844: {"ev": "TP_JUMP", "adc": 0, "t_beat": 14945878837, "utc_ns": 1792735038999821036, "n": 1, "db": 2.9536, "step_db": 0.0, "sigma_db": 0.05114, "ovr": false}
+  EVENT seq 14846: {"ev": "TP_JUMP", "adc": 1, "t_beat": 14945878837, "utc_ns": 1792735038999821036, "n": 1, "db": 2.4506, "step_db": 0.0, "sigma_db": 0.09723, "ovr": false}
+  EVENT seq 14850: {"ev": "TP_JUMP", "adc": 2, "t_beat": 14945878015, "utc_ns": 1792735038999817827, "n": 1, "db": 3.0396, "step_db": 0.0, "sigma_db": 0.05001, "ovr": false}
+  EVENT seq 14852: {"ev": "TP_JUMP", "adc": 3, "t_beat": 14945878015, "utc_ns": 1792735038999817827, "n": 1, "db": 2.7191, "step_db": 0.0, "sigma_db": 0.09721, "ovr": false}
+  EVENT seq 15148: {"ev": "TP_JUMP", "adc": 0, "t_beat": 15201731381, "utc_ns": 1792735039999245036, "n": 1, "db": 2.9552, "step_db": 0.0, "sigma_db": 0.05771, "ovr": false}
+  EVENT seq 15150: {"ev": "TP_JUMP", "adc": 1, "t_beat": 15201731381, "utc_ns": 1792735039999245036, "n": 1, "db": 2.4839, "step_db": 0.0, "sigma_db": 0.0831, "ovr": false}
+  EVENT seq 15154: {"ev": "TP_JUMP", "adc": 2, "t_beat": 15201730559, "utc_ns": 1792735039999241827, "n": 1, "db": 3.0535, "step_db": -0.0032, "sigma_db": 0.04283, "ovr": false}
+  EVENT seq 15156: {"ev": "TP_JUMP", "adc": 3, "t_beat": 15201730559, "utc_ns": 1792735039999241827, "n": 1, "db": 2.5222, "step_db": -0.0101, "sigma_db": 0.1103, "ovr": false}
+  EVENT seq 15440: {"ev": "TP_JUMP", "adc": 0, "t_beat": 15457846069, "utc_ns": 1792735040999693036, "n": 1, "db": 2.9735, "step_db": 0.0, "sigma_db": 0.06004, "ovr": false}
+  EVENT seq 15442: {"ev": "TP_JUMP", "adc": 1, "t_beat": 15457846069, "utc_ns": 1792735040999693036, "n": 1, "db": 2.6046, "step_db": 0.0, "sigma_db": 0.08052, "ovr": false}
+  EVENT seq 15444: {"ev": "TP_JUMP", "adc": 2, "t_beat": 15457845247, "utc_ns": 1792735040999689827, "n": 1, "db": 3.0845, "step_db": 0.0, "sigma_db": 0.04626, "ovr": false}
+  EVENT seq 15446: {"ev": "TP_JUMP", "adc": 3, "t_beat": 15457845247, "utc_ns": 1792735040999689827, "n": 1, "db": 2.6256, "step_db": 0.0, "sigma_db": 0.09019, "ovr": false}
+  EVENT seq 15735: {"ev": "TP_JUMP", "adc": 2, "t_beat": 15713697791, "utc_ns": 1792735041999113827, "n": 1, "db": 3.0912, "step_db": 0.0, "sigma_db": 0.04626, "ovr": false}
+  EVENT seq 15737: {"ev": "TP_JUMP", "adc": 3, "t_beat": 15713697791, "utc_ns": 1792735041999113827, "n": 1, "db": 2.6628, "step_db": 0.0, "sigma_db": 0.0943, "ovr": false}
+  EVENT seq 15746: {"ev": "TP_JUMP", "adc": 0, "t_beat": 15713698613, "utc_ns": 1792735041999117036, "n": 1, "db": 3.0137, "step_db": 0.0006, "sigma_db": 0.04856, "ovr": false}
+  EVENT seq 15748: {"ev": "TP_JUMP", "adc": 1, "t_beat": 15713698613, "utc_ns": 1792735041999117036, "n": 1, "db": 2.4974, "step_db": 0.0002, "sigma_db": 0.07164, "ovr": false}
+  EVENT seq 16036: {"ev": "TP_JUMP", "adc": 0, "t_beat": 15969813301, "utc_ns": 1792735042999565036, "n": 1, "db": 2.9965, "step_db": 0.0, "sigma_db": 0.04873, "ovr": false}
+  EVENT seq 16038: {"ev": "TP_JUMP", "adc": 1, "t_beat": 15969813301, "utc_ns": 1792735042999565036, "n": 1, "db": 2.5387, "step_db": 0.0, "sigma_db": 0.06802, "ovr": false}
+  EVENT seq 16042: {"ev": "TP_JUMP", "adc": 2, "t_beat": 15969812479, "utc_ns": 1792735042999561827, "n": 1, "db": 3.1039, "step_db": 0.0, "sigma_db": 0.03355, "ovr": false}
+  EVENT seq 16044: {"ev": "TP_JUMP", "adc": 3, "t_beat": 15969812479, "utc_ns": 1792735042999561827, "n": 1, "db": 2.4877, "step_db": 0.0, "sigma_db": 0.09102, "ovr": false}
+  EVENT seq 16329: {"ev": "TP_JUMP", "adc": 0, "t_beat": 16225665845, "utc_ns": 1792735043998989036, "n": 2, "db": 1.7744, "step_db": 0.0, "sigma_db": 0.04606, "ovr": false}
+  EVENT seq 16331: {"ev": "TP_JUMP", "adc": 1, "t_beat": 16225665845, "utc_ns": 1792735043998989036, "n": 2, "db": 1.3919, "step_db": 0.0, "sigma_db": 0.07012, "ovr": false}
+  EVENT seq 16333: {"ev": "TP_JUMP", "adc": 2, "t_beat": 16225665023, "utc_ns": 1792735043998985827, "n": 2, "db": 1.919, "step_db": 0.0, "sigma_db": 0.06175, "ovr": false}
+  EVENT seq 16335: {"ev": "TP_JUMP", "adc": 3, "t_beat": 16225665023, "utc_ns": 1792735043998985827, "n": 2, "db": 1.4213, "step_db": 0.0, "sigma_db": 0.09088, "ovr": false}
+  EVENT seq 16634: {"ev": "TP_JUMP", "adc": 0, "t_beat": 16481780533, "utc_ns": 1792735044999437036, "n": 1, "db": 3.0029, "step_db": 0.0, "sigma_db": 0.05132, "ovr": false}
+  EVENT seq 16636: {"ev": "TP_JUMP", "adc": 1, "t_beat": 16481780533, "utc_ns": 1792735044999437036, "n": 1, "db": 2.4771, "step_db": 0.0, "sigma_db": 0.09597, "ovr": false}
+  EVENT seq 16638: {"ev": "TP_JUMP", "adc": 2, "t_beat": 16481779711, "utc_ns": 1792735044999433827, "n": 1, "db": 3.1189, "step_db": 0.0013, "sigma_db": 0.04028, "ovr": false}
+  EVENT seq 16640: {"ev": "TP_JUMP", "adc": 3, "t_beat": 16481779711, "utc_ns": 1792735044999433827, "n": 1, "db": 2.6701, "step_db": -0.0009, "sigma_db": 0.09269, "ovr": false}
+  EVENT seq 16926: {"ev": "TP_JUMP", "adc": 0, "t_beat": 16737895221, "utc_ns": 1792735045999885036, "n": 1, "db": 2.9683, "step_db": 0.0, "sigma_db": 0.0472, "ovr": false}
+  EVENT seq 16928: {"ev": "TP_JUMP", "adc": 1, "t_beat": 16737895221, "utc_ns": 1792735045999885036, "n": 1, "db": 2.5787, "step_db": 0.0, "sigma_db": 0.07561, "ovr": false}
+  EVENT seq 16930: {"ev": "TP_JUMP", "adc": 2, "t_beat": 16737894399, "utc_ns": 1792735045999881827, "n": 1, "db": 3.0241, "step_db": 0.0, "sigma_db": 0.04874, "ovr": false}
+  EVENT seq 16932: {"ev": "TP_JUMP", "adc": 3, "t_beat": 16737894399, "utc_ns": 1792735045999881827, "n": 1, "db": 2.5679, "step_db": 0.0, "sigma_db": 0.08275, "ovr": false}
+  EVENT seq 17229: {"ev": "TP_JUMP", "adc": 0, "t_beat": 16993747765, "utc_ns": 1792735046999309036, "n": 1, "db": 2.9777, "step_db": 0.0032, "sigma_db": 0.05124, "ovr": false}
+  EVENT seq 17231: {"ev": "TP_JUMP", "adc": 1, "t_beat": 16993747765, "utc_ns": 1792735046999309036, "n": 1, "db": 2.6085, "step_db": -0.0004, "sigma_db": 0.07451, "ovr": false}
+  EVENT seq 17233: {"ev": "TP_JUMP", "adc": 2, "t_beat": 16993746943, "utc_ns": 1792735046999305827, "n": 1, "db": 3.0494, "step_db": -0.006, "sigma_db": 0.04022, "ovr": false}
+  EVENT seq 17235: {"ev": "TP_JUMP", "adc": 3, "t_beat": 16993746943, "utc_ns": 1792735046999305827, "n": 1, "db": 2.5868, "step_db": 0.0028, "sigma_db": 0.09671, "ovr": false}
+  EVENT seq 17520: {"ev": "TP_JUMP", "adc": 0, "t_beat": 17249862453, "utc_ns": 1792735047999757036, "n": 1, "db": 2.969, "step_db": 0.0, "sigma_db": 0.06999, "ovr": false}
+  EVENT seq 17522: {"ev": "TP_JUMP", "adc": 1, "t_beat": 17249862453, "utc_ns": 1792735047999757036, "n": 1, "db": 2.6005, "step_db": 0.0, "sigma_db": 0.07465, "ovr": false}
+  EVENT seq 17524: {"ev": "TP_JUMP", "adc": 2, "t_beat": 17249861631, "utc_ns": 1792735047999753827, "n": 1, "db": 3.0887, "step_db": 0.0, "sigma_db": 0.07336, "ovr": false}
+  EVENT seq 17526: {"ev": "TP_JUMP", "adc": 3, "t_beat": 17249861631, "utc_ns": 1792735047999753827, "n": 1, "db": 2.5937, "step_db": 0.0, "sigma_db": 0.09829, "ovr": false}
+  EVENT seq 17812: {"ev": "TP_JUMP", "adc": 0, "t_beat": 17505714997, "utc_ns": 1792735048999181036, "n": 1, "db": 2.9931, "step_db": 0.0, "sigma_db": 0.04652, "ovr": false}
+  EVENT seq 17814: {"ev": "TP_JUMP", "adc": 1, "t_beat": 17505714997, "utc_ns": 1792735048999181036, "n": 1, "db": 2.5729, "step_db": 0.0, "sigma_db": 0.072, "ovr": false}
+  EVENT seq 17818: {"ev": "TP_JUMP", "adc": 2, "t_beat": 17505714175, "utc_ns": 1792735048999177827, "n": 1, "db": 3.074, "step_db": 0.0, "sigma_db": 0.03766, "ovr": false}
+  EVENT seq 17820: {"ev": "TP_JUMP", "adc": 3, "t_beat": 17505714175, "utc_ns": 1792735048999177827, "n": 1, "db": 2.52, "step_db": 0.0, "sigma_db": 0.10588, "ovr": false}
+  EVENT seq 18118: {"ev": "TP_JUMP", "adc": 0, "t_beat": 17761829685, "utc_ns": 1792735049999629036, "n": 1, "db": 3.0042, "step_db": 0.0, "sigma_db": 0.0684, "ovr": false}
+  EVENT seq 18120: {"ev": "TP_JUMP", "adc": 1, "t_beat": 17761829685, "utc_ns": 1792735049999629036, "n": 1, "db": 2.3841, "step_db": 0.0, "sigma_db": 0.0869, "ovr": false}
+  EVENT seq 18122: {"ev": "TP_JUMP", "adc": 2, "t_beat": 17761828863, "utc_ns": 1792735049999625827, "n": 1, "db": 3.0875, "step_db": 0.0, "sigma_db": 0.03383, "ovr": false}
+  EVENT seq 18124: {"ev": "TP_JUMP", "adc": 3, "t_beat": 17761828863, "utc_ns": 1792735049999625827, "n": 1, "db": 2.6111, "step_db": 0.0, "sigma_db": 0.08111, "ovr": false}
+  EVENT seq 18409: {"ev": "TP_JUMP", "adc": 0, "t_beat": 18017682229, "utc_ns": 1792735050999053036, "n": 2, "db": 1.7841, "step_db": 0.0, "sigma_db": 0.04454, "ovr": false}
+  EVENT seq 18411: {"ev": "TP_JUMP", "adc": 1, "t_beat": 18017682229, "utc_ns": 1792735050999053036, "n": 2, "db": 1.4016, "step_db": 0.0, "sigma_db": 0.08551, "ovr": false}
+  EVENT seq 18413: {"ev": "TP_JUMP", "adc": 2, "t_beat": 18017681407, "utc_ns": 1792735050999049827, "n": 2, "db": 1.9409, "step_db": 0.0, "sigma_db": 0.0401, "ovr": false}
+  EVENT seq 18415: {"ev": "TP_JUMP", "adc": 3, "t_beat": 18017681407, "utc_ns": 1792735050999049827, "n": 2, "db": 1.5556, "step_db": 0.0, "sigma_db": 0.09557, "ovr": false}
+  EVENT seq 18712: {"ev": "TP_JUMP", "adc": 0, "t_beat": 18273796917, "utc_ns": 1792735051999501036, "n": 1, "db": 3.0263, "step_db": -0.0003, "sigma_db": 0.04155, "ovr": false}
+  EVENT seq 18714: {"ev": "TP_JUMP", "adc": 1, "t_beat": 18273796917, "utc_ns": 1792735051999501036, "n": 1, "db": 2.5517, "step_db": 0.0046, "sigma_db": 0.08956, "ovr": false}
+  EVENT seq 18718: {"ev": "TP_JUMP", "adc": 2, "t_beat": 18273796095, "utc_ns": 1792735051999497827, "n": 1, "db": 3.0007, "step_db": 0.0011, "sigma_db": 0.06311, "ovr": false}
+  EVENT seq 18720: {"ev": "TP_JUMP", "adc": 3, "t_beat": 18273796095, "utc_ns": 1792735051999497827, "n": 1, "db": 2.5512, "step_db": -0.0052, "sigma_db": 0.09557, "ovr": false}
+  EVENT seq 19005: {"ev": "TP_JUMP", "adc": 0, "t_beat": 18529911605, "utc_ns": 1792735052999949036, "n": 1, "db": 2.9787, "step_db": 0.0, "sigma_db": 0.05329, "ovr": false}
+  EVENT seq 19007: {"ev": "TP_JUMP", "adc": 1, "t_beat": 18529911605, "utc_ns": 1792735052999949036, "n": 1, "db": 2.5541, "step_db": 0.0, "sigma_db": 0.08018, "ovr": false}
+  EVENT seq 19009: {"ev": "TP_JUMP", "adc": 2, "t_beat": 18529910783, "utc_ns": 1792735052999945827, "n": 1, "db": 3.2017, "step_db": 0.0, "sigma_db": 0.06239, "ovr": false}
+  EVENT seq 19011: {"ev": "TP_JUMP", "adc": 3, "t_beat": 18529910783, "utc_ns": 1792735052999945827, "n": 1, "db": 2.6478, "step_db": 0.0, "sigma_db": 0.09282, "ovr": false}
+  EVENT seq 19300: {"ev": "TP_JUMP", "adc": 2, "t_beat": 18785763327, "utc_ns": 1792735053999369827, "n": 1, "db": 3.0764, "step_db": 0.0, "sigma_db": 0.09494, "ovr": false}
+  EVENT seq 19302: {"ev": "TP_JUMP", "adc": 3, "t_beat": 18785763327, "utc_ns": 1792735053999369827, "n": 1, "db": 2.7141, "step_db": 0.0, "sigma_db": 0.10413, "ovr": false}
+  EVENT seq 19312: {"ev": "TP_JUMP", "adc": 0, "t_beat": 18785764149, "utc_ns": 1792735053999373036, "n": 1, "db": 2.9631, "step_db": 0.0038, "sigma_db": 0.07095, "ovr": false}
+  EVENT seq 19314: {"ev": "TP_JUMP", "adc": 1, "t_beat": 18785764149, "utc_ns": 1792735053999373036, "n": 1, "db": 2.4673, "step_db": 0.0004, "sigma_db": 0.09981, "ovr": false}
+  EVENT seq 19520: {"ev": "TP_JUMP", "adc": 2, "t_beat": 18972409855, "utc_ns": 1792735054728457827, "n": 1, "db": 0.2484, "step_db": 0.0, "sigma_db": 0.04047, "ovr": false}
+  EVENT seq 19603: {"ev": "TP_JUMP", "adc": 0, "t_beat": 19041878837, "utc_ns": 1792735054999821036, "n": 1, "db": 2.9867, "step_db": 0.0, "sigma_db": 0.05454, "ovr": false}
+  EVENT seq 19605: {"ev": "TP_JUMP", "adc": 1, "t_beat": 19041878837, "utc_ns": 1792735054999821036, "n": 1, "db": 2.3664, "step_db": 0.0, "sigma_db": 0.08779, "ovr": false}
+  EVENT seq 19607: {"ev": "TP_JUMP", "adc": 2, "t_beat": 19041878015, "utc_ns": 1792735054999817827, "n": 1, "db": 3.0256, "step_db": 0.0, "sigma_db": 0.04047, "ovr": false}
+  EVENT seq 19609: {"ev": "TP_JUMP", "adc": 3, "t_beat": 19041878015, "utc_ns": 1792735054999817827, "n": 1, "db": 2.62, "step_db": 0.0, "sigma_db": 0.13775, "ovr": false}
+  EVENT seq 19895: {"ev": "TP_JUMP", "adc": 0, "t_beat": 19297731381, "utc_ns": 1792735055999245036, "n": 1, "db": 2.8921, "step_db": 0.0, "sigma_db": 0.06362, "ovr": false}
+  EVENT seq 19897: {"ev": "TP_JUMP", "adc": 1, "t_beat": 19297731381, "utc_ns": 1792735055999245036, "n": 1, "db": 2.4628, "step_db": 0.0, "sigma_db": 0.12192, "ovr": false}
+  EVENT seq 19899: {"ev": "TP_JUMP", "adc": 2, "t_beat": 19297730559, "utc_ns": 1792735055999241827, "n": 1, "db": 3.0248, "step_db": 0.0, "sigma_db": 0.06114, "ovr": false}
+  EVENT seq 19901: {"ev": "TP_JUMP", "adc": 3, "t_beat": 19297730559, "utc_ns": 1792735055999241827, "n": 1, "db": 2.533, "step_db": 0.0, "sigma_db": 0.11514, "ovr": false}
+  EVENT seq 20199: {"ev": "TP_JUMP", "adc": 0, "t_beat": 19553846069, "utc_ns": 1792735056999693036, "n": 1, "db": 2.8812, "step_db": 0.0, "sigma_db": 0.06427, "ovr": false}
+  EVENT seq 20201: {"ev": "TP_JUMP", "adc": 1, "t_beat": 19553846069, "utc_ns": 1792735056999693036, "n": 1, "db": 2.5794, "step_db": 0.0, "sigma_db": 0.07774, "ovr": false}
+  EVENT seq 20203: {"ev": "TP_JUMP", "adc": 2, "t_beat": 19553845247, "utc_ns": 1792735056999689827, "n": 1, "db": 3.1151, "step_db": 0.0039, "sigma_db": 0.06519, "ovr": false}
+  EVENT seq 20205: {"ev": "TP_JUMP", "adc": 3, "t_beat": 19553845247, "utc_ns": 1792735056999689827, "n": 1, "db": 2.4616, "step_db": -0.0036, "sigma_db": 0.10048, "ovr": false}
+  EVENT seq 20325: {"ev": "TP_JUMP", "adc": 2, "t_beat": 19663421439, "utc_ns": 1792735057427721827, "n": 1, "db": 0.2547, "step_db": 0.0, "sigma_db": 0.04167, "ovr": false}
+  EVENT seq 20492: {"ev": "TP_JUMP", "adc": 0, "t_beat": 19809698613, "utc_ns": 1792735057999117036, "n": 1, "db": 2.9431, "step_db": 0.0, "sigma_db": 0.05537, "ovr": false}
+  EVENT seq 20494: {"ev": "TP_JUMP", "adc": 1, "t_beat": 19809698613, "utc_ns": 1792735057999117036, "n": 1, "db": 2.5752, "step_db": 0.0, "sigma_db": 0.10559, "ovr": false}
+  EVENT seq 20496: {"ev": "TP_JUMP", "adc": 2, "t_beat": 19809697791, "utc_ns": 1792735057999113827, "n": 1, "db": 3.0657, "step_db": 0.0, "sigma_db": 0.04167, "ovr": false}
+  EVENT seq 20498: {"ev": "TP_JUMP", "adc": 3, "t_beat": 19809697791, "utc_ns": 1792735057999113827, "n": 1, "db": 2.5008, "step_db": 0.0, "sigma_db": 0.10101, "ovr": false}
+  EVENT seq 20796: {"ev": "TP_JUMP", "adc": 0, "t_beat": 20065813301, "utc_ns": 1792735058999565036, "n": 1, "db": 2.9664, "step_db": 0.0029, "sigma_db": 0.05493, "ovr": false}
+  EVENT seq 20798: {"ev": "TP_JUMP", "adc": 1, "t_beat": 20065813301, "utc_ns": 1792735058999565036, "n": 1, "db": 2.5239, "step_db": 0.002, "sigma_db": 0.08511, "ovr": false}
+  EVENT seq 20800: {"ev": "TP_JUMP", "adc": 2, "t_beat": 20065812479, "utc_ns": 1792735058999561827, "n": 1, "db": 3.0521, "step_db": 0.0043, "sigma_db": 0.06504, "ovr": false}
+  EVENT seq 20802: {"ev": "TP_JUMP", "adc": 3, "t_beat": 20065812479, "utc_ns": 1792735058999561827, "n": 1, "db": 2.3768, "step_db": -0.0009, "sigma_db": 0.09216, "ovr": false}
+  EVENT seq 21088: {"ev": "TP_JUMP", "adc": 0, "t_beat": 20321665845, "utc_ns": 1792735059998989036, "n": 2, "db": 1.7814, "step_db": 0.0, "sigma_db": 0.07923, "ovr": false}
+  EVENT seq 21090: {"ev": "TP_JUMP", "adc": 1, "t_beat": 20321665845, "utc_ns": 1792735059998989036, "n": 2, "db": 1.4048, "step_db": 0.0, "sigma_db": 0.06682, "ovr": false}
+  EVENT seq 21092: {"ev": "TP_JUMP", "adc": 2, "t_beat": 20321665023, "utc_ns": 1792735059998985827, "n": 2, "db": 1.8108, "step_db": 0.0, "sigma_db": 0.0617, "ovr": false}
+  EVENT seq 21094: {"ev": "TP_JUMP", "adc": 3, "t_beat": 20321665023, "utc_ns": 1792735059998985827, "n": 2, "db": 1.6243, "step_db": 0.0, "sigma_db": 0.11355, "ovr": false}
+  EVENT seq 21378: {"ev": "TP_JUMP", "adc": 0, "t_beat": 20577780533, "utc_ns": 1792735060999437036, "n": 1, "db": 2.9193, "step_db": 0.0, "sigma_db": 0.06697, "ovr": false}
+  EVENT seq 21380: {"ev": "TP_JUMP", "adc": 1, "t_beat": 20577780533, "utc_ns": 1792735060999437036, "n": 1, "db": 2.4628, "step_db": 0.0, "sigma_db": 0.07799, "ovr": false}
+  EVENT seq 21384: {"ev": "TP_JUMP", "adc": 2, "t_beat": 20577779711, "utc_ns": 1792735060999433827, "n": 1, "db": 3.0959, "step_db": 0.0, "sigma_db": 0.05609, "ovr": false}
+  EVENT seq 21386: {"ev": "TP_JUMP", "adc": 3, "t_beat": 20577779711, "utc_ns": 1792735060999433827, "n": 1, "db": 2.6081, "step_db": 0.0, "sigma_db": 0.10639, "ovr": false}
+  EVENT seq 21684: {"ev": "TP_JUMP", "adc": 0, "t_beat": 20833895221, "utc_ns": 1792735061999885036, "n": 1, "db": 2.9153, "step_db": 0.0, "sigma_db": 0.07014, "ovr": false}
+  EVENT seq 21686: {"ev": "TP_JUMP", "adc": 1, "t_beat": 20833895221, "utc_ns": 1792735061999885036, "n": 1, "db": 2.5493, "step_db": 0.0, "sigma_db": 0.08614, "ovr": false}
+  EVENT seq 21688: {"ev": "TP_JUMP", "adc": 2, "t_beat": 20833894399, "utc_ns": 1792735061999881827, "n": 1, "db": 2.9602, "step_db": 0.0, "sigma_db": 0.06245, "ovr": false}
+  EVENT seq 21690: {"ev": "TP_JUMP", "adc": 3, "t_beat": 20833894399, "utc_ns": 1792735061999881827, "n": 1, "db": 2.5454, "step_db": 0.0, "sigma_db": 0.09881, "ovr": false}
+  EVENT seq 21974: {"ev": "TP_JUMP", "adc": 0, "t_beat": 21089747765, "utc_ns": 1792735062999309036, "n": 1, "db": 2.835, "step_db": 0.0, "sigma_db": 0.06975, "ovr": false}
+  EVENT seq 21976: {"ev": "TP_JUMP", "adc": 1, "t_beat": 21089747765, "utc_ns": 1792735062999309036, "n": 1, "db": 2.4661, "step_db": 0.0, "sigma_db": 0.07254, "ovr": false}
+  EVENT seq 21980: {"ev": "TP_JUMP", "adc": 2, "t_beat": 21089746943, "utc_ns": 1792735062999305827, "n": 1, "db": 2.9943, "step_db": 0.0, "sigma_db": 0.08401, "ovr": false}
+  EVENT seq 21982: {"ev": "TP_JUMP", "adc": 3, "t_beat": 21089746943, "utc_ns": 1792735062999305827, "n": 1, "db": 2.6305, "step_db": 0.0, "sigma_db": 0.11578, "ovr": false}
+  EVENT seq 22279: {"ev": "TP_JUMP", "adc": 0, "t_beat": 21345862453, "utc_ns": 1792735063999757036, "n": 1, "db": 2.9226, "step_db": -0.0063, "sigma_db": 0.06975, "ovr": false}
+  EVENT seq 22281: {"ev": "TP_JUMP", "adc": 1, "t_beat": 21345862453, "utc_ns": 1792735063999757036, "n": 1, "db": 2.4706, "step_db": 0.0021, "sigma_db": 0.07771, "ovr": false}
+  EVENT seq 22283: {"ev": "TP_JUMP", "adc": 2, "t_beat": 21345861631, "utc_ns": 1792735063999753827, "n": 1, "db": 3.0204, "step_db": -0.0049, "sigma_db": 0.09905, "ovr": false}
+  EVENT seq 22285: {"ev": "TP_JUMP", "adc": 3, "t_beat": 21345861631, "utc_ns": 1792735063999753827, "n": 1, "db": 2.6295, "step_db": 0.0008, "sigma_db": 0.09671, "ovr": false}
+  EVENT seq 22572: {"ev": "TP_JUMP", "adc": 0, "t_beat": 21601714997, "utc_ns": 1792735064999181036, "n": 1, "db": 2.9772, "step_db": 0.0, "sigma_db": 0.0751, "ovr": false}
+  EVENT seq 22574: {"ev": "TP_JUMP", "adc": 1, "t_beat": 21601714997, "utc_ns": 1792735064999181036, "n": 1, "db": 2.4999, "step_db": 0.0, "sigma_db": 0.11829, "ovr": false}
+  EVENT seq 22576: {"ev": "TP_JUMP", "adc": 2, "t_beat": 21601714175, "utc_ns": 1792735064999177827, "n": 1, "db": 3.0807, "step_db": 0.0, "sigma_db": 0.05475, "ovr": false}
+  EVENT seq 22578: {"ev": "TP_JUMP", "adc": 3, "t_beat": 21601714175, "utc_ns": 1792735064999177827, "n": 1, "db": 2.5434, "step_db": 0.0, "sigma_db": 0.1121, "ovr": false}
+  EVENT seq 22864: {"ev": "TP_JUMP", "adc": 2, "t_beat": 21857828863, "utc_ns": 1792735065999625827, "n": 1, "db": 3.0477, "step_db": 0.0, "sigma_db": 0.04659, "ovr": false}
+  EVENT seq 22866: {"ev": "TP_JUMP", "adc": 3, "t_beat": 21857828863, "utc_ns": 1792735065999625827, "n": 1, "db": 2.5434, "step_db": 0.0, "sigma_db": 0.08541, "ovr": false}
+  EVENT seq 22878: {"ev": "TP_JUMP", "adc": 0, "t_beat": 21857829685, "utc_ns": 1792735065999629036, "n": 1, "db": 2.9763, "step_db": 0.0054, "sigma_db": 0.06026, "ovr": false}
+  EVENT seq 22880: {"ev": "TP_JUMP", "adc": 1, "t_beat": 21857829685, "utc_ns": 1792735065999629036, "n": 1, "db": 2.5118, "step_db": -0.0009, "sigma_db": 0.07094, "ovr": false}
+  EVENT seq 23168: {"ev": "TP_JUMP", "adc": 0, "t_beat": 22113682229, "utc_ns": 1792735066999053036, "n": 2, "db": 1.7377, "step_db": 0.0, "sigma_db": 0.05736, "ovr": false}
+  EVENT seq 23170: {"ev": "TP_JUMP", "adc": 1, "t_beat": 22113682229, "utc_ns": 1792735066999053036, "n": 2, "db": 1.4744, "step_db": 0.0, "sigma_db": 0.09042, "ovr": false}
+  EVENT seq 23172: {"ev": "TP_JUMP", "adc": 2, "t_beat": 22113681407, "utc_ns": 1792735066999049827, "n": 2, "db": 1.79, "step_db": 0.0, "sigma_db": 0.04673, "ovr": false}
+  EVENT seq 23174: {"ev": "TP_JUMP", "adc": 3, "t_beat": 22113681407, "utc_ns": 1792735066999049827, "n": 2, "db": 1.3994, "step_db": 0.0, "sigma_db": 0.08202, "ovr": false}
+  EVENT seq 23460: {"ev": "TP_JUMP", "adc": 0, "t_beat": 22369796917, "utc_ns": 1792735067999501036, "n": 1, "db": 2.9758, "step_db": 0.0, "sigma_db": 0.06135, "ovr": false}
+  EVENT seq 23462: {"ev": "TP_JUMP", "adc": 1, "t_beat": 22369796917, "utc_ns": 1792735067999501036, "n": 1, "db": 2.5158, "step_db": 0.0, "sigma_db": 0.06934, "ovr": false}
+  EVENT seq 23464: {"ev": "TP_JUMP", "adc": 2, "t_beat": 22369796095, "utc_ns": 1792735067999497827, "n": 1, "db": 3.0327, "step_db": 0.0, "sigma_db": 0.04528, "ovr": false}
+  EVENT seq 23466: {"ev": "TP_JUMP", "adc": 3, "t_beat": 22369796095, "utc_ns": 1792735067999497827, "n": 1, "db": 2.644, "step_db": 0.0, "sigma_db": 0.08744, "ovr": false}
+  EVENT seq 23764: {"ev": "TP_JUMP", "adc": 0, "t_beat": 22625911605, "utc_ns": 1792735068999949036, "n": 1, "db": 2.9863, "step_db": 0.0, "sigma_db": 0.05842, "ovr": false}
+  EVENT seq 23766: {"ev": "TP_JUMP", "adc": 1, "t_beat": 22625911605, "utc_ns": 1792735068999949036, "n": 1, "db": 2.5435, "step_db": 0.0, "sigma_db": 0.08177, "ovr": false}
+  EVENT seq 23768: {"ev": "TP_JUMP", "adc": 2, "t_beat": 22625910783, "utc_ns": 1792735068999945827, "n": 1, "db": 3.0274, "step_db": 0.0009, "sigma_db": 0.0422, "ovr": false}
+  EVENT seq 23770: {"ev": "TP_JUMP", "adc": 3, "t_beat": 22625910783, "utc_ns": 1792735068999945827, "n": 1, "db": 2.5197, "step_db": -0.0018, "sigma_db": 0.10128, "ovr": false}
+  EVENT seq 24055: {"ev": "TP_JUMP", "adc": 0, "t_beat": 22881764149, "utc_ns": 1792735069999373036, "n": 1, "db": 2.8819, "step_db": 0.0, "sigma_db": 0.06219, "ovr": false}
+  EVENT seq 24057: {"ev": "TP_JUMP", "adc": 1, "t_beat": 22881764149, "utc_ns": 1792735069999373036, "n": 1, "db": 2.5473, "step_db": 0.0, "sigma_db": 0.08431, "ovr": false}
+  EVENT seq 24059: {"ev": "TP_JUMP", "adc": 2, "t_beat": 22881763327, "utc_ns": 1792735069999369827, "n": 1, "db": 3.0733, "step_db": 0.0, "sigma_db": 0.05224, "ovr": false}
+  EVENT seq 24061: {"ev": "TP_JUMP", "adc": 3, "t_beat": 22881763327, "utc_ns": 1792735069999369827, "n": 1, "db": 2.6464, "step_db": 0.0, "sigma_db": 0.09953, "ovr": false}
+  EVENT seq 24360: {"ev": "TP_JUMP", "adc": 0, "t_beat": 23137878837, "utc_ns": 1792735070999821036, "n": 1, "db": 2.9297, "step_db": -0.0027, "sigma_db": 0.06416, "ovr": false}
+  EVENT seq 24362: {"ev": "TP_JUMP", "adc": 1, "t_beat": 23137878837, "utc_ns": 1792735070999821036, "n": 1, "db": 2.4122, "step_db": -0.0012, "sigma_db": 0.07855, "ovr": false}
+  EVENT seq 24364: {"ev": "TP_JUMP", "adc": 2, "t_beat": 23137878015, "utc_ns": 1792735070999817827, "n": 1, "db": 3.078, "step_db": -0.0017, "sigma_db": 0.04407, "ovr": false}
+  EVENT seq 24366: {"ev": "TP_JUMP", "adc": 3, "t_beat": 23137878015, "utc_ns": 1792735070999817827, "n": 1, "db": 2.4553, "step_db": -0.0056, "sigma_db": 0.0974, "ovr": false}
+  EVENT seq 24650: {"ev": "TP_JUMP", "adc": 0, "t_beat": 23393731381, "utc_ns": 1792735071999245036, "n": 1, "db": 2.9494, "step_db": 0.0, "sigma_db": 0.05393, "ovr": false}
+  EVENT seq 24652: {"ev": "TP_JUMP", "adc": 1, "t_beat": 23393731381, "utc_ns": 1792735071999245036, "n": 1, "db": 2.5086, "step_db": 0.0, "sigma_db": 0.07494, "ovr": false}
+  EVENT seq 24654: {"ev": "TP_JUMP", "adc": 2, "t_beat": 23393730559, "utc_ns": 1792735071999241827, "n": 1, "db": 3.0159, "step_db": 0.0, "sigma_db": 0.05475, "ovr": false}
+  EVENT seq 24656: {"ev": "TP_JUMP", "adc": 3, "t_beat": 23393730559, "utc_ns": 1792735071999241827, "n": 1, "db": 2.5674, "step_db": 0.0, "sigma_db": 0.09717, "ovr": false}
+  EVENT seq 24910: {"ev": "TP_JUMP", "adc": 2, "t_beat": 23619436543, "utc_ns": 1792735072880905827, "n": 1, "db": 0.3967, "step_db": 0.0, "sigma_db": 0.05283, "ovr": false}
+  EVENT seq 24920: {"ev": "TP_JUMP", "adc": 0, "t_beat": 23619437365, "utc_ns": 1792735072880909036, "n": 1, "db": 0.858, "step_db": -0.0001, "sigma_db": 0.05201, "ovr": false}
+  EVENT seq 24922: {"ev": "TP_JUMP", "adc": 1, "t_beat": 23619437365, "utc_ns": 1792735072880909036, "n": 1, "db": 0.7702, "step_db": -0.0001, "sigma_db": 0.07494, "ovr": false}
+  EVENT seq 24945: {"ev": "TP_JUMP", "adc": 0, "t_beat": 23649846069, "utc_ns": 1792735072999693036, "n": 1, "db": 2.9756, "step_db": 0.0, "sigma_db": 0.05201, "ovr": false}
+  EVENT seq 24947: {"ev": "TP_JUMP", "adc": 1, "t_beat": 23649846069, "utc_ns": 1792735072999693036, "n": 1, "db": 2.5303, "step_db": 0.0, "sigma_db": 0.09402, "ovr": false}
+  EVENT seq 24951: {"ev": "TP_JUMP", "adc": 2, "t_beat": 23649845247, "utc_ns": 1792735072999689827, "n": 1, "db": 3.1228, "step_db": 0.0, "sigma_db": 0.05283, "ovr": false}
+  EVENT seq 24953: {"ev": "TP_JUMP", "adc": 3, "t_beat": 23649845247, "utc_ns": 1792735072999689827, "n": 1, "db": 2.6324, "step_db": 0.0, "sigma_db": 0.09728, "ovr": false}
+  EVENT seq 24977: {"ev": "TP_JUMP", "adc": 2, "t_beat": 23662690303, "utc_ns": 1792735073049865827, "n": 1, "db": 0.3178, "step_db": 0.0047, "sigma_db": 0.05283, "ovr": false}
+  EVENT seq 25250: {"ev": "TP_JUMP", "adc": 0, "t_beat": 23905698613, "utc_ns": 1792735073999117036, "n": 1, "db": 2.9444, "step_db": 0.0, "sigma_db": 0.0564, "ovr": false}
+  EVENT seq 25252: {"ev": "TP_JUMP", "adc": 1, "t_beat": 23905698613, "utc_ns": 1792735073999117036, "n": 1, "db": 2.4754, "step_db": 0.0, "sigma_db": 0.08415, "ovr": false}
+  EVENT seq 25254: {"ev": "TP_JUMP", "adc": 2, "t_beat": 23905697791, "utc_ns": 1792735073999113827, "n": 1, "db": 2.9934, "step_db": -0.0017, "sigma_db": 0.0658, "ovr": false}
+  EVENT seq 25256: {"ev": "TP_JUMP", "adc": 3, "t_beat": 23905697791, "utc_ns": 1792735073999113827, "n": 1, "db": 2.5397, "step_db": -0.0032, "sigma_db": 0.11105, "ovr": false}
+  EVENT seq 25544: {"ev": "TP_JUMP", "adc": 0, "t_beat": 24161813301, "utc_ns": 1792735074999565036, "n": 1, "db": 3.0253, "step_db": 0.0, "sigma_db": 0.05418, "ovr": false}
+  EVENT seq 25546: {"ev": "TP_JUMP", "adc": 1, "t_beat": 24161813301, "utc_ns": 1792735074999565036, "n": 1, "db": 2.5257, "step_db": 0.0, "sigma_db": 0.08415, "ovr": false}
+  EVENT seq 25548: {"ev": "TP_JUMP", "adc": 2, "t_beat": 24161812479, "utc_ns": 1792735074999561827, "n": 1, "db": 3.0027, "step_db": 0.0, "sigma_db": 0.04558, "ovr": false}
+  EVENT seq 25550: {"ev": "TP_JUMP", "adc": 3, "t_beat": 24161812479, "utc_ns": 1792735074999561827, "n": 1, "db": 2.4865, "step_db": 0.0, "sigma_db": 0.09412, "ovr": false}
+  EVENT seq 25848: {"ev": "TP_JUMP", "adc": 0, "t_beat": 24417665845, "utc_ns": 1792735075998989036, "n": 2, "db": 1.8669, "step_db": 0.0036, "sigma_db": 0.05451, "ovr": false}
+  EVENT seq 25850: {"ev": "TP_JUMP", "adc": 1, "t_beat": 24417665845, "utc_ns": 1792735075998989036, "n": 2, "db": 1.4858, "step_db": 0.0015, "sigma_db": 0.06224, "ovr": false}
+  EVENT seq 25852: {"ev": "TP_JUMP", "adc": 2, "t_beat": 24417665023, "utc_ns": 1792735075998985827, "n": 2, "db": 1.8265, "step_db": 0.0043, "sigma_db": 0.06576, "ovr": false}
+  EVENT seq 25854: {"ev": "TP_JUMP", "adc": 3, "t_beat": 24417665023, "utc_ns": 1792735075998985827, "n": 2, "db": 1.6633, "step_db": -0.0014, "sigma_db": 0.13985, "ovr": false}
+  EVENT seq 26139: {"ev": "TP_JUMP", "adc": 0, "t_beat": 24673780533, "utc_ns": 1792735076999437036, "n": 1, "db": 2.8893, "step_db": 0.0, "sigma_db": 0.06574, "ovr": false}
+  EVENT seq 26141: {"ev": "TP_JUMP", "adc": 1, "t_beat": 24673780533, "utc_ns": 1792735076999437036, "n": 1, "db": 2.4429, "step_db": 0.0, "sigma_db": 0.06482, "ovr": false}
+  EVENT seq 26143: {"ev": "TP_JUMP", "adc": 2, "t_beat": 24673779711, "utc_ns": 1792735076999433827, "n": 1, "db": 2.9732, "step_db": 0.0, "sigma_db": 0.04473, "ovr": false}
+  EVENT seq 26145: {"ev": "TP_JUMP", "adc": 3, "t_beat": 24673779711, "utc_ns": 1792735076999433827, "n": 1, "db": 2.7233, "step_db": 0.0, "sigma_db": 0.11072, "ovr": false}
+       60 s: {"spec": 12621, "tp": 6306, "event": 279, "snap": 0, "mb": 3164.5, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 26153, "ver": {"2": 19206}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+  EVENT seq 26434: {"ev": "TP_JUMP", "adc": 2, "t_beat": 24929894399, "utc_ns": 1792735077999881827, "n": 1, "db": 3.0613, "step_db": 0.0, "sigma_db": 0.05461, "ovr": false}
+  EVENT seq 26436: {"ev": "TP_JUMP", "adc": 3, "t_beat": 24929894399, "utc_ns": 1792735077999881827, "n": 1, "db": 2.6841, "step_db": 0.0, "sigma_db": 0.10806, "ovr": false}
+  EVENT seq 26444: {"ev": "TP_JUMP", "adc": 0, "t_beat": 24929895221, "utc_ns": 1792735077999885036, "n": 1, "db": 2.9569, "step_db": 0.001, "sigma_db": 0.06547, "ovr": false}
+  EVENT seq 26446: {"ev": "TP_JUMP", "adc": 1, "t_beat": 24929895221, "utc_ns": 1792735077999885036, "n": 1, "db": 2.5007, "step_db": 0.0005, "sigma_db": 0.07311, "ovr": false}
+  EVENT seq 26736: {"ev": "TP_JUMP", "adc": 0, "t_beat": 25185747765, "utc_ns": 1792735078999309036, "n": 1, "db": 3.0024, "step_db": 0.0, "sigma_db": 0.0541, "ovr": false}
+  EVENT seq 26738: {"ev": "TP_JUMP", "adc": 1, "t_beat": 25185747765, "utc_ns": 1792735078999309036, "n": 1, "db": 2.5203, "step_db": 0.0, "sigma_db": 0.08508, "ovr": false}
+  EVENT seq 26740: {"ev": "TP_JUMP", "adc": 2, "t_beat": 25185746943, "utc_ns": 1792735078999305827, "n": 1, "db": 3.0812, "step_db": 0.0, "sigma_db": 0.05266, "ovr": false}
+  EVENT seq 26742: {"ev": "TP_JUMP", "adc": 3, "t_beat": 25185746943, "utc_ns": 1792735078999305827, "n": 1, "db": 2.6992, "step_db": 0.0, "sigma_db": 0.10783, "ovr": false}
+  EVENT seq 27026: {"ev": "TP_JUMP", "adc": 0, "t_beat": 25441862453, "utc_ns": 1792735079999757036, "n": 1, "db": 2.9932, "step_db": 0.0, "sigma_db": 0.06824, "ovr": false}
+  EVENT seq 27028: {"ev": "TP_JUMP", "adc": 1, "t_beat": 25441862453, "utc_ns": 1792735079999757036, "n": 1, "db": 2.5381, "step_db": 0.0, "sigma_db": 0.06446, "ovr": false}
+  EVENT seq 27032: {"ev": "TP_JUMP", "adc": 2, "t_beat": 25441861631, "utc_ns": 1792735079999753827, "n": 1, "db": 3.1369, "step_db": 0.0, "sigma_db": 0.04027, "ovr": false}
+  EVENT seq 27034: {"ev": "TP_JUMP", "adc": 3, "t_beat": 25441861631, "utc_ns": 1792735079999753827, "n": 1, "db": 2.6567, "step_db": 0.0, "sigma_db": 0.09142, "ovr": false}
+  EVENT seq 27332: {"ev": "TP_JUMP", "adc": 0, "t_beat": 25697714997, "utc_ns": 1792735080999181036, "n": 1, "db": 2.9036, "step_db": -0.0003, "sigma_db": 0.06353, "ovr": false}
+  EVENT seq 27334: {"ev": "TP_JUMP", "adc": 1, "t_beat": 25697714997, "utc_ns": 1792735080999181036, "n": 1, "db": 2.6202, "step_db": 0.0074, "sigma_db": 0.07767, "ovr": false}
+  EVENT seq 27336: {"ev": "TP_JUMP", "adc": 2, "t_beat": 25697714175, "utc_ns": 1792735080999177827, "n": 1, "db": 3.0984, "step_db": 0.001, "sigma_db": 0.05002, "ovr": false}
+  EVENT seq 27338: {"ev": "TP_JUMP", "adc": 3, "t_beat": 25697714175, "utc_ns": 1792735080999177827, "n": 1, "db": 2.6366, "step_db": -0.0027, "sigma_db": 0.10068, "ovr": false}
+  EVENT seq 27623: {"ev": "TP_JUMP", "adc": 0, "t_beat": 25953829685, "utc_ns": 1792735081999629036, "n": 1, "db": 3.0033, "step_db": 0.0, "sigma_db": 0.06926, "ovr": false}
+  EVENT seq 27625: {"ev": "TP_JUMP", "adc": 1, "t_beat": 25953829685, "utc_ns": 1792735081999629036, "n": 1, "db": 2.4005, "step_db": 0.0, "sigma_db": 0.07199, "ovr": false}
+  EVENT seq 27627: {"ev": "TP_JUMP", "adc": 2, "t_beat": 25953828863, "utc_ns": 1792735081999625827, "n": 1, "db": 3.0508, "step_db": 0.0, "sigma_db": 0.05409, "ovr": false}
+  EVENT seq 27629: {"ev": "TP_JUMP", "adc": 3, "t_beat": 25953828863, "utc_ns": 1792735081999625827, "n": 1, "db": 2.6814, "step_db": 0.0, "sigma_db": 0.12839, "ovr": false}
+  EVENT seq 27918: {"ev": "TP_JUMP", "adc": 2, "t_beat": 26209681407, "utc_ns": 1792735082999049827, "n": 2, "db": 1.845, "step_db": 0.0, "sigma_db": 0.05412, "ovr": false}
+  EVENT seq 27920: {"ev": "TP_JUMP", "adc": 3, "t_beat": 26209681407, "utc_ns": 1792735082999049827, "n": 2, "db": 1.4695, "step_db": 0.0, "sigma_db": 0.1172, "ovr": false}
+  EVENT seq 27928: {"ev": "TP_JUMP", "adc": 0, "t_beat": 26209682229, "utc_ns": 1792735082999053036, "n": 2, "db": 1.8173, "step_db": 0.0014, "sigma_db": 0.05449, "ovr": false, "last": true}
+  EVENT seq 27930: {"ev": "TP_JUMP", "adc": 1, "t_beat": 26209682229, "utc_ns": 1792735082999053036, "n": 2, "db": 1.4491, "step_db": -0.0028, "sigma_db": 0.08144, "ovr": false}
+  EVENT seq 28219: {"ev": "TP_JUMP", "adc": 1, "t_beat": 26465796917, "utc_ns": 1792735083999501036, "n": 1, "db": 2.4739, "step_db": 0.0, "sigma_db": 0.08015, "ovr": false}
+  EVENT seq 28223: {"ev": "TP_JUMP", "adc": 2, "t_beat": 26465796095, "utc_ns": 1792735083999497827, "n": 1, "db": 3.103, "step_db": 0.0, "sigma_db": 0.07463, "ovr": false, "last": true}
+  EVENT seq 28225: {"ev": "TP_JUMP", "adc": 3, "t_beat": 26465796095, "utc_ns": 1792735083999497827, "n": 1, "db": 2.5602, "step_db": 0.0, "sigma_db": 0.10869, "ovr": false}
+  EVENT seq 28510: {"ev": "TP_JUMP", "adc": 1, "t_beat": 26721911605, "utc_ns": 1792735084999949036, "n": 1, "db": 2.4677, "step_db": 0.0, "sigma_db": 0.07066, "ovr": false}
+  EVENT seq 28515: {"ev": "TP_JUMP", "adc": 3, "t_beat": 26721910783, "utc_ns": 1792735084999945827, "n": 1, "db": 2.6542, "step_db": 0.0, "sigma_db": 0.09088, "ovr": false}
+  EVENT seq 28814: {"ev": "TP_JUMP", "adc": 1, "t_beat": 26977764149, "utc_ns": 1792735085999373036, "n": 1, "db": 2.4961, "step_db": 0.0, "sigma_db": 0.06952, "ovr": false}
+  EVENT seq 28817: {"ev": "TP_JUMP", "adc": 3, "t_beat": 26977763327, "utc_ns": 1792735085999369827, "n": 1, "db": 2.7134, "step_db": 0.0075, "sigma_db": 0.09096, "ovr": false}
+  EVENT seq 29102: {"ev": "TP_JUMP", "adc": 1, "t_beat": 27233878837, "utc_ns": 1792735086999821036, "n": 1, "db": 2.4661, "step_db": 0.0, "sigma_db": 0.07637, "ovr": false}
+  EVENT seq 29107: {"ev": "TP_JUMP", "adc": 3, "t_beat": 27233878015, "utc_ns": 1792735086999817827, "n": 1, "db": 2.6203, "step_db": 0.0, "sigma_db": 0.08328, "ovr": false}
+  EVENT seq 29406: {"ev": "TP_JUMP", "adc": 1, "t_beat": 27489731381, "utc_ns": 1792735087999245036, "n": 1, "db": 2.4768, "step_db": -0.0016, "sigma_db": 0.07918, "ovr": false, "last": true}
+  EVENT seq 29409: {"ev": "TP_JUMP", "adc": 3, "t_beat": 27489730559, "utc_ns": 1792735087999241827, "n": 1, "db": 2.6116, "step_db": 0.0077, "sigma_db": 0.11287, "ovr": false}
+  EVENT seq 29698: {"ev": "TP_JUMP", "adc": 3, "t_beat": 27745845247, "utc_ns": 1792735088999689827, "n": 1, "db": 2.5509, "step_db": 0.0, "sigma_db": 0.10276, "ovr": false, "last": true}
+      120 s: {"spec": 24340, "tp": 12166, "event": 315, "snap": 0, "mb": 6102.9, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 43768, "ver": {"2": 36821}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      180 s: {"spec": 36058, "tp": 18026, "event": 315, "snap": 0, "mb": 9041.0, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 61346, "ver": {"2": 54399}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      240 s: {"spec": 47776, "tp": 23886, "event": 315, "snap": 0, "mb": 11979.0, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 78924, "ver": {"2": 71977}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      300 s: {"spec": 59496, "tp": 29746, "event": 315, "snap": 0, "mb": 14917.6, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 96504, "ver": {"2": 89557}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      360 s: {"spec": 71214, "tp": 35604, "event": 315, "snap": 0, "mb": 17855.7, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 114080, "ver": {"2": 107133}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      420 s: {"spec": 82933, "tp": 41463, "event": 315, "snap": 0, "mb": 20794.0, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 131658, "ver": {"2": 124711}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      480 s: {"spec": 94652, "tp": 47322, "event": 315, "snap": 0, "mb": 23732.4, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 149236, "ver": {"2": 142289}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      540 s: {"spec": 106370, "tp": 53182, "event": 315, "snap": 0, "mb": 26670.5, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 166814, "ver": {"2": 159867}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      600 s: {"spec": 118088, "tp": 59042, "event": 315, "snap": 0, "mb": 29608.5, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 184392, "ver": {"2": 177445}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      660 s: {"spec": 129808, "tp": 64902, "event": 315, "snap": 0, "mb": 32547.1, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 201972, "ver": {"2": 195025}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      720 s: {"spec": 141526, "tp": 70758, "event": 315, "snap": 0, "mb": 35485.2, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 219546, "ver": {"2": 212599}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      780 s: {"spec": 153245, "tp": 76619, "event": 315, "snap": 0, "mb": 38423.5, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 237126, "ver": {"2": 230179}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      840 s: {"spec": 164964, "tp": 82478, "event": 315, "snap": 0, "mb": 41361.9, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 254704, "ver": {"2": 247757}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      900 s: {"spec": 176682, "tp": 88338, "event": 315, "snap": 0, "mb": 44300.0, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 272282, "ver": {"2": 265335}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+      960 s: {"spec": 188400, "tp": 94198, "event": 315, "snap": 0, "mb": 47238.0, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 289860, "ver": {"2": 282913}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1020 s: {"spec": 200120, "tp": 100058, "event": 315, "snap": 0, "mb": 50176.6, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 307440, "ver": {"2": 300493}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1080 s: {"spec": 211838, "tp": 105914, "event": 315, "snap": 0, "mb": 53114.7, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 325014, "ver": {"2": 318067}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1140 s: {"spec": 223556, "tp": 111774, "event": 315, "snap": 0, "mb": 56052.8, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 342592, "ver": {"2": 335645}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1200 s: {"spec": 235276, "tp": 117634, "event": 315, "snap": 0, "mb": 58991.4, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 360172, "ver": {"2": 353225}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1260 s: {"spec": 246994, "tp": 123494, "event": 315, "snap": 0, "mb": 61929.5, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 377750, "ver": {"2": 370803}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1320 s: {"spec": 258714, "tp": 129354, "event": 315, "snap": 0, "mb": 64868.0, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 395330, "ver": {"2": 388383}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1380 s: {"spec": 270433, "tp": 135214, "event": 315, "snap": 0, "mb": 67806.4, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 412909, "ver": {"2": 405962}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1440 s: {"spec": 282152, "tp": 141074, "event": 315, "snap": 0, "mb": 70744.7, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 430488, "ver": {"2": 423541}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1500 s: {"spec": 293872, "tp": 146934, "event": 315, "snap": 0, "mb": 73683.3, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 448068, "ver": {"2": 441121}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1560 s: {"spec": 305591, "tp": 152794, "event": 315, "snap": 0, "mb": 76621.6, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 465647, "ver": {"2": 458700}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1620 s: {"spec": 317310, "tp": 158650, "event": 315, "snap": 0, "mb": 79559.9, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 483222, "ver": {"2": 476275}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1680 s: {"spec": 329028, "tp": 164510, "event": 315, "snap": 0, "mb": 82498.0, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 500800, "ver": {"2": 493853}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1740 s: {"spec": 340748, "tp": 170370, "event": 315, "snap": 0, "mb": 85436.6, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 518380, "ver": {"2": 511433}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+     1800 s: {"spec": 352466, "tp": 176230, "event": 315, "snap": 0, "mb": 88374.7, "crc_bad": 0, "gaps": 6947, "declared": 6947, "unexplained": 0, "seq_back": 0, "dup": 0, "kgap": 0, "tdev": 0, "tp_gap": 0, "health": "0x0", "sat": 0, "flags": "0x0", "last_seq": 535958, "ver": {"2": 529011}, "f32_pairs": 0, "f32_bad": 0, "f32_maxulp": 0.0}
+  EVENT seq 540238: {"ev": "STOP", "why": "命令", "dumps": [179943, 0, 179943, 0, 0, 0, 0, 0], "miss": [0, 0, 0, 0, 0, 0, 0, 0], "tp": [1799440, 1799440, 1799440, 1799440], "tp_info": [{"adc": 0, "tp": "core", "core": 0, "anch_dev": 0, "gap": 0}, {"adc": 1, "tp": "core", "core": 1, "anch_dev": 0, "gap": 0}, {"adc": 2, "t
