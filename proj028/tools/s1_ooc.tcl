@@ -41,17 +41,23 @@ foreach {top files clocks} {
 create_project s1 $outdir/vivado -part $part -force
 create_ip -name ddr4 -vendor xilinx.com -library ip -module_name ddr4_pl
 set ip [get_ips ddr4_pl]
+# 実機の設定: PYNQ の RFSoC4x2 base overlay（Xilinx/RFSoC-PYNQ 2a6beba の boards/RFSoC4x2/base/base.tcl・base.xdc）と同じ。
+#   参照クロック 200 MHz（G13/G12、IBUFDS → BUFG → No_Buffer）。1 回目（2026-10-23 午前）は仮に MT40A512M16HA-075E・3332 ps・AXI 32 bit で数えた
 set req {
     CONFIG.C0.DDR4_MemoryType         Components
     CONFIG.C0.DDR4_DataWidth          64
-    CONFIG.C0.DDR4_MemoryPart         MT40A512M16HA-075E
+    CONFIG.C0.DDR4_MemoryPart         MT40A1G16RC-062E
     CONFIG.C0.DDR4_TimePeriod         833
-    CONFIG.C0.DDR4_InputClockPeriod   3332
+    CONFIG.C0.DDR4_InputClockPeriod   4998
+    CONFIG.C0.BANK_GROUP_WIDTH        1
+    CONFIG.C0.DDR4_CasLatency         17
+    CONFIG.C0.DDR4_CasWriteLatency    12
+    CONFIG.System_Clock               No_Buffer
     CONFIG.C0.DDR4_DataMask           DM_NO_DBI
     CONFIG.C0.DDR4_Ecc                false
     CONFIG.C0.DDR4_AxiSelection       true
     CONFIG.C0.DDR4_AxiDataWidth       512
-    CONFIG.C0.DDR4_AxiAddressWidth    32
+    CONFIG.C0.DDR4_AxiAddressWidth    33
 }
 set ng 0
 foreach {k v} $req {

@@ -43,9 +43,9 @@ FINE_REST = dict(DSP=160 + 64 + 288 + 24, LUT=int(12400 * 1.5), FF=int(15700 * 1
 #   荒い FFT は S-1 の実測（cfft32、OOC 合成: DSP 252・LUT 12,700・FF 14,250）。出口の回転は M-1d で不要（細かい ch の巡回）。利得 20
 COARSE_PFB_DSP = math.ceil(FS * TC * P_OS / Q_OS / CLK)
 COARSE = dict(DSP=COARSE_PFB_DSP + 252 + 20, LUT=15000 + 12700 + 3000, FF=30000 + 14250 + 5000, BRAM=8)
-# DDR 系（S-1 の後）: MIG は ddr4_pl の実測（DSP 3・LUT 15,124・FF 17,931・BRAM 25.5）、corner turn の溜めは ct_buf の実測（BRAM 57）。
+# DDR 系（S-1 の後）: MIG は ddr4_pl の実測（実機の設定 MT40A1G16RC-062E・参照 200 MHz・AXI 33 bit で DSP 3・LUT 15,638・FF 18,413・BRAM 25.5）、corner turn の溜めは ct_buf の実測（BRAM 57）。
 #   読み手・AXI の LUT 6,000・FF 8,000・BRAM 8 は仮
-DDRSYS = dict(DSP=3, LUT=15124 + 6000, FF=17931 + 8000, BRAM=25.5 + 57 + 8)
+DDRSYS = dict(DSP=3, LUT=15638 + 6000, FF=18413 + 8000, BRAM=25.5 + 57 + 8)
 COMMON = dict(DSP=0, BRAM=18, LUT=13900, FF=30400)                     # proj024 と同じ（v2 の共通部・リング・RAW）
 
 
