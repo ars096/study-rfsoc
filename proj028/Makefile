@@ -32,7 +32,7 @@ export BOARD_REPO PART OUTDIR
 
 PYTHON ?= python3
 
-.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 model-m4 estimate sim-cfft32 sim-cpfb sim-cstage sim-ctwr sim-ctrd s1 sim-ddrtg
+.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 model-m4 estimate sim-cfft32 sim-cpfb sim-cstage sim-ctwr sim-ctrd sim-fpfb sim-fchain s1 sim-ddrtg
 
 # S-2: PL DDR4 の帯域と容量を測る .bit（PS ＋ MIG ＋ ddr_tg。この PC の Vivado、1 時間前後）。成果物は build/proj028.bit・.hwh。
 # 成否は make の終了状態でなく build/vivado.log の「TIMING (確定)」「CRITICAL WARNING: n 件」「=== wrote」で読む
@@ -89,6 +89,18 @@ sim-ctrd:
 	mkdir -p build-sim
 	$(PYTHON) tools/sim_ct_rd.py > build-sim/sim_ctrd.log & $(PYTHON) tools/sim_ct_rd.py --bad > build-sim/sim_ctrd_bad.log & wait
 	@grep "結果:" build-sim/sim_ctrd.log build-sim/sim_ctrd_bad.log
+
+# F-1: 細かい PFB（fine_pfb ＋ fine_coef）を model/fine_fixed.py と bit 単位で。ふつう・valid を落とす・陽性対照 2 つ（端数・ch の頭）。数分
+sim-fpfb:
+	mkdir -p build-sim
+	$(PYTHON) tools/sim_fine_pfb.py > build-sim/sim_fpfb.log & $(PYTHON) tools/sim_fine_pfb.py --gap > build-sim/sim_fpfb_gap.log & $(PYTHON) tools/sim_fine_pfb.py --frac-err > build-sim/sim_fpfb_frac.log & $(PYTHON) tools/sim_fine_pfb.py --no-ch-reset > build-sim/sim_fpfb_nores.log & wait
+	@grep "結果:" build-sim/sim_fpfb.log build-sim/sim_fpfb_gap.log build-sim/sim_fpfb_frac.log build-sim/sim_fpfb_nores.log
+
+# F-2: ひねり係数と鎖（fine_tw ＋ fine_chain）を model/fine_fixed.py の chain_Y ＋ power と bit 単位で。ふつう・陽性対照 2 つ。数分
+sim-fchain:
+	mkdir -p build-sim
+	$(PYTHON) tools/sim_fine_chain.py > build-sim/sim_fch.log & $(PYTHON) tools/sim_fine_chain.py --norm > build-sim/sim_fch_norm.log & $(PYTHON) tools/sim_fine_chain.py --tw-hi-err > build-sim/sim_fch_tw.log & wait
+	@grep "結果:" build-sim/sim_fch.log build-sim/sim_fch_norm.log build-sim/sim_fch_tw.log
 
 # S-1: cfft32・ct_buf・DDR4 IP を OOC で合成して資源を数える（この PC の Vivado、30 分前後）。結果は build-s1/s1.txt
 S1_JOBS ?= 4
