@@ -285,7 +285,8 @@ class Bundler:
             dropped = self._close("欠け")
         bad = int(m["n"]) != self.pl_nacc
         if self.cur is None:
-            self.cur = dict(jb=jb, ms=[mi], acc=np.array(spec, dtype=np.uint64), m=dict(m), sat=int(m["sat"]),
+            acc = spec if (self.n_sum == 1 and not isinstance(spec, np.ndarray)) else np.array(spec, dtype=np.uint64)   # proj029 2: LazyRec は写さない
+            self.cur = dict(jb=jb, ms=[mi], acc=acc, m=dict(m), sat=int(m["sat"]),
                             flags=int(m["flags"]), h=int(m["h"]), n=int(m["n"]), bad="N" if bad else None)
         else:
             c = self.cur
@@ -450,6 +451,30 @@ class HwBackend:
         self.ring_crc = 0
         self.stall_at = getattr(opts, "posctl_ring_stall", 0.0)
         self.n_pump = 0
+        self.lazy_wins = set()                     # proj029 2: SPEC を写さずに渡す窓（--fast-ring・n_sum 1 の FULL。START で決める）
+        self.n_mat = 0                             # proj029 2: 周の終わりに写した LazyRec の数（使い切れなかった分）
+
+    def release(self):
+        """proj029 2: 周の終わり。列に残った LazyRec（その周で使い切れなかった分）を写して CRC を照らし、リングの R を進める。
+        **R を進めた後にリングの上を指すものを残さない**（PL が上書きしてよい場所になる）"""
+        rg = self.ring
+        if rg is None or not rg.hold:
+            return
+        for d in self.q:
+            if not any(not isinstance(x[2], np.ndarray) for x in d):
+                continue
+            keep = []
+            for seq, hw, pay in d:
+                if not isinstance(pay, np.ndarray):
+                    pay, ok = pay.materialize()
+                    self.n_mat += 1
+                    if not ok:
+                        self.ring_crc += 1
+                        continue
+                keep.append((seq, hw, pay))
+            d.clear()
+            d.extend(keep)
+        rg.release()
 
     def open(self):
         import spectrometer as S
@@ -527,6 +552,7 @@ class HwBackend:
         self.ring.read()
         for d in self.q:
             d.clear()
+        self.ring.release()                        # proj029 2: 列を空にしたので、写していないレコードも残っていない
 
     def pump(self):
         """1 周の頭に 1 回: リングを [R, W) まで読み、SPEC は窓ごとの列へ、TP は TpStream へ"""
@@ -557,7 +583,7 @@ class HwBackend:
         if self.ring is None:
             return None
         r = self.ring.regs()
-        return dict(w=r["w"], r=r["r"], drop=r["drop"], rec=r["rec"], peak=r["peak"], err=r["err"], crc=self.ring_crc,
+        return dict(w=r["w"], r=r["r"], drop=r["drop"], rec=r["rec"], peak=r["peak"], err=r["err"], crc=self.ring_crc, mat=self.n_mat,
                     tp_rec_lost=sum(t.rec_lost for t in getattr(self, "tps", [])))
 
     def close(self):
@@ -899,6 +925,9 @@ class FakeBackend:
     def pump(self):
         return 0
 
+    def release(self):
+        pass
+
     def snap(self, adc, n, nacc, timeout=5.0):
         """偽物: 3000.25 MHz（第 2 ナイキストで 1095.75 MHz に見える）の正弦波 ＋ ガウス雑音、16 bit の上位 14 bit"""
         rng = np.random.default_rng(adc)
@@ -1221,11 +1250,13 @@ class G21Backend(HwBackend):
         """リングを [R, W) まで読み、SPEC は窓 A0 の列へ、TP は FULL の TP（s 0）とコアの TP（s 0xFF）をそれぞれの欄へ"""
         self.n_pump += 1
         t0 = time.perf_counter()
-        recs = self.ring.read()
-        t1 = time.perf_counter()
         c0 = self.core.adc
+        lazy = ((lambda core, s, ty: ty == TYPE_SPEC and core == c0 and s == 0)       # proj029 2: 窓 A0 の SPEC を写さずに
+                if 0 in self.lazy_wins and self.running else None)
+        recs = self.ring.read(lazy)
+        t1 = time.perf_counter()
         for core, s, seq, hw, pay, crc_ok, tail_ok in recs:
-            if not (crc_ok and tail_ok):
+            if crc_ok is False or not tail_ok:     # crc_ok None = LazyRec（PL の CRC は記録のときに C で照らす）
                 self.ring_crc += 1
                 continue
             if core != c0:
@@ -1508,10 +1539,13 @@ class G22Backend(HwBackend):
         """リングを [R, W) まで読み、SPEC は窓 A0・B0 の列へ、TP は (コア, s) の欄へ（tp_slot）"""
         self.n_pump += 1
         t0 = time.perf_counter()
-        recs = self.ring.read()
+        lw, jm = self.lazy_wins, self.jmap
+        lazy = ((lambda core, s, ty: ty == TYPE_SPEC and jm.get((core, s)) in lw)    # proj029 2: その窓の SPEC を写さずに
+                if lw and self.running else None)
+        recs = self.ring.read(lazy)
         t1 = time.perf_counter()
         for core, s, seq, hw, pay, crc_ok, tail_ok in recs:
-            if not (crc_ok and tail_ok):
+            if crc_ok is False or not tail_ok:     # crc_ok None = LazyRec（PL の CRC は記録のときに C で照らす）
                 self.ring_crc += 1
                 continue
             ty = int(hw[0]) >> 40 & 0xFF
@@ -1752,6 +1786,9 @@ class Acq:
         if getattr(opts, "fast", False):
             import s45fast
             self.fast = s45fast
+        self.fast_ring = bool(getattr(opts, "fast_ring", False))   # proj029 2: --fast-ring で SPEC のレコードを写さずにリングの上から（n_sum 1 の FULL）
+        if self.fast_ring and self.fast is None:
+            raise SystemExit("--fast-ring は --fast と一緒に")
         self.hist = np.zeros(1001, np.int64)      # 1 周の時間（0.1 ms 刻み、100 ms で頭打ち）
         self.cal = getattr(opts, "tp_cal", None)    # TP の dBm の較正（s45cal、specd が起動時に読む）。bit の ID は open の後で照らす
         self.cal_msg = "較正ファイルが無い" if self.cal is None else "未確認"
@@ -2072,6 +2109,9 @@ class Acq:
         self.start_at = sa
         self.active = [bool(cf.get("active", True)) for cf in self.be.cfgs]
         self.bund = [Bundler(cf["n_sum"], cf["pl_nacc"]) if cf.get("bundle") else None for cf in self.be.cfgs]
+        if hasattr(self.be, "lazy_wins"):          # proj029 2: --fast-ring の窓（n_sum 1 の FULL だけ。n_sum ≧ 2 は今までの道で足す）
+            self.be.lazy_wins = {j for j, (cf, b) in enumerate(zip(self.be.cfgs, self.bund))
+                                 if self.fast_ring and b is not None and b.n_sum == 1 and cf.get("kind") == "full"}
         self.ndump_target = int(cmd.get("n") or 0)
         utc = self.be.clock.utc_ns(sa)
         self.event(dict(ev="START", start_at=sa, utc_ns=utc, n=self.ndump_target, forced=self.forced, version=VERSION,
@@ -2235,6 +2275,31 @@ class Acq:
         if utc:
             utc -= ((cf.get("ds", G_DS_BEATS) + 3 * cf.get("frame", G_FRAME) // 2) * 125) // 32
         fm = self.st.get("fmt", "f32")
+        if not isinstance(spec, np.ndarray) and hasattr(spec, "crc_exp"):
+            # proj029 2: PL のリングの上のレコード（LazyRec）。PL の CRC の照らし・逆順・丸め・出口の CRC を C で（写さない）
+            F = self.fast
+            first = True
+            for f in (("u64", "f32") if fm == "both" else (fm,)):
+                code = P.FMT_RAW if f == "u64" else P.FMT_F32
+                hd = P.SPEC2_H.pack(j // NW, j % NW, src, 1, 0, cf["shift"], code, int(getattr(self.be, "bit_kind", 11)),
+                                    spec.n, int(cf["n_sum"]), m["cfg"], m["k"], cf["nacc"], m["sat"], m["flags"], h, 0, 0,
+                                    m["t"], utc, P.BASE_NS, cf["if_mhz"], cf["df_hz"])
+                pc = F.PC_TRUNC if (self.f32_trunc and f == "f32") else 0
+                if first:
+                    data, crc, crc_pl = F.ring_spec(spec, hd, f, posctl=pc)
+                    if crc_pl != spec.crc_exp:     # 今までの道（Ring.read で捨てる）と同じく、記録を出さずに数える
+                        self.be.ring_crc += 1
+                        self.n_miss[j] += 1
+                        if self.be.ring_crc <= 5:
+                            self.log(f"{win_key(j)}: PL のレコードの CRC が合わない（seq {m['seq']}）。記録を出さない")
+                        return
+                    first = False
+                else:
+                    v = spec.view()
+                    data, crc = F.spec_u64(v, hd) if f == "u64" else F.spec_f32(v, hd, posctl=pc)
+                self._put(P.T_SPEC, [hd, data], crc)
+            self.h_or |= int(m["h"]); self.fl_or |= int(m["flags"]); self.sat += int(m["sat"])
+            return
         if self.fast is not None:
             # proj029 1: 逆順・float32 への丸め・CRC を C の 1 回のなめで（出す bytes は下の Python の道と同じ。test_s45fast.py で照合）
             F = self.fast
@@ -2350,6 +2415,7 @@ class Acq:
                 self._spec_record(j, m, spec)
                 t_rec += time.perf_counter() - ta
                 n_spec += 1
+        be.release()                               # proj029 2: 使い切れなかった LazyRec を写してから R を進める
         t_w = time.perf_counter()
         t_wput = self.t_put                        # 窓の記録の中の put（TP の put は数えない）
         f_wput = self.f_put
@@ -2411,7 +2477,8 @@ class Acq:
             n = self.ring.prefault(write=True)
             self.log(f"溜まりのページを先に触った: {n} ページ・{time.perf_counter() - t0:.2f} 秒")
         if self.fast is not None:
-            self.log(f"SPEC の記録（FULL）は C（s45fast、CRC {'命令' if self.fast.HW_CRC else '表'}）")
+            self.log(f"SPEC の記録（FULL）は C（s45fast、CRC {'命令' if self.fast.HW_CRC else '表'}）"
+                     + ("・リングの SPEC のレコードは写さずに（--fast-ring、n_sum 1）" if self.fast_ring else ""))
         gc.collect(); gc.freeze(); gc.disable()
         self.conn.send(dict(ok=True, ids=self.be.ids, version=VERSION))
         self.log(f"準備完了（{'偽物' if self.o.fake else '実機'}、ID {self.be.ids}）")

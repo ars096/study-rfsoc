@@ -45,6 +45,7 @@ def make_acq(fmt, trunc=False):
     a = s45acq.Acq.__new__(s45acq.Acq)
     a.st = dict(fmt=fmt)
     a.f32_trunc = trunc
+    a.fast = None                                  # 正解は Python の道（proj029 1b で _spec_record_full に C の道が入った）
     a.be = _Be()
     a.h_or = a.fl_or = a.sat = 0
     a.got = []

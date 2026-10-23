@@ -182,11 +182,46 @@ specd を通した陽性対照（`--g22 --fast`、fmt both・n 30）: そのま�
 - 定常の 1 BASE（≒ 9.0 ms）の内訳: リングの読み 3.8（42 %）・振り分け 1.4（16 %）・窓の記録 3.1（34 %。C の記録 0.89 × 2・束ね 0.3 × 2・put 0.25 × 2・poll 0.09 × 2）・TP 0.65。
   **合格の線（7 ms）まで残り 2 ms。いちばん重いのはリングの読み**（SPEC の 512 KiB のレコードを zlib の CRC（≒ 350 MB/s、1a）でなめ、写す）
 
-## 2. 次の手（1 の結果で決める）
+## 2. リングの SPEC のレコードを写さずに C の記録へ（`--fast-ring`） — 予言（2026-10-23、測る前に書く）
 
-- 2: リングの読み（invalidate の後の CRC と写し）と束ねの足し算を同じ C の関数に寄せる（1 回のなめ。CRC は `__crc32d`、PL の尾の CRC と同じ多項式かを先に照らす）。溜まりへ直接書く（`s45ring.put` の写しを省く）かもここで決める
-- 3: 段の時間を specd の `--loop-log-ms 0.1` で今と同じ形で出す（proj025 追補 5 と並べる）。PL なしの 1 周の台本は `bench_g21.py` を 2G-2 に直す
-- 4: tint 10.24 ms・src C・D で 30 分（取りこぼし 0・受けの照合。送り出しは上限を越えるので、受けの形は決めてから）
+西村さんの了承（2026-10-23）: n_sum 1 の FULL の窓だけをこの道に（n_sum ≧ 2 は今までの道で足す）・R を「その周で使い終えた所」まで遅らせて進める。
+
+**足したもの**
+- `plring.Ring.read(lazy)`: lazy(core, s, ty) が真の SPEC のレコードは**写さず・zlib の CRC も取らず**、リングの上を指す `LazyRec`（頭の位置・中身の長さ・尾の CRC）で返す。そのときは R_R を書かない（`hold`）。`release()` で読んだ所まで進める
+- `HwBackend.release()`（周ごとの窓の記録の後）: 列に残った LazyRec（その周で使い切れなかった分）を**写して zlib で CRC を照らしてから** R を進める。R を進めた後にリングの上を指すものを残さない。写した数は STATUS の `pl_mat`
+- `s45fast.s45_ring_spec`: リングの上の頭 ＋ 中身を前から 1 回なめて **PL の CRC**（`Ring.read` と同じ範囲）を取りながら逆順で out に書き、out（書いたばかり）に頭を付けた出口の CRC をもう 1 回なめて取る
+- `Acq._spec_record_full` の LazyRec の道: PL の CRC が尾と合わなければ記録を出さず、ring_crc と miss を 1 ずつ（今までの道で `Ring.read` が捨てたのと同じ数え方）。fmt both の 2 つ目は同じリングの上から `spec_u64` / `spec_f32`
+- `Bundler.add`: n_sum 1 で LazyRec のときは写さない（ndarray のときは今までどおり写す。1d と比べるため）
+- specd の `--fast-ring`（`--fast` と一緒に）。G22Backend・G21Backend の pump
+
+**PL なしの確かめ（この PC、`pynq/test_ring_fast.py`）: 24 項目が全部 OK**
+- PL の形のレコード（頭・中身・尾の MAGIC_E と CRC）を numpy の配列のリングに書き、本物の `Ring.read`・`G22Backend.pump`・`poll_win`・`Bundler`・`_spec_record_full`・`release` に通した
+- fmt f32・u64・both とも **`--fast-ring` = `--fast` = Python の道（頭・中身・CRC の bytes）**、端をまたいで何周も（PAD）でも同じ
+- R: lazy の pump の後は R_R を書かない（0 回）・`release` で読んだ所まで・残りは写して ndarray に（中身が同じ）、その後にリングを上書きしても写した中身は変わらない。lazy でない pump は今までどおり R_R を書く
+- 陽性対照: 中身を 1 バイト壊したレコード（CRC は壊す前）は、Python の道・`--fast-ring` のどちらも記録しない・ring_crc 1・miss 1。写すとき（release）でも捕まえて捨てる。切り捨て（`--posctl-f32-trunc`）は `--fast-ring` で Python の `f32_trunc` と同じ・正の道とは違う
+- test_fake は Python の道と `FAST="--fast --fast-ring --prefault"` の両方で全部通過。`test_s45fast.py` は 1b から最小の Acq に `fast` が無く落ちていた（1a の結果はその前）→ 直して 23 行 OK
+
+**手順**（ボード）: `bash build_fast.sh` → `python3 test_ring_fast.py`（ボードの CRC 命令で同じ照合）→ 1d と同じ形（tint 0.01024・src C・D・fmt f32・n 200・`--loop-log-ms 0.1`・`--prefault`）で、
+`--fast --fast-ring` と `--fast` を交互に 2 回ずつ（2a1 ring → 2a2 なし → 2a3 ring → 2a4 なし）
+
+**予言**
+- ボードの `test_ring_fast.py`: 24 項目が全部 OK
+- 記録: 4 回とも受けの照合 通過・CRC 0・欠け 0、STATUS の pl_crc 0・**pl_mat 0**（2 秒の運転で 1 周の窓あたり 64 個を越えない）
+- `--fast` だけの回: 1d の再現（1 BASE ≒ 9.0 ms、8.7〜9.3）
+- **`--fast-ring` の回: 1 BASE 9.0 → ≒ 6.0 ms（5.3〜6.8、52〜66 %）**。合格の線（7 ms）を下回る
+  - リングの読み 3.8 → ≒ 0.7 ms（0.4〜1.2。残りは invalidate・頭の読み・TP のレコードの写しと CRC）
+  - 窓の記録 ≒ 3.0 ms（2.4〜3.6）でほぼ変わらない: 束ね 0.3 → ≒ 0 / 本、**記録 0.89 → ≒ 1.2 ms / 本（0.9〜1.6）**（キャッシュに無いリングの 512 KiB を読む分と PL の CRC が、リングの読みからこちらに移る）、put ≒ 0.25 / 本
+  - 振り分け ≒ 1.4・TP ≒ 0.65 ms は変わらない（±0.3）
+  - 運転の形: 1 BASE ＋ 寝る 3 ms ≒ 9 ms < 10.24 ms なので、**1 周が 1 BASE に戻る**（周 / ダンプ ≒ 1、1 周の最大 ≒ 10〜16 ms）
+- 自信が低い所: 範囲の invalidate（`bo.sync`、1 BASE に ≒ 1 MiB）の重さを測ったことがない。重ければリングの読みが 1.5 ms を越えて残り、1 BASE ≒ 7 ms 前後になる。
+  そのときは C の中で `DC CIVAC`（EL0 から使える clean ＋ invalidate）で行を捨てる道を次に考える
+
+## 3. 次の手（2 の結果で決める）
+
+- 段の時間は specd の `--loop-log-ms 0.1` と `tools/loopsum.py` で出す（1b〜1d で済み。PL なしの 1 周の台本は要らなくなった）
+- 溜まりへ直接書く（`s45ring.put` の写し 0.25 ms / 本を省く）・束ねを n_sum 1 の ndarray でも写さない・`DC CIVAC` の invalidate は、2 の結果で残りが線の近くなら
+- tint 10.24 ms・src C・D で 30 分（取りこぼし 0・受けの照合。送り出しは上限を越えるので、受けの形は決めてから）
+- proj を閉じる前に: 知見（2 秒の運転は溜まりの一巡の前・`v[:] = v` は書かない・RT の throttling 95 %）を `docs/lessons_all.md` に
 
 ## やったこと
 
@@ -211,7 +246,7 @@ specd を通した陽性対照（`--g22 --fast`、fmt both・n 30）: そのま�
 - [x] 1b. 実機の周で `--fast`（2026-10-23。1 BASE 13.37 → 10.29・10.37 ms、予言どおり。101 % で回らない。≒ 1.3 ms / 本が記録の外に残った）
 - [x] 1c. 窓の記録の内訳（2026-10-23。1 本 2.3 ms = poll 0.10・束ね 0.38・記録 1.0・put 0.81。予言は外れ、put が台の 3〜7 倍）
 - [x] 1d. 溜まりのページを先に触る（2026-10-23。1 BASE 10.15 → 9.0 ms = 88 %、予言どおり。put の中のフォルト 64 → 0 / 本）
-- [ ] 2. リングの読み（SPEC のレコード）を C の記録に寄せる
+- [ ] 2. リングの SPEC のレコードを写さずに C の記録へ（`--fast-ring`。PL なしの照合 24 項目 OK、ボードはこれから）
 - [ ] 2. リングの読み・束ねを寄せる
 - [ ] 3. 段の時間（`--loop-log-ms`）
 - [ ] 4. tint 10.24 ms で 30 分

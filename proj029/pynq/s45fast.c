@@ -161,3 +161,48 @@ int s45_spec_u64(const uint64_t *in, size_t n, const uint8_t *hd, size_t hlen, u
     *crc = ~c;
     return 0;
 }
+
+/* proj029 2: PL のリングの上の SPEC のレコード（頭 64 バイト ＋ 中身 pb バイト = u64 × n、FFT の ch の順）から、写さずに記録を作る。
+ * なめ 1: 前から 1 回。PL の CRC（zlib.crc32(頭 ＋ 中身)、plring.Ring.read と同じ範囲）を取りながら、out の逆順の位置に書く（fmt 1 = f32、0 = u64）。
+ * なめ 2: out（書いたばかり）に頭 hd を付けた CRC（= P.crc32(hd, data)）。
+ * 戻り値: 0 = よし、1 = 2^53 以上の値がある（f32 のときだけ見る）。*crc_pl と尾の CRC の照合は呼び手が行う */
+int s45_ring_spec(const uint8_t *rec, size_t n, const uint8_t *hd, size_t hlen, void *out, int fmt, uint32_t *crc, uint32_t *crc_pl, int posctl)
+{
+#if !HW_CRC
+    if (!crc_tab_ok)
+        crc_init();
+#endif
+    int trunc = posctl & PC_TRUNC;
+    uint32_t cp = crc_buf(~0u, rec, 64);
+    const uint64_t *in = (const uint64_t *)(rec + 64);
+    uint64_t hi = 0;
+    if (fmt == 1) {
+        float *o = (float *)out;
+        if (!trunc) {
+            for (size_t i = 0; i < n; i++) {
+                uint64_t a = in[i];
+                cp = crc_u64(cp, a);
+                hi |= a;
+                o[n - 1 - i] = (float)(double)a;
+            }
+        } else {
+            for (size_t i = 0; i < n; i++) {
+                uint64_t a = in[i];
+                cp = crc_u64(cp, a);
+                hi |= a;
+                o[n - 1 - i] = f32_of(a, 1);
+            }
+        }
+        *crc = ~crc_buf(crc_buf(~0u, hd, hlen), (const uint8_t *)out, n * 4);
+    } else {
+        uint64_t *o = (uint64_t *)out;
+        for (size_t i = 0; i < n; i++) {
+            uint64_t a = in[i];
+            cp = crc_u64(cp, a);
+            o[n - 1 - i] = a;
+        }
+        *crc = ~crc_buf(crc_buf(~0u, hd, hlen), (const uint8_t *)out, n * 8);
+    }
+    *crc_pl = ~cp;
+    return (fmt == 1 && (hi >> 53)) ? 1 : 0;
+}

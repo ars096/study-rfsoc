@@ -305,6 +305,8 @@ class Server:
                 rg = r.get("ring")
                 if rg:                                 # proj021 2-3a: PL が書くリング
                     d["pl_drop"], d["pl_crc"], d["pl_peak"], d["pl_err"] = rg["drop"], rg["crc"], rg["peak"], rg["err"]
+                    if "mat" in rg:
+                        d["pl_mat"] = rg["mat"]           # proj029 2: --fast-ring で使い切れずに写したレコードの数
                     d["tp_rec_lost"] = rg["tp_rec_lost"]
                 if r.get("err"):
                     d["err"] = r["err"]
@@ -643,6 +645,7 @@ def main():
     p.add_argument("--cpu", type=int, default=3, help="取得のプロセスを固定する CPU（-1 で固定しない）")
     p.add_argument("--rt", type=int, default=10, help="取得のプロセスの SCHED_FIFO の優先度（0 で使わない）")
     p.add_argument("--fast", action="store_true", help="proj029 1: 2G の SPEC の記録（FULL）の中身と CRC を C で（libs45fast.so、build_fast.sh で作る）")
+    p.add_argument("--fast-ring", action="store_true", help="proj029 2: n_sum 1 の 2G の SPEC のレコードを写さずにリングの上から C で記録に（--fast と一緒に）")
     p.add_argument("--prefault", action="store_true", help="proj029 1d: 溜まりの全ページを起動時に触る（取得・送り出しの両方）")
     p.add_argument("--loop-log-ms", type=float, default=0, help="proj025 4c: 1 周がこの ms を越えたら内訳をログに（最大 300 周。0 = tint を越えた周だけ、今までどおり）")
     p.add_argument("--loop-sleep", type=float, default=0.003, help="読み出しの 1 周の後に寝る秒数（proj017 F-4 と同じ 3 ms）")

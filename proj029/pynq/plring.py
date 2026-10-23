@@ -44,6 +44,30 @@ class StaleError(SC.S45Error):
     """キャッシュの古い行を読んだ（--no-inval の陽性対照で期待するもの）"""
 
 
+class LazyRec:
+    """proj029 2: 写していない SPEC のレコード（リングの上の頭 ＋ 中身を指すだけ）。PL の CRC はまだ照らしていない。
+    **Ring.release() までに使い切るか、materialize() で写す**（release の後は PL が上書きしてよい場所になる）"""
+    __slots__ = ("ring", "p", "pb", "crc_exp", "n")
+
+    def __init__(self, ring, p, pb, crc_exp):
+        self.ring, self.p, self.pb, self.crc_exp = ring, p, pb, crc_exp
+        self.n = pb >> 3                                     # u64 の数
+
+    @property
+    def addr(self):
+        return self.ring.a8.ctypes.data + self.p             # 頭（64 バイト）の位置。中身はその 64 バイト後
+
+    def view(self):
+        i = (self.p >> 3) + 8
+        return self.ring.a64[i:i + self.n]
+
+    def materialize(self):
+        """(中身の写し, crc_ok)（今までの Ring.read と同じ照らし方）"""
+        nb = 64 + self.pb
+        ok = zlib.crc32(self.ring.a8[self.p:self.p + nb]) == self.crc_exp
+        return self.view().copy(), ok
+
+
 class Ring:
     """s45_ring_0 と、PS の DDR のリング（pynq.allocate）"""
 
@@ -93,6 +117,7 @@ class Ring:
         if self.rd(R_SIZE) != size or (self.rd(R_BASE_HI) << 32 | self.rd(R_BASE_LO)) != pa:
             raise SC.S45Error("BASE・SIZE を書けない")
         self.r = 0
+        self.hold = False                                    # proj029 2: 写していないレコード（LazyRec）を渡した。release() まで R_R を進めない
         self.base = pa
 
     def rd(self, a):
@@ -119,8 +144,16 @@ class Ring:
         e = min(self.size, ((pos % self.size) + n + 4095) & ~4095)
         self.bo_sync(e - a, a)
 
-    def read(self):
-        """[R, W) のレコードを返す: [(core, s, seq, hdr(8 語), payload(np.uint64 の写し), crc_ok, tail_ok)]。R を進める"""
+    def release(self):
+        """proj029 2: 渡した LazyRec を使い終えた（か写した）。読んだ所まで R_R を進める"""
+        if self.hold:
+            self.hold = False
+            self.wr(R_R, self.r)
+
+    def read(self, lazy=None):
+        """[R, W) のレコードを返す: [(core, s, seq, hdr(8 語), payload(np.uint64 の写し), crc_ok, tail_ok)]。R を進める。
+        proj029 2: lazy(core, s, ty) が真のレコードは、payload が LazyRec（写さない）・crc_ok が None（照らしていない）。
+        そのときは R_R を書かず、呼び手が release() で進める"""
         w = self.rd(R_W)
         out = []
         # proj021 2-3a: [R, W) のキャッシュを**まとめて**捨てる（端で 2 回まで）。2-2a〜2-2c はレコードごとに 2 回（頭と全体）捨てていて、
@@ -151,15 +184,21 @@ class Ring:
             pb = h7 & 0xFFFFFFFF
             L = 64 + pb + 64
             nb = 64 + pb
-            crc = zlib.crc32(a8[p:p + nb])
             t0, t1 = a64[(p + nb) >> 3:((p + nb) >> 3) + 2].tolist()
             hw = a64[i: i + 8].copy()
             seq = int(hw[1]) & 0xFFFFFFFF
             tail_ok = (t0 & 0xFFFFFFFF) == MAGIC_E and (t0 >> 32) == seq
-            crc_ok = crc == (t1 & 0xFFFFFFFF)
-            out.append((h0 >> 48 & 0xFF, h0 >> 56 & 0xFF, seq, hw, a64[i + 8: i + 8 + (pb >> 3)].copy(), crc_ok, tail_ok))
+            core, s = h0 >> 48 & 0xFF, h0 >> 56 & 0xFF
+            if lazy is not None and lazy(core, s, (h0 >> 40) & 0xFF):
+                self.hold = True
+                out.append((core, s, seq, hw, LazyRec(self, p, pb, t1 & 0xFFFFFFFF), None, tail_ok))
+            else:
+                crc = zlib.crc32(a8[p:p + nb])
+                crc_ok = crc == (t1 & 0xFFFFFFFF)
+                out.append((core, s, seq, hw, a64[i + 8: i + 8 + (pb >> 3)].copy(), crc_ok, tail_ok))
             self.r = (self.r + L) & 0xFFFFFFFF
-        self.wr(R_R, self.r)
+        if not self.hold:
+            self.wr(R_R, self.r)
         if self.touch:
             p = self.r % self.size
             n = min(self.touch, self.size - p)

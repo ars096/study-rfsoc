@@ -18,6 +18,8 @@ _vp, _sz, _u32p = ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_uint
 for _f in (_L.s45_spec_f32, _L.s45_spec_u64):
     _f.argtypes = [_vp, _sz, ctypes.c_char_p, _sz, _vp, _u32p, ctypes.c_int]
     _f.restype = ctypes.c_int
+_L.s45_ring_spec.argtypes = [_vp, _sz, ctypes.c_char_p, _sz, _vp, ctypes.c_int, _u32p, _u32p, ctypes.c_int]
+_L.s45_ring_spec.restype = ctypes.c_int
 _L.s45_crc32.argtypes = [ctypes.c_uint32, _vp, _sz]
 _L.s45_crc32.restype = ctypes.c_uint32
 _L.s45_hw_crc.restype = ctypes.c_int
@@ -50,6 +52,18 @@ def spec_u64(spec, hd, out=None, posctl=0):
     c = ctypes.c_uint32()
     _L.s45_spec_u64(a.ctypes.data, a.size, hd, len(hd), out.ctypes.data, ctypes.byref(c), posctl)
     return out, c.value
+
+
+def ring_spec(rec, hd, fmt, out=None, posctl=0):
+    """proj029 2: PL のリングの上のレコード（plring.LazyRec）から記録を作る。fmt "f32" / "u64"。
+    → (data（逆順）, crc（頭 hd ＋ data）, crc_pl（PL の頭 ＋ 中身。尾の CRC と照らすのは呼び手）)"""
+    f = 1 if fmt == "f32" else 0
+    if out is None:
+        out = np.empty(rec.n, np.float32 if f else np.uint64)
+    c, cp = ctypes.c_uint32(), ctypes.c_uint32()
+    if _L.s45_ring_spec(rec.addr, rec.n, hd, len(hd), out.ctypes.data, f, ctypes.byref(c), ctypes.byref(cp), posctl):
+        raise ValueError("u64 が 2^53 以上（float64 で厳密でない）")
+    return out, c.value, cp.value
 
 
 def crc32(buf, init=0):
