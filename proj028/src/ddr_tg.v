@@ -18,8 +18,10 @@
 `default_nettype none
 module ddr_tg #(
     parameter integer AW = 33,
+    parameter integer IDW = 4,                      // MIG の AXI の ID の幅（C0.DDR4_AxiIDWidth の既定）
     parameter [31:0]  ID = 32'h0280_0001
 ) (
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axi:m_axi, ASSOCIATED_RESET aresetn" *)
     input  wire          clk,
     input  wire          aresetn,
     input  wire          calib,
@@ -41,10 +43,15 @@ module ddr_tg #(
     output wire [1:0]    s_axi_rresp,
     input  wire          s_axi_rready,
     // AXI4（MIG へ）
+    output wire [IDW-1:0] m_axi_awid,
     output reg  [AW-1:0] m_axi_awaddr,
     output wire [7:0]    m_axi_awlen,
     output wire [2:0]    m_axi_awsize,
     output wire [1:0]    m_axi_awburst,
+    output wire          m_axi_awlock,
+    output wire [3:0]    m_axi_awcache,
+    output wire [2:0]    m_axi_awprot,
+    output wire [3:0]    m_axi_awqos,
     output reg           m_axi_awvalid,
     input  wire          m_axi_awready,
     output wire [511:0]  m_axi_wdata,
@@ -52,15 +59,22 @@ module ddr_tg #(
     output wire          m_axi_wlast,
     output wire          m_axi_wvalid,
     input  wire          m_axi_wready,
+    input  wire [IDW-1:0] m_axi_bid,
     input  wire [1:0]    m_axi_bresp,
     input  wire          m_axi_bvalid,
     output wire          m_axi_bready,
+    output wire [IDW-1:0] m_axi_arid,
     output reg  [AW-1:0] m_axi_araddr,
     output wire [7:0]    m_axi_arlen,
     output wire [2:0]    m_axi_arsize,
     output wire [1:0]    m_axi_arburst,
+    output wire          m_axi_arlock,
+    output wire [3:0]    m_axi_arcache,
+    output wire [2:0]    m_axi_arprot,
+    output wire [3:0]    m_axi_arqos,
     output reg           m_axi_arvalid,
     input  wire          m_axi_arready,
+    input  wire [IDW-1:0] m_axi_rid,
     input  wire [511:0]  m_axi_rdata,
     input  wire [1:0]    m_axi_rresp,
     input  wire          m_axi_rlast,
@@ -70,6 +84,12 @@ module ddr_tg #(
     localparam integer BA = AW - 6;                 // 拍の番地の幅
     localparam integer OUTS = 8;                    // 先に出してよいバーストの数
     wire rst = ~aresetn;
+    // ID は 1 つ（順序どおりに返る）。lock・cache・prot・qos は定数
+    assign m_axi_awid = {IDW{1'b0}}; assign m_axi_arid = {IDW{1'b0}};
+    assign m_axi_awlock = 1'b0; assign m_axi_arlock = 1'b0;
+    assign m_axi_awcache = 4'b0011; assign m_axi_arcache = 4'b0011;
+    assign m_axi_awprot = 3'b000; assign m_axi_arprot = 3'b000;
+    assign m_axi_awqos = 4'd0; assign m_axi_arqos = 4'd0;
 
     // ---- データの式（書き手・読み手で同じ）----
     function [511:0] pat;

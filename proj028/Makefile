@@ -12,18 +12,9 @@ VIVADO        := $(XILINX_VIVADO)/bin/vivado
 # Vivado のインストールツリーの中には置かない（VERSIONS.md 参照）。
 BOARD_REPO ?= $(HOME)/src/RFSoC4x2-BSP/board_files
 
-# part。速度グレードは BSP board_files の宣言値が -2、RefMan A5 は -1 と読める記載で
-# 未決着（VERSIONS.md 参照）。**-1 で閉じる設計は -2 でも必ず閉じる**ので、
-# タイミングが効く設計は `make timing-check` で -1 でも通しておく。
-PART_DEFAULT := xczu48dr-ffvg1517-2-e
-PART         ?= $(PART_DEFAULT)
-
-# 既定以外の part は別ディレクトリに出し、検証済みの成果物を上書きしない。
-ifeq ($(PART),$(PART_DEFAULT))
-  OUTDIR := build
-else
-  OUTDIR := build-$(patsubst xczu48dr-ffvg1517-%,%,$(PART))
-endif
+# part。S-2 の .bit は実機と同じ -1 だけを作る（PS は src/board/ps_preset.tcl を当てる。proj015 から）
+PART ?= xczu48dr-ffvg1517-1-e
+OUTDIR := build
 
 # 同時に走らせる run の数（launch_runs -jobs）。
 # **効くのは IP の OOC 合成だけ。**impl_1 は単一の run なので、いくつにしても 1 つしか走らない。
@@ -34,14 +25,20 @@ endif
 # **コア数やメモリの少ない機械では下げること** — run 1 個が独立した Vivado プロセスで
 # 数 GB 食うので、8 コアの機械で 30 にするとメモリを食い潰して逆に遅くなる。
 # `make JOBS=8` で上書きできる。
-JOBS ?= 30
+JOBS ?= 8
 PROJ ?= proj028
 
 export BOARD_REPO PART OUTDIR
 
 PYTHON ?= python3
 
-.PHONY: all prog id timing-check clean model-m1 model-m2 estimate sim-cfft32 s1 sim-ddrtg
+.PHONY: all build prog id timing-check clean model-m1 model-m2 estimate sim-cfft32 s1 sim-ddrtg
+
+# S-2: PL DDR4 の帯域と容量を測る .bit（PS ＋ MIG ＋ ddr_tg。この PC の Vivado、1 時間前後）。成果物は build/proj028.bit・.hwh。
+# 成否は make の終了状態でなく build/vivado.log の「TIMING (確定)」「CRITICAL WARNING: n 件」「=== wrote」で読む
+build:
+	mkdir -p $(OUTDIR)
+	VIVADO_LOG=$(OUTDIR)/vivado.log $(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(JOBS)
 
 # 模型 M-1（荒い PFB の原型・タップ数・ポリフェーズの形・トーンの折り返し）。numpy だけ、1 分前後。成否は「結果:」の行
 model-m1:
@@ -79,8 +76,7 @@ estimate:
 	$(PYTHON) tools/estimate.py | tee runs/estimate.log
 
 
-all: $(OUTDIR)
-	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(JOBS)
+all: build
 
 prog:
 	$(VIVADO) -mode batch -nojournal -nolog -source program.tcl
@@ -90,11 +86,9 @@ id:
 	$(VIVADO) -mode batch -nojournal -nolog -source program.tcl -tclargs id
 
 # 速度グレード -1 で通るかを確かめる。成果物は build-1-e/ に出るので build/ は無傷。
-timing-check:
-	$(MAKE) PART=xczu48dr-ffvg1517-1-e
+# proj028 は -1 だけを作るので、build がそのまま -1 の確かめ
+timing-check: build
 
-$(OUTDIR):
-	mkdir -p $(OUTDIR)
 
 clean:
 	rm -rf build build-* .Xil *.jou *.log

@@ -338,6 +338,47 @@ N_f 131072 は **DSP 42.9 %・BRAM 47.8 %・URAM 47.5 %・LUT 33.9 %・FF 29.4 %
 
 OOC 合成（`tools/ooc_rtl.tcl`、`-1`、300 MHz）: **DSP 0・LUT 986・FF 1,388・BRAM 0、合成の WNS +0.581 ns**。Synth 8-3848・CRITICAL WARNING は無い
 
+### S-2b .bit（`make build`、この PC の Vivado）— 予言（走らせる前に書く、2026-10-23）
+
+`build.tcl`（PS ＋ MIG ＋ ddr_tg。RFDC なし）。DDR4 の足 `src/board/ddr4.xdc` は PYNQ の base.xdc から ddr4_pl_*・sys_clk_ddr4_* の行だけを抜いたもの。
+**PYNQ の base.xdc と BSP の `4x2_PL_DDR4.xdc` の足は 115 本とも一致**（DM の名前 dm_n / dm_dbi_n だけ違う）。PS は proj024 の `src/board/ps_preset.tcl` を写した。
+ddr_tg に AXI4 の残りの信号（ID・lock・cache・prot・qos、定数）とクロックの関連付けを足した（sim は通過のまま）
+
+予言:
+- 照合（part・PS のプリセット・MIG の設定・結線・足）は全部通る
+- 資源: LUT ≒ 2.0 万（MIG 1.56 万 ＋ ddr_tg 0.1 万 ＋ SmartConnect・リセット 0.3 万、4〜5 %）・BRAM ≒ 26・DSP 3
+- タイミング: 閉じる。WNS +0.1〜+0.6 ns（UI 300 MHz、ddr_tg の 512 bit の照合が最悪経路の候補）。WHS 正
+- CRITICAL WARNING 0 件（外れるとしたら MIG の足の DCI・VREF の制約。PYNQ の xdc に在るものは全部持ってきた）
+
+**結果（`make build`、2026-10-23）: .bit ができた。照合は全部通過・CRITICAL WARNING 0・WNS +0.026 ns・WHS +0.013 ns**
+
+| | 予言 | 結果 |
+|---|---|---|
+| 照合 | 全部通る | PS のプリセット 225 個一致（導出 13 個は違う: proj024・025 の実機の bit と同じ形の PS 側 DDR の値）・MIG 14 個一致（AXI ID 4 bit）・リセットの極性・結線 0 違い・足 5 本 ○ |
+| 資源 | LUT ≒ 2.0 万・BRAM ≒ 26 | **LUT 17,194（4.0 %）・FF 23,337・BRAM 25.5** ○ |
+| WNS | +0.1〜+0.6 ns、最悪経路は ddr_tg の照合 | **+0.026 ns ×**。最悪経路は **MIG の IP の中**（較正の `u_ddr_cal_cplx` の RAMB18 → FDRE、UI 300 MHz）。ddr_tg ではない |
+| CRITICAL WARNING | 0 | 1 回目は 1 件 → 直して 0 |
+
+- **1 回目は CRITICAL WARNING BD 41-737**: proc_sys_reset（rst_ui）の `C_EXT_RESET_HIGH` を 1 に設定しようとして弾かれた。
+  この値は**つないだピン（MIG の `c0_ddr4_ui_clk_sync_rst`、高で効く）の極性から伝わる read-only**で、.hwh を読むと 1（正しい）だった。
+  設定をやめ、validate の後で rst_ui = 1・rst_ctrl = 0 を読み返して違えば止める照合に替えて作り直した（.bit の中身は同じ形。WNS も +0.026289 ns まで同じで再現した）
+- WNS の余裕は小さいが、MIG の中の経路で、自作の論理は関わらない。実機で較正が通るか・誤りが出ないかで見る
+- 成果物（ボードに送るのは build/ だけ。1 回目は build-run1/ に退けた）: `build/proj028.bit` sha256 `b6e89bde…6415aa`・`build/proj028.hwh` `528bd1cf…fdd038`
+
+### S-2c 実機の手順（西村さんがボードの空きを見て回す）
+
+```bash
+# この PC（proj028/）から。**build/ だけを送る**（build-* の glob はしない、LESSONS）
+scp build/proj028.bit build/proj028.hwh pynq/ddr_bw.py xilinx@<ボード>:~/proj028/
+# ボードで（RFDC は載せていないので --clkin・--ref は要らない）
+cd ~/proj028 && sudo python3 ddr_bw.py --out ddr_bw.json        # 全部で 1〜2 分
+#   早く見るだけなら --quick（8 GiB の全体の書き読みを省く）
+# 結果の ddr_bw.json をこの PC の proj028/runs/ へ戻す
+```
+
+読むところ: `ID 0x02800001` → `較正: 済み` → `容量:`（8 GB / 4 GB）→ `全体`（不一致 0）→ 帯域の表 → `本番の形`（○・○、不一致 0）。
+ADC の入力・SG は要らない（DDR だけの試験）。Overlay を替えるので、ほかの bit を使っている途中なら終わってから
+
 ## 決めること（西村さんに）
 
 - ~~os と格子~~ → **決定（2026-10-23、西村さん）: os 8/7（M 64、D 56、T_c 27）、M・N_f は 2 のべき乗、dt は 14.336 ms の倍数**（例 71.68 ms = 7 × 10.24 ms）。比べた案: 4/3（DSP 176、dt は 6.144 ms の倍数、DDR 10.9 GB/s）
@@ -371,7 +412,7 @@ OOC 合成（`tools/ooc_rtl.tcl`、`-1`、300 MHz）: **DSP 0・LUT 986・FF 1,3
 
 - os と格子は決めた（os 8/7、dt は 14.336 ms の倍数）。S は 12 に決めた。E-2・E-3 は済み（律速は出口、N = 12.8 M ch/s × dt）。
 - N_f 131072・dt 286.72 ms に決めた。S-1（荒い FFT・MIG・corner turn の溜めの OOC 合成）は済み: N_f 131072 は DSP 42.9 %・BRAM 47.8 %・URAM 47.5 %・LUT 33.9 % で入る見込み
-- 次: S-2 の build.tcl（PS ＋ MIG ＋ ddr_tg、SmartConnect、XDC は PYNQ の base.xdc の DDR4 の足）→ PS の道具（pynq/ddr_bw.py） → ボードの順番を西村さんと決めて実機 → 荒い段・細かい側の RTL
+- S-2 の .bit（build/）と PS の道具（pynq/ddr_bw.py）はできた。次: 西村さんがボードの空きを見て S-2c の手順で実機 → 結果を予言と照らす → 荒い段・細かい側の RTL → ボードの順番を西村さんと決めて実機 → 荒い段・細かい側の RTL
 - H-0 の残り: 部品は PYNQ の設定から MT40A1G16RC-062E、`-1` で 2400 は IP の設定が通る。容量（4 / 8 GB）は S-2 の実機で
 - 知見: 次の proj でも踏みそうなものを `../docs/lessons_all.md` に足した（要点なら `../LESSONS.md` にも）
 
