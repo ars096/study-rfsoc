@@ -198,6 +198,9 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 ### 構成
 - ソースは src/common・src/<bit>・src/board に分ける（境目は「別の bit で中身が変わるか」、迷ったら bit 個別）（proj021）
 
+- 自作の AXI4-Lite の口は**リセット中に awready・wready・arready を出さない**。PS が最初に読むものは、止まりうるクロック（MIG の UI クロックなど）の側に置かず、pl_clk0 の側の見張りで相手のクロック・リセット・較正を確かめてから触る。— ddr_tg がリセット中（MIG の較正の前）も arready = 1 で、AR の握手だけが成立して応答が返らず、OS ごと止まった（proj028 S-2d）
+- MIG の AXI の口の帯域は口の手前のバースト長（16〜256 拍）に依らない。RFSoC4x2 の PL DDR4（DDR4-2400、64 bit）は書きだけ 15.37・読みだけ 17.83・同時 17.66 GB/s。容量は 4 GB（PYNQ の base overlay の設定は 16 Gb の部品で 8 GB の番地を出すが、4 GiB で折り返す）（proj028 S-2e）
+
 ## sim と模型
 
 - FFT IP の行動模型に実機の振る舞いを入れる: リセットから tready を上げるまでの遅れ（FFT_READY_DELAY）、流し始めの 1 回の tready の下げ（FFT_STALL_AT・周期的な STALL）、入力の途切れ（halt で制御側の数えだけずらす）。模型を別の proj から写すときはこれも引き継ぐ。tready を守らない陽性対照（`-DWSPEC_NOREADY`・`-DIPQ_POSCTL`）を置く。— proj014 で入れた振る舞いが proj023 の模型に無く、同じ不具合が sim を通った（proj011・014・023）

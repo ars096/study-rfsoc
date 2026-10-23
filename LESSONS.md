@@ -84,6 +84,7 @@ proj001〜023 で踏んだ穴と、次以降の proj でも従う決まりを 1 
 - PL → DDR の書き手は自作の AXI4（バースト ≦ 16 拍、4 KiB の境を越えない）。リングはレコードを丸ごと捨てて DROP_CNT を数え、出口のリセット（rst_rec）を起動のやり直しのリセットと分ける（proj021）
 - ソースは src/common・src/<bit>・src/board に分ける（境目は「別の bit で中身が変わるか」）（proj021）
 - → 全部: docs/lessons_all.md の「設計の規約」
+- 自作の AXI4-Lite の口はリセット中に ready を出さない。PS が最初に読むものは、止まりうるクロック（MIG の UI など）の側に置かない。— ddr_tg がリセット中も arready を出し、較正の前の読みで OS ごと止まった（proj028）
 
 ## sim と模型
 
