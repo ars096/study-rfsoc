@@ -39,10 +39,10 @@ FFT_IP = {
 # 細かい側のレーン FFT 以外（proj023 ビルド 11 の CORE_REST を複素の入力に直す）:
 #   PFB 80 → 複素で 160 ＋ 係数の補間の DSP 64（proj027 F-2）、鎖 144 → dft16 の 16 出力全部で 288、TP 24
 FINE_REST = dict(DSP=160 + 64 + 288 + 24, LUT=int(12400 * 1.5), FF=int(15700 * 1.5), BRAM=2 + 7.5 + 11)  # 係数 7.5・ひねり係数 11（2G-1 build-PE）
-# 荒い段（S-1 の後）: PFB は積和の数で fs·T_c·os / 256 MHz = 494（1 入力サンプルが L/D = 30.9 ブロックに効く）。LUT・FF は仮
-#   荒い FFT は S-1 の実測（cfft32、OOC 合成: DSP 252・LUT 12,700・FF 14,250）。出口の回転は M-1d で不要（細かい ch の巡回）。利得 20
-COARSE_PFB_DSP = math.ceil(FS * TC * P_OS / Q_OS / CLK)
-COARSE = dict(DSP=COARSE_PFB_DSP + 252 + 20, LUT=15000 + 12700 + 3000, FF=30000 + 14250 + 5000, BRAM=8)
+# 荒い段（C-2 の後）: coarse_stage（coarse_pfb ＋ cfft32 ＋ coarse_post）の OOC 合成の実測: DSP 892（576 ＋ 252 ＋ 64）・LUT 61,181・FF 83,091・BRAM 0。
+#   荒い PFB は 27 タップを 3 拍で割り切る形で 576（積和の数の下限は fs·T_c·os / 256 MHz = 494）。利得の掛け算は 64 個を並べた形
+COARSE_PFB_DSP = 576
+COARSE = dict(DSP=892, LUT=61181, FF=83091, BRAM=0)
 # DDR 系（S-1 の後）: MIG は ddr4_pl の実測（実機の設定 MT40A1G16RC-062E・参照 200 MHz・AXI 33 bit で DSP 3・LUT 15,638・FF 18,413・BRAM 25.5）、corner turn の溜めは ct_buf の実測（BRAM 57）。
 #   読み手・AXI の LUT 6,000・FF 8,000・BRAM 8 は仮
 DDRSYS = dict(DSP=3, LUT=15638 + 6000, FF=18413 + 8000, BRAM=25.5 + 57 + 8)

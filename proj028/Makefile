@@ -32,7 +32,7 @@ export BOARD_REPO PART OUTDIR
 
 PYTHON ?= python3
 
-.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 estimate sim-cfft32 s1 sim-ddrtg
+.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 estimate sim-cfft32 sim-cpfb sim-cstage s1 sim-ddrtg
 
 # S-2: PL DDR4 の帯域と容量を測る .bit（PS ＋ MIG ＋ ddr_tg。この PC の Vivado、1 時間前後）。成果物は build/proj028.bit・.hwh。
 # 成否は make の終了状態でなく build/vivado.log の「TIMING (確定)」「CRITICAL WARNING: n 件」「=== wrote」で読む
@@ -60,6 +60,18 @@ sim-cfft32:
 	mkdir -p build-sim
 	$(PYTHON) tools/sim_cfft32.py | tee build-sim/sim_cfft32.log
 	$(PYTHON) tools/sim_cfft32.py --bad | tee build-sim/sim_cfft32_bad.log
+
+# C-1: 荒い PFB（tools/gen_coarse_pfb.py が作る src/coarse_pfb.v）を model/coarse_pfb_ref.py と bit 単位で照らす。ふつう・valid を落とす・陽性対照（落ちるべき）
+sim-cpfb:
+	mkdir -p build-sim
+	$(PYTHON) tools/sim_coarse_pfb.py > build-sim/sim_cpfb.log & $(PYTHON) tools/sim_coarse_pfb.py --gap > build-sim/sim_cpfb_gap.log & $(PYTHON) tools/sim_coarse_pfb.py --bad > build-sim/sim_cpfb_bad.log & wait
+	@grep "結果:" build-sim/sim_cpfb.log build-sim/sim_cpfb_gap.log build-sim/sim_cpfb_bad.log
+
+# C-2: 荒い段（coarse_pfb → cfft32 → coarse_post）を整数の模型（coarse_pfb_ref・cfft32_ref・coarse_post_ref）と bit 単位で照らす。ふつうと陽性対照（奇数の ch の共役を抜く）
+sim-cstage:
+	mkdir -p build-sim
+	$(PYTHON) tools/sim_coarse_stage.py > build-sim/sim_cstage.log & $(PYTHON) tools/sim_coarse_stage.py --bad > build-sim/sim_cstage_bad.log & wait
+	@grep "結果:" build-sim/sim_cstage.log build-sim/sim_cstage_bad.log
 
 # S-1: cfft32・ct_buf・DDR4 IP を OOC で合成して資源を数える（この PC の Vivado、30 分前後）。結果は build-s1/s1.txt
 S1_JOBS ?= 4
