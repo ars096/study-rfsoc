@@ -106,6 +106,9 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 
 - `ram_style = "ultra"` の溢れは、コアごとに別の OOC の run だと run の中では見えない。合成はデバイス全体の URAM の数を知らず、place_design の前の DRC UTLZ-1 で初めて止まる。コアを複数にするときは URAM・BRAM の総数をビルドの前に足し算する。— 2G-1（コア 1 個）は 1 つの run の中で溢れが見えて合成が BRAM に回していたが、2G-2（2 コア）は 44 × 2 = 88 > 80 で止まった（proj025 2f）
 
+### 取得の 1 周（PS）
+- **1 周の時間（loop_max・p99）は余裕の物差しにならない。** 1 周の後に寝る時間（3 ms）があるので、1 BASE の処理 ＋ 3 ms が BASE（10.24 ms）を越えた途端に 1 周が 2 BASE を抱える形に落ち着き、1 周の時間が二値的に倍に跳ぶ。余裕は STATUS の loops / dumps（周の間隔）から 1 BASE の処理時間に直して読む。— 2G-2 は TP 2 本で 1 周 13 ms、TP 4 本で 29 ms と跳び、内訳はどこにも寄らなかった。周の間隔 20.4 ms = 2 × 8.7 ＋ 3 で、1 BASE の処理は 10.24 ms の 85 %（proj025 4c）
+
 ### Vivado が落ちる
 - Vivado 2024.1 は OOC・synth_1・impl_1 で終わり際に落ちる（`Abnormal program termination (11)`・tcmalloc abort (6)・Synth 8-7098 Stack limit。毎回違う run）。runme.log の `^ERROR` では見えないので落ちた印を探し、落ちた run と、それに依って始まらなかった run（runme.log が無い）だけを 2 回まで回し直す（JOBS 8）。`wait_on_run` の Tcl のエラーは catch で受ける（proj012〜015・023）
 - run は名前の文字列で持ち、その場で `[get_runs $n]` を渡す（proj015）
