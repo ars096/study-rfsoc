@@ -116,6 +116,10 @@ class Server:
         self.a = a
         self.ctx = mp.get_context("spawn")          # proj021 2-3d: 取得は spawn で（acqboot の冒頭）
         self.ring = R.Ring(a.buf_mb << 20, lock=self.ctx.Lock())
+        if getattr(a, "prefault", False):             # proj029 1d: 送り出しの側（このプロセス）も溜まりのページを先に触る
+            t0 = time.time()
+            n = self.ring.prefault(write=False)
+            log(f"溜まりのページを先に触った（送り出し）: {n} ページ・{time.time() - t0:.2f} 秒")
         self.loading = False
         if a.bits:
             self.bits, self.cur = load_bits(a.bits)
@@ -639,6 +643,7 @@ def main():
     p.add_argument("--cpu", type=int, default=3, help="取得のプロセスを固定する CPU（-1 で固定しない）")
     p.add_argument("--rt", type=int, default=10, help="取得のプロセスの SCHED_FIFO の優先度（0 で使わない）")
     p.add_argument("--fast", action="store_true", help="proj029 1: 2G の SPEC の記録（FULL）の中身と CRC を C で（libs45fast.so、build_fast.sh で作る）")
+    p.add_argument("--prefault", action="store_true", help="proj029 1d: 溜まりの全ページを起動時に触る（取得・送り出しの両方）")
     p.add_argument("--loop-log-ms", type=float, default=0, help="proj025 4c: 1 周がこの ms を越えたら内訳をログに（最大 300 周。0 = tint を越えた周だけ、今までどおり）")
     p.add_argument("--loop-sleep", type=float, default=0.003, help="読み出しの 1 周の後に寝る秒数（proj017 F-4 と同じ 3 ms）")
     p.add_argument("--boot-timeout", type=float, default=120.0)

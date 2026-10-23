@@ -24,6 +24,7 @@ proj023 手順 4d: **SAM45-Wide（BIT_KIND 1）の裏 WideBackend**（`--wide`�
 import collections
 import gc
 import os
+import resource
 import time
 import traceback
 
@@ -1758,6 +1759,7 @@ class Acq:
         self.tpj = [TpJump(phase=250 * i) for i in range(4)]    # proj021 B2: TP の跳ねの見張り（tpjump.py。START で初めから。B2b: σ の計算し直しを ADC ごとにずらす）
         self.tpj_on = not getattr(opts, "no_tp_jump", False)   # --no-tp-jump: 見張りを止める（1 周の重さの比べ）
         self.t_put = 0.0                            # proj029 1c: その周の put の時間の和
+        self.f_put = 0                              # proj029 1d: その周の put の中のページフォルト
         self._reset_counters()
 
     def log(self, *a):
@@ -1797,10 +1799,12 @@ class Acq:
             if rtype == P.T_EVENT or self.ring.cap - self.ring.used() >= self.ring.cap // 4:
                 self._flush_drop()                    # EVENT（小さく、START・STOP を落としたくない）は空きがあれば割り込む
         t_put0 = time.perf_counter()               # proj029 1c: 窓の記録の内訳（put）
+        f_put0 = resource.getrusage(resource.RUSAGE_SELF).ru_minflt    # proj029 1d: put の中のページフォルト
         try:
             self._put1(rtype, payload_parts, crc, d)
         finally:
             self.t_put += time.perf_counter() - t_put0
+            self.f_put += resource.getrusage(resource.RUSAGE_SELF).ru_minflt - f_put0
 
     def _put1(self, rtype, payload_parts, crc, d):
         seq = self._next_seq()
@@ -2310,12 +2314,14 @@ class Acq:
 
     def _loop_once(self):
         ts = time.perf_counter()
+        f_loop0 = resource.getrusage(resource.RUSAGE_SELF).ru_minflt    # proj029 1d: この周のページフォルト
         be = self.be
         nrec = be.pump()                           # proj021 2-3a: リングを 1 回読んで振り分ける（axi・偽物では何もしない）
         t_p = time.perf_counter()
         n_spec = 0                                 # proj025 4c: この周で書いた SPEC の記録（束）の数
         t_poll = t_bund = t_rec = 0.0              # proj029 1c: 窓の記録の内訳（poll_win・束ね・記録（put を含む）。put は self.t_put）
         self.t_put = 0.0
+        self.f_put = 0
         for j in range(4 * NW):
             for _ in range(64):                    # 溜まったぶんを全部（リングでは止まりの後に何個も来る）
                 ta = time.perf_counter()
@@ -2346,6 +2352,7 @@ class Acq:
                 n_spec += 1
         t_w = time.perf_counter()
         t_wput = self.t_put                        # 窓の記録の中の put（TP の put は数えない）
+        f_wput = self.f_put
         for i in range(4):
             be.poll_tp(i)
             self._flush_tp(i)
@@ -2367,7 +2374,8 @@ class Acq:
             lp = getattr(be, "last_pump", (0.0, 0.0))
             self.log(f"1 周が {dt * 1e3:.1f} ms（周 {self.n_loop}・リングのレコード {nrec}・SPEC の記録 {n_spec}）: リングの読み {lp[0] * 1e3:.1f}・振り分け {lp[1] * 1e3:.1f}・"
                      f"窓の記録 {(t_w - t_p) * 1e3:.1f}・TP {(t_t - t_w) * 1e3:.1f}・時刻の確かめ {(t_c - t_t) * 1e3:.1f} ms"
-                     f"（窓の記録の内訳: poll {t_poll * 1e3:.2f}・束ね {t_bund * 1e3:.2f}・記録 {(t_rec - t_wput) * 1e3:.2f}・put {t_wput * 1e3:.2f} ms）")
+                     f"（窓の記録の内訳: poll {t_poll * 1e3:.2f}・束ね {t_bund * 1e3:.2f}・記録 {(t_rec - t_wput) * 1e3:.2f}・put {t_wput * 1e3:.2f} ms）"
+                     f"（フォルト: 周 {resource.getrusage(resource.RUSAGE_SELF).ru_minflt - f_loop0}・put {f_wput}）")
         self.n_loop += 1
         if self.ndump_target and self._dumps_min() >= self.ndump_target:
             self._stop("n に達した")
@@ -2398,6 +2406,10 @@ class Acq:
                     f"{a} K {c['k_db']:+.2f}{' 暫定' if c.get('provisional') else ''}" for a, c in sorted(self.cal["adc"].items())) + "）")
         if (self.g21 or self.g22) and not getattr(self.o, "no_malloc_tune", False):
             self.log(malloc_tune()[1])               # proj024 3d: 2G-1 の 1 MiB の配列（Fine・Wide の道は今までどおり）
+        if getattr(self.o, "prefault", False):        # proj029 1d: 溜まりのページを先に触る（運転の最初の ≒ 5 秒のページフォルトを起動に寄せる）
+            t0 = time.perf_counter()
+            n = self.ring.prefault(write=True)
+            self.log(f"溜まりのページを先に触った: {n} ページ・{time.perf_counter() - t0:.2f} 秒")
         if self.fast is not None:
             self.log(f"SPEC の記録（FULL）は C（s45fast、CRC {'命令' if self.fast.HW_CRC else '表'}）")
         gc.collect(); gc.freeze(); gc.disable()

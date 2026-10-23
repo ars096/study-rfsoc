@@ -41,6 +41,19 @@ class Ring:
         except FileNotFoundError:
             pass
 
+    def prefault(self, write):
+        """proj029 1d: 溜まりの全ページを先に触る（書き手は書いて、読み手は読んで）。ページの数を返す。
+        共有メモリのページ表はプロセスごとなので、触った側のプロセスにだけ効く。write は中身を変えない（同じ値を書き戻す）"""
+        a = np.frombuffer(self.buf, np.uint8)
+        v = a[::4096]
+        if write:
+            v[:] = v.copy()                             # v[:] = v は同じ場所なので numpy が書かない（触らない。1d の 1 回目の偽物で、フォルトが 64 / 本のまま残った）
+        else:
+            int(v.sum())
+        n = v.size
+        del v, a                                        # memoryview の書き出しを残さない（残ると close できない）
+        return n
+
     # ---- 共通
     def positions(self):
         with self.lock:
