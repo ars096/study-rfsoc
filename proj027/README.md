@@ -9,7 +9,7 @@
 - fcea4f1（proj025 の段階 A の commit）の proj025 から: `sim/check_g22.py` → `check_g24.py`・`Makefile`（段階 A の 1a〜1d の分だけの版）
 - 写していないもの: 表の `.hex`（`make gen` で 2G-4 の長さで作り直す）・コア（g22_acc・spec・core・s45_core）・build.tcl・`pynq/`（段階 B）
 
-状態: 進行中（段階 A。PFB あり・模型 M・部品 1a〜1d の単体の sim は全部通過・4 コアの論点 F-1〜F-6 は決めた（F-2 は g24_coef の OOC で測って コアごと）。W: Wide の束ね・切り出しは差し引き 730 LUT / コアで、2G-4 の LUT は約 64.0 % の見込み。段階 B は proj025 の実機の後のタグから）
+状態: 進行中（段階 B。段階 A は済み: PFB あり・模型 M・部品 1a〜1d の単体の sim は全部通過・4 コアの論点 F-1〜F-6 は決めた（F-2 は g24_coef の OOC で測って コアごと）。W: Wide の束ね・切り出しは差し引き 730 LUT / コアで、2G-4 の LUT は約 64.0 % の見込み。段階 B を 2026-10-23 にタグ proj025-m0 から始めた: B0 写し済み）
 
 着手の前に [`../LESSONS.md`](../LESSONS.md) を全部読む（知見の全部は [`../docs/lessons_all.md`](../docs/lessons_all.md)）。
 
@@ -165,6 +165,33 @@ Wide のコア 0（`build-wide/wide_hier_c0.rpt`、配置後）の LUT:
 - 共通部: proj025 の 15,571 ＋ full_sel 2 個 516
 - **計 約 272,000 = 64.0 %**（proj024 の数え方だと 66.6 %）。**目安 65 % の下に入る見込み**。ただし余裕は 1 % で、レーン FFT の OOC と配置後の比（0.94）とコアの残りの見積もりの誤差と同じ大きさ。段階 B の最初のビルドで確かめる
 
+## 段階 B（2026-10-23 から。写し元はタグ **proj025-m0** = b1207af）
+
+写し元: study-rfsoc のタグ `proj025-m0`（2G-2 を閉じた commit b1207af。ビルドに効くファイルは 96605ab と同じ）。
+段階 A の部品の写し元 f706170 から proj025-m0 までに、proj025 の `src/`・`sim/`・`model/`・`tools/`・`Makefile`・`build.tcl` は変わっていない（`git diff --stat f706170 proj025-m0` が pynq と文書だけ）ので、**段階 A の部品はそのまま使う**。
+
+### B0. 写す（2026-10-23）
+
+写したもの（proj025-m0 の proj025 から。追跡しているファイルだけを `git show` で。計 115 個）:
+- **そのまま**（101 個）: `src/common/`（cmul.v・dft16.v は段階 A で写したものと同じ中身（cmp で確かめた）なので上書きしていない）・`src/board/`・`pynq/`・`tools/ip_impl.tcl`・`ip_survey.tcl`・`sim/rec_fr_ref.v`・`tb_recfr_eq.v`
+- **名前（g22 → g24、G22 → G24）だけを置き換えた**（14 個）: `src/g22/g22_{acc,spec,core,s45_core}.v` → `src/g24/g24_*.v`、`sim/{lane_fft_g22_model,tb_g22_{acc,spec,core,s45,ds,x2},tb_lane_g22}.v` → `*g24*`、`build.tcl`・`build_post.tcl`。長さ・ID・コアの数はまだ 2G-2 のまま（2a〜2f で直す）
+- `sim/check_g24.py`: proj025-m0 の check_g22.py を名前だけ置き換え、段階 A で入れた 2G-4 の直し（chain-gen の Y 27 bit・|Y| の上限）をパッチで当て直した（頭の docstring だけ手で）。**写した後に `make sim-all`（1a〜1d）は全部通過・陽性対照 6 本は落ちた**
+
+写していないもの: `model/g22_*.py`（2G-4 は段階 A の `g24_*.py`）・`tools/gen_g22_tables.py`・`src/g22/*.hex`・`runs/`。Makefile は 2a で proj025-m0 の目標を足す
+
+### 段階 B の手順（proj025 の 2a〜4d と同じ並び。各手順は 予言 → 結果 → 当たり・外れ → INDEX → コミット）
+
+| | もの | 2G-2 から変わること |
+|---|---|---|
+| 2a | `sim/lane_fft_g24_model.v`（レーン FFT 4096 点・bit 反転順の行動模型。tready の下げ・halt を引き継ぐ） | 長さ 4096（k1 12 bit）、出口 Y 27 bit |
+| 2b | `g24_acc`（FULL の積分器、8 銀行 × 4096 × 48 bit × 2 面） | 行 4096、ch c = k1 + 4096·k2 |
+| 2c | `g24_spec`（PFB → レーン FFT × 16 → 鎖 → 積分器） | フレーム 4096 ビート、bit 反転の幅 12、Y の丸めなし |
+| 2d | `g24_core`（FULL の流れ 1 本、SPEC のレコード 256 KiB・FULL の TP） | NCH 32768・FRAME_BEATS 4096・log2 N 16、DUMP_T = K_F ＋ 4096·DUMP_F0、N_ACC 640、GF_L2 7（128 フレーム = 2.048 ms）、TP の F0 × 8 |
+| 2e | `g24_s45_core`（コア 1 個ぶん: core_cmn ＋ g24_core ＋ RAW ＋ rec_arb） | BIT_KIND 3・PROJ 0x0027_0100。**RAW は 4 コアとも**（F-5） |
+| 2f | `build.tcl`（**s45_core_0〜3** の 4 セル、axis_sel4 はコアごと（F-4）、係数・ひねり係数の ROM はコアごと（F-2・F-3）、結線の照合を 4 コアに） | Wide（proj023）の 4 コアの形（F-1）。**URAM・BRAM の総数を事前に足す**（LESSONS、proj025 2f）。戦略は既定と Explore を並べる（LUT 約 64 %） |
+| 3 | PS（`G24Backend`、FULL 4 本 × 256 KiB / 10.24 ms） | 流れが 4 本 |
+| 4 | 実機 4a 立ち上げ・4b ch → IF・4c 30 分・4d F-2・D_eff。**4 コアに同じ ADC の陽性対照**（F-4） | 4 コアの同等 |
+
 ## 決めること（段階 A の終わりまでに並べる）
 
 - ~~PFB を残すか~~ → **残す**（2026-10-23、西村さん。PFB を外しても LUT は 1 % ほどしか減らず、目安 65 % は切れない（proj024 S-1: なし 64〜67 %・あり 65〜68 %）。LUT の余裕はコアの残り（Wide の束ね・切り出しの分が 2G-4 では要らない）で詰める）
@@ -222,4 +249,6 @@ g24_coef を 1 個だけ OOC で合成する（part `-1`・3.906 ns・合成だ�
 - [x] 4 コアの論点 F-1〜F-6（2026-10-23、西村さん。F-5 は勧めと違い RAW も TP もコアごと）
 - [x] F-2 の測り: g24_coef の OOC（2026-10-23、LUT 16・DSP 64・RAMB36 2）→ 係数 ROM はコアごと
 - [x] W. Wide の束ね・切り出しの LUT（2026-10-23、proj023 ビルド 11 のチェックポイントを読むだけで。差し引き 730 / コア・0.7 %。レーン FFT は配置後が OOC より 6 % 小さく、2G-4 は約 64.0 % の見込み）
-- [ ] 段階 B: proj025 の実機の後のタグ（`proj025-m0` の案）からコア・build.tcl・`pynq/` を写し、F-1〜F-6 で 4 コアに組む。g24_coef の注の「LUT」を DSP に直す
+- [x] 段階 B の B0: proj025-m0 から写した（2026-10-23。写した後も 1a〜1d は全部通過）
+- [ ] 段階 B の 2a〜2e の sim（長さ・幅・ID を 2G-4 に）。g24_coef の注の「LUT」を DSP に直す
+- [ ] 2f の build.tcl を 4 コアに・ビルド
