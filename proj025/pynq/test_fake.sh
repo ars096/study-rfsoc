@@ -276,8 +276,85 @@ EOF
   judge $([ "$r" = "15:131072:131072:1:0:0" ] && echo 1 || echo 0) "手元のダンプ:ch:軸:昇順:説明のない欠け:CRC $r（期待 15:131072:131072:1:0:0）"
 }
 
+g22_check() {   # g22_check <記録> <期待の src0> <期待の src1>: f32 の数:NG:陽性対照の NG:TP の ADC:窓ごとの数
+  python3 - "$1" "$2" "$3" <<'EOF'
+import sys, numpy as np, s45proto as P, s45acq as A
+from s45client import if_axis
+f = open(sys.argv[1], "rb").read(); o = 0; n = ng = ngp = 0; tps = set(); per = {0: 0, 1: 0}
+want = {0: int(sys.argv[2]), 1: int(sys.argv[3])}
+i = np.arange(65536)
+ref = A.g2_if_mhz(65535 - i)                                             # 送る i ↔ ch 65535 − i
+for _ in range(10**6):
+    if o >= len(f):
+        break
+    rt, pl, crc, seq = P.parse_header(f[o:o + 24]); ver = P.header_ver(f[o:o + 24])
+    d = P.decode(rt, f[o + 24:o + 24 + pl], ver); o += 24 + pl
+    if rt == P.T_TP:
+        tps.add(d["adc"])
+    if rt != P.T_SPEC or d["fmt"] != P.FMT_F32:
+        continue
+    ifx = if_axis(d)
+    c = d["core"]
+    ng += (c not in (0, 1) or d["kind"] != 1 or d["ns"] != 0 or d["nch"] != 65536 or d["s"] != 0 or d["src"] != want.get(c, -1)
+           or d["nacc"] != 1280 or d["df_hz"] != 31250.0 or d["bit_kind"] != 10 or d["data"].size != 65536
+           or float(np.max(np.abs(ifx - ref))) > 1e-6 or not np.all(np.diff(ifx) > 0))
+    ngp += float(np.max(np.abs(ifx - A.g2_if_mhz(65536 - i)))) > 1e-6  # 陽性対照: 1 ch ずらした軸 → 全部 NG のはず
+    per[c] = per.get(c, 0) + 1; n += 1
+print(f"{n}:{ng}:{ngp}:{''.join('ABCD'[a] for a in sorted(tps))}:{per[0]}/{per[1]}")
+EOF
+}
+t_g22() {     # proj025 3c: 2G-2（--g22、FULL の流れ A0・B0 の 2 本・65536 ch）。core・src・nch・IF の軸・DUMP_T の進み 8192·nacc・TP の欄は FULL の C・D ＋ コアの A・B
+  echo "== g22"; rm -f "$OUT/g22.s45"; srv g22 --g22
+  ctl "SET tint=0.04096 A0.src=C B0.src=D shift=7 fmt=both" "GET" "START n=30" "SEND ON" > "$OUT/g22.ctl.log"
+  rcv --seconds 6 --out "$OUT/g22.s45" --json "$OUT/g22.json" > "$OUT/g22.recv.log"
+  local s=$(js "$OUT/g22.json" spec) fp=$(js "$OUT/g22.json" f32_pairs) fb=$(js "$OUT/g22.json" f32_bad)
+  stop_srv
+  local ax=$(g22_check "$OUT/g22.s45" 2 3)
+  judge $([ "$s" = 120 ] && [ "$fp" = 60 ] && [ "$fb" = 0 ] && [ "$ax" = "60:0:60:ABCD:30/30" ] && grep -q "照合: 通過" "$OUT/g22.recv.log" \
+          && grep -q "A0.src=C" "$OUT/g22.ctl.log" && grep -q "B0.src=D" "$OUT/g22.ctl.log" && grep -q "B0.shift=7" "$OUT/g22.ctl.log" && echo 1 || echo 0) \
+    "SPEC $s（期待 120 = 30 × 2 窓 × u64・f32）・組 $fp・不一致 $fb・f32 の数:NG:陽性対照の NG:TP の ADC:A0/B0 $ax（期待 60:0:60:ABCD:30/30）"
+}
+t_g22same() { # proj025 3c: E-4 の偽物版。2 コアに同じ ADC（B）→ 2 窓とも src 1、TP の欄は B（コア 0 の FULL）と A（コア 0 のコアの TP）の 2 本
+  echo "== g22same"; rm -f "$OUT/g22same.s45"; srv g22same --g22
+  ctl "SET A0.src=B B0.src=B fmt=f32" "START n=20" "SEND ON" > "$OUT/g22same.ctl.log"
+  rcv --seconds 5 --out "$OUT/g22same.s45" --json "$OUT/g22same.json" > "$OUT/g22same.recv.log"
+  stop_srv
+  local ax=$(g22_check "$OUT/g22same.s45" 1 1)
+  judge $([ "$ax" = "40:0:40:AB:20/20" ] && grep -q "照合: 通過" "$OUT/g22same.recv.log" && echo 1 || echo 0) "f32 の数:NG:陽性対照の NG:TP の ADC:A0/B0 $ax（期待 40:0:40:AB:20/20）"
+}
+t_g22p() {    # proj025 3c 陽性対照: 範囲の外の src・SHIFT、流れの無い窓（A1・C0）、窓なしの src、BASE の倍数でない tint は ERR。同じ ADC は通る
+  echo "== g22p（陽性対照）"; srv g22p --g22
+  local r1=$(ctl "SET A0.src=E") r2=$(ctl "SET shift=16") r3=$(ctl "SET A1.shift=7") r4=$(ctl "SET C0.src=A") r5=$(ctl "SET src=B") r6=$(ctl "SET tint=0.03") \
+        r7=$(ctl "SET A0.src=B B0.src=B A0.shift=3" "GET")
+  stop_srv
+  local e=0; for r in "$r1" "$r2" "$r3" "$r4" "$r5" "$r6"; do echo "$r" | grep -q "ERR" && e=$((e+1)); done
+  judge $([ $e = 6 ] && echo "$r7" | grep -q "A0.src=B" && echo "$r7" | grep -q "B0.src=B" && echo "$r7" | grep -q "A0.shift=3" && echo "$r7" | grep -q "B0.shift=7" && echo 1 || echo 0) \
+    "ERR $e 個（期待 6: A0.src=E・shift=16・A1.shift・C0.src・src・tint=0.03）、A0.src=B B0.src=B A0.shift=3 は通る（$(echo $r5 | tr -d "\n")）"
+}
+t_g22cli() {  # proj025 3c: 受け側の s45client で 2G-2 の偽物から acquire(40)。A0・B0 の 2 窓を数えて時間切れにならない・手元の溜めは 31 個（keep 500 × 4096 / 65536）・軸は 65536 個の昇順
+  echo "== g22cli"; srv g22cli --g22
+  local r=$(timeout 60 python3 - $PORTC $PORTD <<'EOF'
+import sys, numpy as np
+from s45client import S45
+s = S45("127.0.0.1", ctrl_port=int(sys.argv[1]), data_port=int(sys.argv[2]))
+try:
+    d = s.acquire(40, **{"A0.src": "C", "B0.src": "A"})
+    out = []
+    for k in ("A0", "B0"):
+        sp, f = d.spec(k), d.freq(k)
+        out.append(f"{sp.shape[0]}:{sp.shape[1]}:{f.size}:{int(np.all(np.diff(f) > 0))}")
+    c = s.check()
+    print("/".join(out) + f":{c['unexplained']}:{c['crc_bad']}")
+finally:
+    s.close()
+EOF
+)
+  stop_srv
+  judge $([ "$r" = "31:65536:65536:1/31:65536:65536:1:0:0" ] && echo 1 || echo 0) "A0 / B0 の 手元のダンプ:ch:軸:昇順、説明のない欠け:CRC $r（期待 31:65536:65536:1/31:65536:65536:1:0:0）"
+}
+
 case "${1:-all}" in
-  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1; t_load; t_tpjump; t_idle; t_wide; t_widep; t_widesnap; t_g21; t_g21p; t_g21cli ;;
+  all) t_basic; t_corrupt; t_gap; t_drop; t_skip; t_reconnect; t_stall; t_f32; t_f32p; t_v1; t_load; t_tpjump; t_idle; t_wide; t_widep; t_widesnap; t_g21; t_g21p; t_g21cli; t_g22; t_g22same; t_g22p; t_g22cli ;;
   *) "t_$1" ;;
 esac
 if [ $NG = 0 ]; then echo "test_fake: 全部通過"; else echo "test_fake: NG $NG 件"; exit 1; fi

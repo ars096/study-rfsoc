@@ -16,6 +16,8 @@
   SNAP adc=A|B|C|D [n=1] [every=20]（proj019: ADC の生サンプル 8192 個 = 2 µs を n 個、every ms おき。IDLE のときだけ。記録は T_SNAP）
 proj023 4d: `--wide`（または bits.json の項目に "kind": "wide"）で SAM45-Wide の .bit（SLICE の流れ 8 本）。SET のキーは
   tint・fmt・cfg・A.b（束ね B 1/2/4、コアで 1 つ）・A.shift（コアで 1 つ）・A0.s0（流れの最初の ch）・all.b・all.shift。SNAP は RAW の流れ（SAM45-Fine と同じ命令）
+proj025 3c: `--g22`（または bits.json の項目に "kind": "g22"）で 2G-2 の .bit（FULL の流れ 2 本・65536 ch、鍵は A0・B0）。SET のキーは
+  tint・fmt・cfg・A0.src・B0.src・A0.shift・B0.shift・all.shift・shift（src はコアごと。2 コアに同じ ADC も可）。SNAP はコア 0 の RAW の流れ（s 1）
 proj024 3c: `--g21`（または bits.json の項目に "kind": "g21"）で 2G-1 の .bit（FULL の流れ 1 本・131072 ch、鍵は A0）。SET のキーは
   tint・fmt・cfg・src（FULL の入力の ADC A〜D、次の WRST で効く）・shift（RUN で効く）・A0.src・A0.shift・all.shift。SNAP は RAW の流れ（s 1）
 proj021 2-3d: BITS（bits.json の許す bit の一覧）| LOAD bit=<名前>（IDLE のときだけ。取得のプロセスを新しい bit で起こし直す。
@@ -157,6 +159,7 @@ class Server:
         o.seq0 = seq0
         o.wide = bool(self.a.wide) if e.get("kind") is None else e.get("kind") == "wide"     # proj023: SAM45-Wide
         o.g21 = bool(getattr(self.a, "g21", False)) if e.get("kind") is None else e.get("kind") == "g21"   # proj024: 2G-1
+        o.g22 = bool(getattr(self.a, "g22", False)) if e.get("kind") is None else e.get("kind") == "g22"   # proj025: 2G-2
         if e.get("tp_cal"):
             o.tp_cal = None
             if os.path.exists(e["tp_cal"]):
@@ -321,6 +324,11 @@ class Server:
             def f(r):
                 st = r["settings"]
                 d = dict(tint=st["tint"], cfg=f"{st['cfg']:#x}")
+                if st.get("kind") == "g22":                  # proj025: 2G-2（FULL の流れ A0・B0 の 2 本、コアごとの src・shift）
+                    d["fmt"] = st.get("fmt")
+                    for c, key in enumerate(("A0", "B0")):
+                        d[f"{key}.src"] = "ABCD"[st["src"][c]]; d[f"{key}.shift"] = st["shift"][c]
+                    return kv_line(d)
                 if st.get("kind") == "g21":                  # proj024: 2G-1（FULL の流れ A0 の 1 本）
                     d["fmt"] = st.get("fmt"); d["src"] = "ABCD"[st["src"]]; d["shift"] = st["shift"]
                     return kv_line(d)
@@ -635,6 +643,7 @@ def main():
     p.add_argument("--fake", action="store_true", help="PL を使わない（偽の記録。通信の試験）")
     p.add_argument("--wide", action="store_true", help="proj023: SAM45-Wide の .bit（SLICE の流れ。bits.json の項目の kind が優先）")
     p.add_argument("--g21", action="store_true", help="proj024: 2G-1 の .bit（FULL の流れ 1 本・131072 ch。bits.json の項目の kind が優先）")
+    p.add_argument("--g22", action="store_true", help="proj025: 2G-2 の .bit（FULL の流れ 2 本・65536 ch × 2、鍵は A0・B0。bits.json の項目の kind が優先）")
     p.add_argument("--no-malloc-tune", action="store_true", help="proj024 3d: 2G-1 の取得で mallopt（1 MiB の配列を mmap で取らせない）をしない（比べる用）")
     p.add_argument("--tp-cal", default="tp_cal.json", help="TP の dBm の較正ファイル（無ければ使わない。s45cal.py）")
     p.add_argument("--fake-notime", action="store_true", help="偽物で 1PPS が無い（時刻を答えられない）状態を作る")

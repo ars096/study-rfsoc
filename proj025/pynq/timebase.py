@@ -39,6 +39,10 @@ NS_NUM, NS_DEN = 125, 32          # 1 ビート = 125/32 ns（厳密）
 #   **T-2（閉ループ）で測れるのは差 M = adc_to_core − pps_det（＋ 2 本のケーブルの差）の 1 つだけ**なので、M を adc_to_core_ns に入れ、
 #   pps_det_ns = 0 とする（式の上では引く量は M で同じ）。
 CAL = {
+    # proj025（2G-2、PROJ 0x0025_0100）: 別の Overlay・別の配置なので proj024 の adc_to_core は持ち込まない。4 の F-2（RAW の流れ = コア 0 の s 1）で測るまで未較正。
+    #   pps_det_ns は 1PPS の入口の LPF（BLP-10.7+）の分で、bit に依らない（形 (b)、proj026）。LPF を外したら 0 に
+    0x0025_0100: dict(pps_det_ns=71.5, adc_to_core_ns=None, bound_ns=50,
+                      source="proj025: adc_to_core は未較正（4 の F-2 で測る）。pps_det_ns 71.5 は LPF の分（形 (b)、proj024 4d-1 と同じ配線 P の LPF）"),
     # proj023（SAM45-Wide、PROJ 0x0023_0100）: ギアボックス・time_core の RTL は proj021 2-5 と同じだが、別の Overlay・別の配置なので
     #   proj021 の値は持ち込まない（proj017 → 020 → 021 と同じ方針）。H-3 の前に F-2（RAW の流れ = コア 0 の s 2）で測る
     # proj024（2G-1、PROJ 0x0024_0100）: ギアボックス・time_core の RTL は 567fda2（proj023 のビルド 11）と同じだが、別の Overlay・別の配置なので
@@ -128,7 +132,8 @@ class TimeCore:
     ID = 0x0202_0302              # proj021 2-5: IF_ID（IF_VER 2・BIT_KIND 2 = SAM45-Fine・BIT_REV 3・CORE_KIND 2）。2-2d〜2-4 は 0x0202_0202、2-1〜2-2c は 0x0202_0102、旧 0x0021_7101
     IDS = (0x0202_0102, 0x0202_0202, 0x0202_0302,   # BIT_REV 1（2-1〜2-2c）・2（2-2d〜2-4）・3（2-5〜）。time_core の中身は同じ
            0x0201_0102,                              # proj023: SAM45-Wide（BIT_KIND 1・BIT_REV 1）
-           0x020B_0102)                              # proj024: 2G-1（BIT_KIND 11・BIT_REV 1）
+           0x020B_0102,                              # proj024: 2G-1（BIT_KIND 11・BIT_REV 1）
+           0x020A_0102)                              # proj025: 2G-2（BIT_KIND 10・BIT_REV 1）
     PROJ = 0x0021_0200            # 0x5C。CAL の鍵
     CTRL_ARM, CTRL_CANCEL, CTRL_ASET, CTRL_ACLR, CTRL_NCLR = 1, 2, 8, 16, 256
 

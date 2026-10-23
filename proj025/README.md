@@ -257,6 +257,58 @@ sim の環境: oss-cad-suite 2024-10-18（Icarus 13.0 devel、VERSIONS.md）。2
 - sha256: proj025.bit `de3ee45395a393c91c4cbacf0e21a9e1e5cc0f25ff4a00bf76bacb3a9cf30bf9` / proj025.hwh `e568364b32bb65ab817ec68951adb3e401217e0fd697d07250a6b0854e218682`
 - 実機に載せるのは **build/ の proj025.bit・.hwh**（ビルド 2 を `make post` で写したもの）
 
+### 3. PS — 土台と手順（2026-10-23 から）
+
+土台: B0 で写した `pynq/`（proj024-m0 の 60 個。3a〜3d・4 の直しが入った 2G-1 の道具）。2G-1 の道（`--g21`・G21Backend）は**触らずに残し**、2G-2 の道を横に足す（test_fake の g21 の 3 試験が回し直しの対照になる）。
+3b（受け側の軸を記録の nch から作る・`active_keys`・`keep_of`）は proj024 で済んでいて、写しに入っている。3d（取得の 1 周の速さ）は 2G-2 も 1 BASE に 1 MiB（512 KiB × 2）で同じ量なので、4 の実機の loop_max で見る
+
+手順:
+- 3a. ID を 2G-2 に: `s45core` に PROJ_G22 0x0025_0100・BIT_KIND_G22 10（BIT_KINDS[10] = 2G-2 は既に在る）・`TimeCore.IDS` に 0x020A_0102・
+  CAL[0x0025_0100] は **pps_det_ns 71.5（LPF の分、形 (b)）・adc_to_core_ns None（未較正。4 の F-2 で測る。proj024 の値は別の Overlay なので持ち込まない）**・VERSION proj025-0.1
+- 3c. **G22Backend・FakeG22Backend**、specd に `--g22`（bits.json の `"kind": "g22"`）。作りの決め（窓の枠 8 本・窓 j = 2·コア ＋ s を崩さない）:
+  - **窓 A0 = コア 0 の FULL（s 0）、B0 = コア 1 の FULL（s 0）**。残り 6 本は空。レコードの頭の (core, s) は (0, 0)・(1, 0) で、RTL の REC_CORE（= CORE_PORT）と同じ
+  - 設定: **src・shift はコアごと**（`A0.src`・`B0.src`・`A0.shift`・`B0.shift`、`all.shift`・`shift` は両方）。既定 src = (A, B)・shift 7。**2 コアに同じ ADC も許す**（E-4 の陽性対照）。
+    `src` だけ（窓なし）は ERR（どのコアか分からない）。A1・C0 など流れの無い窓は ERR
+  - START: 2 本とも STOP・REC 0 → SRC・SHIFT・CFG → ARM_WRST（2 本、tint の格子 1 つ）→ 2 本の SRC の読み返し 0x8000_000s・NCH 65536・FRAME_BEATS 8192 →
+    N_ACC 320・REC ALL・FULL の TP × 2・コアの TP → ARM_RUN × 2・TP_ARM を同じ格子で。begin で 2 本の RUN_T = START_AT ＋ 1・RUN_SHIFT・**2 本の RUN_F0 が同じ**・FULL の TP の F0 = RUN_F0 × 16
+  - **TP の欄の割り付け**（同じ ADC の 2 本を 1 つの欄に混ぜない、2G-1 の決めの延長）: コア 0 の FULL の TP → 欄 src0、コア 1 の FULL の TP → 欄 src1（src1 = src0 なら使わない）、
+    コア c のコアの TP → 欄 c（空いていれば）。既定（A, B）は FULL の TP 2 本だけ、(C, D) は 4 本、(B, B) は コア 0 の FULL → B・コア 0 のコアの TP → A の 2 本
+  - SPEC v2: kind 1・ns 0・**nch 65536**・中身は IF の昇順（送る i ↔ ch c = 65535 − i）・IF(c) = 4096 − c·df・**df 31.25 kHz・if_mhz = 送る 2047 番目 = 2112 MHz**・nacc = n_sum × 320。
+    utc_ns = beat_utc(dump_t) − adc_to_core[src] − (D_S ＋ 1.5·L)、**L 8192・D_S +1**（4d-2 の sim の D_eff 12,289 ビート）。G21 と共有の `_spec_record_full` は L・D_S を cfg から読む形に（2G-1 の値は今までどおり）
+  - SNAP は RAW（コア 0 の s 1）。DUMP_T の進みは 1280 × 8192 = 10,485,760（2G-1 の 640 × 16384 と同じ）、specrecv の L = nch / 8 = 8192（直す所なし）
+  - 受け側の溜め: keep_of(500, 65536) = 31 ダンプ / 窓
+
+3a・3c の予言（PL なし。test_fake に g22・g22p・g22cli を足す）:
+- 既存の 19 試験（g21 の 3 本を含む）は全部 OK（判定に使う数は土台と同じ）
+- **g22**: `SET tint=0.04096 A0.src=C B0.src=D shift=7 fmt=both`・START n=30 → **SPEC 120**（30 × 2 窓 × u64・f32）・組 60・不一致 0・照合 通過。f32 の記録 60 個は
+  窓 A0 が core 0・src 2、B0 が core 1・src 3、どれも kind 1・s 0・ns 0・nch 65536・nacc 1280・df 31250・bit_kind 10、軸は 4096 − (65535 − i)·df と一致し昇順。
+  **TP の ADC は ABCD**（FULL の C・D ＋ コアの A・B）。同じ試験の中の陽性対照: 1 ch ずらした軸（65536 − i）で 60 個全部 NG
+- **g22same**（E-4 の偽物版）: `A0.src=B B0.src=B` → 2 窓とも src 1・**TP の ADC は AB**（B は FULL 1 本だけ）
+- **g22p**（陽性対照）: `A0.src=E`・`shift=16`・`A1.shift=7`・`C0.src=A`・`src=B`（窓なし）・`tint=0.03` は全部 ERR。`A0.src=B B0.src=B A0.shift=3` は通り、GET に A0.src=B・B0.src=B・A0.shift=3・B0.shift=7
+- **g22cli**: s45client で acquire(40)（31 の上限が効く数。予言を書いた後、走らせる前に 20 → 40 に直した: 20 では上限に届かない）→ A0・B0 とも手元 **31 ダンプ × 65536 ch**・軸 65536 個の昇順・説明のない欠け 0・CRC 0（2 窓を数えて時間切れにならない）
+- 外れるとしたら: 2G-1 の 131072・16384・11 を直に書いている所の取り残し（`_spec_record_full` の L・D_S・bit_kind の既定）。偽物は束ねないので nacc の欄は cfg の値そのまま
+- 実機の道（G22Backend）は PL が無いと通らない。4 で初めて走る（ここでは import と、偽物と共有する関数の試験だけ）
+
+**3a・3c 結果（2026-10-23）: 全部 OK・予言は全部当たり**（test_fake.sh は 19 ＋ 4 = 23 試験、`test_nch.py` 17 項目。PC のコンピュータ側のシェルで試験の名前ごとに分けて回した）
+| 試験 | 結果 |
+|---|---|
+| 3a の import | BIT_KINDS[10] = 2G-2・PROJ_G22 0x0025_0100・IDS に 0x020A_0102・CAL[0x0025_0100] は pps_det_ns 71.5・adc_to_core_ns None・VERSION proj025-0.1 |
+| g22 | SPEC 120・組 60・不一致 0・照合 通過。f32 の 60 個は A0 30（core 0・src 2）・B0 30（core 1・src 3）、どれも kind 1・s 0・ns 0・nch 65536・nacc 1280・df 31250・bit_kind 10、軸は 4096 − (65535 − i)·df と一致し昇順。**TP の ADC は ABCD**。GET に A0.src=C・B0.src=D・B0.shift=7 |
+| g22 の中の陽性対照 | 1 ch ずらした軸（65536 − i）では 60 個全部が NG |
+| g22same（E-4 の偽物版） | 2 窓とも src 1（20 / 20）・**TP の ADC は AB** |
+| g22p（陽性対照） | A0.src=E・shift=16・A1.shift・C0.src・src（窓なし）・tint=0.03 の 6 個とも ERR。A0.src=B B0.src=B A0.shift=3 は通り、GET に B0.shift=7 |
+| g22cli | acquire(40) で A0・B0 とも手元 31 ダンプ × 65536 ch・軸 65536 個の昇順・説明のない欠け 0・CRC 0 |
+| 既存の 19 試験（g21 の 3 本を含む） | 全部 OK（判定に使う数は土台と同じ） |
+
+- **偽物の時計は ADC の遅れが 0 なので、上の試験は utc_ns の引き算を見ていない**。`_spec_record_full` を時計の偽物で直に呼んで確かめた: 2G-2 の cfg で **48,003 ns（= (1 ＋ 12,288) × 125 / 32、4d-2 の D_eff 12,289 ビート）**・bit_kind 10・nch 65536、
+  2G-1 の cfg で 96,003 ns（土台と同じ）
+- specd のログの終わりの `resource_tracker` の KeyError は proj024 3c と同じもの（終わり際の共有メモリの後片づけ）
+- 3c で足したもの: `s45acq.py` に 2G-2 の定数・`g22_cfgs`・`g22_tp_slots`・**G22Backend・FakeG22Backend**・`_set1_g22`、`_spec_record_full` の L・D_S を cfg から（2G-1 の値は既定）・
+  `specd.py` に `--g22`・`"kind": "g22"`・GET の A0.src など、`test_fake.sh` に g22・g22same・g22p・g22cli。2G-1 の道（G21Backend・`--g21`）は変えていない
+- **実機の道（G22Backend）はまだ一度も走っていない**。4 で最初に確かめること（sim と RTL を前提にしている所）: discover の CORE_PORT [0, 1]・コア 1 の NSTREAM 1・
+  2 本の WRST の後の SRC = 0x8000_000s・**2 本の RUN_F0 が同じ**（2e-2 の sim では同じだった）・FULL の TP の F0 = RUN_F0 × 16・RUN_T = START_AT ＋ 1・
+  ch → IF = 4096 − c·df（SG の CW で、2 窓とも）・D_S = +1（F-2 の RAW と並べて）・loop_max（512 KiB × 2 / 10.24 ms、3d の代わり）
+
 ## 結論・次にやること
 
 - [x] 0. 写す（2026-10-18）
@@ -267,4 +319,5 @@ sim の環境: oss-cad-suite 2024-10-18（Icarus 13.0 devel、VERSIONS.md）。2
 - [x] 段階 B の 2a〜2e・2e-2・4d-2 の sim（2026-10-22、全部通過・陽性対照は全部落ちた）
 - [x] 2f の build.tcl を 2 コアに（2026-10-22、Vivado では未実行）
 - [x] 2f のビルド（2026-10-22、ビルド 2 が既定の戦略で閉じた。WNS +0.046 ns。親の Vivado が open_run で落ち、`make post` で後段を回した）
-- [ ] 3 PS・4 実機
+- [x] 3 PS（2026-10-23、3a ID・3c G22Backend。test_fake 23 試験が全部 OK。3b は proj024 で済み、3d は 4 の loop_max で見る）
+- [ ] 4 実機
