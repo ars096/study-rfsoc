@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-3-Clause
-"""proj025 — 2G-2 の ROM の中身（PFB の係数の補間の表・ひねり係数の 2 つの表）を生成し、読み返して模型と照らす。
+"""proj027 — 2G-4 の ROM の中身（PFB の係数の補間の表・ひねり係数の 2 つの表）を生成し、読み返して模型と照らす。
 
     python3 tools/gen_g24_tables.py [出力先（既定 build-gen/）]
 
-値は model/g24_fixed.py の定義そのもの。**手で直さない**。proj024 の gen_g21_tables.py を写し、長さを 2G-2 に。生成物は src/g24/ に写してコミットする。
-  g24_coef_lo.hex・g24_coef_hi.hex: 各 2048 行 × 36 bit = {S[13], V[23]}（V が [0 +: 23]、S が [23 +: 13]、2 の補数）。
-      lo は区間 s = 0..2047（タップ t 0・3 が引く）、hi は s = 2048..4095（t 1・2 が引く）。番地は s − 2048·(hi)
-  g24_tw_a.hex: 64 行 × 576 bit、g24_tw_b.hex: 128 行 × 576 bit。レーン p が [36p +: 36] = {im[18], re[18]}（Wide の wide_tw.hex と同じ並び）。
+値は model/g24_fixed.py の定義そのもの。**手で直さない**。proj025 の gen_g22_tables.py を写し、長さを 2G-4 に。生成物は src/g24/ に写してコミットする。
+  g24_coef_lo.hex・g24_coef_hi.hex: 各 1024 行 × 35 bit = {S[13], V[22]}（V が [0 +: 22]、S が [22 +: 13]、2 の補数）。
+      lo は区間 s = 0..1023（タップ t 0・3 が引く）、hi は s = 1024..2047（t 1・2 が引く）。番地は s − 1024·(hi)
+  g24_tw_a.hex: 32 行 × 576 bit、g24_tw_b.hex: 128 行 × 576 bit。レーン p が [36p +: 36] = {im[18], re[18]}（Wide の wide_tw.hex と同じ並び）。
       A の行 = hi（k1 >> 7）、B の行 = lo（k1 & 127）
 """
 import os
@@ -19,7 +19,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "model"))
 import g24_fixed as F  # noqa: E402
 
-VW, SW = 23, 13
+VW, SW = 22, 13
 
 
 def tc(v, w):
@@ -36,7 +36,7 @@ def main():
     os.makedirs(out, exist_ok=True)
     V, S = F.coef_tables()
     H = F.NSEG // 2
-    assert len(V) == 4096
+    assert len(V) == 2048
     for name, rng in (("lo", range(0, H)), ("hi", range(H, 2 * H))):
         with open(os.path.join(out, f"g24_coef_{name}.hex"), "w") as fo:
             for s in rng:

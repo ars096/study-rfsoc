@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-3-Clause
-"""proj025 — 2G-2（2 ADC、各 FFT 131072 点 = 16 レーン × 8192 点）の固定小数点の鎖。bit 単位の定義の唯一の正。
+"""proj027 — 2G-4（4 ADC、各 FFT 65536 点 = 16 レーン × 4096 点）の固定小数点の鎖。bit 単位の定義の唯一の正。
 
-proj024 の model/g21_fixed.py（2G-1）を写し、長さ・表の行数・Y の丸めの bit を 2G-2 にした（式は同じ）。2 本の ADC は同じ鎖を 1 本ずつ通る。
-丸めは Wide と同じ rshift_round(v, s) = (v + 2^(s−1)) >> s（cmul の丸め）。proj025 README の M と proj024 の D-5・D-6・D-7。
+proj025 の model/g22_fixed.py（2G-2、proj024 の g21_fixed.py の写し）を写し、長さ・表の行数・節の G・Y の丸めの bit を 2G-4 にした（式は同じ）。4 本の ADC は同じ鎖を 1 本ずつ通る。
+丸めは Wide と同じ rshift_round(v, s) = (v + 2^(s−1)) >> s（cmul の丸め）。proj027 README の M と proj024 の D-5・D-6・D-7。
 
   1. PFB の係数（D-6、線形補間）: 番地 i = t·N + n を左右で折り返し（i ≧ L/2 → i' = L − 1 − i）、s = i' >> 6・f = i' & 63、
-       c[i] = (V[s]·64 + S[s]·f + 2^(G+5)) >> (G+6)、V[s] = round(h[64s]·2^(16+G))、S[s] = V[s+1] − V[s]（s = 0..4095）
+       c[i] = (V[s]·64 + S[s]·f + 2^(G+5)) >> (G+6)、V[s] = round(h[64s]·2^(16+G))、S[s] = V[s+1] − V[s]（s = 0..2047）
      1 ビート m の 16 レーン p は同じ s（coef_beat）。
   2. PFB: y = sat15((Σ_t c[t·N + n]·x[(r − 3 + t)·N + n] + 2^15) >> 16)（Wide の wide_pfb と同じ。係数の出どころだけが違う）
-  3. レーン FFT（IP、unscaled、8192 点）: Y = rint(DFT(y))（28 bit に入る）
-  4. Y の丸め（D-7、proj024 M-7 の 2G-2 の行）: Yd = (Y + 1) >> 1（27 bit、cmul の A ポート）
+  3. レーン FFT（IP、unscaled、4096 点）: Y = rint(DFT(y))（27 bit に入る）
+  4. Y の丸め（D-7）: **2G-4 は丸めない**（D1 0、Yd = Y。4096 点は今の cmul の A ポート 27 bit に入る、proj024 M-4）
   5. ひねり係数（D-5、2 つの表の積）: k1 = hi·128 + lo、w = cmul(A[p][hi], B[p][lo], SH 16)、
        A[p][hi] = round(2^16·W_N^(p·128·hi))、B[p][lo] = round(2^16·W_N^(p·lo))
-  6. V = cmul(Yd, w, SH 18)（25 bit）→ dft16（Wide と同じ、U 27・Z 29、k2 = 0..7）→ ch c = k1 + 8192·k2
+  6. V = cmul(Yd, w, SH 18)（25 bit）→ dft16（Wide と同じ、U 27・Z 29、k2 = 0..7）→ ch c = k1 + 4096·k2
   7. q = sat18(Z >>> SHIFT)（切り捨て、Wide の wide_chain と同じ）、p = q_re² + q_im²
 """
 import os
@@ -24,14 +24,14 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from g2_model import CF, LANES, T, design, quantize  # noqa: E402
 
-N = 131072
-M = N // LANES            # 8192（レーン FFT の点数 = 1 フレームのビート数）
-KB = 13                   # log2 M（k1・m の bit 数）
-L = T * N                 # 524,288 タップ
+N = 65536
+M = N // LANES            # 4096（レーン FFT の点数 = 1 フレームのビート数）
+KB = 12                   # log2 M（k1・m の bit 数）
+L = T * N                 # 262,144 タップ
 D = 64                    # 補間の区間
-NSEG = L // 2 // D        # 4096（片側）
-G = 5                     # 節の小数部の追加の bit（予言: V 23 ＋ S 13 = 36 bit に入る最大。make model の M-a で確かめる）
-D1 = 1                    # Y の丸めの bit（proj024 M-7: 2G-2 は Y 28 bit → 27 bit）
+NSEG = L // 2 // D        # 2048（片側）
+G = 4                     # 節の小数部の追加の bit（予言: G 5 は S 14 で 37 bit になり入らない。G 4 で V 22 ＋ S 13 = 35 bit。make model の M-a で確かめる）
+D1 = 0                    # Y の丸めの bit（proj024 D-7・M-4: 2G-4 は丸めない）
 S_TW = 128                # ひねり係数の積の分け方 k1 = hi·S_TW + lo
 
 

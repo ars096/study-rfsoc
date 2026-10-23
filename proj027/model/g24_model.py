@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-3-Clause
-"""proj025 — 2G-2 の部品を bit 単位で確かめる（README の M。proj024 の g2_model.py の m8 を 2G-2 の長さで写した）。
+"""proj027 — 2G-4 の部品を bit 単位で確かめる（README の M。proj025 の g22_model.py を 2G-4 の長さで写した）。
 
   python3 g24_model.py        # a〜d（1 分ほど）。成否は最後の「まとめ」の行で読む
 """
@@ -140,7 +140,7 @@ def m_d():
 
 
 def main():
-    print(f"M 2G-2 の部品を bit 単位で（model/g24_fixed.py: N {F.N}・M {F.M}・L {F.L}・G {F.G}・D1 {F.D1}・S_TW {F.S_TW}）")
+    print(f"M 2G-4 の部品を bit 単位で（model/g24_fixed.py: N {F.N}・M {F.M}・L {F.L}・G {F.G}・D1 {F.D1}・S_TW {F.S_TW}）")
     res = {}
     t0 = time.time()
     res["a"], cf = m_a()
