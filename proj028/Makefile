@@ -41,7 +41,7 @@ export BOARD_REPO PART OUTDIR
 
 PYTHON ?= python3
 
-.PHONY: all prog id timing-check clean model-m1 model-m2
+.PHONY: all prog id timing-check clean model-m1 model-m2 estimate
 
 # 模型 M-1（荒い PFB の原型・タップ数・ポリフェーズの形・トーンの折り返し）。numpy だけ、1 分前後。成否は「結果:」の行
 model-m1:
@@ -52,6 +52,11 @@ model-m1:
 model-m2:
 	mkdir -p runs
 	$(PYTHON) model/m2_requant.py all | tee runs/m2.log
+
+# 見積もり E-2・E-3（チップ内の資源・DDR・出口と dt）。表を作るだけ。荒い FFT・MIG・corner turn は仮の値
+estimate:
+	mkdir -p runs
+	$(PYTHON) tools/estimate.py | tee runs/estimate.log
 
 
 all: $(OUTDIR)
