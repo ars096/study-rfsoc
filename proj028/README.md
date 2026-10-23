@@ -373,7 +373,9 @@ B=<ボード>
 ssh xilinx@$B 'mkdir -p ~/proj028'
 scp build/proj028.bit build/proj028.hwh pynq/ddr_bw.py xilinx@$B:~/proj028/
 # ボードで回す（RFDC は載せていないので --clkin・--ref は要らない。全部で 1〜2 分。早く見るだけなら --quick で 8 GiB の全体の書き読みを省く）
-ssh -t xilinx@$B 'cd ~/proj028 && sudo python3 ddr_bw.py --out ddr_bw.json'
+# ssh にコマンドを直接渡すとログインシェルが読まれず PYNQ の venv に入らない（ModuleNotFoundError: pynq、2026-10-23 に踏んだ）→ sudo -i（root のログインシェル）の中で回す
+ssh -t xilinx@$B "sudo -i bash -c 'cd /home/xilinx/proj028 && python3 ddr_bw.py --out ddr_bw.json'"
+# それでも pynq が無ければ、ボードに入ってから: cd ~/proj028 && sudo -E $(which python3) ddr_bw.py --out ddr_bw.json
 # 結果をこの PC へ戻す
 mkdir -p runs && scp xilinx@$B:~/proj028/ddr_bw.json runs/
 ```
