@@ -368,12 +368,14 @@ ddr_tg に AXI4 の残りの信号（ID・lock・cache・prot・qos、定数）�
 ### S-2c 実機の手順（西村さんがボードの空きを見て回す）
 
 ```bash
-# この PC（proj028/）から。**build/ だけを送る**（build-* の glob はしない、LESSONS）
-scp build/proj028.bit build/proj028.hwh pynq/ddr_bw.py xilinx@<ボード>:~/proj028/
-# ボードで（RFDC は載せていないので --clkin・--ref は要らない）
-cd ~/proj028 && sudo python3 ddr_bw.py --out ddr_bw.json        # 全部で 1〜2 分
-#   早く見るだけなら --quick（8 GiB の全体の書き読みを省く）
-# 結果の ddr_bw.json をこの PC の proj028/runs/ へ戻す
+# この PC の proj028/ から。B にボードのホスト名か IP を入れる（リポジトリには書かない）。**build/ だけを送る**（build-* の glob はしない、LESSONS）
+B=<ボード>
+ssh xilinx@$B 'mkdir -p ~/proj028'
+scp build/proj028.bit build/proj028.hwh pynq/ddr_bw.py xilinx@$B:~/proj028/
+# ボードで回す（RFDC は載せていないので --clkin・--ref は要らない。全部で 1〜2 分。早く見るだけなら --quick で 8 GiB の全体の書き読みを省く）
+ssh -t xilinx@$B 'cd ~/proj028 && sudo python3 ddr_bw.py --out ddr_bw.json'
+# 結果をこの PC へ戻す
+mkdir -p runs && scp xilinx@$B:~/proj028/ddr_bw.json runs/
 ```
 
 読むところ: `ID 0x02800001` → `較正: 済み` → `容量:`（8 GB / 4 GB）→ `全体`（不一致 0）→ 帯域の表 → `本番の形`（○・○、不一致 0）。
