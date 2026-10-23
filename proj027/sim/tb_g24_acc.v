@@ -1,27 +1,27 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// tb_g24_acc — g24_acc の単体（proj025 手順 2b。proj024 の tb_g21_acc を 8192 行・65536 ch に）。電力 p は決まった式の擬似乱数（sim/check_g24.py の acc_p と同じ）:
+// tb_g24_acc — g24_acc の単体（proj027 手順 2b。proj025 の tb_g22_acc を 4096 行・32768 ch に）。電力 p は決まった式の擬似乱数（sim/check_g24.py の acc_p と同じ）:
 //   p(f, k1, b) = ((f·1315423911 + k1·2654435761 + b·97531 + 12345) · 2246822519) mod 2^35（64 bit で掛けて下 35 bit）
 // 3 つのダンプ（各 NA = 9 フレーム）: A = フレーム 0〜8（面 0）、B = 9〜17（面 1）、C = 18〜26（面 0、面 0 の 2 回目）。k1 は bit 反転順。
-// B を積んでいる間に A（面 0）を、C を積んでいる間に B（面 1）を、終わってから C（面 0）を、全 65536 ch 読み出して `OUT/rd_<名前>.txt に
+// B を積んでいる間に A（面 0）を、C を積んでいる間に B（面 1）を、終わってから C（面 0）を、全 32768 ch 読み出して `OUT/rd_<名前>.txt に
 `timescale 1ns / 1ps
 module tb_g24_acc;
-    localparam integer M = 8192, NA = 9, NFR = 3 * NA, NCH = 65536, RLAT = 4;
+    localparam integer M = 4096, NA = 9, NFR = 3 * NA, NCH = 32768, RLAT = 4;
     reg clk = 0;
     always #1.953 clk = ~clk;
     reg rst = 1;
     reg [295:0] p = 0;
     reg pv = 0;
-    reg [12:0] k1 = 0;
+    reg [11:0] k1 = 0;
     reg act = 0, first = 0, plane = 0;
-    reg [15:0] rc = 0;
+    reg [14:0] rc = 0;
     reg rpl = 0;
     wire [63:0] rd;
     g24_acc u (.clk(clk), .rst(rst), .p(p), .p_v(pv), .p_k1(k1), .t_act(act), .t_first(first), .t_plane(plane),
         .rd_c(rc), .rd_plane(rpl), .rd_d(rd));
 
-    function [12:0] brev(input [12:0] n);
+    function [11:0] brev(input [11:0] n);
         integer q;
-        begin for (q = 0; q < 13; q = q + 1) brev[12 - q] = n[q]; end
+        begin for (q = 0; q < 12; q = q + 1) brev[11 - q] = n[q]; end
     endfunction
     function [36:0] pv_of(input integer f, input integer kk, input integer bb);
         reg [63:0] t;
@@ -39,7 +39,7 @@ module tb_g24_acc;
         for (f = 0; f < NFR; f = f + 1)
             for (i = 0; i < M; i = i + 1) begin
                 @(negedge clk);
-                k1 = brev(i[12:0]);
+                k1 = brev(i[11:0]);
                 for (bb = 0; bb < 8; bb = bb + 1) p[37*bb +: 37] = pv_of(f, k1, bb);
                 pv = 1; act = 1; first = (f % NA) == 0; plane = (f / NA) % 2;
             end

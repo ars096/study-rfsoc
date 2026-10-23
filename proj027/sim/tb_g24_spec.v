@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// tb_g24_spec — g24_spec の単体（proj025 手順 2c。proj024 の tb_g21_spec を 8192 ビートのフレームに）。入力は `OUT/x.hex（sim/check_g24.py spec-gen。1 行 = 1 ビート = T のビート）。
+// tb_g24_spec — g24_spec の単体（proj027 手順 2c。proj025 の tb_g22_spec を 4096 ビートのフレームに）。入力は `OUT/x.hex（sim/check_g24.py spec-gen。1 行 = 1 ビート = T のビート）。
 // T は 0 から 1 クロックに 1。s_tdata = x[T]（T と同じクロック）。設定: WRST → PFB が始まったら RUN（SHIFT `SHIFT・N_ACC 2・N_DUMP 2）。
 // （2d から SHIFT は RUN で効く。w_shift はずっと `SHIFT なので、2c のときと同じ値で積む）
 // 記録: PFB の出口（`OUT/y.txt）・IP の出口（`OUT/ip.txt）・ダンプ（commit の瞬間に凍った面の記憶をそのまま写す `OUT/dump<seq>.txt）。
 // 読み出しの口（rd_c → rd_d）は各ダンプの頭 4096 ch だけ口からも読んで、写しと比べる（全部は 2b で確かめた）
 `timescale 1ns / 1ps
 module tb_g24_spec;
-    localparam integer NB = 10 * 8192;
+    localparam integer NB = 12 * 4096;   // proj027: 10 → 12 フレーム（2 個目のダンプの後の 4200 クロックの待ちの間に入力が尽きないように。2G-2 の 10 フレームは 2G-4 では 1 フレーム足りない）
     reg clk = 0;
     always #1.953 clk = ~clk;
     reg rst = 1;
@@ -14,7 +14,7 @@ module tb_g24_spec;
     reg [255:0] d = 0;
     reg v = 0;
     reg wrst = 0, run = 0, stop = 0, fclr = 0;
-    reg [15:0] rc = 0;
+    reg [14:0] rc = 0;
     wire [63:0] rd;
     wire [3:0] c_shift;
     wire go, st_sched, st_acc, commit, rd_plane, have_first;
@@ -23,7 +23,7 @@ module tb_g24_spec;
     wire [31:0] seq, dk, dn, dsat, ip_ph;
     wire [15:0] pfb_sat, ipq, ip_st;
     wire [1023:0] ip_td;
-    wire [12:0] ip_k1;
+    wire [11:0] ip_k1;
     wire ip_v;
     g24_spec #(.ST_N(256), .GF_L2(1), .SHIFT_DEFAULT(7),
                .LO_FILE(`LO), .HI_FILE(`HI), .TA_FILE(`TA), .TB_FILE(`TB)) u (
@@ -37,7 +37,7 @@ module tb_g24_spec;
 
     reg [255:0] xm [0:NB-1];
     integer fy, fi, fdmp, k, nrd_bad = 0, ndump = 0;
-    reg [383:0] snap [0:8191];
+    reg [383:0] snap [0:4095];
     // 入力: T のビートに x[T]
     always @(posedge clk) t <= t + 1;
     always @(negedge clk) begin d <= (t < NB) ? xm[t] : 256'd0; v <= !rst && (t < NB); end
@@ -49,14 +49,14 @@ module tb_g24_spec;
     // ダンプ: commit の次のクロックで dump_* と rd_plane が変わっている
     always @(posedge clk) if (commit) begin
         #0.1;
-        for (k = 0; k < 8192; k = k + 1) snap[k] = rd_plane ? u.u_acc.g_pl[1].mem[k] : u.u_acc.g_pl[0].mem[k];
+        for (k = 0; k < 4096; k = k + 1) snap[k] = rd_plane ? u.u_acc.g_pl[1].mem[k] : u.u_acc.g_pl[0].mem[k];
         case (seq)
             1: fdmp = $fopen({`OUT, "/dump1.txt"}, "w");
             2: fdmp = $fopen({`OUT, "/dump2.txt"}, "w");
             default: fdmp = $fopen({`OUT, "/dump_x.txt"}, "w");
         endcase
         $fwrite(fdmp, "# seq %0d dk %0d df0 %0d dn %0d dsat %0d plane %0d f_first %0d\n", seq, dk, df0, dn, dsat, rd_plane, u.f_first);
-        for (k = 0; k < 8192; k = k + 1) $fwrite(fdmp, "%h\n", snap[k]);
+        for (k = 0; k < 4096; k = k + 1) $fwrite(fdmp, "%h\n", snap[k]);
         $fclose(fdmp);
         ndump = ndump + 1;
         rd_check;
@@ -66,9 +66,9 @@ module tb_g24_spec;
         reg [47:0] e;
         begin
             for (c = 0; c < 4096 + 4; c = c + 1) begin
-                @(negedge clk); rc = c[15:0];
+                @(negedge clk); rc = c[14:0];
                 if (c >= 4) begin
-                    e = snap[(c - 4) & 8191][48 * ((c - 4) >> 13) +: 48];
+                    e = snap[(c - 4) & 4095][48 * ((c - 4) >> 12) +: 48];
                     if (rd !== {16'd0, e}) nrd_bad = nrd_bad + 1;
                 end
             end
@@ -92,5 +92,5 @@ module tb_g24_spec;
                  ndump, flags, c_shift, ipq, ipq[15:8], u.f_first, nrd_bad, pfb_sat);
         $finish;
     end
-    initial begin #(3.906 * 13 * 8192); $display("tb_g24_spec: 時間切れ（ダンプ %0d・flags %h）", ndump, flags); $finish; end
+    initial begin #(3.906 * 13 * 4096); $display("tb_g24_spec: 時間切れ（ダンプ %0d・flags %h）", ndump, flags); $finish; end
 endmodule

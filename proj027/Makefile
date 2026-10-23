@@ -5,7 +5,7 @@ PYTHON        ?= python3
 IVERILOG      ?= iverilog
 VVP           ?= vvp
 
-.PHONY: coef-ooc wide-hier model gen sim-all sim-g24c sim-g24t sim-g24p sim-g24ch clean
+.PHONY: coef-ooc wide-hier model gen sim-all sim-g24c sim-g24t sim-g24p sim-g24ch sim-lane sim-g24a sim-g24s sim-recfr sim-g24core sim-g24s45 clean
 
 # 模型（numpy だけ）。M-a〜d。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -73,6 +73,134 @@ sim-g24ch:
 	@grep -q '結果: 全部通過' $(SIMDIR)/g24ch_normal/check.log && grep -q '結果: 全部通過' $(SIMDIR)/g24ch_sat/check.log \
 	  && grep -q '結果: 不合格' $(SIMDIR)/g24ch_twlat/check.log && grep -q '結果: 不合格' $(SIMDIR)/g24ch_rnd1/check.log \
 	  && echo "sim-g24ch: 全部通過（陽性対照 2 本は落ちた）" || (echo "sim-g24ch: NG"; exit 1)
+
+# ---- 段階 B: 2a〜2e・4d-2 の sim（proj025-m0 の Makefile から写した。名前は g24 に。2e-2 は 4 コア版 sim-g24x4 を作った）----
+# 2a. レーン FFT 4096 点の行動模型（sim/lane_fft_g24_model.v）の単体。tready の下げなし・あり（-DFFT_STALL_AT=3）
+sim-lane:
+	@for v in plain stall; do \
+	  o=$(SIMDIR)/lane_$$v; mkdir -p $$o; d=""; st=0; [ $$v = stall ] && d="-DFFT_STALL_AT=3" && st=1; \
+	  $(PYTHON) sim/check_g24.py lane-gen $$o && \
+	  $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -o $$o/tb sim/lane_fft_g24_model.v sim/tb_lane_g24.v && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	  $(PYTHON) sim/check_g24.py lane $$o $$o/tb.log $$st > $$o/check.log 2>&1; \
+	  printf '%-14s %s\n' "lane_$$v" "$$(grep '結果:' $$o/check.log || echo '結果の行が無い')"; \
+	done
+	@grep -q '結果: 全部通過' $(SIMDIR)/lane_plain/check.log && grep -q '結果: 全部通過' $(SIMDIR)/lane_stall/check.log \
+	  && echo "sim-lane: 全部通過" || (echo "sim-lane: NG"; exit 1)
+
+# 2b. g24_acc（FULL の積分器）。ふつうと陽性対照（-DACC_FIRST_ERR: ダンプの最初で消さない。面 0 の 2 回目のダンプ C が落ちるべき）
+sim-g24a:
+	@for v in normal err; do \
+	  o=$(SIMDIR)/g24a_$$v; mkdir -p $$o; d=""; [ $$v = err ] && d="-DACC_FIRST_ERR"; \
+	  $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -o $$o/tb src/g24/g24_acc.v sim/tb_g24_acc.v && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	  $(PYTHON) sim/check_g24.py acc $$o > $$o/check.log 2>&1; \
+	  printf '%-14s %s\n' "g24a_$$v" "$$(grep '結果:' $$o/check.log || echo '結果の行が無い')"; \
+	done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g24a_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g24a_err/check.log \
+	  && echo "sim-g24a: 全部通過（陽性対照は落ちた）" || (echo "sim-g24a: NG"; exit 1)
+
+# 2c. g24_spec（分光の本体）。x.hex は無ければ作る（proj027: 毎回作り直すと、make -j で並べた 2d・2e が書きかけの x.hex を読んで X が混ざった）。ふつう（流し始めの tready の下げあり）と陽性対照（-DIPQ_POSCTL: 待ち行列なし。落ちるべき）
+G24S_RTL := src/common/cmul.v src/common/dft16.v src/g24/g24_coef.v src/g24/g24_pfb_core.v src/g24/g24_pfb.v \
+            src/g24/g24_tw.v src/g24/g24_chain.v src/g24/g24_acc.v src/g24/g24_spec.v sim/lane_fft_g24_model.v sim/tb_g24_spec.v
+sim-g24s:
+	@o0=$(SIMDIR)/g24s_in; mkdir -p $$o0; [ -f $$o0/x.hex ] || $(PYTHON) sim/check_g24.py spec-gen $$o0; \
+	for v in normal ipq; do \
+	  o=$(SIMDIR)/g24s_$$v; mkdir -p $$o; ln -sf ../g24s_in/x.hex $$o/x.hex; d="-DFFT_STALL_AT=3"; \
+	  [ $$v = ipq ] && d="$$d -DIPQ_POSCTL"; \
+	  $(IVERILOG) -g2005 $$d -DSHIFT=4 -DOUT=\"$$o\" -DLO=\"src/g24/g24_coef_lo.hex\" -DHI=\"src/g24/g24_coef_hi.hex\" \
+	    -DTA=\"src/g24/g24_tw_a.hex\" -DTB=\"src/g24/g24_tw_b.hex\" -o $$o/tb $(G24S_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	  $(PYTHON) sim/check_g24.py spec $$o $$o/tb.log 4 > $$o/check.log 2>&1; \
+	  printf '%-14s %s\n' "g24s_$$v" "$$(grep '結果:' $$o/check.log || echo '結果の行が無い')"; \
+	done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g24s_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g24s_ipq/check.log \
+	  && echo "sim-g24s: 全部通過（陽性対照は落ちた）" || (echo "sim-g24s: NG"; exit 1)
+
+# 2d. rec_fr に NCH を足した版が NCH 4096 で 567fda2 の版（sim/rec_fr_ref.v）と同じ振る舞いか（全部の出口をクロックごとに比べる）。
+#     陽性対照（-DEQ_POSCTL: 新しい版を NCH 2048 に。違いが出るべき）。2 本を同時に回す
+sim-recfr:
+	@for v in normal posctl; do \
+	  o=$(SIMDIR)/recfr_$$v; mkdir -p $$o; d=""; [ $$v = posctl ] && d="-DEQ_POSCTL"; \
+	  ( $(IVERILOG) -g2005 $$d -o $$o/tb sim/rec_fr_ref.v src/common/rec_fr.v sim/tb_recfr_eq.v && $(VVP) -n $$o/tb > $$o/tb.log 2>&1 ) & \
+	done; wait; \
+	for v in normal posctl; do printf '%-14s %s\n' "recfr_$$v" "$$(grep '結果:' $(SIMDIR)/recfr_$$v/tb.log || echo '結果の行が無い')"; done
+	@grep -q '結果: 全部通過' $(SIMDIR)/recfr_normal/tb.log && grep -q '結果: 不合格' $(SIMDIR)/recfr_posctl/tb.log \
+	  && echo "sim-recfr: 全部通過（陽性対照は落ちた）" || (echo "sim-recfr: NG"; exit 1)
+
+# 2d. g24_core（FULL の流れのブロック・SPEC のレコード 256 KiB・FULL の TP・SRC）。入力は 2c と同じ x.hex（sim-g24s の g24s_in を作る）。
+#     ふつう・陽性対照 2 本（-DG24C_POSCTL: 積分器の読みの口に 1 段多い / -DG24C_TP_POSCTL: TP の F0 の × 8 を忘れる）。
+#     G24CORE_V で回す変種を選べる（proj025 では 3 本を同時に 20 分前後。2G-4 のレコードは 256 KiB で半分）
+G24CORE_RTL := src/common/cmul.v src/common/dft16.v src/common/adc_ev.v src/common/tp_core.v src/common/rec_fr.v src/common/rec_arb.v \
+               src/g24/g24_coef.v src/g24/g24_pfb_core.v src/g24/g24_pfb.v src/g24/g24_tw.v src/g24/g24_chain.v src/g24/g24_acc.v \
+               src/g24/g24_spec.v src/g24/g24_core.v sim/lane_fft_g24_model.v sim/tb_g24_core.v
+G24CORE_V ?= normal posctl tp
+sim-g24core:
+	@o0=$(SIMDIR)/g24s_in; mkdir -p $$o0; [ -f $$o0/x.hex ] || $(PYTHON) sim/check_g24.py spec-gen $$o0; \
+	for v in $(G24CORE_V); do \
+	  o=$(SIMDIR)/g24core_$$v; mkdir -p $$o; ln -sf ../g24s_in/x.hex $$o/x.hex; d="-DFFT_STALL_AT=3"; \
+	  [ $$v = posctl ] && d="$$d -DG24C_POSCTL"; [ $$v = tp ] && d="$$d -DG24C_TP_POSCTL"; \
+	  ( $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -DLO=\"src/g24/g24_coef_lo.hex\" -DHI=\"src/g24/g24_coef_hi.hex\" \
+	      -DTA=\"src/g24/g24_tw_a.hex\" -DTB=\"src/g24/g24_tw_b.hex\" -o $$o/tb $(G24CORE_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	    $(PYTHON) sim/check_g24.py core $$o $$o/tb.log > $$o/check.log 2>&1 ) & \
+	done; wait; \
+	for v in $(G24CORE_V); do printf '%-14s %s\n' "g24core_$$v" "$$(grep '結果:' $(SIMDIR)/g24core_$$v/check.log || echo '結果の行が無い')"; done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g24core_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g24core_posctl/check.log \
+	  && grep -q '結果: 不合格' $(SIMDIR)/g24core_tp/check.log \
+	  && echo "sim-g24core: 全部通過（陽性対照 2 本は落ちた）" || (echo "sim-g24core: NG"; exit 1)
+
+# 2e. g24_s45_core（コアの共通・FULL（s 0）・RAW（s 1）・axis_sel4 × 2 は tb がブロックデザインと同じく外に置く）。
+#     ふつうと陽性対照（-DDROP_POSCTL: FULL の TP の drop を数え忘れる。rec_drop の和と LATE の和が合わなくなるべき）。2 本を同時に
+G24S45_RTL := $(filter-out sim/tb_g24_core.v,$(G24CORE_RTL)) src/common/core_cmn.v src/common/raw_core.v src/common/axis_sel4.v \
+              src/g24/g24_s45_core.v sim/tb_g24_s45.v
+G24S45_V ?= normal drop
+sim-g24s45:
+	@o0=$(SIMDIR)/g24s_in; mkdir -p $$o0; [ -f $$o0/x.hex ] || $(PYTHON) sim/check_g24.py spec-gen $$o0; \
+	for v in $(G24S45_V); do \
+	  o=$(SIMDIR)/g24s45_$$v; mkdir -p $$o; ln -sf ../g24s_in/x.hex $$o/x.hex; d="-DFFT_STALL_AT=3"; \
+	  [ $$v = drop ] && d="$$d -DDROP_POSCTL"; \
+	  ( $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -DLO=\"src/g24/g24_coef_lo.hex\" -DHI=\"src/g24/g24_coef_hi.hex\" \
+	      -DTA=\"src/g24/g24_tw_a.hex\" -DTB=\"src/g24/g24_tw_b.hex\" -o $$o/tb $(G24S45_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	    $(PYTHON) sim/check_g24.py s45 $$o $$o/tb.log > $$o/check.log 2>&1 ) & \
+	done; wait; \
+	for v in $(G24S45_V); do printf '%-14s %s\n' "g24s45_$$v" "$$(grep '結果:' $(SIMDIR)/g24s45_$$v/check.log || echo '結果の行が無い')"; done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g24s45_normal/check.log && grep -q '結果: 不合格' $(SIMDIR)/g24s45_drop/check.log \
+	  && echo "sim-g24s45: 全部通過（陽性対照は落ちた）" || (echo "sim-g24s45: NG"; exit 1)
+
+# 2e-2. コア 4 個（s45_core_0〜3、4 個とも RAW = 1、F-5）に同じ ADC（SRC 2）を入れ、ダンプがコア 0 と bit 単位で同じか（F-4 の sim 版）・
+#       RAW の SRC がコアごとに効くか。proj025 の sim-g22x2（2 コア）を 4 コアに。
+#       ふつうと陽性対照（-DX4_DLY: コア 3 の FULL の口に 1 段多い。コア 3 だけ違うべき）の 2 本を同時に。判定は tb の中（「結果:」の行）
+G24X4_RTL := $(filter-out sim/tb_g24_s45.v,$(G24S45_RTL)) sim/tb_g24_x4.v
+G24X4_V ?= normal dly
+.PHONY: sim-g24x4
+sim-g24x4:
+	@o0=$(SIMDIR)/g24s_in; mkdir -p $$o0; [ -f $$o0/x.hex ] || $(PYTHON) sim/check_g24.py spec-gen $$o0; \
+	for v in $(G24X4_V); do \
+	  o=$(SIMDIR)/g24x4_$$v; mkdir -p $$o; ln -sf ../g24s_in/x.hex $$o/x.hex; d="-DFFT_STALL_AT=3"; \
+	  [ $$v = dly ] && d="$$d -DX4_DLY"; \
+	  ( $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -DLO=\"src/g24/g24_coef_lo.hex\" -DHI=\"src/g24/g24_coef_hi.hex\" \
+	      -DTA=\"src/g24/g24_tw_a.hex\" -DTB=\"src/g24/g24_tw_b.hex\" -o $$o/tb $(G24X4_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1 ) & \
+	done; wait; \
+	for v in $(G24X4_V); do printf '%-14s %s\n' "g24x4_$$v" "$$(grep '結果:' $(SIMDIR)/g24x4_$$v/tb.log || echo '結果の行が無い')"; done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g24x4_normal/tb.log && grep -q '結果: 不合格' $(SIMDIR)/g24x4_dly/tb.log \
+	  && echo "sim-g24x4: 全部通過（陽性対照は落ちた）" || (echo "sim-g24x4: NG"; exit 1)
+
+# 4d-2. FULL の流れの遅れ D_eff = D_S ＋ 1.5·L（tb_g24_ds、proj023 の sim-wds の形）。ADC 4 本・axis_sel4 × 2 はブロックデザインと同じく外に、
+#       FULL・RAW とも SRC 2。インパルスを (i) RAW のダンプの頭・(ii) フレームの境目に G24DS_NIMP 個（組の数 × 2）。
+#       ふつうと陽性対照（-DDS_POSCTL: FULL の口に axis_sel4 の段が無い → D_S が 0 に動き、+1 の判定だけが落ちるべき）の 2 本を同時に
+G24DS_RTL  := $(filter-out sim/tb_g24_s45.v,$(G24S45_RTL)) sim/tb_g24_ds.v
+G24DS_NIMP ?= 8
+G24DS_V    ?= normal posctl
+.PHONY: sim-g24ds
+sim-g24ds:
+	@for v in $(G24DS_V); do \
+	  o=$(SIMDIR)/g24ds_$$v; mkdir -p $$o; d="-DFFT_STALL_AT=3 -DNIMP=$(G24DS_NIMP)"; pc=""; \
+	  [ $$v = posctl ] && d="$$d -DDS_POSCTL" && pc=posctl; \
+	  ( $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" -DLO=\"src/g24/g24_coef_lo.hex\" -DHI=\"src/g24/g24_coef_hi.hex\" \
+	      -DTA=\"src/g24/g24_tw_a.hex\" -DTB=\"src/g24/g24_tw_b.hex\" -o $$o/tb $(G24DS_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	    $(PYTHON) sim/check_g24.py ds $$o $$pc > $$o/check.log 2>&1 ) & \
+	done; wait; \
+	for v in $(G24DS_V); do printf '%-14s %s\n' "g24ds_$$v" "$$(grep '結果:' $(SIMDIR)/g24ds_$$v/check.log || echo '結果の行が無い')"; done
+	@grep -q '結果: 全部通過' $(SIMDIR)/g24ds_normal/check.log && grep -q '結果: 全部通過（陽性対照' $(SIMDIR)/g24ds_posctl/check.log \
+	  && echo "sim-g24ds: 全部通過（陽性対照は落ちた）" || (echo "sim-g24ds: NG"; exit 1)
+
 
 # 1a〜1d をまとめて（iverilog は 1 本 1 コアなので並べて回す）。成否は各ターゲットの最後の行で読む
 sim-all:

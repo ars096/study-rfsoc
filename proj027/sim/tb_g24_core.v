@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// tb_g24_core — g24_core の単体（proj025 手順 2d。proj024 の tb_g21_core を 8192 ビートのフレーム・65536 ch に）。入力は 2c と同じ `OUT/x.hex（check_g24.py spec-gen）。T は 0 から、s_axis = x[T]（同じクロック）。
+// tb_g24_core — g24_core の単体（proj027 手順 2d。proj025 の tb_g22_core を 4096 ビートのフレーム・32768 ch に）。入力は 2c と同じ `OUT/x.hex（check_g24.py spec-gen）。T は 0 から、s_axis = x[T]（同じクロック）。
 // AXI4-Lite で PS と同じ手順を踏む: SRC 2 → WRST / SHIFT 4・N_ACC 2・N_DUMP 1・CFG_ID・REC_CTRL ALL / TP_N 16・TP_REC_CTRL（4 個で 1 レコード）
 //   → PFB が始まったら RUN。SHIFT は RUN で効く（RUN の前と後で RUN_SHIFT を読む）。
 // 記録: IP の出口（`OUT/ip.txt）・ダンプ（commit の瞬間に凍った面の記憶 `OUT/dump1.txt）・レコードの出口の全部の語（`OUT/rec.txt。
@@ -7,7 +7,7 @@
 // 判定は check_g24.py core。
 `timescale 1ns / 1ps
 module tb_g24_core;
-    localparam integer NB = 10 * 8192;
+    localparam integer NB = 12 * 4096;   // proj027: 10 → 12 フレーム（2 個目のダンプの後の 4200 クロックの待ちの間に入力が尽きないように。2G-2 の 10 フレームは 2G-4 では 1 フレーム足りない）
     reg clk = 0;
     always #1.953 clk = ~clk;
     reg rstn = 0;
@@ -26,7 +26,7 @@ module tb_g24_core;
     wire        rec_v, rec_l, rec_u;
     reg         rec_r = 1;
     wire [1023:0] ip_td;
-    wire [12:0] ip_k1;
+    wire [11:0] ip_k1;
     wire        ip_v;
     g24_core #(.SID_S(2), .REC_CORE(1), .K_F(0), .ST_N(256), .GF_L2(1), .SHIFT_DEFAULT(7), .TPN_DEFAULT(512), .BUILD_TAG(32'h2024_0d00),
                .LO_FILE(`LO), .HI_FILE(`HI), .TA_FILE(`TA), .TB_FILE(`TB)) u (
@@ -41,7 +41,7 @@ module tb_g24_core;
 
     reg [255:0] xm [0:NB-1];
     integer fi, fr, fg, fdmp, k, ndump = 0, nspec = 0, nrec = 0, ndrop = 0;
-    reg [383:0] snap [0:8191];
+    reg [383:0] snap [0:4095];
     always @(posedge clk) t <= t + 1;
     always @(negedge clk) begin d <= (t < NB) ? xm[t] : 256'd0; v <= rstn; end   // NB の後は 0 を流し続ける（途切れにしない）
     always @(negedge clk) rec_r <= ($random % 8) != 0;
@@ -64,10 +64,10 @@ module tb_g24_core;
     // ダンプ: commit の次のクロックで凍った面を写す（2c と同じ）
     always @(posedge clk) if (u.commit) begin
         #0.1;
-        for (k = 0; k < 8192; k = k + 1) snap[k] = u.rd_plane ? u.u_spec.u_acc.g_pl[1].mem[k] : u.u_spec.u_acc.g_pl[0].mem[k];
+        for (k = 0; k < 4096; k = k + 1) snap[k] = u.rd_plane ? u.u_spec.u_acc.g_pl[1].mem[k] : u.u_spec.u_acc.g_pl[0].mem[k];
         fdmp = $fopen({`OUT, "/dump1.txt"}, "w");
         $fwrite(fdmp, "# seq %0d dk %0d df0 %0d dn %0d dsat %0d plane %0d f_first %0d\n", u.seq, u.dk, u.df0, u.dn, u.dsat, u.rd_plane, u.u_spec.f_first);
-        for (k = 0; k < 8192; k = k + 1) $fwrite(fdmp, "%h\n", snap[k]);
+        for (k = 0; k < 4096; k = k + 1) $fwrite(fdmp, "%h\n", snap[k]);
         $fclose(fdmp);
         ndump = ndump + 1;
     end
@@ -112,7 +112,7 @@ module tb_g24_core;
         axi_wr(10'h00C, 32'd2);              // N_ACC
         axi_wr(10'h010, 32'd1);              // N_DUMP
         axi_wr(10'h084, 32'd1);              // REC_CTRL ALL
-        axi_wr(10'h100, 32'd16);             // TP_N 16 小フレーム（= 1 フレーム。2G-1 では 0.5 フレームだった）
+        axi_wr(10'h100, 32'd16);             // TP_N 16 小フレーム（= 2 フレーム。2G-2 では 1 フレーム、2G-1 では 0.5 フレームだった）
         axi_wr(10'h11C, 32'h0000_0401);      // TP_REC_CTRL: 4 個で 1 レコード・出す
         reg_log(10'h038, "RUN_SHIFT0");      // RUN の前: 既定 7
         wait (u.u_spec.have_first);
@@ -148,5 +148,5 @@ module tb_g24_core;
                  ndump, nspec, nrec, src_sel, ndrop, u.flags);
         $finish;
     end
-    initial begin #(3.906 * 40 * 8192); $display("tb_g24_core: 時間切れ（ダンプ %0d・SPEC のレコード %0d）", ndump, nspec); $finish; end
+    initial begin #(3.906 * 40 * 4096); $display("tb_g24_core: 時間切れ（ダンプ %0d・SPEC のレコード %0d）", ndump, nspec); $finish; end
 endmodule

@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //
-// g24_core — 2G-2 の FULL の流れ 1 本（1 ADC、65536 ch。コア 1 個ぶん）。proj025 手順 2d: proj024（proj024-m0）の g21_core を 8192 ビートのフレームに縮めた
+// g24_core — 2G-4 の FULL の流れ 1 本（1 ADC、32768 ch。コア 1 個ぶん）。proj027 手順 2d: proj025（proj025-m0）の g22_core を 4096 ビートのフレームに縮めた
 //
 // src/common/wide_core.v（567fda2）を写し、流れのブロックを KIND 1 FULL の 1 本にした。g24_spec（分光の本体）を、
-// INTERFACE.md v2 の流れのブロック（2.5）・SPEC のレコード（rec_fr、NCH 65536 = 512 KiB）・FULL の TP（tp_core、D-12）・
+// INTERFACE.md v2 の流れのブロック（2.5）・SPEC のレコード（rec_fr、NCH 32768 = 256 KiB）・FULL の TP（tp_core、D-12）・
 // 時刻の予約（ARM_RUN・ARM_WRST）・ダンプの健全性（DUMP_H）で包む。g24_s45_core（2e）の中に置き、番地を振ってもらう:
 //   コアの 0x4000 + 0x400·SID_S → ここの 0x000–0x3FF
 // 入力は g24_s45_core の axis_sel4 が 4 本から選んだ ADC（D-8）。選ぶのはこの流れの SRC（今効いている値を src_sel で外へ）。
 // 係数・ひねり係数はコアの中（g24_spec）。SNAP は持たない（生のサンプルは RAW の流れ、D-13）。全部が DSP ドメイン（256 MHz）。
 //
 // ---- 流れのブロック（INTERFACE 2.5。FULL の読み方）----
-//   0x00 SID {2, 1, SID_S, 0} / 0x04 PARAM {0, 64, 0, 17}（[7:0] log2 N、2G-2 は N = 131072） / 0x08 CTRL / 0x0C N_ACC / 0x10 N_DUMP /
-//   0x14 SHIFT（書いた値。**RUN で取り込む**、FULL の約束）/ 0x18 FLAGS（g24_spec の flags）/ 0x1C SEQ / 0x20 NCH 65536 /
-//   0x24 FRAME_BEATS 8192 / 0x28 SRC {1, 0, 今効いている ADC}（W: [3:0]、次の WRST で効く）/ 0x2C CFG_ID / 0x30 RUN_CFG / 0x34 WRST_CFG /
-//   0x38 RUN_SHIFT（今効いている SHIFT）/ 0x3C DUMP_K / 0x40·44 DUMP_F0 / 0x48 DUMP_N / 0x4C DUMP_SAT / 0x50·54 DUMP_T（= K_F ＋ 8192·DUMP_F0）/
-//   0x58 DUMP_H / 0x5C DUMP_CFG / 0x60·64 RUN_T / 0x68·6C RUN_F0 / 0x70·74 FIN / 0x78·7C FOUT / 0x80 NFFT_MIN_MAX {0, 0, 17, 17} /
+//   0x00 SID {2, 1, SID_S, 0} / 0x04 PARAM {0, 64, 0, 16}（[7:0] log2 N、2G-4 は N = 65536） / 0x08 CTRL / 0x0C N_ACC / 0x10 N_DUMP /
+//   0x14 SHIFT（書いた値。**RUN で取り込む**、FULL の約束）/ 0x18 FLAGS（g24_spec の flags）/ 0x1C SEQ / 0x20 NCH 32768 /
+//   0x24 FRAME_BEATS 4096 / 0x28 SRC {1, 0, 今効いている ADC}（W: [3:0]、次の WRST で効く）/ 0x2C CFG_ID / 0x30 RUN_CFG / 0x34 WRST_CFG /
+//   0x38 RUN_SHIFT（今効いている SHIFT）/ 0x3C DUMP_K / 0x40·44 DUMP_F0 / 0x48 DUMP_N / 0x4C DUMP_SAT / 0x50·54 DUMP_T（= K_F ＋ 4096·DUMP_F0）/
+//   0x58 DUMP_H / 0x5C DUMP_CFG / 0x60·64 RUN_T / 0x68·6C RUN_F0 / 0x70·74 FIN / 0x78·7C FOUT / 0x80 NFFT_MIN_MAX {0, 0, 16, 16} /
 //   0x84 REC_CTRL（[0] ALL・[1] ONE。[2] SNAP は受けるが意味は無い）/ 0x88 REC_LATE /
 //   0x100〜0x1FF FULL の TP のレジスタ（tp_core。コアの 0x100〜 と同じ並び。D-12: SRC で選んだ ADC の入力で測る）/
 //   0x200 診断: {pfb の飽和の数}・0x204 {IP に待たされたクロック数[31:24], 待ち行列の語数[21:16], go, have_first}・0x208 BUILD_TAG・
-//   0x20C {IP の入口の位相[28:16], 出口の位相[12:0]}・0x210 最初に IP が受けてから待たされるまで（wide_core と同じ並び。位相は 13 bit）
+//   0x20C {IP の入口の位相[27:16], 出口の位相[11:0]}・0x210 最初に IP が受けてから待たされるまで（wide_core と同じ並び。位相は 12 bit）
 //   CTRL の書き: [0] RUN / [1] STOP / [2] ARM_RUN / [3] 予約の取り消し / [8] FLAGS を消す / [12] WRST / [13] ARM_WRST。
 //   **WRST は SRC と CFG_ID を取り込み、RUN を止める**（spec_core の FULL と同じ。SHIFT は変えない）。
 //   CTRL の読み: [0] 積分中 / [1] 開始待ち / [3] 口が開いた（go）/ [5] ARM_RUN 中 / [6] ARM_WRST 中
@@ -29,15 +29,15 @@
 //   レコード（type 2）の s は SID_S。SPEC のレコードとはレコード単位で rec_arb で束ねる（spec_core と同じ形）
 //
 // ---- DUMP_H（wide_core と同じ意味）----
-//   [3:0] 時刻の健全性（tev）・[4] ADC の振り切れ・[5] 入力の途切れ を、ダンプの入力の区間（T の [DUMP_T, DUMP_T + 8192·N_ACC)）の間 OR。
+//   [3:0] 時刻の健全性（tev）・[4] ADC の振り切れ・[5] 入力の途切れ を、ダンプの入力の区間（T の [DUMP_T, DUMP_T + 4096·N_ACC)）の間 OR。
 //   [15] H_OPEN（commit の時点で入力の区間がまだ閉じていない）
 //
 // ---- レコード ----
-//   rec_fr（NS 1・NCH 65536・W7HI 0）。語 4 = {DUMP_H, src, 0, 0, SHIFT, 0, 17}（src・SHIFT はそのダンプを閉じたときの値）、
-//   語 7 = {0, 524288}（FULL の KIND に固有は 0）
+//   rec_fr（NS 1・NCH 32768・W7HI 0）。語 4 = {DUMP_H, src, 0, 0, SHIFT, 0, 16}（src・SHIFT はそのダンプを閉じたときの値）、
+//   語 7 = {0, 262144}（FULL の KIND に固有は 0）
 //
 // -DG24C_POSCTL: 積分器の読みの口に 1 段足す（陽性対照。rec_fr の LAT 5 と合わなくなり、レコードの中身が 1 ch ずれて落ちるべき）
-// -DG24C_TP_POSCTL: TP の F0 を FULL の RUN_F0 のまま渡す（× 16 を忘れる。陽性対照。TP の区切りが SPEC のダンプと同じ T から始まらず落ちるべき）
+// -DG24C_TP_POSCTL: TP の F0 を FULL の RUN_F0 のまま渡す（× 8 を忘れる。陽性対照。TP の区切りが SPEC のダンプと同じ T から始まらず落ちるべき）
 
 `timescale 1ns / 1ps
 
@@ -46,8 +46,8 @@ module g24_core #(
     parameter integer REC_CORE      = 0,       // レコードの core
     parameter integer K_F           = 0,
     parameter integer ST_N          = 16384,
-    parameter integer GF_L2         = 6,       // F0 の格子（64 フレーム = 2.048 ms）
-    parameter integer N_ACC_DEFAULT = 320,     // 10.24 ms（8192 ビート × 320 = BASE 2,621,440）
+    parameter integer GF_L2         = 7,       // F0 の格子（128 フレーム = 2.048 ms）
+    parameter integer N_ACC_DEFAULT = 640,     // 10.24 ms（4096 ビート × 640 = BASE 2,621,440）
     parameter integer SHIFT_DEFAULT = 7,
     parameter integer TPN_DEFAULT   = 512,     // 1.024 ms（512 ビート × 512）
     parameter integer BUILD_TAG     = 0,
@@ -93,7 +93,7 @@ module g24_core #(
     output wire [1:0]    rec_drop,           // [0] SPEC（読み始めなかったダンプ）/ [1] TP
     // sim の記録用
     output wire [16*64-1:0] dbg_ip_tdata,
-    output wire [12:0]      dbg_ip_k1,
+    output wire [11:0]      dbg_ip_k1,
     output wire             dbg_ip_v
 );
     localparam integer FW = 48;
@@ -166,18 +166,18 @@ module g24_core #(
     wire [FW-1:0] fa_now, fo, df0;
     wire [7:0]    flags;
     wire [31:0]   seq, dk, dn, dsat;
-    wire [15:0]   fr_ch;
+    wire [14:0]   fr_ch;
     wire [63:0]   rd_d;
     wire [15:0]   pfb_sat, ipq, ip_st;
     wire [31:0]   ip_ph;
     wire          have_first;
     // rd_ch（rec_fr のレジスタ）→ g24_acc の 4 段（番地 → 記憶 → 出力 → 銀行の選択）→ rd_d = rec_fr の LAT 5（wide_core と同じく直に繋ぐ）
 `ifdef G24C_POSCTL
-    reg  [15:0]   rd_c_pc;
+    reg  [14:0]   rd_c_pc;
     always @(posedge aclk) rd_c_pc <= fr_ch;
-    wire [15:0]   rd_c_use = rd_c_pc;                    // 陽性対照: 1 段多い（中身が 1 ch ずれる）
+    wire [14:0]   rd_c_use = rd_c_pc;                    // 陽性対照: 1 段多い（中身が 1 ch ずれる）
 `else
-    wire [15:0]   rd_c_use = fr_ch;
+    wire [14:0]   rd_c_use = fr_ch;
 `endif
     g24_spec #(.K_F(K_F), .ST_N(ST_N), .SHIFT_DEFAULT(SHIFT_DEFAULT), .FW(FW), .GF_L2(GF_L2),
                .LO_FILE(LO_FILE), .HI_FILE(HI_FILE), .TA_FILE(TA_FILE), .TB_FILE(TB_FILE)) u_spec (
@@ -216,8 +216,8 @@ module g24_core #(
     reg           h_arm, h_on;
     reg  [5:0]    hring [0:7];
     wire [63:0]   tk = t_loc - K_F;
-    wire          fstart = go && (tk[12:0] == 13'd0);
-    wire [FW-1:0] fa_loc = tk[13 +: FW];
+    wire          fstart = go && (tk[11:0] == 12'd0);
+    wire [FW-1:0] fa_loc = tk[12 +: FW];
     integer q;
     always @(posedge aclk) begin
         if (rst) begin
@@ -263,17 +263,17 @@ module g24_core #(
 `ifdef G24C_TP_POSCTL
         .cmd_run(run_go), .f0_ext(f0_now),
 `else
-        .cmd_run(run_go), .f0_ext({f0_now[FW-5:0], 4'd0}),                  // FULL の F0 × 16（小フレーム 512 ビート、8192 / 512）
+        .cmd_run(run_go), .f0_ext({f0_now[FW-4:0], 3'd0}),                  // FULL の F0 × 8（小フレーム 512 ビート、4096 / 512）
 `endif
         .wr_en(wr_go && s_axi_awaddr[9:8] == 2'd1), .wr_addr(s_axi_awaddr[7:2]), .wr_data(s_axi_wdata),
         .rd_addr({6'd0, ar_addr}), .rd_ring(), .rd_reg(tp_reg_rd),
         .t_now(t_loc), .m_tdata(tp_d), .m_tvalid(tp_v), .m_tready(tp_r), .m_tlast(tp_l), .m_tuser(tp_u), .rec_drop(tp_drop));
 
     // ---- SPEC のレコード ----
-    wire [63:0]   dt = K_F + {df0, 13'd0};
+    wire [63:0]   dt = K_F + {df0, 12'd0};
     localparam [7:0] RC8 = REC_CORE;
     wire [383:0] hdr = {{24'd0, flags}, dcfg, dsat, dn,
-                        dh, {4'd0, d_src}, 8'd0, 8'd0, {4'd0, d_shift}, 8'd0, 8'd17,
+                        dh, {4'd0, d_src}, 8'd0, 8'd0, {4'd0, d_shift}, 8'd0, 8'd16,
                         dt, {{(64-FW){1'b0}}, df0}, dk, seq};
     wire       fr_req;
     reg        fr_gnt;
@@ -281,7 +281,7 @@ module g24_core #(
     wire [63:0] sr_d;
     wire        sr_v, sr_r, sr_l, sr_u;
     always @(posedge aclk) fr_gnt <= rst ? 1'b0 : fr_req;
-    rec_fr #(.NS(1), .S_BASE(SID_S), .CORE(RC8), .LAT(5), .SNAP(0), .W7HI(0), .NCH(65536)) u_rec (.clk(aclk), .rst(rst),
+    rec_fr #(.NS(1), .S_BASE(SID_S), .CORE(RC8), .LAT(5), .SNAP(0), .W7HI(0), .NCH(32768)) u_rec (.clk(aclk), .rst(rst),
         .seq(seq), .hdr(hdr), .rec_all(r_rec[0]), .rec_one(r_rec[1]), .rec_snap(1'b0), .snap_ok(1'b0),
         .rd_snap(), .one_clr(fr_one_clr), .late(fr_late), .drop(rec_drop[0]),
         .req(fr_req), .gnt(fr_gnt), .rd_s(), .rd_ch(fr_ch), .rd_data(rd_d),
@@ -307,15 +307,15 @@ module g24_core #(
     always @* begin
         case (ar_addr[9:2])
             8'h00: reg_rd = {8'd2, 8'd1, SID_S[7:0], 8'd0};
-            8'h01: reg_rd = {8'd0, 8'd64, 8'd0, 8'd17};
+            8'h01: reg_rd = {8'd0, 8'd64, 8'd0, 8'd16};
             8'h02: reg_rd = {25'd0, arm_wrst, arm_run, 1'b0, go, 1'b0, st_sched, st_acc};
             8'h03: reg_rd = r_nacc;
             8'h04: reg_rd = r_ndump;
             8'h05: reg_rd = {28'd0, r_shift};
             8'h06: reg_rd = {24'd0, flags};
             8'h07: reg_rd = seq;
-            8'h08: reg_rd = 32'd65536;
-            8'h09: reg_rd = 32'd8192;
+            8'h08: reg_rd = 32'd32768;
+            8'h09: reg_rd = 32'd4096;
             8'h0A: reg_rd = {1'b1, 27'd0, c_src};
             8'h0B: reg_rd = r_cfg;
             8'h0C: reg_rd = run_cfg;
@@ -338,7 +338,7 @@ module g24_core #(
             8'h1D: reg_rd = {{(64-FW){1'b0}}, fin_lat[FW-1:32]};
             8'h1E: reg_rd = fout_lat[31:0];
             8'h1F: reg_rd = {{(64-FW){1'b0}}, fout_lat[FW-1:32]};
-            8'h20: reg_rd = {16'd0, 8'd17, 8'd17};
+            8'h20: reg_rd = {16'd0, 8'd16, 8'd16};
             8'h21: reg_rd = {29'd0, r_rec};
             8'h22: reg_rd = rec_late;
             8'h80: reg_rd = {16'd0, pfb_sat};
