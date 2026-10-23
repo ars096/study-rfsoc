@@ -3,7 +3,7 @@
 """proj028 E-2・E-3 — 2 段分光（荒い PFB → PL DDR4 で corner turn → 細かい PFB＋FFT）の資源・帯域・出口の見積もり。表を作るだけ。
 
 決めたこと（README）: os 8/7・M 64・D 56・T_c 27・b 8（S 12）。細かい側は流れ 1 本 × 16 レーンで荒い ch を 1 本ずつ順に処理する。
-数字の出どころは定数の注釈に書く。**「仮」と書いた値は実装の実測が無い**（荒い FFT・MIG・corner turn の溜め）。
+数字の出どころは定数の注釈に書く。荒い FFT・MIG・corner turn の溜めは S-1 の OOC 合成の実測。**「仮」と書いた値は実装の実測が無い**（荒い PFB の LUT・FF、DDR の読み手・AXI）。
 
 使い方: python3 tools/estimate.py
 """
@@ -39,10 +39,13 @@ FFT_IP = {
 # 細かい側のレーン FFT 以外（proj023 ビルド 11 の CORE_REST を複素の入力に直す）:
 #   PFB 80 → 複素で 160 ＋ 係数の補間の DSP 64（proj027 F-2）、鎖 144 → dft16 の 16 出力全部で 288、TP 24
 FINE_REST = dict(DSP=160 + 64 + 288 + 24, LUT=int(12400 * 1.5), FF=int(15700 * 1.5), BRAM=2 + 7.5 + 11)  # 係数 7.5・ひねり係数 11（2G-1 build-PE）
-# 荒い段: PFB は 16 サンプル/拍 × T_c の DSP。荒い FFT（64 点、毎拍 18.3 点）・出口の回転（cmul 10）・利得（20）
-COARSE = dict(DSP=16 * TC + 150 + 10 * 4 + 20, LUT=15000 + 15000 + 3000, FF=30000 + 25000 + 5000, BRAM=8)   # LUT・FF・荒い FFT の DSP は仮
-# MIG（DDR4 64 bit）・corner turn の書き手（32 ch × 2 面 × 4 KiB の溜め）と読み手・AXI。仮
-DDRSYS = dict(DSP=3, LUT=12000 + 6000, FF=14000 + 8000, BRAM=26 + math.ceil(32 * 2 * 4096 * 8 / 36864) + 8)
+# 荒い段（S-1 の後）: PFB は積和の数で fs·T_c·os / 256 MHz = 494（1 入力サンプルが L/D = 30.9 ブロックに効く）。LUT・FF は仮
+#   荒い FFT は S-1 の実測（cfft32、OOC 合成: DSP 252・LUT 12,700・FF 14,250）。出口の回転は M-1d で不要（細かい ch の巡回）。利得 20
+COARSE_PFB_DSP = math.ceil(FS * TC * P_OS / Q_OS / CLK)
+COARSE = dict(DSP=COARSE_PFB_DSP + 252 + 20, LUT=15000 + 12700 + 3000, FF=30000 + 14250 + 5000, BRAM=8)
+# DDR 系（S-1 の後）: MIG は ddr4_pl の実測（DSP 3・LUT 15,124・FF 17,931・BRAM 25.5）、corner turn の溜めは ct_buf の実測（BRAM 57）。
+#   読み手・AXI の LUT 6,000・FF 8,000・BRAM 8 は仮
+DDRSYS = dict(DSP=3, LUT=15124 + 6000, FF=17931 + 8000, BRAM=25.5 + 57 + 8)
 COMMON = dict(DSP=0, BRAM=18, LUT=13900, FF=30400)                     # proj024 と同じ（v2 の共通部・リング・RAW）
 
 
@@ -99,11 +102,11 @@ def main():
               % (nf, r["N"], r["df"] / 1e3, r["dt"] * 1e3, r["frames"], r["ddr"] / 1e9, r["ddr_size"] / 2 ** 30,
                  100 * r["busy"], 100 * pct["DSP"], 100 * pct["BRAM"], 100 * pct["URAM"], 100 * pct["LUT"],
                  100 * pct["FF"], "○" if not bad else "× " + "・".join(bad)))
-    print("  内訳（N_f 32768）:")
-    r = row(32768)
+    print("  内訳（N_f 131072）:")
+    r = row(131072)
     print("    BRAM: 共通 %d・荒い段 %d・DDR 系 %d・細かい側の残り %.1f・レーン FFT 16 × %.1f・履歴 %d"
           % (COMMON["BRAM"], COARSE["BRAM"], DDRSYS["BRAM"], FINE_REST["BRAM"], FFT_IP[r["L"]][3], r["hist"]))
-    print("    DSP:  荒い段 %d（PFB %d）・細かい側の残り %d・レーン FFT 16 × %d" % (COARSE["DSP"], 16 * TC, FINE_REST["DSP"], FFT_IP[r["L"]][0]))
+    print("    DSP:  荒い段 %d（PFB %d）・細かい側の残り %d・レーン FFT 16 × %d" % (COARSE["DSP"], COARSE_PFB_DSP, FINE_REST["DSP"], FFT_IP[r["L"]][0]))
 
 
 if __name__ == "__main__":

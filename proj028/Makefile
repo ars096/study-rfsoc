@@ -41,7 +41,7 @@ export BOARD_REPO PART OUTDIR
 
 PYTHON ?= python3
 
-.PHONY: all prog id timing-check clean model-m1 model-m2 estimate
+.PHONY: all prog id timing-check clean model-m1 model-m2 estimate sim-cfft32 s1
 
 # 模型 M-1（荒い PFB の原型・タップ数・ポリフェーズの形・トーンの折り返し）。numpy だけ、1 分前後。成否は「結果:」の行
 model-m1:
@@ -52,6 +52,18 @@ model-m1:
 model-m2:
 	mkdir -p runs
 	$(PYTHON) model/m2_requant.py all | tee runs/m2.log
+
+# S-1: 荒い FFT の RTL（tools/gen_cfft32.py が作る src/cfft32.v）を iverilog で模型と照らす。ふつうと陽性対照（落ちるべき）。成否は「結果:」の行
+sim-cfft32:
+	mkdir -p build-sim
+	$(PYTHON) tools/sim_cfft32.py | tee build-sim/sim_cfft32.log
+	$(PYTHON) tools/sim_cfft32.py --bad | tee build-sim/sim_cfft32_bad.log
+
+# S-1: cfft32・ct_buf・DDR4 IP を OOC で合成して資源を数える（この PC の Vivado、30 分前後）。結果は build-s1/s1.txt
+S1_JOBS ?= 4
+s1:
+	mkdir -p build-s1
+	$(VIVADO) -mode batch -nojournal -log build-s1/vivado.log -source tools/s1_ooc.tcl -tclargs $(S1_JOBS)
 
 # 見積もり E-2・E-3（チップ内の資源・DDR・出口と dt）。表を作るだけ。荒い FFT・MIG・corner turn は仮の値
 estimate:

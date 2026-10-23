@@ -13,7 +13,7 @@
   C  トーンを入れて、残す範囲に落ちた折り返しの大きさが A の |H| の値と合うか（陽性対照: os = 1 は −6 dB 前後で落ちる）
 
 使い方:
-  python3 model/m1_coarse.py all | a | b | c
+  python3 model/m1_coarse.py all | a | b | c | d
 """
 import sys
 
@@ -190,6 +190,68 @@ def m1c(res):
     return ok
 
 
+def fft32(z, M=64):
+    """M-1d: 実数の z（長さ 64）から Y_k（k = 0..31、出口の回転の前）を 32 点の複素 FFT 1 回で。"""
+    n = np.arange(M // 2)
+    w = (z[: M // 2] + 1j * z[M // 2:]) * np.exp(1j * np.pi * n / M)
+    F = (M // 2) * np.fft.ifft(w)                         # Σ_n w_n e^{+j2πmn/32}
+    Y = np.empty(M // 2, complex)
+    Y[0::2] = F[: M // 4]                                # Y_{2m} = F_m
+    Y[1::2] = np.conj(F[::-1][: M // 4])                  # Y_{2m+1} = conj(F_{31−m})
+    return Y, F
+
+
+def m1d():
+    print("== M-1 D: 荒い FFT を 32 点の複素 FFT 1 回に・出口の回転を細かい ch の巡回に（M 64、os 8/7、D 56）")
+    M, p, q, Tc = 64, 8, 7, 27
+    D = M * q // p
+    h = proto(M, Tc, p / q)
+    rng = np.random.default_rng(3)
+    nout = 4096
+    x = rng.standard_normal(Tc * M + (nout + 4) * D)
+    m0 = int(np.ceil((Tc * M - 1) / D))
+    Yref = pfb(x, h, M, D, nout, m0)                      # 回転込みの基準（B で直の定義と一致）
+    hr = h.reshape(Tc, M) * ((-1.0) ** np.arange(Tc))[:, None]
+    r = np.arange(M)
+    k = np.arange(M // 2)
+    Y32 = np.empty_like(Yref)
+    Ybad = np.empty_like(Yref)
+    Ynorot = np.empty_like(Yref)
+    for i in range(nout):
+        t0 = (m0 + i) * D
+        z = np.sum(hr * x[t0 - r[None, :] - (np.arange(Tc) * M)[:, None]], axis=0)
+        y, F = fft32(z, M)
+        rot = np.exp(-2j * np.pi * (k + 0.5) * t0 / M)
+        Ynorot[i] = y
+        Y32[i] = rot * y
+        yb = y.copy()
+        yb[1::2] = F[::-1][: M // 4]                      # 陽性対照: 共役を取らない
+        Ybad[i] = rot * yb
+    e1 = np.max(np.abs(Y32 - Yref)) / np.max(np.abs(Yref))
+    eb = np.max(np.abs(Ybad - Yref)) / np.max(np.abs(Yref))
+    print("  32 点の FFT 1 回 と ポリフェーズ＋64 点: 相対の差 %.2e（陽性対照: 共役なし %.2f）" % (e1, eb))
+    # 出口の回転を省く: 細かい FFT（N_f = 1024、矩形）の電力が整数 bin の巡回だけ違う
+    NFt = 1024
+    worst, worst_bad = 0.0, 0.0
+    for kk in (0, 1, 5, 17, 31):
+        a = Yref[:NFt, kk]
+        b = Ynorot[:NFt, kk]
+        # 回転の位相の原点は t0 = (m0 + i)·D（i = 0 の時刻）も含む: rot_i = e^{−j2π(k+½)(m0+i)D/M}
+        Pa = np.abs(np.fft.fft(a)) ** 2
+        Pb = np.abs(np.fft.fft(b)) ** 2
+        nu = ((kk + 0.5) * D / M) % 1.0                  # 1 出力サンプルあたりの回転（周期）
+        sh = -int(round(nu * NFt))
+        assert abs(nu * NFt - round(nu * NFt)) < 1e-9
+        e = np.max(np.abs(Pa - np.roll(Pb, sh))) / Pa.max()
+        eb2 = np.max(np.abs(Pa - np.roll(Pb, sh + 1))) / Pa.max()
+        worst = max(worst, e)
+        worst_bad = max(worst_bad, eb2)
+        print("  ch %2d: 回転 %.4f 周期/サンプル → 巡回 %+5d bin、電力の差 %.2e（陽性対照: 1 bin 違え %.2f）" % (kk, nu, sh, e, eb2))
+    ok = e1 < 1e-10 and eb > 0.1 and worst < 1e-10 and worst_bad > 0.1
+    print("  結果: %s" % ("全部通過" if ok else "不合格"))
+    return ok
+
+
 if __name__ == "__main__":
     what = sys.argv[1] if len(sys.argv) > 1 else "all"
     res = {}
@@ -199,3 +261,5 @@ if __name__ == "__main__":
         m1b()
     if what in ("all", "c"):
         m1c(res)
+    if what in ("all", "d"):
+        m1d()
