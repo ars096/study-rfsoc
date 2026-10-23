@@ -1757,6 +1757,7 @@ class Acq:
         self.tp_last = [None] * 4                  # ADC ごとの直近の TP（σ_x²、最後に書き出した記録の平均）
         self.tpj = [TpJump(phase=250 * i) for i in range(4)]    # proj021 B2: TP の跳ねの見張り（tpjump.py。START で初めから。B2b: σ の計算し直しを ADC ごとにずらす）
         self.tpj_on = not getattr(opts, "no_tp_jump", False)   # --no-tp-jump: 見張りを止める（1 周の重さの比べ）
+        self.t_put = 0.0                            # proj029 1c: その周の put の時間の和
         self._reset_counters()
 
     def log(self, *a):
@@ -1795,6 +1796,13 @@ class Acq:
         if d["pending"] is not None:
             if rtype == P.T_EVENT or self.ring.cap - self.ring.used() >= self.ring.cap // 4:
                 self._flush_drop()                    # EVENT（小さく、START・STOP を落としたくない）は空きがあれば割り込む
+        t_put0 = time.perf_counter()               # proj029 1c: 窓の記録の内訳（put）
+        try:
+            self._put1(rtype, payload_parts, crc, d)
+        finally:
+            self.t_put += time.perf_counter() - t_put0
+
+    def _put1(self, rtype, payload_parts, crc, d):
         seq = self._next_seq()
         if self.posctl["gap"] and seq % self.posctl["gap"] == 0:
             return                                    # 陽性対照: 番号だけ進めて黙って捨てる（受け側の「説明のない欠け」が数えるはず）
@@ -2306,9 +2314,13 @@ class Acq:
         nrec = be.pump()                           # proj021 2-3a: リングを 1 回読んで振り分ける（axi・偽物では何もしない）
         t_p = time.perf_counter()
         n_spec = 0                                 # proj025 4c: この周で書いた SPEC の記録（束）の数
+        t_poll = t_bund = t_rec = 0.0              # proj029 1c: 窓の記録の内訳（poll_win・束ね・記録（put を含む）。put は self.t_put）
+        self.t_put = 0.0
         for j in range(4 * NW):
             for _ in range(64):                    # 溜まったぶんを全部（リングでは止まりの後に何個も来る）
+                ta = time.perf_counter()
                 r = be.poll_win(j)
+                t_poll += time.perf_counter() - ta
                 if r is None:
                     break
                 m, spec, miss = r
@@ -2316,7 +2328,9 @@ class Acq:
                 self.pl_dumps[j] += 1
                 bu = self.bund[j]
                 if bu is not None:                 # proj021 2-3b: 束ねる（INTERFACE 5.1）
+                    ta = time.perf_counter()
                     got, dropped = bu.add(m, spec)
+                    t_bund += time.perf_counter() - ta
                     if dropped is not None:
                         self._bdrop(j, dropped)
                     if got is None:
@@ -2326,9 +2340,12 @@ class Acq:
                     self.kgap[j] += 1
                 self.last_k[j] = m["k"]
                 self.n_dump[j] += 1
+                ta = time.perf_counter()
                 self._spec_record(j, m, spec)
+                t_rec += time.perf_counter() - ta
                 n_spec += 1
         t_w = time.perf_counter()
+        t_wput = self.t_put                        # 窓の記録の中の put（TP の put は数えない）
         for i in range(4):
             be.poll_tp(i)
             self._flush_tp(i)
@@ -2349,7 +2366,8 @@ class Acq:
                 self.n_loop_log += 1
             lp = getattr(be, "last_pump", (0.0, 0.0))
             self.log(f"1 周が {dt * 1e3:.1f} ms（周 {self.n_loop}・リングのレコード {nrec}・SPEC の記録 {n_spec}）: リングの読み {lp[0] * 1e3:.1f}・振り分け {lp[1] * 1e3:.1f}・"
-                     f"窓の記録 {(t_w - t_p) * 1e3:.1f}・TP {(t_t - t_w) * 1e3:.1f}・時刻の確かめ {(t_c - t_t) * 1e3:.1f} ms")
+                     f"窓の記録 {(t_w - t_p) * 1e3:.1f}・TP {(t_t - t_w) * 1e3:.1f}・時刻の確かめ {(t_c - t_t) * 1e3:.1f} ms"
+                     f"（窓の記録の内訳: poll {t_poll * 1e3:.2f}・束ね {t_bund * 1e3:.2f}・記録 {(t_rec - t_wput) * 1e3:.2f}・put {t_wput * 1e3:.2f} ms）")
         self.n_loop += 1
         if self.ndump_target and self._dumps_min() >= self.ndump_target:
             self._stop("n に達した")
