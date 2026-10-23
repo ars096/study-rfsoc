@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// tb_g24_pfb — g24_pfb の単体（proj025 手順 1c）。入力は `OUT/x.hex（sim/check_g24.py pfb-gen が書く。1 行 = 1 ビート 256 bit）。
-// 流し方: リセットの後、m = 7800 から 384 ビート（フレームの途中。本体は m = 0 まで捨てるはず）→ m = 0 から 5 フレーム（40,960 ビート）。
+// tb_g24_pfb — g24_pfb の単体（proj027 手順 1c）。入力は `OUT/x.hex（sim/check_g24.py pfb-gen が書く。1 行 = 1 ビート 256 bit）。
+// 流し方: リセットの後、m = 3700 から 384 ビート（フレームの途中。本体は m = 0 まで捨てるはず）→ m = 0 から 5 フレーム（20,480 ビート）。
 // 出口の (y_m, y_fr, y_first, y) を `OUT/y.txt に、終わりに sat_cnt・coef_mis を tb.log に書く。判定は sim/check_g24.py pfb
 `timescale 1ns / 1ps
 module tb_g24_pfb;
-    localparam integer PRE = 384, NF = 5, NB = PRE + NF * 8192;
+    localparam integer PRE = 384, NF = 5, NB = PRE + NF * 4096;
     reg clk = 0;
     always #1.953 clk = ~clk;
     reg rst = 1;
     reg [255:0] d = 0;
     reg v = 0;
-    reg [12:0] m = 0;
+    reg [11:0] m = 0;
     wire [239:0] y;
     wire y_v, y_first, coef_mis;
-    wire [12:0] y_m;
+    wire [11:0] y_m;
     wire [1:0] y_fr;
     wire [15:0] sat_cnt;
     g24_pfb #(.LO_FILE(`LO), .HI_FILE(`HI)) u (.clk(clk), .rst(rst), .s_tdata(d), .s_tvalid(v), .s_m(m),
@@ -34,7 +34,7 @@ module tb_g24_pfb;
         for (i = 0; i < NB; i = i + 1) begin
             @(negedge clk);
             d = xm[i]; v = 1;
-            m = (i < PRE) ? (7800 + i) : (i - PRE) % 8192;
+            m = (i < PRE) ? (3700 + i) : (i - PRE) % 4096;
         end
         @(negedge clk); v = 0;
         repeat (30) @(posedge clk);

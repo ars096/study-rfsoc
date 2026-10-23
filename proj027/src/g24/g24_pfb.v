@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //
-// g24_pfb — 2G-2 の PFB（proj025 手順 1c。proj024 の g21_pfb を写した）: g24_coef（係数の補間）＋ 入力の遅延線 ＋ g24_pfb_core（8192 ビート）
+// g24_pfb — 2G-4 の PFB（proj027 手順 1c。proj025 の g22_pfb を写した）: g24_coef（係数の補間）＋ 入力の遅延線 ＋ g24_pfb_core（4096 ビート）
 //
 // wide_pfb は係数が「入力のビートの 2 クロック後」に届く前提（wide_coef_rom の LAT 2）。g24_coef の LAT は 5 なので、
 // **係数は遅らせる前の s_m で引き、本体への入力（s_tdata・s_tvalid・s_m）を DLY = 5 − 2 = 3 クロック遅らせる**（README 1a）。
@@ -19,10 +19,10 @@ module g24_pfb #(
     input  wire              rst,
     input  wire [255:0]      s_tdata,
     input  wire              s_tvalid,
-    input  wire [12:0]       s_m,
+    input  wire [11:0]       s_m,
     output wire [16*15-1:0]  y,
     output wire              y_v,
-    output wire [12:0]       y_m,
+    output wire [11:0]       y_m,
     output wire              y_first,
     output wire [1:0]        y_fr,
     output wire [15:0]       sat_cnt,
@@ -35,14 +35,14 @@ module g24_pfb #(
 `endif
 
     wire [1151:0] coef;
-    wire [12:0]   coef_m;
+    wire [11:0]   coef_m;
     wire          coef_v;
     g24_coef #(.LO_FILE(LO_FILE), .HI_FILE(HI_FILE)) u_coef (
         .clk(clk), .addr(s_m), .addr_v(s_tvalid), .coef(coef), .m_out(coef_m), .v_out(coef_v)
     );
 
     reg [255:0] dd [0:DLY-1];
-    reg [12:0]  dm [0:DLY-1];
+    reg [11:0]  dm [0:DLY-1];
     reg         dv [0:DLY-1];
     integer i;
     always @(posedge clk) begin

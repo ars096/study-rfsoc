@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # proj027 — 2G-4 の RTL。段階 A: 模型（`make model`）・ROM の中身（`make gen`）・部品の単体の sim（手順 1a〜1d、`make sim-all`）
-# proj024 の Makefile の model・gen・sim-g21* を写し、名前を g24 に。Vivado のターゲットは段階 B で足す
+# proj025 の段階 A の Makefile（fcea4f1）を写し、名前を g24 に・1d の陽性対照 NORND を RND1 に。Vivado のターゲットは段階 B で足す
 PYTHON        ?= python3
 IVERILOG      ?= iverilog
 VVP           ?= vvp
@@ -58,20 +58,20 @@ sim-g24p:
 	  && grep -q '結果: 不合格' $(SIMDIR)/g24p_nomask/check.log \
 	  && echo "sim-g24p: 全部通過（陽性対照 2 本は落ちた）" || (echo "sim-g24p: NG"; exit 1)
 
-# 1d. g24_tw ＋ g24_chain（鎖）。ふつう（SHIFT 7）・飽和（SHIFT 4）・陽性対照 2 本（-DCHAIN_TW_LAT_ERR・-DCHAIN_NORND、落ちるべき）
+# 1d. g24_tw ＋ g24_chain（鎖）。ふつう（SHIFT 7）・飽和（SHIFT 4）・陽性対照 2 本（-DCHAIN_TW_LAT_ERR・-DCHAIN_RND1、落ちるべき）
 G24CH_RTL := src/common/cmul.v src/common/dft16.v src/g24/g24_tw.v src/g24/g24_chain.v sim/tb_g24_chain.v
 sim-g24ch:
 	@o0=$(SIMDIR)/g24ch_in; mkdir -p $$o0; $(PYTHON) sim/check_g24.py chain-gen $$o0 > /dev/null; \
-	for v in normal sat twlat nornd; do \
+	for v in normal sat twlat rnd1; do \
 	  o=$(SIMDIR)/g24ch_$$v; mkdir -p $$o; cp $$o0/yre.hex $$o0/yim.hex $$o/; d=""; sh=7; \
-	  [ $$v = sat ] && sh=4; [ $$v = twlat ] && d="-DCHAIN_TW_LAT_ERR"; [ $$v = nornd ] && d="-DCHAIN_NORND"; \
+	  [ $$v = sat ] && sh=4; [ $$v = twlat ] && d="-DCHAIN_TW_LAT_ERR"; [ $$v = rnd1 ] && d="-DCHAIN_RND1"; \
 	  $(IVERILOG) -g2005 $$d -DSHIFT=$$sh -DOUT=\"$$o\" -DTA=\"src/g24/g24_tw_a.hex\" -DTB=\"src/g24/g24_tw_b.hex\" \
 	    -o $$o/tb $(G24CH_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
 	  $(PYTHON) sim/check_g24.py chain $$o $$o/tb.log $$sh > $$o/check.log 2>&1; \
 	  printf '%-14s %s\n' "g24ch_$$v" "$$(grep '結果:' $$o/check.log || echo '結果の行が無い')"; \
 	done
 	@grep -q '結果: 全部通過' $(SIMDIR)/g24ch_normal/check.log && grep -q '結果: 全部通過' $(SIMDIR)/g24ch_sat/check.log \
-	  && grep -q '結果: 不合格' $(SIMDIR)/g24ch_twlat/check.log && grep -q '結果: 不合格' $(SIMDIR)/g24ch_nornd/check.log \
+	  && grep -q '結果: 不合格' $(SIMDIR)/g24ch_twlat/check.log && grep -q '結果: 不合格' $(SIMDIR)/g24ch_rnd1/check.log \
 	  && echo "sim-g24ch: 全部通過（陽性対照 2 本は落ちた）" || (echo "sim-g24ch: NG"; exit 1)
 
 # 1a〜1d をまとめて（iverilog は 1 本 1 コアなので並べて回す）。成否は各ターゲットの最後の行で読む

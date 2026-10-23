@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-3-Clause
-"""proj025 — 2G-2 の部品の sim の判定（model/g24_fixed.py の定義と bit 単位で比べる）。proj024 の check_g21.py の 1a〜1d の分を写した。
+"""proj027 — 2G-4 の部品の sim の判定（model/g24_fixed.py の定義と bit 単位で比べる）。proj025 の check_g22.py（段階 A の版）を写した。
 
     python3 sim/check_g24.py coef <sim の出力ディレクトリ> [tb のログ]
     python3 sim/check_g24.py tw   <sim の出力ディレクトリ> [tb のログ]
@@ -165,7 +165,7 @@ def pfb(outdir, tblog):
 
 def chain_Y_frames():
     """1d の刺激: レーン FFT の出口 Y（re, im）を 3 フレーム。0: CW 1000 ＋ 雑音 σ 100（PFB の履歴が埋まった 4 フレーム目）、
-    1: 雑音だけ σ 30、2: 最悪の同相（y がすべて +11507 → k1 = 0 で |Y| = 11507·8192、28 bit に入る）。戻り値 [(Yr, Yi)] × 3（各 (16, M)）"""
+    1: 雑音だけ σ 30、2: 最悪の同相（y がすべて +11507 → k1 = 0 で |Y| = 11507·4096、27 bit に入る）。戻り値 [(Yr, Yi)] × 3（各 (16, M)）"""
     rng = np.random.default_rng(4)
     n = np.arange(4 * F.N)
     x = np.clip(np.round(1000 * np.cos(2 * np.pi * 20000 * n / F.N) + rng.normal(0, 100, 4 * F.N)), -8192, 8191).astype(np.int64)
@@ -189,11 +189,11 @@ def chain_gen(outdir):
     br = F.bitrev(np.arange(F.M), F.KB)
     with open(os.path.join(outdir, "yre.hex"), "w") as fr_, open(os.path.join(outdir, "yim.hex"), "w") as fi_:
         for Yr, Yi in fr:
-            assert max(np.abs(Yr).max(), np.abs(Yi).max()) < (1 << 27), "Y が 28 bit に入らない"
+            assert max(np.abs(Yr).max(), np.abs(Yi).max()) < (1 << 26), "Y が 27 bit に入らない"
             for i in range(F.M):
                 k = br[i]
-                fr_.write("%0112x\n" % _pack(Yr[:, k], 28))
-                fi_.write("%0112x\n" % _pack(Yi[:, k], 28))
+                fr_.write("%0108x\n" % _pack(Yr[:, k], 27))
+                fi_.write("%0108x\n" % _pack(Yi[:, k], 27))
     print(f"chain-gen: {len(fr) * F.M} ビート")
 
 
