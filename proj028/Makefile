@@ -39,7 +39,15 @@ PROJ ?= proj028
 
 export BOARD_REPO PART OUTDIR
 
-.PHONY: all prog id timing-check clean
+PYTHON ?= python3
+
+.PHONY: all prog id timing-check clean model-m1
+
+# 模型 M-1（荒い PFB の原型・タップ数・ポリフェーズの形・トーンの折り返し）。numpy だけ、1 分前後。成否は「結果:」の行
+model-m1:
+	mkdir -p runs
+	$(PYTHON) model/m1_coarse.py all | tee runs/m1.log
+
 
 all: $(OUTDIR)
 	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(JOBS)
