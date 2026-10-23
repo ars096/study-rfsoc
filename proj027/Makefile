@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # proj027 — 2G-4 の RTL。段階 A: 模型（`make model`）・ROM の中身（`make gen`）・部品の単体の sim（手順 1a〜1d、`make sim-all`）
 # proj025 の段階 A の Makefile（fcea4f1）を写し、名前を g24 に・1d の陽性対照 NORND を RND1 に。Vivado のターゲットは段階 B で足す
+# 段階 B: 2a〜2e・4d-2 の sim（sim-lane 〜 sim-g24ds）・2G-4 の .bit（2f、`make build`・`make post`、Vivado サーバ）
 PYTHON        ?= python3
 IVERILOG      ?= iverilog
 VVP           ?= vvp
 
-.PHONY: coef-ooc wide-hier model gen sim-all sim-g24c sim-g24t sim-g24p sim-g24ch sim-lane sim-g24a sim-g24s sim-recfr sim-g24core sim-g24s45 clean
+.PHONY: build post coef-ooc wide-hier model gen sim-all sim-g24c sim-g24t sim-g24p sim-g24ch sim-lane sim-g24a sim-g24s sim-recfr sim-g24core sim-g24s45 clean
 
 # 模型（numpy だけ）。M-a〜d。成否は最後の「まとめ」の行で読む（make の成功を信用しない）
 model:
@@ -225,3 +226,40 @@ wide-hier:
 	mkdir -p build-wide
 	$(VIVADO) -mode batch -nojournal -log build-wide/vivado.log -source tools/wide_hier.tcl > /dev/null 2>&1; true
 	@grep -E 'CLB LUTs:|NG|結果:' build-wide/vivado.log | grep -v '^#' | tail -n 6
+
+# ---- 2f: 2G-4 の .bit（Vivado サーバ。`make build`。proj025-m0 の Makefile から写した）----
+# RealDigitalOrg/RFSoC4x2-BSP を clone した先の board_files（Vivado のインストールツリーの中には置かない。VERSIONS.md）
+BOARD_REPO ?= $(HOME)/src/RFSoC4x2-BSP/board_files
+# part。既定は -1（実機の .bit。PS には src/board/ps_preset.tcl を当てる）。-2 は PART=xczu48dr-ffvg1517-2-e → build-2-e/
+PART_DEFAULT := xczu48dr-ffvg1517-1-e
+PART         ?= $(PART_DEFAULT)
+# gb_gate のしきい値の既定（core_cmn の GB_K_RST）。proj012 rev3 から 2
+GB_K_DEFAULT := 2
+GB_K ?= $(GB_K_DEFAULT)
+# 実装の戦略（impl_1 の strategy）。空なら既定。例: make build IMPL=Performance_Explore → build-PE/
+IMPL ?=
+ifeq ($(PART),$(PART_DEFAULT))
+  OUTDIR := build
+else
+  OUTDIR := build-$(patsubst xczu48dr-ffvg1517-%,%,$(PART))
+endif
+ifneq ($(GB_K),$(GB_K_DEFAULT))
+  OUTDIR := $(OUTDIR)-k$(GB_K)
+endif
+ifneq ($(IMPL),)
+  OUTDIR := $(OUTDIR)-$(shell echo $(IMPL) | tr -cd 'A-Z')
+endif
+# launch_runs -jobs（効くのは OOC 合成だけ）。proj027: Vivado は並行で使うので上限 8（2026-10-23、西村さん。proj025 は 30）
+BUILD_JOBS ?= 8
+export BOARD_REPO PART OUTDIR GB_K IMPL
+
+# 2G-4 の .bit（2f。合成〜ビットストリーム）。成果物は $(OUTDIR)/proj027.bit・.hwh。
+# **ビルドの後、今のディレクトリで今の RTL が焼けたかを確かめる**（grep BUILD_TAG $(OUTDIR)/vivado.log）。成否は make の終了状態でなくログの ERROR・TIMING (確定) で読む
+build:
+	mkdir -p $(OUTDIR)
+	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(BUILD_JOBS)
+
+# impl_1 は完走したのに、後段（open_run 〜 照合・CDC・build/ への写し）で親の Vivado が落ちたときの再開（proj025 2f ビルド 2）。
+# 合成・実装はやり直さない（build.tcl の RESUME=1 → build_post.tcl）。.bit より新しいソースがあれば止まる。ログは別名（元の vivado.log を残す）
+post:
+	RESUME=1 $(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado_post.log -source build.tcl -tclargs $(BUILD_JOBS)

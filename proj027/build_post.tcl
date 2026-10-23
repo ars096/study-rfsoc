@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # proj025 build.tcl の後段（open_run impl_1 から最後まで）。build.tcl から source する。単独では回さない
+# proj027 2f: 4 コアに（ROM の BRAM・積分器・PFB の報告をコアごとに 4 個、lane_fft_g24 は 64 個・1 個 DSP 27（S-1 の 4096 点・rev））
 # 2f ビルド 2 で build.tcl から切り出した（中身は一字も変えていない）。親の Vivado が open_run で落ちたとき、
 # `make post`（RESUME=1）で合成・実装をやり直さずにここだけを回すため。
 # 前段から引き継ぐ変数: proj・part・outdir・projdir・bd_name・fft_mod・ncore・has_preset
@@ -25,9 +26,11 @@ foreach {pname want} {pps_trig AH13 pps_comp AJ13} {
 #       ひねり係数（g24_tw）64 行・128 行 × 576 bit → 幅で決まり RAMB36（512 × 72）× 8 × 2 = 16（A は 64 行なので RAMB18 に落ちて 12 前後までありうる。
 #       レーン 0 の定数の列が削られて少し減りうる）。合否は「予言の半分に届くか」（中身が 0 なら ROM が消えて 0 になる）
 puts ""
-puts "---- ROM の BRAM（s45_core_0・1 の中）----"
-foreach {cell pred} {s45_core_0/inst/u_full/u_spec/u_pfb/u_coef 4 s45_core_0/inst/u_full/u_spec/u_tw 12 \
-                     s45_core_1/inst/u_full/u_spec/u_pfb/u_coef 4 s45_core_1/inst/u_full/u_spec/u_tw 12} {
+puts "---- ROM の BRAM（s45_core_0〜3 の中）----"
+# proj027: 係数は 1024 行 × 35 bit × 2 表 → RAMB36 2（M-a・F-2 の OOC）。ひねり係数は proj025 の実測 11.5（A は 32 行に減るが、幅 576 bit で数が決まる）
+set rom_pred {}
+for {set c 0} {$c < $ncore} {incr c} { lappend rom_pred s45_core_$c/inst/u_full/u_spec/u_pfb/u_coef 2 s45_core_$c/inst/u_full/u_spec/u_tw 12 }
+foreach {cell pred} $rom_pred {
     set n36 0; set n18 0
     foreach x [get_cells -quiet -hierarchical -filter {REF_NAME =~ RAMB36*}] { if {[string first "/$cell/" "/$x"] >= 0} { incr n36 } }
     foreach x [get_cells -quiet -hierarchical -filter {REF_NAME =~ RAMB18*}] { if {[string first "/$cell/" "/$x"] >= 0} { incr n18 } }
@@ -118,18 +121,18 @@ set dsp_fft 0
 foreach c $ffts { incr dsp_fft [count_under $dsp_names $c] }
 puts ""
 puts "---- FFT IP の資源（$fft_mod）----"
-puts "  $fft_mod の個数         = [llength $ffts]（期待 32 = 16 × 2 コア）"
+puts "  $fft_mod の個数         = [llength $ffts]（期待 [expr {16 * $ncore}] = 16 × $ncore コア）"
 if {[llength $ffts] > 0} {
     set c0 [lindex $ffts 0]
     report_utilization -cells $c0 -file $outdir/lane_fft_util.rpt
-    puts "  DSP48E2 1 個あたり      = [count_under $dsp_names $c0]（$c0。S-1 は 33）"
-    puts "    S-1（OOC 合成）: DSP 33・BRAM 21.5"
+    puts "  DSP48E2 1 個あたり      = [count_under $dsp_names $c0]（$c0。S-1 は 27）"
+    puts "    S-1（OOC 合成、4096 点・rev）: DSP 27・BRAM 7・LUT 3434（配置後は × 0.94 の見込み）"
     foreach line [split [exec cat $outdir/lane_fft_util.rpt] \n] {
         if {[regexp {^\|\s*(CLB LUTs|CLB Registers|Block RAM Tile|URAM|DSPs)\s*\|} $line]} { puts "    [string trim $line]" }
     }
 }
-puts "  DSP48E2 $fft_mod 32 個の合計 = $dsp_fft（S-1 から 32 × 33 = 1056）"
-puts "  DSP48E2 全体            = $dsp_all（proj025 の見込み ≒ 37 %、コア 1 個 ≒ 800）"
+puts "  DSP48E2 $fft_mod [llength $ffts] 個の合計 = $dsp_fft（S-1 から 64 × 27 = 1728）"
+puts "  DSP48E2 全体            = $dsp_all（proj027 の見込み 3,312 = 77.5 %、コア 1 個 828）"
 # 段ごと（階層の名前は g24_s45_core.v・g24_core.v・g24_spec.v・core_cmn.v のインスタンス名）
 set ram_names [get_property NAME [get_cells -quiet -hierarchical -filter {REF_NAME =~ RAMB* || REF_NAME =~ URAM*}]]
 for {set c 0} {$c < $ncore} {incr c} {
@@ -137,10 +140,14 @@ foreach sub {u_full/u_spec/u_pfb u_full/u_spec/g_lane u_full/u_spec/u_tw u_full/
     puts [format "  s45_core_%d/%-24s DSP48E2 %4d・RAMB/URAM のセル %4d" $c $sub [count_in $dsp_names "/s45_core_$c/inst/$sub"] [count_in $ram_names "/s45_core_$c/inst/$sub"]]
 }
 }
-foreach {c f what} {s45_core_0/inst/g_raw.u_raw raw_core_util.rpt "s45_core_0 の RAW（予言 RAMB36 8 前後）" \
-                    s45_core_0/inst/u_full/u_spec/u_acc acc_util.rpt "コア 0 の積分器（予言 URAM 24）" \
-                    s45_core_1/inst/u_full/u_spec/u_acc acc1_util.rpt "コア 1 の積分器（予言 URAM 24）" \
-                    s45_core_0/inst/u_full/u_spec/u_pfb pfb_util.rpt "コア 0 の PFB（履歴 ＋ 係数 RAMB36 4）"} {
+set util_cells {}
+for {set c 0} {$c < $ncore} {incr c} {
+    set sfx [expr {$c == 0 ? "" : $c}]
+    lappend util_cells s45_core_$c/inst/g_raw.u_raw raw${sfx}_core_util.rpt "s45_core_$c の RAW（予言 RAMB36 換算 7.5）" \
+                       s45_core_$c/inst/u_full/u_spec/u_acc acc${sfx}_util.rpt "コア $c の積分器（予言 URAM 12）" \
+                       s45_core_$c/inst/u_full/u_spec/u_pfb pfb${sfx}_util.rpt "コア $c の PFB（予言 履歴 ≒ 75 ＋ 係数 RAMB36 2）"
+}
+foreach {c f what} $util_cells {
     set cc [get_cells -quiet $c]
     if {$cc eq ""} { set cc [get_cells -quiet -hierarchical -filter "NAME =~ *$c"] }
     if {$cc eq ""} { puts "  WARNING: $c のセルが見つからない（utilization_hier.rpt で見る）"; continue }
@@ -150,7 +157,7 @@ foreach {c f what} {s45_core_0/inst/g_raw.u_raw raw_core_util.rpt "s45_core_0 �
         if {[regexp {^\|\s*(CLB LUTs|CLB Registers|Block RAM Tile|URAM|DSPs)\s*\|} $line]} { puts "    [string trim $line]" }
     }
 }
-# 全体の LUT・FF・URAM・BRAM を utilization.rpt から。README の E-1（PFB あり・URAM 2 列 ＋ BRAM・積）: DSP 19.6 %・BRAM 57.8 %・URAM 70 %・LUT 23.9 %
+# 全体の LUT・FF・URAM・BRAM を utilization.rpt から。proj027 2f の予言: LUT 63.5〜65.5 %・BRAM ≒ 842（78 %）・URAM 48（60 %）・DSP 3,312（77.5 %）
 if {![catch {set fh [open $outdir/utilization.rpt r]; set ut [read $fh]; close $fh}]} {
     foreach line [split $ut "\n"] {
         if {[regexp {^\|\s*(CLB LUTs|CLB Registers|URAM|Block RAM Tile|DSPs)\*?\s*\|} $line]} { puts "  全体: [string trim $line]" }

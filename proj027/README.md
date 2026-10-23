@@ -9,7 +9,7 @@
 - fcea4f1（proj025 の段階 A の commit）の proj025 から: `sim/check_g22.py` → `check_g24.py`・`Makefile`（段階 A の 1a〜1d の分だけの版）
 - 写していないもの: 表の `.hex`（`make gen` で 2G-4 の長さで作り直す）・コア（g22_acc・spec・core・s45_core）・build.tcl・`pynq/`（段階 B）
 
-状態: 進行中（段階 B。段階 A は済み: PFB あり・模型 M・部品 1a〜1d の単体の sim は全部通過・4 コアの論点 F-1〜F-6 は決めた（F-2 は g24_coef の OOC で測って コアごと）。W: Wide の束ね・切り出しは差し引き 730 LUT / コアで、2G-4 の LUT は約 64.0 % の見込み。段階 B を 2026-10-23 にタグ proj025-m0 から始めた: B0 写し済み・2a〜2e・2e-2（4 コア）・4d-2 の sim は全部通過。次は 2f の build.tcl を 4 コアに）
+状態: 進行中（段階 B。段階 A は済み: PFB あり・模型 M・部品 1a〜1d の単体の sim は全部通過・4 コアの論点 F-1〜F-6 は決めた（F-2 は g24_coef の OOC で測って コアごと）。W: Wide の束ね・切り出しは差し引き 730 LUT / コアで、2G-4 の LUT は約 64.0 % の見込み。段階 B を 2026-10-23 にタグ proj025-m0 から始めた: B0 写し済み・2a〜2e・2e-2（4 コア）・4d-2 の sim は全部通過・2f のビルドは Performance_Explore で閉じた（WNS +0.032 ns、LUT 64.6 %）。次は 3. PS）
 
 着手の前に [`../LESSONS.md`](../LESSONS.md) を全部読む（知見の全部は [`../docs/lessons_all.md`](../docs/lessons_all.md)）。
 
@@ -238,6 +238,75 @@ sim の環境: この機械（Vivado サーバ、32 コア）の iverilog（/usr
      2G-4 では 16 小フレームが 2 フレームで、SPEC は 256 KiB で塞ぐ時間も半分なので溢れない。tb_g24_s45 の TP_N を 8（= 1 フレーム、2G-2 と同じ比）に、判定に S45_TPN を足した。**見張りが立たない sim は見張りが壊れているのと区別がつかない**ので、溢れを起こす側を直した
 - 2e-2 は F-4 の「複数のコアに同じ ADC = 同等の陽性対照」の sim 版。RUN は AXI でコア 0 → 3 の順に書いたが、同じ格子の中なので F0 は 4 コアで同じになった
 
+### 2f. build.tcl を 4 コアに — 予言（ビルドの前に書く、2026-10-23）
+
+`build.tcl`（B0 で写した proj025-m0 の 2G-2 を直した。冒頭の 1.〜6.）:
+- `set proj proj027`（proj025 2f で取り残した所。最初に直した）・レーン FFT 4096 点・出力 28 bit（RTL は下 27 bit）・K_F の注 mod 4096・**GF_L2 7**（RTL の既定と同じ。proj025 の 6 のままだと読み返しの照合は通るが 4.096 ms の格子になる）・表の行数（係数 1024・A 32）・BIT_KIND 3・PROJ 0x0027_0100
+- **s45_core_0〜3、RAW は 4 コアとも 1**（F-5）。CORE_PORT はコア c = ADC c（A・B は Tile 226、C・D は Tile 224）。ギアボックスの制御は 4 ch ともコアが握る
+- **axis_sel4 × 8**（full_sel_0〜3・raw_sel_0〜3、F-4・F-5）。gb_bc_i は 9 本（M00 コア・M01〜M04 full_sel・M05〜M08 raw_sel）。SmartConnect の M は 7。s45_ring_0 の NIN 4
+- **縛り（tie_*・gb_tie_*）は作らない**: 4 コアとも RAW を持ち、ring の入口も 4 本全部使うので、縛る入口が無い。空いた入口が残れば BD 41-759 が vivado.log の見張りで止める
+- 結線の照合: ch_nets・shared_nets を 4 コアの表から作る（張る側と照らす側が同じ表）。在ってはいけない側に「セル s45_core_[4-9]*・full_sel・raw_sel（2G-1・2G-2 の名前）・tie_*・gb_tie_* が無い」「axis_sel4 が 8 個・gb_bc の NUM_MI 9」「コア c の full_sel・raw_sel のネットにほかのコア・もう一方の種類の sel が載っていない（新しく sel_other）」。
+  陽性対照は (a)〜(k) を 4 コアに（(h) は raw_sel_0、(i) は 4 ch × 3 本 = 12、(k) はコア 3）、足したもの: **(j2) コア 3 の raw_sel に raw_sel_2 を期待する・(l) sel_other をコア 0 の正しいネットにコア 1 として当てる**
+- OOC の自作の run は 22（proj025 の 15 から s45_core +2・full_sel +2・raw_sel +3）。ROM のラッパ・$readmemh・配置後の ROM の BRAM はコアごとに 4 個
+- build_post.tcl: ROM の BRAM の予言（係数 2・ひねり係数 12）・lane_fft_g24 64 個・積分器・PFB・RAW の報告を 4 コアに
+- Makefile: proj025-m0 の build・post を写した。**BUILD_JOBS の既定 30 → 8**（Vivado は並行で使う、上限 8）
+- Tcl の括弧の完結は tclsh で確かめた（Vivado ではまだ回していない）
+
+**資源の総数を先に足す**（LESSONS、proj025 2f の URAM の溢れ。部品ごとの実測から）:
+
+| | 1 コア | 4 コア ＋ 共通 | デバイス | 内訳の出どころ |
+|---|---|---|---|---|
+| URAM | 12（積分器 8 銀行 × 48 bit = 384 bit → 6 個 / 面 × 2 面） | **48** | 80（60 %） | proj025 は 65536 ch で 24 / コア |
+| BRAM タイル | レーン FFT 16 × 7 = 112・PFB の履歴 ≒ 75（4096 × 672 bit、4K × 9 の詰めで 74.7）＋ 係数 2・ひねり係数 11.5・TP 2・RAW 7.5 = **≒ 210** | **≒ 842**（＋ ring 2） | 1080（**78 %**） | S-1 の 4096 点・rev 7（proj025 の 8192 点は OOC 13 = 配置後 13）・proj025 の PFB 153.5（8192 × 672 bit）の半分 ＋ 係数の差・proj025 の tw・TP・RAW の実測 |
+| DSP | レーン FFT 16 × 27 = 432・PFB 144・鎖 144・ひねり係数 60・TP 24 × 2 = **828** | **3,312** | 4272（**77.5 %**） | proj025 の 1 コア 924（内訳まで実測）− レーン FFT の差 6 × 16 |
+
+- PFB の履歴を URAM に回す余地は無い（4 コアで ≒ 40 個要り、空きは 32）。proj025 と同じ `ram_style = "block"` のまま
+- LUT: W の見込み 64.0 % に、axis_sel4 が 3 個多い分（proj025 の実測 258 × 3 = 774）と SmartConnect の M +2 を足して **63.5〜65.5 %**。FF ≒ 58〜62 %
+
+予言（`make build`、`-1`）:
+- BD の段階: vivado.log の CRITICAL WARNING は陽性対照の目印 1 件だけ（BD 41-759 は出ない）・結線の照合 問題 0・陽性対照 (a)〜(l) が全部落ちる。ROM のラッパは 4 コアとも 4 本・$readmemh の失敗 0（読めた印 16）・Synth 8-3848 0（自作の run 22 個）
+- 資源: lane_fft_g24 64 個・1 個 DSP 27・DSP 3,312・BRAM ≒ 842（78 %、±10）・URAM 48・LUT 63.5〜65.5 %。ROM の BRAM は 4 コアとも係数 2・ひねり係数 11〜12
+- CDC: CDC-3 Info 105・CDC-6 Warning 5（45 ＋ 15 × コア・1 ＋ コア、proj023 の 4 コアと同じ）・CDC-15 は RFDC の中で ≒ 3,137
+- **タイミング: 既定の戦略では閉じない見込み（WNS −0.25〜−0.02 ns）**。Wide（4 コア、LUT 60 %）は Explore で +0.001 ns、2G-4 は LUT・DSP・BRAM のどれも Wide より混む。Performance_Explore は −0.10〜+0.05 ns で五分。負の経路の塊は PFB の履歴の BRAM のカスケード・積分器の URAM・コアをまたぐ axis_sel4 の出口（256 bit × 8 本が 4 ADC から集まる）
+- 外れるとしたら: BD の組み方（sel_names から作った表・ring の 4 本）・axis_sel4 の VLNV の数え（`module_ref:axis_sel4` の filter）・BRAM の PFB の詰め（4K × 9 で詰まらなければ 76〜80 / コアで +16）
+
+**ビルド 1（2026-10-23 17:00〜、西村さんの決め: 既定 `build/` と Performance_Explore `build-PE/` を BUILD_JOBS 4 ずつで並べる。計 8）**
+
+途中まで（BD 〜 OOC。2 本とも同じ）:
+- BD の段階は予言どおり: **結線の照合 178 行・問題 0・陽性対照 (a)〜(l) が全部落ちた**（(i) は 12 / 12、(l) 2 件、(j2) 1 件）・vivado.log の CRITICAL WARNING は目印 1 件だけ（BD 41-759 は出ない）。output_width を読めない ERROR 2 行は catch の中で、proj025 のビルドにも同じ 1 組がある（ポートの幅の照合 m_axis_data_tdata 64 は OK）
+- ROM のラッパ 4 コア × 4 本・OOC 46 個・$readmemh の失敗 0（**読めた印 16**）・Synth 8-3848 0（**自作の run 22**）。予言どおり
+- **Vivado が落ちた回数が多い**（2 本を並べた日）: build/ の OOC で gb_bc_2（`librdi_synth.so is corrupt` の Abnormal program termination (6)。同じ時刻にほかの run は同じ .so を読んで通っている）・rst_ctrl（segfault）・s45_core_3（下）。
+  build-PE/ の impl_1 は link_design の DCP の継ぎ合わせで 2 回（signal 7 `HATAttrValueMap::~HATAttrValueMap`・signal 11 `HANEBuilderDbImpl::setInstMaster`。proj025 2f の open_run の落ち方 `HANENetlist::copyAttrsToAttrMap` と同じ辺り）、回し直しの 2 回目（上限）で通った
+- **新しい型: 合成の並列の子（task_worker）が segfault すると、親の Vivado は終わらずに待ち続ける**（s45_core_3、17:09 に子が落ち、親は CPU 2 % のまま 1 時間）。run に終わりの印（.vivado.end.rst / .error.rst）が出ないので、build.tcl の `wait_on_run` も止まり、「落ちた run の回し直し」が働かない。
+  親（その run の vivado だけ）を kill すると .error.rst が出て、runme.log の「segfault in」を build.tcl が拾い、3 個とも 1 回目の回し直しで通った。見張りに「終わりの印の無い run のログが 40 分書かれない」を足した
+
+**build-PE/（Performance_Explore、`-1`）: 完走し、閉じた — WNS +0.032 ns / WHS +0.010 ns**（19:10 に .bit、後段の照合は全部通過）
+
+| | 結果 | 予言 | |
+|---|---|---|---|
+| タイミング | **WNS +0.032222 ns / WHS +0.009505 ns**（上位 5 本はどれも clk_out2（256 MHz）の中）。配置の後の見込みは +0.277 | Explore −0.10〜+0.05 | 当たり（上のほう） |
+| URAM | 48（60.00 %、積分器 12 × 4） | 48 | 当たり |
+| BRAM | **842 タイル（77.96 %。RAMB36 390・RAMB18 904）**。1 コア: レーン FFT 16 × 7・PFB 77（履歴 75 ＋ 係数 2）・ひねり係数 11.5・TP 2・RAW 7.5 | ≒ 842 | 当たり（部品ごとに一致） |
+| DSP | **3,312（77.53 %）**: 1 コア 828 = レーン FFT 432（27 × 16）・PFB 144・鎖 144・ひねり係数 60・TP 24 × 2 | 3,312 | 当たり |
+| LUT | **274,731（64.60 %）**。1 コア ≒ 64,400（レーン FFT 1 個 3,250 = OOC 3,434 の 0.946）・axis_sel4 1 個 258・smc_ctrl 1,388 | 63.5〜65.5 % | 当たり。目安 65 % まで 0.4 % |
+| FF | 505,719（59.46 %） | 58〜62 % | 当たり |
+| ROM の BRAM | 4 コアとも係数 2.0・ひねり係数 11.5 | 2・11〜12 | 当たり |
+| CDC | CDC-3 Info 105・CDC-6 Warning 5・CDC-15 Warning 3,137（ほかの分類 0） | 105・5・≒ 3,137 | 当たり（proj023 の 4 コアと同じ） |
+| run の CRITICAL WARNING | なし | | |
+| 1PPS | pps_trig AH13・pps_comp AJ13（LVCMOS18） | | 照合を通った |
+
+- 指紋: BUILD_TAG s45_core_c 0x50c0000c（c = 0〜3）・time_core_0 0x50900000。CORE_PORT 0x2200・0x0201・0x2002・0x0003（ADC_A〜D）・RAW 4 コアとも 1
+- sha256: proj027.bit `8b35ecd411fb100bf3190169cbc46bcfb6ff22ae788aa6ddfa26b4fdf3eed511`（34,437,476 B）/ proj027.hwh `6678f34ea24cc44261ae1903777e9fe5b43b4252ebb426404ca0473535830ae5`
+- 予言の外れ: タイミングは「既定では閉じない・Explore は五分」と書き、Explore は閉じた（既定は下）。資源は全部当たり。Vivado の落ち方（並列の子の segfault で親が止まる）は予言に無かった
+
+**build/（既定の戦略、`-1`）: 配線までは閉じたが、.bit は残らなかった**
+- 配置の後の見込み WNS −0.256 ns → 配線の後の phys_opt で **WNS +0.008 ns / WHS +0.010 ns**（runme.log の Post Physical Optimization Timing Summary。routed.dcp も書いた）。**予言の「既定では閉じない（−0.25〜−0.02）」は外れ**（配置の後の見込みは予言の幅の中だった）
+- その後 **write_bitstream の前の DRC で segfault**（20:23、`HDPLPlaceDBImpl::clear`）。build.tcl の回し直しは `reset_run impl_1` から始めるので、**配線済みの結果（routed.dcp）を消して最初からやり直し**、2 回とも link_design で落ちて（20:26・20:30）上限で止まった（`ERROR: impl_1 が完走していない`）
+- **回し直しの欠け**: 落ちた段が write_bitstream でも合成からやり直す。impl の後ろの段で落ちたときは、reset せずに残っている段から（`launch_runs impl_1 -next_step` か routed.dcp を開いて write_bitstream）回すべき。build.tcl は直していない（直すなら次のビルドの前に）
+- 既定は回し直さない: 閉じた .bit は build-PE/ にあり、余裕も Explore のほうが大きい（+0.032 > +0.008）
+
+**2f の結論: 実機に載せるのは build-PE/ の proj027.bit・.hwh**（Performance_Explore、WNS +0.032 ns。sha256 は上）。LUT 64.6 % は目安 65 % の内側。既定の戦略でも配線までは閉じた（+0.008）ので、2G-4 は戦略に依らず閉じる線にいる
+
 ## 決めること（段階 A の終わりまでに並べる）
 
 - ~~PFB を残すか~~ → **残す**（2026-10-23、西村さん。PFB を外しても LUT は 1 % ほどしか減らず、目安 65 % は切れない（proj024 S-1: なし 64〜67 %・あり 65〜68 %）。LUT の余裕はコアの残り（Wide の束ね・切り出しの分が 2G-4 では要らない）で詰める）
@@ -298,4 +367,6 @@ g24_coef を 1 個だけ OOC で合成する（part `-1`・3.906 ns・合成だ�
 - [x] 段階 B の B0: proj025-m0 から写した（2026-10-23。写した後も 1a〜1d は全部通過）
 - [x] 段階 B の 2a〜2e・2e-2（4 コア）・4d-2 の sim（2026-10-23、全部通過・陽性対照は全部落ちた。D_eff 6,145 ビート）
 - [x] g24_coef の注の「LUT」を DSP に直した（2026-10-23、注だけ）
-- [ ] 2f の build.tcl を 4 コアに・ビルド
+- [x] 2f の build.tcl を 4 コアに・ビルド（2026-10-23。**build-PE/（Performance_Explore）が閉じた: WNS +0.032 ns・LUT 64.6 %・BRAM 842・URAM 48・DSP 3,312**。既定は配線まで +0.008 で閉じたが write_bitstream の前に Vivado が落ち、回し直しが配線済みを消した）
+- [ ] build.tcl の回し直しを、impl の後ろの段で落ちたときに reset しない形に（次のビルドの前に）
+- [ ] 3. PS（proj029 を土台にできるかを、3 の予言を書くときに確かめる）

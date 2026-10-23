@@ -1,4 +1,16 @@
 # SPDX-License-Identifier: BSD-3-Clause
+# proj027 手順 2f — 2G-4（4 ADC × 65536 点、32768 ch × 4、BIT_KIND 3）の .bit。proj025-m0 の build.tcl（2G-2、2 コア）を写して直した:
+#   1. コアは **s45_core_0〜3 の 4 個**（F-1: Wide の形。module reference の g24_s45_core）。**RAW は 4 コアとも 1**（F-5）。
+#      CORE_PORT はコア c = ADC c（ch c = ADC_A〜D）。ギアボックスの制御はコア c が ch c を握る（4 ch ともコアがあるので gb_tie_* は無い）
+#   2. **axis_sel4 を 8 個**: full_sel_c（sel = s45_core_c/full_sel → s45_core_c/s_axis_full）・raw_sel_c（sel = s45_core_c/raw_sel →
+#      s45_core_c/s_axis_raw）、c = 0〜3（F-4・F-5）。gb_bc_i は 9 本（M00 コア i・M01〜M04 full_sel_0〜3・M05〜M08 raw_sel_0〜3）
+#   3. FFT IP は lane_fft_g24（**4096 点**・bit 反転順・入力 15 bit・unscaled → 出力 28 bit・realtime。proj024 S-1 の 4096 点・rev の設定）× 16 × 4 コア
+#   4. 係数・ひねり係数の ROM はコアの中なので**コアごとに 1 組**（F-2・F-3）。中身は src/g24/*.hex（係数 1024 行・A 32 行）を絶対パスで 4 コアの CONFIG に
+#   5. ID: BIT_KIND 3・BIT_REV 1・PROJ 0x0027_0100。s45_ring_0 の入口は 4 本で全部使う。**使わない入口が無いので tie_*・gb_tie_* は作らない**
+#      （在ってはいけない側の照合で、そのセルが無いことを見る）
+#   6. SmartConnect の M は 1 ＋ 4 ＋ 2 = 7（RFDC・s45_core_0〜3・time_core_0・s45_ring_0）
+#
+# （以下は proj025 の build.tcl の記録）
 # proj025 手順 2f — 2G-2（2 ADC × 131072 点、65536 ch × 2、BIT_KIND 10）の .bit。proj024-m0 の build.tcl（2G-1）を写して直した:
 #   1. コアは **s45_core_0・s45_core_1 の 2 個**（E-1: Wide の形。module reference の g24_s45_core。コア 0 は RAW = 1、コア 1 は RAW = 0、E-5）。
 #      CORE_PORT はコア c = ADC c（ch 0 = ADC_A・ch 1 = ADC_B）。ギアボックスの制御はコア c が ch c を握り、ch 2・3 は定数（gb_tie_*）と rst_dsp
@@ -163,7 +175,7 @@
 # RFDC・Clocking Wizard・ギアボックス・spec_core の本体は proj010 と同一。
 # ナイキストゾーン（2）は実行時に PYNQ から設定する（pynq/spectrometer.py）。
 
-set proj         proj025
+set proj         proj027
 # proj015: **既定の part を -1 に**（実機の .bit を -1 で配置配線する。チップの刻印が未確認で、遅い方で閉じたものだけを載せる）。
 #   -1 のビルドは board_part を使わず、src/board/ps_preset.tcl（make ps-preset で書き出したボードプリセットの PS の設定）を当てる。
 #   -2（board_part の宣言値）は PART=xczu48dr-ffvg1517-2-e で build-2-e/ に（board_part ＋ プリセット。proj014 までの build/ と同じ作り）
@@ -246,21 +258,21 @@ set dsp_mhz    [format %.3f [expr {$fs_gsps * 1000.0 / $spw}]]
 set fs_mhz     [format %.3f [expr {$fs_gsps * 1000.0}]]
 
 # ---- 分光計（g24_spec.v と対。proj024）----
-# proj025: 131072 点 = 16 レーン × 8192 点（固定長・bit 反転順）。ch 31.25 kHz、1 フレーム 32 µs（8192 ビート）。FULL 65536 ch × 2 コア
+# proj027: 65536 点 = 16 レーン × 4096 点（固定長・bit 反転順）。ch 62.5 kHz、1 フレーム 16 µs（4096 ビート）。FULL 32768 ch × 4 コア
 set fft_mod     lane_fft_g24 ;# **名前は RTL（g24_spec.v）と sim/lane_fft_g24_model.v と対**
-set fft_lane_n  8192
+set fft_lane_n  4096
 set fft_order   bit_reversed_order
 set fft_in_w    15        ;# IP の入力（g24_pfb の出口 y、15 bit）
-set fft_out_w   29        ;# unscaled の出力 = 15 + log2(8192) + 1。RTL は 32 bit の欄の下位 28 bit を読む（|Y| < 2^27、proj024 M-7 の 2G-2 の行）
+set fft_out_w   28        ;# unscaled の出力 = 15 + log2(4096) + 1。RTL は 32 bit の欄の下位 27 bit を読む（Y の丸めなし、|Y| ≦ 2.04M < 2^26、proj027 M-c）
 # フレームの頭と起動の見張り。**RTL の既定と同じ値を明示して読み返す**（sim は GF_L2 1 で回している）
-set g24_kf      0         ;# T ≡ K_F（mod 8192）がフレームの頭
+set g24_kf      0         ;# T ≡ K_F（mod 4096）がフレームの頭
 set g24_st_n    16384     ;# 起動の見張り（ビート）
-set g24_gf_l2   6         ;# F0 の格子 = 2^6 フレーム（2.048 ms）
+set g24_gf_l2   7         ;# F0 の格子 = 2^7 フレーム（2.048 ms。2G-4 のフレームは 16 µs）
 # ROM の中身（make gen の生成物。src/g24/）: {CONFIG の名前 ファイル 行数 1 行の桁数}
 set g24_hex [list \
-    LO_FILE [file normalize ./src/g24/g24_coef_lo.hex] 2048 9 \
-    HI_FILE [file normalize ./src/g24/g24_coef_hi.hex] 2048 9 \
-    TA_FILE [file normalize ./src/g24/g24_tw_a.hex]    64 144 \
+    LO_FILE [file normalize ./src/g24/g24_coef_lo.hex] 1024 9 \
+    HI_FILE [file normalize ./src/g24/g24_coef_hi.hex] 1024 9 \
+    TA_FILE [file normalize ./src/g24/g24_tw_a.hex]    32 144 \
     TB_FILE [file normalize ./src/g24/g24_tw_b.hex]    128 144 ]
 # 生成物の形を先に見る。古い・切れた hex をここで止める
 foreach {par h nrow ncol} $g24_hex {
@@ -273,9 +285,10 @@ foreach {par h nrow ncol} $g24_hex {
         exit 1
     }
 }
-set ncore 2               ;# proj025: コアは 2 個（s45_core_0・s45_core_1、E-1）。ギアボックスの ch は nch（4）
-set g24_kind 10           ;# BIT_KIND（2G-2）
-set g24_proj [expr {0x00250100}]
+set ncore 4               ;# proj027: コアは 4 個（s45_core_0〜3、F-1）= ギアボックスの ch の数 nch
+set g24_kind 3            ;# BIT_KIND（2G-4）
+set g24_proj [expr {0x00270100}]
+if {$ncore != $nch} { puts "ERROR: ncore（$ncore）が nch（$nch）と違う（2G-4 はコア c = ch c）"; exit 1 }
 
 puts "PART      : $part"
 puts "OUTDIR    : $outdir"
@@ -288,7 +301,7 @@ foreach ch $chans {
 }
 puts "fs        : $fs_mhz MSPS （RFDC $fabric_mhz MHz × $spw_adc → DSP $dsp_mhz MHz × $spw sample/word）"
 puts "GEARBOX   : $spw_adc → $gb_mid → $spw サンプル（×$gb_up / ÷$gb_dn）"
-puts "SPEC      : 131072 点 = 16 × $fft_lane_n / ch [expr {$fs_gsps * 1e6 / 131072}] kHz / 1 フレーム [expr {131072 / $fs_gsps / 1000.0}] us / FULL 65536 ch / コア 2 個（s45_core_0・s45_core_1）"
+puts "SPEC      : 65536 点 = 16 × $fft_lane_n / ch [expr {$fs_gsps * 1e6 / 65536}] kHz / 1 フレーム [expr {65536 / $fs_gsps / 1000.0}] us / FULL 32768 ch / コア 4 個（s45_core_0〜3）"
 puts "G24       : K_F = $g24_kf / ST_N = $g24_st_n / GF_L2 = $g24_gf_l2"
 foreach {par h nrow ncol} $g24_hex { puts "ROM       : $par = $h（$nrow 行 × $ncol 桁）" }
 
@@ -986,7 +999,9 @@ set rdc_w [expr {[get_property LEFT $rdc] - [get_property RIGHT $rdc] + 1}]
 
 # proj024: 入力の選びは 2 個（D-8・D-14）。full_sel → s45_core_0/s_axis_full（FULL の流れの SRC）、raw_sel → s45_core_0/s_axis_raw（RAW の流れの SRC）
 # proj025: FULL の選びはコアごと（full_sel_0・full_sel_1、E-4）＋ raw_sel（コア 0）の 3 個
-set sel_names {full_sel_0 full_sel_1 raw_sel}
+# proj027: FULL も RAW もコアごと（full_sel_0〜3・raw_sel_0〜3、F-4・F-5）の 8 個。**この並びが gb_bc_i の M01〜M08 の順**
+set sel_names {}
+foreach kind {full_sel raw_sel} { for {set c 0} {$c < $ncore} {incr c} { lappend sel_names ${kind}_$c } }
 foreach sname $sel_names {
     set c [create_bd_cell -type module -reference axis_sel4 $sname]
     set_property CONFIG.DW $beat_bits $c
@@ -1000,7 +1015,7 @@ foreach sname $sel_names {
 # proj016: 時刻（time_core_0）。BUILD_TAG = 土台 ＋ [20] 時刻のコア
 set tcore [create_bd_cell -type module -reference time_core time_core_0]
 set time_tag [expr {$build_tag_base | (1 << 20)}]
-foreach {k want} [list CONFIG.BUILD_TAG $time_tag CONFIG.BIT_KIND $g24_kind CONFIG.BIT_REV 1 CONFIG.PROJ $g24_proj] {   ;# proj025: 2G-2
+foreach {k want} [list CONFIG.BUILD_TAG $time_tag CONFIG.BIT_KIND $g24_kind CONFIG.BIT_REV 1 CONFIG.PROJ $g24_proj] {   ;# proj027: 2G-4
     set_property $k $want $tcore
     if {[get_property $k $tcore] != $want} { puts "ERROR: time_core_0 の $k が [get_property $k $tcore]（要求 $want）"; exit 1 }
 }
@@ -1014,7 +1029,7 @@ if {abs([get_property CONFIG.BEATS_PER_SEC $tcore] - $dsp_mhz * 1e6) > 0.5} {
 set time_axi [BI time_core_0 [list "s_axi" "S_AXI"] "time_core_0 の AXI4-Lite"]
 puts [format "time_core_0: BUILD_TAG = 0x%08x / 1 秒 = %d ビート" $time_tag [get_property CONFIG.BEATS_PER_SEC $tcore]]
 
-# リング（s45_ring_0）。入口はコアの数（2 本）、書き手 → PS の S_AXI_HP0_FPD
+# リング（s45_ring_0）。入口はコアの数（4 本、全部使う）、書き手 → PS の S_AXI_HP0_FPD
 set rcore [create_bd_cell -type module -reference s45_ring s45_ring_0]
 foreach {k want} [list CONFIG.NIN $ncore CONFIG.BIT_KIND $g24_kind CONFIG.BIT_REV 1 CONFIG.PROJ $g24_proj] {
     set_property $k $want $rcore
@@ -1029,16 +1044,17 @@ for {set i 0} {$i < $ncore} {incr i} {
 }
 puts "s45_ring_0: NIN = $ncore / 書き手 → zynq_ultra_ps_e_0/S_AXI_HP0_FPD（128 bit）"
 
-# ---- コア s45_core_0・s45_core_1（g24_s45_core。proj025: 2 個、E-1）----
+# ---- コア s45_core_0〜3（g24_s45_core。proj027: 4 個、F-1）----
 #   CORE_PORT = [3:0] ADC の番号（SMA のラベル）/ [11:8] タイル / [15:12] スライス（chans の c 番 = コア c の ADC。VERSIONS.md の実測）
-#   RAW: コア 0 = 1（RAW の流れ s 1 を持つ）・コア 1 = 0（E-5）。BUILD_TAG の [1:0] はコアの番号（Wide と同じ。同じ RTL の 2 個を PS が見分ける）
+#   RAW: 4 コアとも 1（RAW の流れ s 1 を持つ、F-5）。BUILD_TAG の [1:0] はコアの番号（Wide と同じ。同じ RTL の 4 個を PS が見分ける）
+set core_raw 1
 for {set c 0} {$c < $ncore} {incr c} {
     set gcore($c) [create_bd_cell -type module -reference g24_s45_core s45_core_$c]
     set core_tag($c) [expr {$build_tag_base | (1 << 22) | $c}]
     lassign [lindex $chans $c] cp_t cp_s
     set core_port($c) [expr {$c | ($cp_t << 8) | ($cp_s << 12)}]
     set kv [list CONFIG.BUILD_TAG $core_tag($c) CONFIG.GB_K_RST $gb_k_rst CONFIG.CORE_PORT $core_port($c) \
-                 CONFIG.K_F $g24_kf CONFIG.ST_N $g24_st_n CONFIG.GF_L2 $g24_gf_l2 CONFIG.RAW [expr {$c == 0 ? 1 : 0}] \
+                 CONFIG.K_F $g24_kf CONFIG.ST_N $g24_st_n CONFIG.GF_L2 $g24_gf_l2 CONFIG.RAW $core_raw \
                  CONFIG.BIT_KIND $g24_kind CONFIG.BIT_REV 1 CONFIG.PROJ $g24_proj]
     foreach {k want} $kv {
         set_property $k $want $gcore($c)
@@ -1061,12 +1077,12 @@ for {set c 0} {$c < $ncore} {incr c} {
     set core_axis($c) [BI s45_core_$c [list "s_axis" "S_AXIS"] "s45_core_$c の AXI4-Stream 入力（コアの ADC）"]
     set full_axis($c) [BI s45_core_$c [list "s_axis_full" "S_AXIS_FULL"] "s45_core_$c の FULL の流れの入力"]
     set rec_axis($c)  [BI s45_core_$c [list "m_axis_rec" "M_AXIS_REC"] "s45_core_$c のレコードの出口"]
+    set raw_axis($c)  [BI s45_core_$c [list "s_axis_raw" "S_AXIS_RAW"] "s45_core_$c の RAW の流れの入力"]
 }
-set raw_axis    [BI s45_core_0 [list "s_axis_raw" "S_AXIS_RAW"] "s45_core_0 の RAW の流れの入力"]
 
 for {set i 0} {$i < $nch} {incr i} {
-    # proj025: gb_bc_i: ch 0・1 は 4 本（M00 コア i・M01 full_sel_0・M02 full_sel_1・M03 raw_sel）、ch 2・3 は 3 本（M00 full_sel_0・M01 full_sel_1・M02 raw_sel）
-    set nmi($i) [expr {$i < $ncore ? 4 : 3}]
+    # proj027: gb_bc_i は 9 本（M00 コア i・M01〜M04 full_sel_0〜3・M05〜M08 raw_sel_0〜3）。4 ch ともコアがある
+    set nmi($i) [expr {($i < $ncore ? 1 : 0) + [llength $sel_names]}]
     set gbc [create_bd_cell -type ip -vlnv xilinx.com:ip:axis_broadcaster gb_bc_$i]
     set want_bc [list CONFIG.NUM_MI $nmi($i) CONFIG.S_TDATA_NUM_BYTES [expr {$spw * 2}] CONFIG.M_TDATA_NUM_BYTES [expr {$spw * 2}]]
     cfg_apply $gbc $want_bc
@@ -1087,10 +1103,13 @@ for {set i 0} {$i < $nch} {incr i} {
 }
 cfg_report "gb_bc_*（axis_broadcaster）"
 # proj024: ch 1〜3 のギアボックスの制御の定数（コアが無い ch。core_cmn と同じ値: hold 0・adj 0・k = GB_K_RST）。proj025: ch 2・3
+# proj027: 4 ch ともコアが握るので作らない（gb_tie_* が無いことは照合の「在ってはいけない」側で見る）
+if {$ncore < $nch} {
 foreach {nm w v} [list gb_tie_hold 1 0 gb_tie_adj 2 0 gb_tie_k 6 $gb_k_rst] {
     set c [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant $nm]
     set_property -dict [list CONFIG.CONST_WIDTH $w CONFIG.CONST_VAL $v] $c
     if {[get_property CONFIG.CONST_WIDTH $c] != $w || [get_property CONFIG.CONST_VAL $c] != $v} { puts "ERROR: $nm の CONST_WIDTH・CONST_VAL が要求と違う"; exit 1 }
+}
 }
 
 puts [format "gb_adc_*: DW = %d / gb_gate_*: DW = %d・CW = %d（axis_rd_data_count の幅）" \
@@ -1150,11 +1169,11 @@ foreach t $adc_tiles {
 
 # ---- 相互接続 ----
 # **NUM_CLKS = 2**: aclk = pl_clk0（PS と RFDC）/ aclk1 = DSP ドメイン。SmartConnect が乗り換えを内部に持つ（自作の CDC は書かない）
-# M00 = RFDC、M01 = s45_core_0、M02 = s45_core_1、M03 = time_core_0、M04 = s45_ring_0（proj025: コア 2 個）
+# M00 = RFDC、M01〜M04 = s45_core_0〜3、M05 = time_core_0、M06 = s45_ring_0（proj027: コア 4 個）
 set smc_ctrl [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect smc_ctrl]
 set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI [expr {1 + $ncore + 2}] CONFIG.NUM_CLKS {2}] $smc_ctrl
 if {[get_property CONFIG.NUM_MI $smc_ctrl] != 1 + $ncore + 2} {
-    puts "ERROR: smc_ctrl の NUM_MI が [get_property CONFIG.NUM_MI $smc_ctrl]（要求 [expr {1 + $ncore + 2}]: RFDC ＋ s45_core_0・1 ＋ time_core_0 ＋ s45_ring_0）"
+    puts "ERROR: smc_ctrl の NUM_MI が [get_property CONFIG.NUM_MI $smc_ctrl]（要求 [expr {1 + $ncore + 2}]: RFDC ＋ s45_core_0〜3 ＋ time_core_0 ＋ s45_ring_0）"
     exit 1
 }
 
@@ -1183,7 +1202,10 @@ for {set i 0} {$i < $nch} {incr i} {
     lappend adc_dom gb_up_$i/aclk gb_fifo_$i/s_axis_aclk gb_adc_$i/aclk
     lappend dsp_dom gb_fifo_$i/m_axis_aclk gb_dn_$i/aclk gb_gate_$i/aclk gb_bc_$i/aclk
 }
-set dsp_shared [list s45_core_0/aclk s45_core_1/aclk full_sel_0/aclk full_sel_1/aclk raw_sel/aclk time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk]
+set dsp_shared {}
+for {set c 0} {$c < $ncore} {incr c} { lappend dsp_shared s45_core_$c/aclk }
+foreach sname $sel_names { lappend dsp_shared $sname/aclk }
+lappend dsp_shared time_core_0/aclk s45_ring_0/aclk zynq_ultra_ps_e_0/saxihp0_fpd_aclk
 lappend dsp_dom {*}$dsp_shared
 nc $ps_clk0 time_core_0/ctrl_aclk
 foreach p $adc_dom { nc $adc_fabric $p }
@@ -1206,14 +1228,14 @@ for {set i 0} {$i < $nch} {incr i} {
     set ch_tile($i) [lindex [lindex $chans $i] 0]
     nc $rst_out($ch_tile($i)) gb_adc_$i/aresetn
 }
-# ギアボックスの制御: ch c（c < ncore）はコア s45_core_c（core_cmn）、ch 2・3 は定数 gb_tie_* と rst_dsp（proj025。コアが無い ch）
+# ギアボックスの制御: ch c（c < ncore）はコア s45_core_c（core_cmn）、コアが無い ch は定数 gb_tie_* と rst_dsp（proj025 の ch 2・3。proj027 では無い）
 #   書き込み側（gb_up / gb_fifo）: gb_adc が rst_adc と gb_hold（0）から作る gb_rstn
 #   読み出し側（gb_gate / gb_dn）: コアのある ch はそのコアの gb_dn_rstn、ほかは rst_dsp
-#   gb_gate の見張りは full_sel_0・full_sel_1・raw_sel の i 番の入口へ（コアのある ch はそのコアにも）
+#   gb_gate の見張りは 8 個の axis_sel4（full_sel_0〜3・raw_sel_0〜3）の i 番の入口へ（コアのある ch はそのコアにも）
 # **ch ごとの結線はこの表 1 つから張り、下の照合も同じ表を読む**（張る側と照かめる側が別の表だと、両方が同じ誤りを持てない）
 proc ch_nets {i} {
-    set sels [list full_sel_0/gb_stat$i full_sel_1/gb_stat$i raw_sel/gb_stat$i]
-    set sela [list full_sel_0/adc_stat$i full_sel_1/adc_stat$i raw_sel/adc_stat$i]
+    set sels [lmap s $::sel_names {string cat $s/gb_stat$i}]
+    set sela [lmap s $::sel_names {string cat $s/adc_stat$i}]
     if {$i < $::ncore} {
         return [list \
             rst_dsp/peripheral_aresetn     [list gb_bc_$i/aresetn] \
@@ -1248,34 +1270,28 @@ for {set i 0} {$i < $nch} {incr i} {
 proc lseq {n} { set r {}; for {set i 0} {$i < $n} {incr i} { lappend r $i }; return $r }
 # proj025: 使わない入口の縛り（BD 41-759 を出さない。proj024 2f は s45_ring_0 の空いた入口を Vivado が黙って 0 に縛っていた）。
 #   s45_core_1（RAW = 0）の s_axis_raw の tdata・tvalid、s45_ring_0 の s2・s3（tdata・tvalid・tlast・tuser）・rec_drop2・3。幅ごとに xlconstant 1 個を共有
-foreach {nm w} {tie_1b 1 tie_2b 2 tie_64b 64 tie_256b 256} {
-    set c [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant $nm]
-    set_property -dict [list CONFIG.CONST_WIDTH $w CONFIG.CONST_VAL 0] $c
-    if {[get_property CONFIG.CONST_WIDTH $c] != $w || [get_property CONFIG.CONST_VAL $c] != 0} { puts "ERROR: $nm の CONST_WIDTH・CONST_VAL が要求と違う"; exit 1 }
-}
-# 共有のネット（入力の選び・時刻・リング・縛り）
+# proj027: 4 コアとも RAW を持ち、s45_ring_0 の入口 4 本も全部使うので、縛る入口が無い。**tie_* は作らない**
+#   （空いた入口が残っていれば BD 41-759 が出て、下の vivado.log の見張りで止まる。tie_* が無いことは照合の「在ってはいけない」側で見る）
+# 共有のネット（入力の選び・時刻・リング）
 proc shared_nets {} {
-    return [list \
-        rst_dsp/peripheral_aresetn     [list s45_core_0/aresetn s45_core_1/aresetn full_sel_0/aresetn full_sel_1/aresetn raw_sel/aresetn time_core_0/aresetn s45_ring_0/aresetn] \
-        s45_core_0/full_sel            full_sel_0/sel \
-        s45_core_1/full_sel            full_sel_1/sel \
-        s45_core_0/raw_sel             raw_sel/sel \
-        rst_ctrl/peripheral_aresetn    time_core_0/ctrl_aresetn \
-        time_core_0/t_out              [list s45_core_0/t_in s45_core_1/t_in] \
-        time_core_0/go_out             [list s45_core_0/go_in s45_core_1/go_in] \
-        time_core_0/ev_out             [list s45_core_0/tev_in s45_core_1/tev_in] \
-        s45_core_0/rec_drop            s45_ring_0/rec_drop0 \
-        s45_core_1/rec_drop            s45_ring_0/rec_drop1 \
-        tie_1b/dout                    [list s45_core_1/s_axis_raw_tvalid s45_ring_0/s2_axis_tvalid s45_ring_0/s2_axis_tlast s45_ring_0/s2_axis_tuser \
-                                             s45_ring_0/s3_axis_tvalid s45_ring_0/s3_axis_tlast s45_ring_0/s3_axis_tuser] \
-        tie_2b/dout                    [list s45_ring_0/rec_drop2 s45_ring_0/rec_drop3] \
-        tie_64b/dout                   [list s45_ring_0/s2_axis_tdata s45_ring_0/s3_axis_tdata] \
-        tie_256b/dout                  s45_core_1/s_axis_raw_tdata \
-    ]
+    set rl [list]
+    for {set c 0} {$c < $::ncore} {incr c} { lappend rl s45_core_$c/aresetn }
+    foreach s $::sel_names { lappend rl $s/aresetn }
+    lappend rl time_core_0/aresetn s45_ring_0/aresetn
+    set r [list rst_dsp/peripheral_aresetn $rl rst_ctrl/peripheral_aresetn time_core_0/ctrl_aresetn]
+    foreach {drv pin} {t_out t_in go_out go_in ev_out tev_in} {
+        lappend r time_core_0/$drv [lmap c [lseq $::ncore] {string cat s45_core_$c/$pin}]
+    }
+    for {set c 0} {$c < $::ncore} {incr c} {
+        lappend r s45_core_$c/full_sel full_sel_$c/sel \
+                  s45_core_$c/raw_sel  raw_sel_$c/sel \
+                  s45_core_$c/rec_drop s45_ring_0/rec_drop$c
+    }
+    return $r
 }
 foreach {drv loads} [shared_nets] { foreach p $loads { nc $drv $p } }
 
-# ---- データ経路: RFDC → ギアボックス → gb_bc_i →（ch 0 だけ s45_core_0）・full_sel・raw_sel ----
+# ---- データ経路: RFDC → ギアボックス → gb_bc_i → s45_core_i・full_sel_0〜3・raw_sel_0〜3（proj027）----
 set i 0
 foreach ch $chans {
     lassign $ch t s
@@ -1297,6 +1313,7 @@ foreach ch $chans {
         [get_bd_intf_pins gb_dn_$i/M_AXIS]   [get_bd_intf_pins gb_bc_$i/S_AXIS] \
     ]
     # proj025: コアのある ch（i < ncore）は M00 がそのコア、その後に full_sel_0・full_sel_1・raw_sel。コアの AXI4-Lite は smc の M(1 + i)
+    # proj027: その後は sel_names の順（full_sel_0〜3・raw_sel_0〜3）
     set m 0
     if {$i < $ncore} {
         lappend ch_intf($i) [get_bd_intf_pins gb_bc_$i/M[format %02d $m]_AXIS] $core_axis($i) \
@@ -1308,24 +1325,24 @@ foreach ch $chans {
         incr m
     }
     foreach {a b} $ch_intf($i) { ic $a $b }
-    puts [format "  %s = Tile %d slice %d -> gb_adc_%d / gb_up_%d / gb_fifo_%d / gb_gate_%d / gb_dn_%d -> gb_bc_%d -> {%sfull_sel_0・1/s%d, raw_sel/s%d}" \
+    puts [format "  %s = Tile %d slice %d -> gb_adc_%d / gb_up_%d / gb_fifo_%d / gb_gate_%d / gb_dn_%d -> gb_bc_%d -> {%sfull_sel_0〜3/s%d, raw_sel_0〜3/s%d}" \
             [lindex $ch_labels $i] [expr {224 + $t}] $s $i $i $i $i $i $i [expr {$i < $ncore ? "s45_core_$i（smc M0[expr {1 + $i}]）, " : ""}] $i $i]
     incr i
 }
 
-# 制御系 AXI: PS → SmartConnect → RFDC（M00）/ s45_core_0・1（M01・M02。上の ch_intf で張った）/ time_core_0（M03）/ s45_ring_0（M04）
+# 制御系 AXI: PS → SmartConnect → RFDC（M00）/ s45_core_0〜3（M01〜M04。上の ch_intf で張った）/ time_core_0（M05）/ s45_ring_0（M06）
 ic [get_bd_intf_pins zynq_ultra_ps_e_0/M_AXI_HPM0_FPD] [get_bd_intf_pins smc_ctrl/S00_AXI]
 ic [get_bd_intf_pins smc_ctrl/M00_AXI] [get_bd_intf_pins rfdc/s_axi]
-set sh_intf [list $sel_m(full_sel_0) $full_axis(0) \
-                 $sel_m(full_sel_1) $full_axis(1) \
-                 $sel_m(raw_sel) $raw_axis \
-                 [get_bd_intf_pins smc_ctrl/M[format %02d [expr {1 + $ncore}]]_AXI] $time_axi \
-                 [get_bd_intf_pins smc_ctrl/M[format %02d [expr {2 + $ncore}]]_AXI] $ring_axi \
-                 $ring_m $hp0 \
-                 $rec_axis(0) $ring_in(0) \
-                 $rec_axis(1) $ring_in(1)]
+set sh_intf [list [get_bd_intf_pins smc_ctrl/M[format %02d [expr {1 + $ncore}]]_AXI] $time_axi \
+                  [get_bd_intf_pins smc_ctrl/M[format %02d [expr {2 + $ncore}]]_AXI] $ring_axi \
+                  $ring_m $hp0]
+for {set c 0} {$c < $ncore} {incr c} {
+    lappend sh_intf $sel_m(full_sel_$c) $full_axis($c) \
+                    $sel_m(raw_sel_$c)  $raw_axis($c) \
+                    $rec_axis($c)       $ring_in($c)
+}
 foreach {a b} $sh_intf { ic $a $b }
-puts "  full_sel_c（コア c の FULL の SRC）-> s45_core_c/s_axis_full / raw_sel（RAW の SRC）-> s45_core_0/s_axis_raw"
+puts "  full_sel_c（コア c の FULL の SRC）-> s45_core_c/s_axis_full / raw_sel_c（コア c の RAW の SRC）-> s45_core_c/s_axis_raw"
 puts [format "  time_core_0（smc M%02d）/ s45_core_c/m_axis_rec -> s45_ring_0/s{c}_axis（smc M%02d）-> zynq_ultra_ps_e_0/S_AXI_HP0_FPD" [expr {1 + $ncore}] [expr {2 + $ncore}]]
 
 # ---- 1PPS の外部ポート（proj007 と同じ。create_bd_port で作る: make_bd_pins_external は `_0` を足し XDC と食い違う）----
@@ -1418,27 +1435,55 @@ lappend nc_log [format "ch * %-3s pin  %s -> %s" [expr {[llength $probs] ? "NG" 
 foreach pr $probs { lappend nc_log "        $pr"; incr nc_ng }
 # proj025: **在ってはいけない側**。コアは s45_core_0・1 の 2 個だけ・Wide の部品（共有の ROM・spec_core）や 2G-1 の名前（full_sel）のセルが無い・
 #   中身がどちらも g24_s45_core・RAW はコア 0 だけ
-foreach pat {s45_core_[2-9]* spec_core_* wide_coef_rom_* wide_tw_rom_* full_tie_* full_sel} {
+# proj027: コアは s45_core_0〜3 の 4 個だけ・2G-1・2G-2 の名前（full_sel・raw_sel）と縛り（tie_*・gb_tie_*）のセルが無い・中身が 4 個とも g24_s45_core・RAW 1
+foreach pat {s45_core_[4-9]* s45_core_??* spec_core_* wide_coef_rom_* wide_tw_rom_* full_tie_* full_sel raw_sel tie_* gb_tie_* full_sel_[4-9]* raw_sel_[4-9]*} {
     set cs [get_bd_cells -quiet $pat]
     set tag [expr {[llength $cs] == 0 ? "OK" : "NG"}]
     lappend nc_log [format "ch * %-3s セル %s が無い（在るのは: %s）" $tag $pat $cs]
     if {$tag eq "NG"} { incr nc_ng }
 }
+# 在るべき側の数: axis_sel4 は 8 個（sel_names）、gb_bc_i は NUM_MI 9
+set ns [llength [get_bd_cells -quiet -filter {VLNV =~ "*:module_ref:axis_sel4:*"}]]
+set tag [expr {$ns == [llength $sel_names] && $ns == 2 * $ncore ? "OK" : "NG"}]
+lappend nc_log [format "ch * %-3s axis_sel4 のセル %d 個（期待 %d = full_sel・raw_sel × %d コア）" $tag $ns [expr {2 * $ncore}] $ncore]
+if {$tag eq "NG"} { incr nc_ng }
+for {set i 0} {$i < $nch} {incr i} {
+    set got [get_property CONFIG.NUM_MI [get_bd_cells gb_bc_$i]]
+    set tag [expr {$got == 1 + 2 * $ncore ? "OK" : "NG"}]
+    lappend nc_log [format "ch %d %-3s gb_bc_%d の NUM_MI = %s（期待 %d）" $i $tag $i $got [expr {1 + 2 * $ncore}]]
+    if {$tag eq "NG"} { incr nc_ng }
+}
 for {set c 0} {$c < $ncore} {incr c} {
     set v [get_property VLNV [get_bd_cells s45_core_$c]]
     set r [get_property CONFIG.RAW [get_bd_cells s45_core_$c]]
-    set tag [expr {[string match "*:module_ref:g24_s45_core:*" $v] && $r == ($c == 0 ? 1 : 0) ? "OK" : "NG"}]
-    lappend nc_log [format "ch %d %-3s s45_core_%d の中身 = %s・RAW = %s（期待 g24_s45_core・RAW %d）" $c $tag $c $v $r [expr {$c == 0 ? 1 : 0}]]
+    set tag [expr {[string match "*:module_ref:g24_s45_core:*" $v] && $r == $core_raw ? "OK" : "NG"}]
+    lappend nc_log [format "ch %d %-3s s45_core_%d の中身 = %s・RAW = %s（期待 g24_s45_core・RAW %d）" $c $tag $c $v $r $core_raw]
     if {$tag eq "NG"} { incr nc_ng }
 }
 proc pin_unconnected {p} { return [expr {[llength [get_bd_pins -quiet $p]] == 1 && [llength [get_bd_nets -quiet -of_objects [get_bd_pins -quiet $p]]] == 0}] }
-# proj025: s45_core_1 の RAW の口の sel は使わない（raw_sel はコア 0 の raw_sel だけが選ぶ）。**s45_core_1/raw_sel はどこにも繋がっていない**
-set tag [expr {[pin_unconnected s45_core_1/raw_sel] ? "OK" : "NG"}]
-lappend nc_log [format "ch 1 %-3s s45_core_1/raw_sel がどこにも繋がっていない" $tag]
-if {$tag eq "NG"} { incr nc_ng }
-# proj024: コアの無い ch（2・3）のギアボックスの制御はどれもコアの gb_* の出口から来ていない（在ってはいけない側。上の ch_nets の (2) でも見ているが、名指しで）
+# proj027: コア c の選び（full_sel・raw_sel）のネットに、**ほかのコアの axis_sel4・もう一方の種類の axis_sel4 の sel が載っていない**（在ってはいけない側）。
+#   shared_nets の照合は「在るか」だけを見る（共有扱い）ので、取り違えの片側（余計に載っている）はここで見る
+proc sel_other {c kind} { return [sel_other_as $c $kind s45_core_$c/$kind] }
+proc sel_other_as {c kind pin} {
+    set bad {}
+    foreach q [peer_names [get_bd_pins -quiet $pin] pin] {
+        if {[regexp {^(full_sel|raw_sel)_(\d+)/} $q -> k j] && ($k ne $kind || $j != $c)} { lappend bad $q }
+        if {[regexp {^s45_core_(\d+)/} $q -> j] && $j != $c} { lappend bad $q }
+    }
+    return $bad
+}
+for {set c 0} {$c < $ncore} {incr c} {
+    foreach kind {full_sel raw_sel} {
+        set bad [sel_other $c $kind]
+        set tag [expr {[llength $bad] == 0 && ![pin_unconnected s45_core_$c/$kind] ? "OK" : "NG"}]
+        lappend nc_log [format "ch %d %-3s s45_core_%d/%s のネットにほかのコア・種類の sel が無い（%s）" $c $tag $c $kind [expr {[llength $bad] ? "載っている: $bad" : "なし"}]]
+        if {$tag eq "NG"} { incr nc_ng }
+    }
+}
+# proj024: コアの無い ch のギアボックスの制御はどれもコアの gb_* の出口から来ていない（在ってはいけない側。上の ch_nets の (2) でも見ているが、名指しで）
 #   **ネットの上にコアが居ないこと、ではない**: rst_dsp のネットには s45_core_*/aresetn も正しく載る（2026-10-18 の 1 回目のビルドはこれで止めた）。
 #   見るのはコアのギアボックスの制御の出口 4 本（gb_hold・gb_adj・gb_k・gb_dn_rstn）だけ
+#   proj027: コアの無い ch は無い（下のループは 0 回）。代わりに陽性対照 (i) を 4 ch 全部に当てる
 set core_gb_out {}
 for {set c 0} {$c < $ncore} {incr c} { foreach q {gb_hold gb_adj gb_k gb_dn_rstn} { lappend core_gb_out s45_core_$c/$q } }
 proc from_core_gb {p} {
@@ -1455,9 +1500,7 @@ for {set i $ncore} {$i < $nch} {incr i} {
         if {$tag eq "NG"} { incr nc_ng }
     }
 }
-proc pin_unconnected {p} { return [expr {[llength [get_bd_pins -quiet $p]] == 1 && [llength [get_bd_nets -quiet -of_objects [get_bd_pins -quiet $p]]] == 0}] }
 # rev2: タイルのリセットが別のネット（別のフロップ）であること。**在ってはいけない側**
-proc pin_unconnected {p} { return [expr {[llength [get_bd_pins -quiet $p]] == 1 && [llength [get_bd_nets -quiet -of_objects [get_bd_pins -quiet $p]]] == 0}] }
 foreach t $adc_tiles {
     set peers [peer_names [get_bd_pins -quiet rfdc/m${t}_axis_aresetn] pin]
     foreach u $adc_tiles {
@@ -1487,13 +1530,17 @@ lappend nc_log "陽性対照: (a) [llength $pa] 件・(b) [llength $pb] 件で�
 # (c)(d) 時刻のネット / (h) 入力の選びの取り違え（full_sel の sel に raw_sel を期待する）。どれも落ちるべき
 set pcc [net_check 0 pin time_core_0/t_out  [list s45_core_0/go_in] 1]
 set pcd [net_check 0 pin time_core_0/go_out [list s45_core_0/t_in] 1]
-set pch [net_check 0 pin s45_core_0/full_sel [list raw_sel/sel] 1]
+set pch [net_check 0 pin s45_core_0/full_sel [list raw_sel_0/sel] 1]
 # proj025 (j): コア 1 の FULL の選びにコア 0 の選びを期待する（full_sel_0 と full_sel_1 の取り違え。落ちるべき）
 set pcj [net_check 1 pin s45_core_1/full_sel [list full_sel_0/sel] 1]
-foreach {nm r} [list c $pcc d $pcd h $pch j $pcj] {
+# proj027 (j2): コア 3 の RAW の選びにコア 2 の選びを期待する（raw_sel_2 と raw_sel_3 の取り違え。落ちるべき）
+set pcj2 [net_check 3 pin s45_core_3/raw_sel [list raw_sel_2/sel] 1]
+# proj027 (l): 上の sel_other（ほかのコア・種類の sel が載っていない）を、コア 0 の正しいネットにコア 1 として当てる（full_sel_0 を「ほかのコア」と言うべき）
+set pcl [sel_other_as 1 full_sel s45_core_0/full_sel]
+foreach {nm r} [list c $pcc d $pcd h $pch j $pcj j2 $pcj2 l $pcl] {
     if {[llength $r] == 0} { set pc_ok 0; lappend nc_log "陽性対照 ($nm) が通ってしまった（共有のネットの照合が壊れている）" }
 }
-lappend nc_log "陽性対照: (c) [llength $pcc] 件・(d) [llength $pcd] 件・(h) [llength $pch] 件・(j) [llength $pcj] 件で落ちた（どれも 1 件以上が期待）"
+lappend nc_log "陽性対照: (c) [llength $pcc] 件・(d) [llength $pcd] 件・(h) [llength $pch] 件・(j) [llength $pcj] 件・(j2) [llength $pcj2] 件・(l) [llength $pcl] 件で落ちた（どれも 1 件以上が期待）"
 # (e)(f): 「つながっていない」の照合が、つながっているピン・無いピンに「つながっていない」と言わないこと
 set pce [pin_unconnected s45_core_0/full_sel]
 set pcf [pin_unconnected s45_core_0/no_such_pin]
@@ -1504,14 +1551,17 @@ lappend nc_log "陽性対照: (e) [expr {$pce ? "通った（NG）" : "落ちた
 set pcg [lsearch -all -inline [net_check 3 pin gb_adc_2/gb_rstn [list gb_up_2/aresetn] 0] "*ch 2 のピン*"]
 if {[llength $pcg] == 0} { set pc_ok 0; lappend nc_log "陽性対照 (g) が通ってしまった（ch の照合が壊れている）" }
 lappend nc_log "陽性対照: (g) [llength $pcg] 件で落ちた（1 件以上が期待）"
-# (i) 上の「コアの gb_* の出口に繋がっていない」を ch 0・1 に当てる（コアが握るので、繋がっていると言うべき）
+# (i) 上の「コアの gb_* の出口に繋がっていない」を 4 ch に当てる（コアが握るので、繋がっていると言うべき）。proj027: ch 0〜3 の 12 本
 set pci 0
-foreach p {gb_adc_0/hold gb_gate_0/k gb_gate_0/aresetn gb_adc_1/hold gb_gate_1/k gb_gate_1/aresetn} { lassign [from_core_gb $p] peers bad; if {[llength $bad] > 0} { incr pci } }
-if {$pci != 6} { set pc_ok 0; lappend nc_log "陽性対照 (i) が通ってしまった（ch 0・1 の 6 本のうち $pci 本しかコアの gb_* に繋がっていると言わない）" }
-lappend nc_log "陽性対照: (i) ch 0・1 の 6 本のうち $pci 本で「コアの gb_* に繋がっている」と言った（6 が期待）"
-# (k) 「繋がっていない」の照合を、繋がっている s45_core_0/raw_sel に当てる（繋がっていない、と言わないべき）
-set pck [pin_unconnected s45_core_0/raw_sel]
-if {$pck} { set pc_ok 0; lappend nc_log "陽性対照 (k) が通ってしまった（s45_core_0/raw_sel を「繋がっていない」と言った）" }
+set pci_n 0
+for {set i 0} {$i < $ncore} {incr i} {
+    foreach p [list gb_adc_$i/hold gb_gate_$i/k gb_gate_$i/aresetn] { incr pci_n; lassign [from_core_gb $p] peers bad; if {[llength $bad] > 0} { incr pci } }
+}
+if {$pci != $pci_n || $pci_n != 12} { set pc_ok 0; lappend nc_log "陽性対照 (i) が通ってしまった（$pci_n 本のうち $pci 本しかコアの gb_* に繋がっていると言わない）" }
+lappend nc_log "陽性対照: (i) ch 0〜3 の $pci_n 本のうち $pci 本で「コアの gb_* に繋がっている」と言った（12 が期待）"
+# (k) 「繋がっていない」の照合を、繋がっている s45_core_3/raw_sel に当てる（繋がっていない、と言わないべき。proj025 はコア 0）
+set pck [pin_unconnected s45_core_3/raw_sel]
+if {$pck} { set pc_ok 0; lappend nc_log "陽性対照 (k) が通ってしまった（s45_core_3/raw_sel を「繋がっていない」と言った）" }
 lappend nc_log "陽性対照: (k) [expr {$pck ? "通った（NG）" : "落ちた"}]（落ちるのが期待）"
 set fh [open $outdir/net_check.rpt w]
 foreach l $nc_log { puts $fh $l }
@@ -1616,8 +1666,8 @@ save_bd_design
 # ---- proj025: vivado.log の本体の CRITICAL WARNING（BD を組むときのもの）を拾って止める ----
 # proj024 2f: BD 41-759（s45_ring_0 の空いた入口を 0 に縛った）は vivado.log の本体にだけ出て、runme.log を読む見張りに 3 回のビルドで見落とされた（LESSONS）。
 # 陽性対照: 目印の CRITICAL WARNING を 1 件わざと出し、**それを拾えなかったら止める**（ログが読めない・書き出しが遅れている、を「異常なし」と読まない）
-set cw_mark "PROJ025-CW-POSCTL"
-if {[catch {send_msg_id PROJ025-1 {CRITICAL WARNING} "$cw_mark: vivado.log の見張りの陽性対照（このビルドの正常な印）"} msg]} {
+set cw_mark "PROJ027-CW-POSCTL"
+if {[catch {send_msg_id PROJ027-1 {CRITICAL WARNING} "$cw_mark: vivado.log の見張りの陽性対照（このビルドの正常な印）"} msg]} {
     puts "ERROR: 陽性対照の CRITICAL WARNING を出せない（send_msg_id: $msg）"; exit 1
 }
 set vlog [file join $outdir vivado.log]
@@ -1738,7 +1788,7 @@ proc ooc_wait {names} { foreach n $names { catch {wait_on_run [get_runs $n]} } }
 generate_target all [get_files $bd_file]
 create_ip_run [get_files $bd_file]
 # proj024: s45_core_0 のラッパに ROM の hex の絶対パスが文字列として書かれたか（**在るべき側**。引用符が抜けると合成で落ちるか、別の名前を探して 0 の ROM になる）
-# proj025: コアごとに（ROM はコアごとに 1 組、E-2・E-3）
+# proj025: コアごとに（ROM はコアごとに 1 組、E-2・E-3）。proj027: 4 コア（F-2・F-3）
 for {set c 0} {$c < $ncore} {incr c} {
 set vs {}
 catch {set vs [split [exec find $projdir -path "*${bd_name}_s45_core_${c}_0*" -name "*.v"] "\n"]}
@@ -1795,7 +1845,7 @@ for {set try 1} {$try <= 2} {incr try} {
 set bad [ooc_bad $ooc_names]
 if {[llength $bad] > 0} { puts "ERROR: 回し直しても OOC の合成が通らない: $bad"; exit 1 }
 puts "OOC 合成   : [llength $ooc_names] 個すべて完了"
-# proj023 3b: $readmemh が読めないと ROM が 0 になり、BRAM が消えるだけで合成は通る。**OOC のログで先に止める**（ROM は s45_core_0・1 の中）
+# proj023 3b: $readmemh が読めないと ROM が 0 になり、BRAM が消えるだけで合成は通る。**OOC のログで先に止める**（ROM は s45_core_0〜3 の中）
 set rm_ng 0
 set rm_seen 0
 set rm_ok 0
@@ -1826,8 +1876,9 @@ foreach n $ooc_names {
     }
 }
 puts "ドライバ   : 自作のセルの OOC の run $nd_seen 個のログに Synth 8-3848（ドライバの無いネット）$nd_ng 行"
-# 期待（proj025）: s45_core 2・time_core_0 1・s45_ring_0 1・gb_adc 4・gb_gate 4・full_sel_0・1 2・raw_sel 1 = 15
-if {$nd_seen != 15} { puts "ERROR: 自作のセルの OOC の run が $nd_seen 個（期待 15。run の名前が変わった？ $ooc_names）"; exit 1 }
+# 期待（proj027）: s45_core 4・time_core_0 1・s45_ring_0 1・gb_adc 4・gb_gate 4・full_sel_0〜3 4・raw_sel_0〜3 4 = 22（proj025 は 15）
+set nd_want [expr {$ncore + 1 + 1 + $nch + $nch + [llength $sel_names]}]
+if {$nd_seen != $nd_want} { puts "ERROR: 自作のセルの OOC の run が $nd_seen 個（期待 $nd_want。run の名前が変わった？ $ooc_names）"; exit 1 }
 if {$nd_ng > 0} { puts "ERROR: ドライバの無いネットがある（RTL の書き漏れ）"; exit 1 }
 if {$rm_seen != $ncore} { puts "ERROR: s45_core_* の OOC の run が $ncore 個でない（$rm_seen）。run の名前: $ooc_names"; exit 1 }
 if {$rm_ng > 0} { puts "ERROR: ROM の中身（hex）を合成が読めていない"; exit 1 }
