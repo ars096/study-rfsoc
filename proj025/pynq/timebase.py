@@ -39,10 +39,13 @@ NS_NUM, NS_DEN = 125, 32          # 1 ビート = 125/32 ns（厳密）
 #   **T-2（閉ループ）で測れるのは差 M = adc_to_core − pps_det（＋ 2 本のケーブルの差）の 1 つだけ**なので、M を adc_to_core_ns に入れ、
 #   pps_det_ns = 0 とする（式の上では引く量は M で同じ）。
 CAL = {
-    # proj025（2G-2、PROJ 0x0025_0100）: 別の Overlay・別の配置なので proj024 の adc_to_core は持ち込まない。4 の F-2（RAW の流れ = コア 0 の s 1）で測るまで未較正。
+    # proj025（2G-2、PROJ 0x0025_0100）: 別の Overlay・別の配置なので proj024 の adc_to_core は持ち込まず、4d の F-2（RAW の流れ = コア 0 の s 1）で測った。
     #   pps_det_ns は 1PPS の入口の LPF（BLP-10.7+）の分で、bit に依らない（形 (b)、proj026）。LPF を外したら 0 に
-    0x0025_0100: dict(pps_det_ns=71.5, adc_to_core_ns=None, bound_ns=50,
-                      source="proj025: adc_to_core は未較正（4 の F-2 で測る）。pps_det_ns 71.5 は LPF の分（形 (b)、proj024 4d-1 と同じ配線 P の LPF）"),
+    0x0025_0100: dict(pps_det_ns=71.5, adc_to_core_ns={0: 141.1, 1: 141.3, 2: 140.5, 3: 140.5}, bound_ns=50,
+                      source="proj025 4d の F-2（2026-10-23、配線 P・1PPS の入口に LPF BLP-10.7+）: RAW の流れ（コア 0 の s 1、SRC で ADC を選ぶ）の生サンプルで "
+                             "1PPS の縁がコアに入った T − スタンプを 4 ADC、ケーブルを A↔D・B↔C に入れ替えて 2 回（f2_25a2・f2_25b。f2_25a は D の σ 0.46 で NG、"
+                             "Overlay を載せ直して回し直した）。M = A 69.6・B 69.8・C 69.0・D 69.0 ns。(b): pps_det_ns = LPF の分 71.5、"
+                             "adc_to_core_ns = M ＋ 71.5（LPF を外したら pps_det_ns を 0 に）"),
     # proj023（SAM45-Wide、PROJ 0x0023_0100）: ギアボックス・time_core の RTL は proj021 2-5 と同じだが、別の Overlay・別の配置なので
     #   proj021 の値は持ち込まない（proj017 → 020 → 021 と同じ方針）。H-3 の前に F-2（RAW の流れ = コア 0 の s 2）で測る
     # proj024（2G-1、PROJ 0x0024_0100）: ギアボックス・time_core の RTL は 567fda2（proj023 のビルド 11）と同じだが、別の Overlay・別の配置なので
