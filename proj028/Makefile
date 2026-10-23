@@ -32,7 +32,7 @@ export BOARD_REPO PART OUTDIR
 
 PYTHON ?= python3
 
-.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 estimate sim-cfft32 sim-cpfb sim-cstage sim-ctwr sim-ctrd s1 sim-ddrtg
+.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 model-m4 estimate sim-cfft32 sim-cpfb sim-cstage sim-ctwr sim-ctrd s1 sim-ddrtg
 
 # S-2: PL DDR4 の帯域と容量を測る .bit（PS ＋ MIG ＋ ddr_tg。この PC の Vivado、1 時間前後）。成果物は build/proj028.bit・.hwh。
 # 成否は make の終了状態でなく build/vivado.log の「TIMING (確定)」「CRITICAL WARNING: n 件」「=== wrote」で読む
@@ -54,6 +54,11 @@ model-m2:
 model-m3:
 	mkdir -p runs
 	$(PYTHON) model/m3_coarse_fixed.py | tee runs/m3.log
+
+# 模型 M-4（つなぎ: 荒い段 → 細かい FFT → bin の巡回・7/8 → 32 ch。N_f 512 に縮めて）。1〜2 分
+model-m4:
+	mkdir -p runs
+	$(PYTHON) model/m4_stitch.py | tee runs/m4.log
 
 # S-1: 荒い FFT の RTL（tools/gen_cfft32.py が作る src/cfft32.v）を iverilog で模型と照らす。ふつうと陽性対照（落ちるべき）。成否は「結果:」の行
 sim-cfft32:
