@@ -65,6 +65,14 @@ bit は proj025 のまま（`proj025/build/proj025.bit`、sha256 `de3ee453…cf3
 ## やったこと
 
 - 2026-10-23: 起こした（template から README、proj025-m0 の `pynq/` を写した。Vivado の Makefile・build.tcl・program.tcl・src は PS だけの試行なので持たない。proj018・019 と同じ形）。写した `pynq/` で test_fake 全部通過
+- 2026-10-23: ボードの道具の確かめ（西村さん）: gcc 11.2.0（Ubuntu 11.2.0-19ubuntu1）・numpy 1.21.5・ctypes あり。`-march=armv8-a+crc` は `build_fast.sh` の中で確かめる
+- 2026-10-23: 手順 1 の道具を書いた。`pynq/s45fast.c`（`s45_spec_f32`・`s45_spec_u64`・`s45_crc32`。aarch64 で `__ARM_FEATURE_CRC32` があれば CRC32 命令、無ければ表）・
+  `pynq/build_fast.sh`（→ `libs45fast.so`、.gitignore）・`pynq/s45fast.py`（ctypes の包み）・`pynq/test_s45fast.py`（照合 ＋ 陽性対照 ＋ `--bench`）。
+  照合の正解は**本物の `Acq._spec_record_full`**（最小の Acq を作り、`_put` で頭・中身・CRC を捕まえる）。頭（`SPEC2_H.pack`）は Python のまま
+- 2026-10-23: この PC（x86_64、CRC は表）で `test_s45fast.py`: **照合 22 項目が全部 OK**。n 65536・131072 とも f32・u64・fmt f32・out の使い回しが bytes と CRC まで一致。
+  陽性対照: p1（1 ch を変える）は不一致 1 か所で位置 = n − 1 − ch、p2（切り捨て）は 32,754 / 65,536 か所が不一致・**p2 の C は Python の `f32_trunc` と bytes まで同じ**、p3（逆順なし）は全部不一致、p4（2^53）は両方が同じ ValueError。
+  CRC の口だけ（位置 0〜8・長さ 0〜4096・初期値の続き）も zlib と一致。
+  時間（参考、この PC）: Python の記録 0.26 ms・C 0.50 ms（表の CRC が 1 バイトずつで遅い。C の CRC 256 KiB だけで 0.49 ms）。**ボードは CRC32 命令なので、この比は持ち込まない**
 
 ## 結果
 
