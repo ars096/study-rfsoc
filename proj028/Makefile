@@ -32,7 +32,7 @@ export BOARD_REPO PART OUTDIR
 
 PYTHON ?= python3
 
-.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 model-m4 estimate sim-cfft32 sim-cpfb sim-cstage sim-ctwr sim-ctrd sim-fpfb sim-fchain s1 sim-ddrtg
+.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 model-m4 estimate sim-cfft32 sim-cpfb sim-cstage sim-ctwr sim-ctrd sim-fpfb sim-fchain sim-facc s1 sim-ddrtg
 
 # S-2: PL DDR4 の帯域と容量を測る .bit（PS ＋ MIG ＋ ddr_tg。この PC の Vivado、1 時間前後）。成果物は build/proj028.bit・.hwh。
 # 成否は make の終了状態でなく build/vivado.log の「TIMING (確定)」「CRITICAL WARNING: n 件」「=== wrote」で読む
@@ -101,6 +101,12 @@ sim-fchain:
 	mkdir -p build-sim
 	$(PYTHON) tools/sim_fine_chain.py > build-sim/sim_fch.log & $(PYTHON) tools/sim_fine_chain.py --norm > build-sim/sim_fch_norm.log & $(PYTHON) tools/sim_fine_chain.py --tw-hi-err > build-sim/sim_fch_tw.log & wait
 	@grep "結果:" build-sim/sim_fch.log build-sim/sim_fch_norm.log build-sim/sim_fch_tw.log
+
+# F-3: 積分器と読み出し（fine_acc ＋ fine_rdo）。出口を Python の和と並べ替えと照らす。ふつう・陽性対照 2 つ
+sim-facc:
+	mkdir -p build-sim
+	$(PYTHON) tools/sim_fine_acc.py > build-sim/sim_facc.log & $(PYTHON) tools/sim_fine_acc.py --first-err > build-sim/sim_facc_first.log & $(PYTHON) tools/sim_fine_acc.py --k2-err > build-sim/sim_facc_k2.log & wait
+	@grep "結果:" build-sim/sim_facc.log build-sim/sim_facc_first.log build-sim/sim_facc_k2.log
 
 # S-1: cfft32・ct_buf・DDR4 IP を OOC で合成して資源を数える（この PC の Vivado、30 分前後）。結果は build-s1/s1.txt
 S1_JOBS ?= 4
