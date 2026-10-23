@@ -25,7 +25,8 @@ DT_UNIT = Q_OS * 524288 * 16 / FS         # 14.336 ms（q × 2.048 ms）
 OUT_RATE = 131072 / 10.24e-3              # 2G-1 の N/dt = 12.8 M ch/s（リング 102.4 MB/s・ネットワーク 51.2 MB/s）
 DDR_PEAK = 19.2e9
 DDR_BUDGET = 0.70 * DDR_PEAK              # H-0 の仮の目安
-DDR_SIZE = 4 * 2 ** 30
+DDR_SIZE = 4 * 2 ** 30                    # 実機の PL DDR4（S-2e・S-2f）
+NPLANE_CT = 3
 
 # レーン FFT 1 個（bit 反転順）。proj024 の S-1 の実測（OOC。LUT・FF は本番の大きさに直した値）。1024 点は外挿（仮）
 FFT_IP = {
@@ -43,9 +44,9 @@ FINE_REST = dict(DSP=160 + 64 + 288 + 24, LUT=int(12400 * 1.5), FF=int(15700 * 1
 #   荒い PFB は 27 タップを 3 拍で割り切る形で 576（積和の数の下限は fs·T_c·os / 256 MHz = 494）。利得の掛け算は 64 個を並べた形
 COARSE_PFB_DSP = 576
 COARSE = dict(DSP=892, LUT=61181, FF=83091, BRAM=0)
-# DDR 系（S-1 の後）: MIG は ddr4_pl の実測（実機の設定 MT40A1G16RC-062E・参照 200 MHz・AXI 33 bit で DSP 3・LUT 15,638・FF 18,413・BRAM 25.5）、corner turn の溜めは ct_buf の実測（BRAM 57）。
-#   読み手・AXI の LUT 6,000・FF 8,000・BRAM 8 は仮
-DDRSYS = dict(DSP=3, LUT=15638 + 6000, FF=18413 + 8000, BRAM=25.5 + 57 + 8)
+# DDR 系（C-4 の後）: MIG は ddr4_pl の実測（実機の設定 8 Gb の部品で S-2f のビルドに入っている形、LUT は S-1 の 16 Gb の設定の 15,638 を使う）、
+#   corner turn の書き手 ct_wr（OOC: LUT 3,586・FF 1,811・BRAM 64）と読み手 ct_rd（LUT 855・FF 556）は実測。SmartConnect（2 本、乗り換え）の LUT 3,000・FF 5,000 は仮
+DDRSYS = dict(DSP=3, LUT=15638 + 3586 + 855 + 3000, FF=18413 + 1811 + 556 + 5000, BRAM=25.5 + 64)
 COMMON = dict(DSP=0, BRAM=18, LUT=13900, FF=30400)                     # proj024 と同じ（v2 の共通部・リング・RAW）
 
 
@@ -66,7 +67,7 @@ def row(nf):
     wr = NCOARSE * (FS / D) * 2 * B / 8
     rd = wr * (1 + (T_FINE - 1) / frames)
     ddr = wr + rd
-    ddr_size = 2 * dt * wr
+    ddr_size = NPLANE_CT * dt * wr                # corner turn の面の数（C-3: 前のチャンクの末尾を読み直すので 3 面）
     busy = (wr / (2 * B / 8)) * (1 + (T_FINE - 1) / frames) / (LANES * CLK)
     # E-2: 記憶
     hist = bram36((T_FINE - 1) * nf * 2 * B)

@@ -32,7 +32,7 @@ export BOARD_REPO PART OUTDIR
 
 PYTHON ?= python3
 
-.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 estimate sim-cfft32 sim-cpfb sim-cstage s1 sim-ddrtg
+.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 estimate sim-cfft32 sim-cpfb sim-cstage sim-ctwr sim-ctrd s1 sim-ddrtg
 
 # S-2: PL DDR4 の帯域と容量を測る .bit（PS ＋ MIG ＋ ddr_tg。この PC の Vivado、1 時間前後）。成果物は build/proj028.bit・.hwh。
 # 成否は make の終了状態でなく build/vivado.log の「TIMING (確定)」「CRITICAL WARNING: n 件」「=== wrote」で読む
@@ -72,6 +72,18 @@ sim-cstage:
 	mkdir -p build-sim
 	$(PYTHON) tools/sim_coarse_stage.py > build-sim/sim_cstage.log & $(PYTHON) tools/sim_coarse_stage.py --bad > build-sim/sim_cstage_bad.log & wait
 	@grep "結果:" build-sim/sim_cstage.log build-sim/sim_cstage_bad.log
+
+# C-3: corner turn の書き手 ct_wr。DDR の模型の中身を ch ごとに並べ替えた入力と照らす。QB 4・QB 64・陽性対照（回しを 1 ずらす）・STALL（溢れを数える）
+sim-ctwr:
+	mkdir -p build-sim
+	$(PYTHON) tools/sim_ct_wr.py > build-sim/sim_ctwr.log & $(PYTHON) tools/sim_ct_wr.py --qb 64 > build-sim/sim_ctwr_qb64.log & $(PYTHON) tools/sim_ct_wr.py --bad > build-sim/sim_ctwr_bad.log & $(PYTHON) tools/sim_ct_wr.py --stall > build-sim/sim_ctwr_stall.log & wait
+	@grep "結果:" build-sim/sim_ctwr.log build-sim/sim_ctwr_qb64.log build-sim/sim_ctwr_bad.log build-sim/sim_ctwr_stall.log
+
+# C-4: corner turn の読み手 ct_rd。出口の拍の並び・中身・tuser・tlast を期待と照らす。ふつうと陽性対照（末尾の番地を 1 拍ずらす）
+sim-ctrd:
+	mkdir -p build-sim
+	$(PYTHON) tools/sim_ct_rd.py > build-sim/sim_ctrd.log & $(PYTHON) tools/sim_ct_rd.py --bad > build-sim/sim_ctrd_bad.log & wait
+	@grep "結果:" build-sim/sim_ctrd.log build-sim/sim_ctrd_bad.log
 
 # S-1: cfft32・ct_buf・DDR4 IP を OOC で合成して資源を数える（この PC の Vivado、30 分前後）。結果は build-s1/s1.txt
 S1_JOBS ?= 4
