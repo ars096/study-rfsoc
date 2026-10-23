@@ -1772,6 +1772,7 @@ class Acq:
         self.bund = [None] * (4 * NW)              # proj021 2-3b: 窓ごとの Bundler（START で作る）
         self.pl_dumps = [0] * (4 * NW)
         self.loop_slow = 0                         # 1 周が tint を越えた回数
+        self.n_loop_log = 0                        # proj025 4c: --loop-log-ms で残した周の数
         self.hist[:] = 0
         self.n_loop = 0
         self.ndump_target = 0
@@ -2284,6 +2285,7 @@ class Acq:
         be = self.be
         nrec = be.pump()                           # proj021 2-3a: リングを 1 回読んで振り分ける（axi・偽物では何もしない）
         t_p = time.perf_counter()
+        n_spec = 0                                 # proj025 4c: この周で書いた SPEC の記録（束）の数
         for j in range(4 * NW):
             for _ in range(64):                    # 溜まったぶんを全部（リングでは止まりの後に何個も来る）
                 r = be.poll_win(j)
@@ -2305,6 +2307,7 @@ class Acq:
                 self.last_k[j] = m["k"]
                 self.n_dump[j] += 1
                 self._spec_record(j, m, spec)
+                n_spec += 1
         t_w = time.perf_counter()
         for i in range(4):
             be.poll_tp(i)
@@ -2316,12 +2319,17 @@ class Acq:
         self.hist[min(1000, int(dt * 1e4))] += 1
         if dt > self.loop_max:
             self.loop_max, self.loop_max_at = dt, self.n_loop
-        if dt > self.st["tint"]:
+        slow = dt > self.st["tint"]
+        if slow:
             self.loop_slow += 1
-            if self.loop_slow <= 20:               # どの周が遅いかを残す（2-3a の 1 回目: 最大 115 ms・p99 14.5 ms）
-                lp = getattr(be, "last_pump", (0.0, 0.0))
-                self.log(f"1 周が {dt * 1e3:.1f} ms（周 {self.n_loop}・リングのレコード {nrec}）: リングの読み {lp[0] * 1e3:.1f}・振り分け {lp[1] * 1e3:.1f}・"
-                         f"窓の記録 {(t_w - t_p) * 1e3:.1f}・TP {(t_t - t_w) * 1e3:.1f}・時刻の確かめ {(t_c - t_t) * 1e3:.1f} ms")
+        lim = float(getattr(self.o, "loop_log_ms", 0) or 0)    # proj025 4c: 診断（指定したときだけ。loop_slow の数え方は変えない）
+        diag = lim > 0 and dt * 1e3 > lim and self.n_loop_log < 300
+        if (slow and self.loop_slow <= 20) or diag:  # どの周が遅いかを残す（2-3a の 1 回目: 最大 115 ms・p99 14.5 ms）
+            if diag:
+                self.n_loop_log += 1
+            lp = getattr(be, "last_pump", (0.0, 0.0))
+            self.log(f"1 周が {dt * 1e3:.1f} ms（周 {self.n_loop}・リングのレコード {nrec}・SPEC の記録 {n_spec}）: リングの読み {lp[0] * 1e3:.1f}・振り分け {lp[1] * 1e3:.1f}・"
+                     f"窓の記録 {(t_w - t_p) * 1e3:.1f}・TP {(t_t - t_w) * 1e3:.1f}・時刻の確かめ {(t_c - t_t) * 1e3:.1f} ms")
         self.n_loop += 1
         if self.ndump_target and self._dumps_min() >= self.ndump_target:
             self._stop("n に達した")
