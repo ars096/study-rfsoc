@@ -309,6 +309,44 @@ sim の環境: oss-cad-suite 2024-10-18（Icarus 13.0 devel、VERSIONS.md）。2
   2 本の WRST の後の SRC = 0x8000_000s・**2 本の RUN_F0 が同じ**（2e-2 の sim では同じだった）・FULL の TP の F0 = RUN_F0 × 16・RUN_T = START_AT ＋ 1・
   ch → IF = 4096 − c·df（SG の CW で、2 窓とも）・D_S = +1（F-2 の RAW と並べて）・loop_max（512 KiB × 2 / 10.24 ms、3d の代わり）
 
+### 4. 実機 — 手順と予言（2026-10-23、走らせる前に書く）
+
+載せるもの: **build/ の proj025.bit・.hwh**（2f ビルド 2。sha256 `de3ee453…cf30bf9`・`e568364b…e218682`）と pynq/*.py。ボードの `~/proj025/` に送り、ボードで sha256 を照らしてから使う。
+順番（proj024 と同じ）: **4a 立ち上げ（＋ E-4 の 2 コアの同等）→ 4b ch → IF（SG の CW）→ 4c 長い運転 → 4d F-2（adc_to_core）**。
+判定の道具は `pynq/g22cw.py`（g21cw の 2 窓版。記録の .s45 を読む）。PL なしの確かめ（この PC）:
+偽物の記録（src C・D、fmt both）で頭の欄・DUMP_T の進み・2 窓の DUMP_T の揃いが通り、2 窓の中身が違う偽物では `--same` が落ちる（0 / 30 組）。
+偽物を書き換えた合成の記録（B0 = 同じ DUMP_T の A0、3000.25 MHz の ch にピーク）で `--same` 30 / 30 組・CW は 2 窓とも番号 30471・差 0 Hz で通り、
+陽性対照 `--posctl-same`（1 ダンプずらす）は 0 / 29 組・`--posctl`（軸の向きを逆）は軸 1223.75 MHz で落ちる
+
+**4a 立ち上げ（SG なし。入力は今の配線のまま、構成を記録する）**
+- ボード: `specd.py --g22 --bitfile proj025.bit --clkin 0 --ref 10` → PC: `specctl`: ID・STATUS → SET → `START n=200`（時刻が無ければ `force=1`）→ PC で `specrecv.py --host $B --out runs/…`
+  - 4a-1: `A0.src=A B0.src=B shift=7`（既定の割り当て）→ `runs/g22_4a1.s45`
+  - 4a-2: `A0.src=C B0.src=D` → `runs/g22_4a2.s45`（SRC の道とコアの TP を足す道）
+  - **4a-3（E-4、2 コアの同等）**: `A0.src=C B0.src=C fmt=both`・`START n=50` → `runs/g22_4a3.s45`
+- 予言:
+  - 起動: ID の adc = 020a0101・time 020a0102・proj 00250100・win は 2 本の SID を「/」でつないだもの・ログに「リング … SIZE 67108864（2G-2: FULL 2 本 …）」と mallopt
+  - **START が通る**（= G22Backend の照合が全部通る: discover の CORE_PORT [0, 1]・コア 1 の NSTREAM 1・2 本の WRST の後の SRC 0x8000_000s・NCH 65536・FRAME_BEATS 8192・RUN_SHIFT 7・
+    **2 本の RUN_F0 が同じ**・FULL の TP の F0 = RUN_F0 × 16）。RUN_T の WARN なし
+  - 記録（g22cw）: 4a-1・4a-2 とも 2 窓 × 200・CRC 0・説明のない欠け 0・照合 通過・頭の欄が期待どおり（core 0 / 1・nacc 1280・df 31250・bit_kind 10）・DUMP_T の進み 10,485,760・DUMP_K 1 ずつ・**2 窓の DUMP_T が揃う**。
+    TP の ADC は 4a-1 で {A, B}、4a-2 で {A, B, C, D}
+  - **床の中央値（1 フレームあたり）≒ 2G-1 の 2 倍**: 2G-1 は −30.9 dBFS・SHIFT 7 で 1.8e3。ch の雑音の電力は N に比例（131072 / 262144 = 1/2）し、
+    Y の丸めが 2 bit → 1 bit で 4 倍（2c の判定の式の 2^(D1+2)）なので × 2。**3.6e3 × 10^((TP + 30.9) / 10)**（TP は dBFS）、±1 dB
+  - **4a-3: 同じ DUMP_T の A0・B0 が u64 で bit 単位で同じ（50 / 50 組）**（2e-2 の sim の実機版。同じギアボックスの出口・同じ RUN_F0・同じ係数で、決まった計算）。陽性対照 `--posctl-same` は 0 / 49 組。
+    TP の ADC は {A, B, C}（コア 0 の FULL → C・コアの TP → A・B。コア 1 の FULL の TP は使わない）
+  - STATUS（STOP の後）: miss・kgap・bdrop・r_bad・**loop_slow 0**・drop・ring の drop・tp_lost・tp_bad 0。loop_max は 2G-1（15〜16 ms）と同じ程度（1 BASE の量が同じ 1 MiB、レコードが 2 個に分かれるだけ）: **12〜20 ms**
+  - 自信が低い所: 4a-3 の bit 単位の一致（2 コアの配置が違い、どちらかの経路にタイミングの際どい所があれば数 ch で違う。違えば違う ch の数と場所を見る）。
+    床の 2 倍（PFB の係数の和は 2G-1 と同じ形のはずだが、実機では確かめていない）
+
+**4b ch → IF（SG の CW）**: proj024 の 4b と同じ配線・SG（ボードと同じ 10 MHz）で、`A0.src=A B0.src=B`。周波数も同じ **3000.25 MHz**（ch c 35064 → 送る i 30471）と **2500.5 MHz**（c 51056 → i 14479）。
+2G-2 でも ch の中心（df 31.25 kHz の整数倍）
+- 予言: 2 点 × 2 窓とも CW が見えている・ピークの番号が期待と一致・軸と SG の差 0 Hz。**ピーク / 中央値は 2G-1 より 3 dB 低い ≒ 82 dB**（CW の電力は N²、雑音は N に比例）。隣の ch は 50 dB 以上下（PFB は同じ T 4）
+- 陽性対照 `--posctl` は軸の向きで落ちる
+
+**4c 長い運転**: `A0.src=A B0.src=B`・`START n=0` で 30 分。STATUS を 1 分ごと。予言: loop_slow・drop・ring の drop・REC_LATE・miss 0（2G-1 の 4c と同じ）
+
+**4d F-2（adc_to_core）**: proj024 の `widef2.py` を 2G-2 の開き方（`discover(bit_kind=10, ncore=2)`、RAW はコア 0 の s 1）に直してから、手順と予言を書く。
+D_eff = 12,289 ビートは 4d-2 の sim で済み（実機では測れない: 1 ビートはパワースペクトルに出ない）
+
 ## 結論・次にやること
 
 - [x] 0. 写す（2026-10-18）
@@ -320,4 +358,4 @@ sim の環境: oss-cad-suite 2024-10-18（Icarus 13.0 devel、VERSIONS.md）。2
 - [x] 2f の build.tcl を 2 コアに（2026-10-22、Vivado では未実行）
 - [x] 2f のビルド（2026-10-22、ビルド 2 が既定の戦略で閉じた。WNS +0.046 ns。親の Vivado が open_run で落ち、`make post` で後段を回した）
 - [x] 3 PS（2026-10-23、3a ID・3c G22Backend。test_fake 23 試験が全部 OK。3b は proj024 で済み、3d は 4 の loop_max で見る）
-- [ ] 4 実機
+- [ ] 4 実機（4a〜4d。予言は上に、2026-10-23）
