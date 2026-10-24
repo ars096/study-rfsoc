@@ -41,6 +41,7 @@ proj001〜023 で踏んだ穴と、次以降の proj でも従う決まりを 1 
 - DSP は乗算器 3 乗算・LUT バタフライで減る（realtime は減らさない）。IP の中の LUT の記憶は SRL。資源は IP を 1 個だけ合成して数えてから予言する（`make survey`）（proj011・022）
 - unscaled でも IP は各段の積を丸める。倍精度の模型と比べる判定は、丸めの模型で許容を作るか、SHIFT を大きめ（7）にして比べる（proj010・015）
 - 長さの実行時切り替えは使わない（LUT が 1 個 +713）。固定長にして、ch の束ねでモードを作る（proj023 D-7）
+- 入力の流れに空きがある（DDR から読む・忙しさ 100 % 未満）ときは、realtime の IP の手前でフレームの枠を途切れなく回し、そろわない枠は空のフレームで埋める。— realtime の IP（とその模型）はフレームの間の途切れも halt として数える（proj028 F-4）
 - → 全部: docs/lessons_all.md の「FFT IP（Xilinx xfft、realtime）」
 
 ## Vivado・build.tcl の見張り

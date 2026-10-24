@@ -8,6 +8,7 @@
 //   - y = sat15((Σ_t c·x + 2^11) >>> 12)（端数を 4 bit 残す）。タップ t（0 = いちばん古い）は fr ≧ 3 − t のときだけ（ほかは履歴 0）
 // 段は g21_pfb_core と同じ（入力 → y_v が LAT 7、係数は fine_coef の LAT 5 に合わせて入力を 3 拍遅らせる）
 // -DNO_CH_RESET: s_first で fr を戻さない（陽性対照: 前の ch の履歴を拾う）
+// valid の段はどれもリセットで 0 にする（F-4 の sim: 段の数がリセットの長さより多く、明けた後に不定の y_v が残って下流の数えを壊した）
 
 `timescale 1ns / 1ps
 
@@ -85,7 +86,7 @@ module fine_pfb #(
             xi1[XW*p +: XW] <= s_d[16*p + 8 +: 8];
         end
         m1 <= s_m; v1 <= s_v & ~rst; f1 <= s_f;
-        xr2 <= xr1; xi2 <= xi1; m2 <= m1; v2 <= v1; f2 <= f1;
+        xr2 <= xr1; xi2 <= xi1; m2 <= m1; v2 <= v1 & ~rst; f2 <= f1;
     end
 
     // ---- 1・2: 履歴（{h2, h1, h0} × 実部・虚部）----
@@ -119,7 +120,7 @@ module fine_pfb #(
             xb[4*p + 0] <= (f2 >= 2'd3) ? hr2[5*HW + XW*p +: XW] : {XW{1'b0}};
             for (t = 0; t < 4; t = t + 1) ca[4*p + t] <= coef[72*p + 18*t +: CW];
         end
-        v3 <= v2; m3 <= m2; f3 <= f2;
+        v3 <= v2 & ~rst; m3 <= m2; f3 <= f2;
     end
 
     // ---- 4: 積 / 5: 2 つずつ / 6: 和 ----
@@ -131,9 +132,9 @@ module fine_pfb #(
         for (p = 0; p < 64; p = p + 1) begin pra[p] <= ca[p] * xa[p]; prb[p] <= ca[p] * xb[p]; end
         for (p = 0; p < 32; p = p + 1) begin s2a[p] <= pra[2*p] + pra[2*p + 1]; s2b[p] <= prb[2*p] + prb[2*p + 1]; end
         for (p = 0; p < 16; p = p + 1) begin s4a[p] <= s2a[2*p] + s2a[2*p + 1]; s4b[p] <= s2b[2*p] + s2b[2*p + 1]; end
-        v4 <= v3; m4 <= m3; f4 <= f3;
-        v5 <= v4; m5 <= m4; f5 <= f4;
-        v6 <= v5; m6 <= m5; f6 <= f5;
+        v4 <= v3 & ~rst; m4 <= m3; f4 <= f3;
+        v5 <= v4 & ~rst; m5 <= m4; f5 <= f4;
+        v6 <= v5 & ~rst; m6 <= m5; f6 <= f5;
     end
 
     // ---- 7: 丸め・飽和 ----
