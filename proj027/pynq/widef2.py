@@ -5,6 +5,8 @@
  開き方は s45acq の G21Backend と同じ（discover(bit_kind=11, ncore=1)）。CAL の鍵は 0x0024_0100。測り方・合格の線は proj023 と同じ）
 （proj025 4d: 2G-2（BIT_KIND 10、コア 2 個）に直した。RAW はコア 0 だけが持つ（s 1、コア 1 は RAW なし・NSTREAM 1）ので snap_stream はそのまま 1 本。
  開き方は G22Backend と同じ（discover(bit_kind=10, ncore=2)）。CAL の鍵は 0x0025_0100。直したのは開き方・鍵・既定の .bit だけ）
+（proj027 4d: 2G-4（BIT_KIND 3、コア 4 個）に直した。**4 コアとも RAW を持つ**（s 1、NSTREAM 2。F-5）ので snap_stream（1 本の前提）は使わず、
+ `--raw-core`（既定 0）のコアの RAW を直に取る。開き方は G24Backend と同じ（discover(bit_kind=3, ncore=4)）。CAL の鍵は 0x0027_0100。既定の .bit は proj027.bit）
 
 timetest.py --t2 の (a)（RAW の流れの生サンプルで 1PPS の縁を見る）を Wide に移したもの。Wide には DDC の窓が無いので、
 窓の (b) の代わりに**陽性対照 (p)**: 同じ手順で RAW のフレームを縁の 2 フレーム（1,024 ビート）前に置き、縁が写らない（最大 / σ < 20）ことを見る。
@@ -43,7 +45,7 @@ NS_PER_BEAT = 3.90625
 
 
 def open_board(a):
-    """wide.open_board と同じ手順で、2G-2 の .bit を開く（proj024 は 2G-1）（wide.open_board は BIT_KIND 1 と SLICE の流れを要求するので使わない）"""
+    """wide.open_board と同じ手順で、2G-4 の .bit を開く（proj025 は 2G-2、proj024 は 2G-1）（wide.open_board は BIT_KIND 1 と SLICE の流れを要求するので使わない）"""
     import spectrometer as S
     S.setup_clocks(a.clkin, a.ref)
     from pynq import Overlay
@@ -56,9 +58,12 @@ def open_board(a):
     return ol
 
 
-def open_raw(ol):
-    cores, tmm = SC.discover(ol, bit_kind=SC.BIT_KIND_G22, ncore=2, bit_rev_min=1)      # proj025: 2G-2（proj024 は G21・ncore 1）
-    fs = SC.snap_stream(cores)
+def open_raw(ol, raw_core=0):
+    cores, tmm = SC.discover(ol, bit_kind=SC.BIT_KIND_G24, ncore=4, bit_rev_min=1)      # proj027: 2G-4（proj025 は G22・ncore 2、proj024 は G21・ncore 1）
+    nraw = [len(c.raw()) for c in cores]
+    if nraw != [1, 1, 1, 1]:
+        raise SC.S45Error(f"RAW の流れの本数がコアごとに {nraw}（期待 [1, 1, 1, 1]）")
+    fs = cores[raw_core].raw()[0]                        # proj027: 4 コアとも RAW があるので、使うコアを選ぶ（SRC で ADC を選ぶのは同じ）
     if fs.kind != SC.KIND_RAW or fs.s != 1:
         raise SC.S45Error(f"RAW の流れが s 1 に無い（{fs.name}・kind {fs.kind}）")
     regs = dict(cfg=T.R_CFG, run_cfg=T.R_RUN_CFG, dump_t=T.R_DUMP_T, dump_h=T.R_DUMP_H, dump_cfg=T.R_DUMP_CFG, run_t=T.R_RUN_T)
@@ -140,14 +145,15 @@ def combine(paths):
         cal["ABCD"[adc]] = round(m * NS_PER_BEAT, 1)
         log(f"  {'ABCD'[adc]}: " + " / ".join(f"{x['mean']:+.2f}（σ {x['std']:.2f}・{x['n']}/{x['n_trial']}・(p) で見えた {x['p_seen']}）" for x in v)
             + f" → M = {m:.2f} ビート = **{m * NS_PER_BEAT:.1f} ns**・2 回の差 {d:.2f}（≦ 1）: {'OK' if good else 'NG'}")
-    log(f"timebase.CAL[{SC.PROJ_G22:#011_x}] の M（LPF ありなら (b): adc_to_core_ns = M ＋ LPF の分、pps_det_ns = LPF の分）: {cal}")
+    log(f"timebase.CAL[{SC.PROJ_G24:#011_x}] の M（LPF ありなら (b): adc_to_core_ns = M ＋ LPF の分、pps_det_ns = LPF の分）: {cal}")
     log(f"結果（F-2）: {'通過' if ok else '失敗'}")
     return ok
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--bitfile", default="proj025.bit")
+    p.add_argument("--bitfile", default="proj027.bit")
+    p.add_argument("--raw-core", type=int, default=0, choices=range(4), help="proj027: RAW を取るコア（既定 0。4 コアとも RAW を持つ）")
     p.add_argument("--clkin", default="stock")
     p.add_argument("--ref", type=float, default=10.0)
     p.add_argument("--settle", type=float, default=5.0)
@@ -165,7 +171,7 @@ def main():
             log(f"ERROR: {d} に書けない"); sys.exit(1)
     try:
         ol = open_board(a)
-        cores, tmm, full = open_raw(ol)
+        cores, tmm, full = open_raw(ol, a.raw_core)
         tc = TimeCore(tmm)
         tc.configure(src=a.path, tol=1)
         tb = Timebase(tc, path=a.path)
@@ -200,7 +206,7 @@ def main():
         ok = False
     # リングは rectap が終わりに閉じる（atexit）
     if a.out and summ:
-        json.dump(dict(adc=summ, bitfile=a.bitfile, t=time.time()), open(a.out + ".f2.json", "w"), indent=1)
+        json.dump(dict(adc=summ, bitfile=a.bitfile, raw_core=a.raw_core, t=time.time()), open(a.out + ".f2.json", "w"), indent=1)
         np.savez_compressed(a.out + ".f2.npz", **{f"{k}_{tag}_x": np.array([r["x"] for r in v[i]]) for k, v in raw.items()
                                                  for i, tag in enumerate(("a", "p"))},
                             **{f"{k}_{tag}_meta": np.array([[r["dump_t"], r["stamp"], r["s0"], r["i_e"]] for r in v[i]]) for k, v in raw.items()
