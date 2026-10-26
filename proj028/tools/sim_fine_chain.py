@@ -25,7 +25,7 @@ rng = np.random.default_rng(37)
 NF = 2
 twr, twi = F.tw_prod()
 k1o = F.bitrev(np.arange(F.M), 13)                  # IP の出る順
-inhex = os.path.abspath(os.path.join(od, "fch_in.hex"))
+inhex = os.path.abspath(os.path.join(od, "fch_in_%s.hex" % tag))
 outtxt = os.path.abspath(os.path.join(od, "fch_out_%s.txt" % tag))
 exp = []
 with open(inhex, "w") as f:

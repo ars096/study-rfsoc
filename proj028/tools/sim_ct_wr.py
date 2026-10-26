@@ -34,7 +34,7 @@ PS = 32 * CHS
 MB = (BASE + NP * PS) // 64
 rng = np.random.default_rng(17)
 y = rng.integers(0, 1 << 16, size=(NBLK, 32), dtype=np.int64)
-inhex = os.path.abspath(os.path.join(od, "ctw_in_qb%d.hex" % QB))
+inhex = os.path.abspath(os.path.join(od, "ctw_in_%s.hex" % tag))
 outtxt = os.path.abspath(os.path.join(od, "ctw_out_%s.txt" % tag))
 chk = os.path.abspath(os.path.join(od, "ctw_chk_%s.txt" % tag))
 with open(inhex, "w") as f:

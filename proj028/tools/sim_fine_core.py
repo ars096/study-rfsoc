@@ -42,7 +42,7 @@ for c, k, nt, nb in CH:
         if b == nbeat - 1:
             v |= 1 << 534
         lines.append(v)
-inhex = os.path.abspath(os.path.join(od, "fcore_in.hex"))
+inhex = os.path.abspath(os.path.join(od, "fcore_in_%s.hex" % tag))
 iptxt = os.path.abspath(os.path.join(od, "fcore_ip_%s.txt" % tag))
 rectxt = os.path.abspath(os.path.join(od, "fcore_rec_%s.txt" % tag))
 with open(inhex, "w") as f:
@@ -100,7 +100,7 @@ for c, k, nt, nb, xr, xi in streams:
             acc = P.copy() if acc is None else acc + P
             nact += 1
     s = (14 * k + 7) % 16
-    rec = [(0, (0x028000F5 << 32) | 114688), (0, (k << 32) | c), (0, nact), (0, s), (0, 0), (0, 0), (0, 0), (0, 0)]
+    rec = [(0, (0x028000F5 << 32) | 114688), (0, (k << 32) | c), (0, nact), (0, s), (0, 0), (0, 0), (0, 0), (0, 917504)]
     for i in range(114688):
         j, k1 = i // 8192, i % 8192
         rec.append((1 if i == 114687 else 0, int(acc[(j + s - 7) % 16, k1])))

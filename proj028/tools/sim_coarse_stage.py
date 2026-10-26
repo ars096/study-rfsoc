@@ -45,8 +45,8 @@ sg = np.sqrt(np.mean(yr[30:].astype(float) ** 2 + yi[30:].astype(float) ** 2, ax
 gains = np.clip(np.round(12.0 / sg * 2 ** 16), 1, 2 ** 17 - 1).astype(np.int64)
 gains[CWCH] = gains[(CWCH + 2) % 32]                  # 強い CW の ch は雑音の ch の利得のまま → 飽和する
 qr, qi, clip, _, _ = post(fr, fi, gains)
-inhex = os.path.abspath(os.path.join(od, "cst_in.hex"))
-ghex = os.path.abspath(os.path.join(od, "cst_gain.hex"))
+inhex = os.path.abspath(os.path.join(od, "cst_in_%s.hex" % tag))
+ghex = os.path.abspath(os.path.join(od, "cst_gain_%s.hex" % tag))
 outtxt = os.path.abspath(os.path.join(od, "cst_out_%s.txt" % tag))
 regtxt = os.path.abspath(os.path.join(od, "cst_reg_%s.txt" % tag))
 with open(inhex, "w") as f:

@@ -32,7 +32,7 @@ x = np.round(rng.standard_normal(16 * NB) * 1031).astype(np.int64)
 x[16 * 120: 16 * 130] = lim                            # 満杯の区間（LESSONS: ±最大値を入れる）
 x[16 * 130: 16 * 140] = -lim
 x = np.clip(x, -lim, lim)
-inhex = os.path.abspath(os.path.join(od, "cpfb_in.hex"))
+inhex = os.path.abspath(os.path.join(od, "cpfb_in_%s.hex" % tag))
 outtxt = os.path.abspath(os.path.join(od, "cpfb_out_%s.txt" % tag))
 with open(inhex, "w") as f:
     for b in range(NB):

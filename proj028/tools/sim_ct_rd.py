@@ -30,7 +30,7 @@ rng = np.random.default_rng(23)
 mem = [int(rng.integers(0, 1 << 62)) << 448 | int(rng.integers(0, 1 << 62)) for _ in range(MB)]
 for a in range(MB):                                  # 拍ごとに違う中身（番地を下に埋める）
     mem[a] = (mem[a] & ~0xFFFFFFFF) | a
-inhex = os.path.abspath(os.path.join(od, "ctr_mem.hex"))
+inhex = os.path.abspath(os.path.join(od, "ctr_mem_%s.hex" % tag))
 outtxt = os.path.abspath(os.path.join(od, "ctr_out_%s.txt" % tag))
 with open(inhex, "w") as f:
     for v in mem:

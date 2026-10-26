@@ -5,7 +5,8 @@
 // つないだ順 i = 0..114687（G = k·114688 ＋ i）: j = ⌊i / 8192⌋（0..13）、k1 = i mod 8192、**k2 = (j ＋ s_k − 7) mod 16**、s_k = (14k + 7) mod 16
 //   （bin の巡回 sh_k = s_k·8192 は銀行の入れ替えだけ。M-4・README の F-3）。b = k1 + 8192·k2 を fine_acc の rd_c に
 // 出口: AXI4-Stream 64 bit。頭 8 語 → 114,688 語（fine_acc の 48 bit を u64 に）、最後の語で tlast
-//   w0 = {ID 32 bit, 114688}、w1 = {k（32 bit に）, c}、w2 = 積んだフレームの数、w3 = s_k、w4..w7 = 0
+//   w0 = {ID 32 bit, 114688}、w1 = {k（32 bit に）, c}、w2 = 積んだフレームの数、w3 = s_k、w4..w6 = 0、
+//   w7 = 本体のバイト数 917504（= 114688 × 8。F-5: proj024 の s45_ring がレコードの長さを w7 の下位 32 bit で読む）
 // 番地 → データは RL 拍（fine_acc の 4 段 ＋ 番地のレジスタ 1）。溜め FD 語の空き（溜めの中 ＋ 読み途中）を数えて読む
 // 読み途中（busy）に start が来たら捨てて数える（n_drop、粘着の f_drop）
 // -DRDO_K2_ERR: k2 の式の 7 を 6 にする（陽性対照）
@@ -64,7 +65,8 @@ module fine_rdo #(
     wire [63:0] hw = (hi == 3'd0) ? {ID, 32'd114688} :
                      (hi == 3'd1) ? {27'd0, kk, cc} :
                      (hi == 3'd2) ? {48'd0, nf} :
-                     (hi == 3'd3) ? {60'd0, s} : 64'd0;
+                     (hi == 3'd3) ? {60'd0, s} :
+                     (hi == 3'd7) ? 64'd917504 : 64'd0;
     integer i;
     always @(posedge clk) begin
         if (rst) begin

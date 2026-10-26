@@ -33,7 +33,7 @@ for nf in FR:
     chans.append((xr, xi))
 V, S = F.coef_tables()
 c = F.coef_beat(V, S)
-inhex = os.path.abspath(os.path.join(od, "fpfb_in.hex"))
+inhex = os.path.abspath(os.path.join(od, "fpfb_in_%s.hex" % tag))
 outtxt = os.path.abspath(os.path.join(od, "fpfb_out_%s.txt" % tag))
 nbeat = 0
 with open(inhex, "w") as f:

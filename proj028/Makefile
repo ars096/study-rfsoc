@@ -32,7 +32,7 @@ export BOARD_REPO PART OUTDIR
 
 PYTHON ?= python3
 
-.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 model-m4 estimate sim-cfft32 sim-cpfb sim-cstage sim-ctwr sim-ctrd sim-fpfb sim-fchain sim-facc s1 sim-ddrtg
+.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 model-m4 estimate sim-cfft32 sim-cpfb sim-cstage sim-ctwr sim-ctrd sim-fpfb sim-fchain sim-facc s1 sim-ddrtg f5ooc f5
 
 # S-2: PL DDR4 の帯域と容量を測る .bit（PS ＋ MIG ＋ ddr_tg。この PC の Vivado、1 時間前後）。成果物は build/proj028.bit・.hwh。
 # 成否は make の終了状態でなく build/vivado.log の「TIMING (確定)」「CRITICAL WARNING: n 件」「=== wrote」で読む
@@ -148,3 +148,14 @@ timing-check: build
 
 clean:
 	rm -rf build build-* .Xil *.jou *.log
+
+# F-5a: 細かい側の全体（fine_top ＋ 本物のレーン FFT × 16）を OOC で合成・配置配線（この PC の Vivado、1〜2 時間）。結果は build-f5ooc/f5ooc.txt
+f5ooc:
+	mkdir -p build-f5ooc
+	$(VIVADO) -mode batch -nojournal -log build-f5ooc/vivado.log -source tools/f5_ooc.tcl -tclargs $(JOBS)
+
+# F-5: 2 段分光の全体の .bit（RFDC → 荒い段 → ct_wr → PL DDR4 → ct_rd → 細かい側 → PS のリング。この PC の Vivado、2〜3 時間）。成果物は build-f5/proj028.bit・.hwh。
+# 成否は make の終了状態でなく build-f5/vivado.log の「TIMING (確定)」「CRITICAL WARNING: n 件」「=== wrote」で読む
+f5:
+	mkdir -p build-f5
+	VIVADO_LOG=build-f5/vivado.log $(VIVADO) -mode batch -nojournal -log build-f5/vivado.log -source build_f5.tcl -tclargs $(JOBS)

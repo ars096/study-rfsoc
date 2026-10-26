@@ -25,7 +25,7 @@ lim = (1 << (ZW - 1)) - 1
 z = rng.integers(-lim, lim + 1, size=(NB, 64))
 z[0] = lim                                                   # 満杯の区間（LESSONS: 刺激に ±最大値を入れる）
 z[1] = -lim
-inhex = os.path.abspath(os.path.join(od, "cfft32_in.hex"))
+inhex = os.path.abspath(os.path.join(od, "cfft32_in_%s.hex" % tag))
 outtxt = os.path.abspath(os.path.join(od, "cfft32_out_%s.txt" % tag))
 with open(inhex, "w") as f:
     for row in z:

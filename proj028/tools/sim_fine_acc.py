@@ -23,7 +23,7 @@ os.makedirs(od, exist_ok=True)
 KA, KB = 5, 12
 rng = np.random.default_rng(41)
 k1o = F.bitrev(np.arange(F.M), 13)
-inhex = os.path.abspath(os.path.join(od, "facc_in.hex"))
+inhex = os.path.abspath(os.path.join(od, "facc_in_%s.hex" % tag))   # 変種ごとに分ける（make sim-facc は 3 本を同時に回す。同じ名前だと書きかけを読んで不定になった。F-5a）
 outtxt = os.path.abspath(os.path.join(od, "facc_out_%s.txt" % tag))
 lines = []
 sums = {}
@@ -58,7 +58,7 @@ got = [ln.split() for ln in open(outtxt) if ln.strip()]
 exp = []
 for k, c in ((KA, 7), (KB, 8)):
     s = (14 * k + 7) % 16
-    hdr = [(0x028000F5 << 32) | 114688, (k << 32) | c, 3, s, 0, 0, 0, 0]
+    hdr = [(0x028000F5 << 32) | 114688, (k << 32) | c, 3, s, 0, 0, 0, 917504]
     exp += [(0, w) for w in hdr]
     acc = sums[k]
     for i in range(114688):

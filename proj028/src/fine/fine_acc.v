@@ -5,6 +5,8 @@
 //   記憶は面ごとに 8192 行（番地 = k1）× 768 bit（銀行 k2 が [48·k2 +: 48]）、URAM。1 クロックに 1 行を RMW するだけで銀行の衝突は無い。
 //   面: 積んでいる面（t_plane）は RMW に 2 口、凍った面の口を読み出し（rd_*）に。読み出しは rd_c（b = 0..131071）・rd_plane の 4 クロック後に rd_d
 //   -DACC_FIRST_ERR は g21_acc と同じ陽性対照
+//   F-5a: 加算の後に 1 段（w4）を足した。OOC の配置配線で、URAM の出口（rd2）→ 48 bit の加算 → URAM の連鎖の入口が WNS −0.034 ns だった。
+//   同じ番地の RMW は 1 フレーム（8192 クロック）に 1 回なので、書きが 1 クロック遅れても読み・書きの順は変わらない
 // （以下は g21_acc の本体を写したもの）
 
 `timescale 1ns / 1ps
@@ -56,9 +58,9 @@ module fine_acc #(
     generate
         for (pl = 0; pl < 2; pl = pl + 1) begin : g_pl
             (* ram_style = "ultra" *) reg [16*AW-1:0] mem [0:8191];
-            reg [16*AW-1:0] rd1, rd2, d2, d3, wv;
-            reg [12:0]      a2, a3;
-            reg            rmw2, rmw3, f2, f3;
+            reg [16*AW-1:0] rd1, rd2, d2, d3, wv, w4;
+            reg [12:0]      a2, a3, a4;
+            reg            rmw2, rmw3, rmw4, f2, f3;
             wire           rmw = w1_we && (w1_pl == pl);
             wire [12:0]    ra  = rmw ? w1_a : r_a;
             integer k;
@@ -69,15 +71,14 @@ module fine_acc #(
                 rmw2 <= rmw;    rmw3 <= rmw2;
                 f2 <= w1_first; f3 <= f2;
                 d2 <= w1_d;     d3 <= d2;
-                if (rmw3) begin
-                    for (k = 0; k < 16; k = k + 1)
+                for (k = 0; k < 16; k = k + 1)
 `ifdef ACC_FIRST_ERR
-                        wv[AW*k +: AW] = rd2[AW*k +: AW] + d3[AW*k +: AW];
+                    wv[AW*k +: AW] = rd2[AW*k +: AW] + d3[AW*k +: AW];
 `else
-                        wv[AW*k +: AW] = f3 ? d3[AW*k +: AW] : rd2[AW*k +: AW] + d3[AW*k +: AW];
+                    wv[AW*k +: AW] = f3 ? d3[AW*k +: AW] : rd2[AW*k +: AW] + d3[AW*k +: AW];
 `endif
-                    mem[a3] <= wv;
-                end
+                w4 <= wv; a4 <= a3; rmw4 <= rmw3;
+                if (rmw4) mem[a4] <= w4;
             end
             assign rdo[pl] = rd2;
         end

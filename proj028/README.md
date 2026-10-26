@@ -690,6 +690,67 @@ IP の手前の待ち行列（proj024 の g21_spec と同じ）→ レーン FFT
 - 駆動の道具は、sim の終わりに出かけていた途中のフレームを捨てる形に直した（1 回目の照らしで行数が 8192 の倍数でなく止まった）
 - 陽性対照（`--act-err`: 帳簿の first の bit を act として読む）: レコード 344,058 語が違って落ちる（IP の出口は差 0 のまま＝帳簿だけが違う）○
 
+### F-5 全体の .bit へ（2026-10-26 から）
+
+作りの方針:
+- ブロックデザイン: PS（プリセット）・RFDC（ADC_A の 1 本、4.096 GS/s）・Clocking Wizard（341.33 / 256 MHz）・ギアボックス（proj024 の gb_adc・gb_up・gb_fifo・gb_gate・gb_dn。
+  制御は proj024 の ch 1〜3 と同じ定数: hold 0・adj 0・k = GB_K_RST）→ `coarse_stage` → `ct_wr` →（SmartConnect、256 MHz → MIG の UI クロック）→ MIG ←（同）← `ct_rd` → `fine_top` → `s45_ring`（proj024）→ PS の S_AXI_HP0_FPD
+- `fine_top`（新）: fine_core に AXI4-Lite（ID・CTRL の SRST・SHIFT・FLAGS・N_REC）をつけた包み
+- **fine_rdo のヘッダ w7 = 本体のバイト数 917,504**（s45_ring がレコードの長さを w7 で読む）。F-3 の回帰（`make sim-facc`）は通過、陽性対照 2 本も落ちた。F-4 の sim は回し直し中
+- 時刻（time_core・1PPS）と INTERFACE の共通（core_cmn）は載せない（実験。分光の形を実機で見るのが目的）
+
+#### F-5a 細かい側の全体の OOC（`make f5ooc`: fine_top ＋ 本物のレーン FFT 8192 点 × 16、`-1`・256 MHz、合成 → 配置配線）— 予言（走らせる前に書く）
+
+- DSP ≒ 940（PFB 224 ＋ ひねり・鎖 188 ＋ IP 16 × 33 = 528。proj024 の S-1 の lane8192_rev）
+- BRAM ≒ 288（IP 16 × 13 = 208 ＋ 1 フレームの溜め 8192 × 280 bit = 64 ＋ ひねり係数 11.5 ＋ 係数 4）
+- URAM 66（PFB の履歴 22 ＋ 積分 44）
+- LUT 7〜8 万（IP 16 × 3.8k ≒ 6 万 ＋ 鎖 8k ＋ 残り）
+- 配線の後の WNS > 0（256 MHz）。陽性対照（配線の後に 1.5 ns）は負
+
+**結果（2026-10-26、`build-f5ooc/f5ooc.txt`）**:
+
+| 段 | DSP | LUT | FF | BRAM | URAM | WNS | WHS |
+|---|---|---|---|---|---|---|---|
+| 合成 | 940 | 75,997 | 131,920 | 293.5 | 66 | +1.072 | +0.039 |
+| 配置配線 | 940 | 70,884 | 131,081 | 293.5 | 66 | **−0.034** | +0.011 |
+
+- 資源は予言どおり（DSP 940 ちょうど・BRAM 293.5（予言 288）・URAM 66・LUT 7.1 万）。IP 16 個・出口 64 本・Synth 8-3848 0・CRITICAL WARNING 0。陽性対照（1.5 ns）は −2.44 ns
+- **配線の後の WNS −0.034 ns（外れ）**: 負の 2 本はどちらも fine_acc の RMW（URAM の出口 rd2 → 48 bit の加算（CARRY8 3 段）→ URAM の連鎖の入口）。
+  → **加算の後に 1 段（w4）を足した**。同じ番地の RMW は 1 フレーム（8192 クロック）に 1 回なので、書きが 1 クロック遅れても結果は変わらない。`make sim-facc` は通過（陽性対照 2 本も落ちた）
+- 1 回目は合成の終わり際に Vivado が segfault（Abnormal program termination (11)）。落ちた印のある run だけ回し直す処理を f5_ooc.tcl に足した（2 回目で完走）
+- **sim の道具の競合を見つけた**: `make sim-facc` の 3 本が同じ入力 `facc_in.hex` を同時に書き直し、fine_acc を直した後の 1 回目は本体が不定で落ちた（単独では通過）。
+  ほかの 7 本の道具も同じ形だったので、入力のファイル名を変種ごとに分け、単体の sim と F-4 を全部回し直す（陽性対照が「競合で落ちた」だけでないことを確かめるため）
+
+#### F-5b 全体の .bit（`make f5`、`build_f5.tcl`）— 予言（走らせる前に書く、2026-10-26）
+
+作り: 上の方針どおり。ギアボックスの出口（AXIS）を coarse_stage の素の口に渡す受け口 `src/gb_tap.v`（線だけ、tready = 1）を足した。
+proj024 の gb_adc・gb_gate・s45_ring・rec_arb は `src/common/` に、timing.xdc は `src/board/timing_f5.xdc` に写した（HEAD）。番地は自作のセルを 0xA010_0000 から 4 KiB ずつ（clk_mon・coarse_stage・ct_wr・ct_rd・fine_top・s45_ring）
+
+予言:
+- 資源（F-5a の OOC と、荒い段・corner turn の OOC と、S-1 の MIG を足す）: DSP ≒ 940 ＋ 892 ≒ 1,830（43 %）・BRAM ≒ 288 ＋ 64（ct_wr）＋ MIG 25 ＋ SmartConnect・リング 20 ≒ 400（37 %）・URAM 66（14 %）・LUT ≒ 18〜20 万（35〜40 %）
+- 照合（設定の読み返し・結線・番地・ROM・足）は全部通る。初回は Tcl の誤りで 1〜2 回止まる見込み（新しく書いた部分が多い）
+- タイミング: 荒い段（WNS +0.57 ns の OOC）と SmartConnect の 512 bit の乗り換えが候補。閉じない場合は IMPL の戦略（Performance_Explore）で 1 回
+- CDC: 自作の乗り換えは無い（ギアボックスの FIFO・SmartConnect・clk_mon だけ）
+
+#### F-5c 実機の手順（西村さんがボードの空きを見て回す。ビルドが通ってから）— 予言（走らせる前に書く）
+
+道具: `pynq/f5.py`（`extref.py` は proj024 から写した。`--clkin` を使うときだけ要る）
+
+```bash
+scp build-f5/proj028.bit build-f5/proj028.hwh pynq/f5.py pynq/extref.py xilinx@$B:~/proj028/
+ssh -t xilinx@$B "sudo -i bash -c 'cd /home/xilinx/proj028 && python3 f5.py --gain-only --out f5_gain'"   # 1. 利得だけ
+ssh -t xilinx@$B "sudo -i bash -c 'cd /home/xilinx/proj028 && python3 f5.py --chunks 3 --out f5_run1'"    # 2. 3 チャンク
+```
+
+入力: ADC_A に雑音（運転のレベル −16〜−21 dBFS）か、雑音 ＋ CW（例 1000.1 MHz）。**何もつながないと ADC の雑音が小さすぎ、利得が上限（2^17 − 1）に張り付いて σ が 12 に届かない**（動きは見られる）
+
+予言:
+- clk_mon: 参照 200 MHz・UI 300 MHz・較正済み（S-2 と同じ）。ギアボックスは開始・空振り 0
+- 利得: 3 回で σ = 12.0 ± 0.1 LSB（雑音の入力のとき）。飽和 0
+- 3 チャンクで 96 レコード（≒ 1.2 s）。頭・CRC・尾の違い 0、積んだフレームの数はチャンク 0 が 157・1 以降が 160
+- 見張り: ct_wr の溢れ 0・ct_rd の捨て 0・fine_top の FLAGS 0（PFB の飽和 [7] は入力の強さ次第）・リングの DROP 0
+- CW を入れたら、最大の bin が f / 558.04 Hz に来る（±1 bin）。荒い ch の継ぎ目に段や欠けが見えない（M-4 の模型では平ら）
+
 ## 決めること（西村さんに）
 
 - ~~os と格子~~ → **決定（2026-10-23、西村さん）: os 8/7（M 64、D 56、T_c 27）、M・N_f は 2 のべき乗、dt は 14.336 ms の倍数**（例 71.68 ms = 7 × 10.24 ms）。比べた案: 4/3（DSP 176、dt は 6.144 ms の倍数、DDR 10.9 GB/s）
