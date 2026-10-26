@@ -73,7 +73,9 @@ module fine_core #(
     // ---- 溜め（2^FB_LOG × FW_、既定 2 フレーム）----
     //   F-5c-0（実機）: 1 フレームの溜めでは、満ちている間は入口を止めるので、本物の枠の 8192 クロックで次の 1 フレームを埋め切れず、
     //   本物と空の枠が交互になった（1 チャンク 333 ms > 286.72 ms、7 チャンクに 1 つ ct_rd が捨てた）。2 フレームにして、空の枠で溜めた分を次の枠に回す
-    (* ram_style = "block" *) reg [FW_-1:0] fmem [0:(1 << FB_LOG) - 1];
+    //   F-5d: 1 本の 16384 段の配列にすると、BRAM の後ろに LUT の選択器が論理 8 段でつき、出口のレジスタを足しても閉じなかった（PE −0.026 ns）。
+    //   8192 段の銀行（F-5b で閉じていた形）を 2 つ置き、両方を読んでから、1 段遅らせた銀行の番号で選ぶ（FB_LOG 13 / 14 のみ）
+    localparam integer NB = 1 << (FB_LOG - 13);
     reg [FB_LOG-1:0] f_wa, f_ra;
     reg [FB_LOG:0]   f_n;
     // ---- 枠: 8192 拍ずつ途切れなく回す。枠の頭で 1 フレームそろっていれば本物、そろっていなければ空のフレーム ----
@@ -88,19 +90,22 @@ module fine_core #(
     wire       d_beat = (s_run && s_dum)  || (s_start && !f_full);
     reg        f_v1, d_v1;
     reg [12:0] d_m1;
-    reg [FW_-1:0] f_rd0, f_rdb;
+    reg [FW_-1:0] f_rdb;
+    wire [FW_-1:0] f_rd0 [0:NB-1];
+    wire       bk_w = ((f_wa >> 13) != 0);
+    wire       bk_r = ((f_ra >> 13) != 0);
+    reg        bk_r0;
     (* shreg_extract = "no" *) reg [FW_-1:0] f_rd;
     reg        f_v0, d_v0, f_vb, d_vb;
     reg [12:0] d_m0, d_mb;
     assign f_cnt = f_n;
     always @(posedge clk) begin
-        if (f_we) fmem[f_wa] <= f_wd;
         // F-5b: 溜めの読みは 2 段（BRAM の出口レジスタ）。全体のビルドで溜めの出口 → 帳簿の加算 → inf_q が WNS −0.186 ns だった。
         //   空のフレームの道（d_*）も同じだけ遅らせる（本物と空の合流の関係は変わらない）
         //   F-5d: 溜めを 2 フレーム（縦につないだ BRAM）にしたら、出口 → fine_pfb の遅延線（SRL）が WNS −0.076 ns（PE）。
         //   3 段にし、最後の段は SRL に吸わせない
-        if (f_re) f_rd0 <= fmem[f_ra];
-        f_rdb <= f_rd0;
+        if (f_re) bk_r0 <= bk_r;
+        f_rdb <= f_rd0[bk_r0];
         f_rd  <= f_rdb;
         f_v0 <= f_re && !rst;   f_vb <= f_v0 && !rst;  f_v1 <= f_vb && !rst;
         d_v0 <= d_beat && !rst; d_vb <= d_v0 && !rst;  d_v1 <= d_vb && !rst;
@@ -114,6 +119,16 @@ module fine_core #(
             f_n <= f_n + (f_we ? 1'b1 : 1'b0) - (f_re ? 1'b1 : 1'b0);
         end
     end
+    genvar gb;
+    generate for (gb = 0; gb < NB; gb = gb + 1) begin : g_bank
+        (* ram_style = "block" *) reg [FW_-1:0] fmem [0:8191];
+        reg [FW_-1:0] rd;
+        always @(posedge clk) begin
+            if (f_we && bk_w == gb) fmem[f_wa[12:0]] <= f_wd;
+            if (f_re) rd <= fmem[f_ra[12:0]];
+        end
+        assign f_rd0[gb] = rd;
+    end endgenerate
     wire [255:0] x_d    = f_rd[255:0];
     wire         x_first = f_rd[256];
     wire         x_last  = f_rd[257];
