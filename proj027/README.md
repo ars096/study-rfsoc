@@ -305,6 +305,16 @@ sim の環境: この機械（Vivado サーバ、32 コア）の iverilog（/usr
 - **回し直しの欠け**: 落ちた段が write_bitstream でも合成からやり直す。impl の後ろの段で落ちたときは、reset せずに残っている段から（`launch_runs impl_1 -next_step` か routed.dcp を開いて write_bitstream）回すべき。build.tcl は直していない（直すなら次のビルドの前に）
 - 既定は回し直さない: 閉じた .bit は build-PE/ にあり、余裕も Explore のほうが大きい（+0.032 > +0.008）
 
+**回し直しの直し（2026-10-26、ビルドは回していない）**
+- `build.tcl` の impl_1 の回し直しを、**落ちた段（`CURRENT_STEP`）から後だけを reset する**形にした（`reset_runs impl_1 -from_step <段>` → `launch_runs impl_1 -to_step write_bitstream`）。init_design（link_design）で落ちたとき・synth_1 が落ちたときは、失うものが無いので今までどおり丸ごと reset する。`-from_step` の reset ができなければ丸ごとの reset に逃げずに `exit 1`
+- 完走の判定を PROGRESS から **STATUS が「write_bitstream Complete!」かつ impl_1 に .bit が 1 個**に変えた。`-from_step write_bitstream` の reset の直後は、PROGRESS が 100%（STATUS は「route_design Complete!」）になるため。PROGRESS だけで見ると、.bit が無いのに「完走した」と読む
+- 確かめ方（小さな設計、xczu48dr、scratchpad で。リポジトリには置いていない）: write_bitstream の TCL.PRE で自分に SIGSEGV を送り、ビルド 1 の build/ と同じ印（`Abnormal program termination (11)`、`.vivado.error.rst`、routed.dcp あり、CURRENT_STEP は write_bitstream）を作った。build.tcl から切り出した proc と回し直しの塊をそのまま回すと、`NOTE: impl_1 の write_bitstream で Vivado が落ちた。write_bitstream から後だけを回し直す（1 回目）` → `open_checkpoint top_routed.dcp` → `write_bitstream` だけを回して完走した（routed.dcp は reset の前後で md5 が同じ）
+- 確かめていないこと: write_bitstream 以外の段（place_design・route_design など）で落ちたときの `-from_step`。2G-4 の本番のビルドでも、まだ通していない（次のビルドが初めて）
+
+**知見の候補（LESSONS.md・lessons_all.md には、まだ足さない。2026-10-26、西村さん「まずは README だけで様子を見る」）**
+- 並列の task_worker が segfault すると、親の Vivado は終わらずに待ち続ける。終わりの印が出ないので wait_on_run も止まり、回し直しが働かない（上の s45_core_3）
+- impl の回し直しで `reset_run impl_1` をすると、後ろの段で落ちたときに配線済みの結果を消す。`-from_step` で落ちた段から。その reset の直後は PROGRESS が 100% になるので、完走の判定に PROGRESS を使わない
+
 **2f の結論: 実機に載せるのは build-PE/ の proj027.bit・.hwh**（Performance_Explore、WNS +0.032 ns。sha256 は上）。LUT 64.6 % は目安 65 % の内側。既定の戦略でも配線までは閉じた（+0.008）ので、2G-4 は戦略に依らず閉じる線にいる
 
 ## 決めること（段階 A の終わりまでに並べる）
@@ -368,5 +378,5 @@ g24_coef を 1 個だけ OOC で合成する（part `-1`・3.906 ns・合成だ�
 - [x] 段階 B の 2a〜2e・2e-2（4 コア）・4d-2 の sim（2026-10-23、全部通過・陽性対照は全部落ちた。D_eff 6,145 ビート）
 - [x] g24_coef の注の「LUT」を DSP に直した（2026-10-23、注だけ）
 - [x] 2f の build.tcl を 4 コアに・ビルド（2026-10-23。**build-PE/（Performance_Explore）が閉じた: WNS +0.032 ns・LUT 64.6 %・BRAM 842・URAM 48・DSP 3,312**。既定は配線まで +0.008 で閉じたが write_bitstream の前に Vivado が落ち、回し直しが配線済みを消した）
-- [ ] build.tcl の回し直しを、impl の後ろの段で落ちたときに reset しない形に（次のビルドの前に）
+- [x] build.tcl の回し直しを、落ちた段から後だけを reset する形に（2026-10-26。小さな設計で write_bitstream の落ちを作って確かめた。本番のビルドではまだ）
 - [ ] 3. PS（proj029 を土台にできるかを、3 の予言を書くときに確かめる）

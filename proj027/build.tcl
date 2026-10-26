@@ -1887,21 +1887,42 @@ if {$rm_ng > 0} { puts "ERROR: ROM の中身（hex）を合成が読めていな
 # proj023 4b: synth_1・impl_1 でも Vivado が落ちる（2026-10-15 のビルド 6 回目: impl_1 が始まってすぐ segfault、
 #   Abnormal program termination (11)）。**落ちた印のある run だけ**を 2 回まで回し直す（OOC と同じ方針。印の無い失敗は止める）。
 #   wait_on_run は失敗した run で Tcl のエラーを投げてスクリプトごと止まるので、catch で受ける
+# proj027 2f: impl_1 を回し直すときは、落ちた段（CURRENT_STEP）から後だけを reset する（reset_runs -from_step）。
+#   ビルド 1 の build/ は write_bitstream の前の DRC で落ち、reset_run が丸ごと消したので配線済みの結果（routed.dcp）を失い、
+#   その後の 2 回も link_design から回して落ちた。小さな設計で write_bitstream の頭で SIGSEGV を起こして確かめた
+#   （2026-10-26）: -from_step write_bitstream の後の launch_runs -to_step write_bitstream は open_checkpoint routed.dcp から
+#   write_bitstream だけを回し、routed.dcp は同じ中身のまま。init_design（link_design）で落ちたときは失うものが無いので丸ごと reset する。
+#   **-from_step の reset の直後は PROGRESS が 100% になる**（STATUS は「route_design Complete!」）ので、完走の判定は
+#   PROGRESS でなく STATUS と .bit で見る
+proc impl_done {} {
+    return [expr {[get_property STATUS [get_runs impl_1]] eq "write_bitstream Complete!"
+                  && [llength [glob -nocomplain [file join [ooc_dir impl_1] *.bit]]] == 1}]
+}
 launch_runs impl_1 -to_step write_bitstream -jobs $jobs
 catch {wait_on_run impl_1}
-for {set try 1} {$try <= 2 && [get_property PROGRESS [get_runs impl_1]] ne "100%"} {incr try} {
+for {set try 1} {$try <= 2 && ![impl_done]} {incr try} {
     set redo ""
     foreach n {synth_1 impl_1} {
         if {[ooc_crashed $n]} { set redo $n; break }
     }
     if {$redo eq ""} { break }
-    puts "NOTE: $redo で Vivado が落ちた。回し直す（$try 回目）"
-    reset_run [get_runs $redo]
+    set step [expr {$redo eq "impl_1" ? [get_property CURRENT_STEP [get_runs impl_1]] : ""}]
+    if {$step in {"" init_design}} {
+        puts "NOTE: $redo で Vivado が落ちた（段 [expr {$step eq "" ? "-" : $step}]）。丸ごと回し直す（$try 回目）"
+        reset_run [get_runs $redo]
+    } else {
+        puts "NOTE: impl_1 の $step で Vivado が落ちた。$step から後だけを回し直す（$try 回目）"
+        if {[catch {reset_runs [get_runs impl_1] -from_step $step} msg]} {
+            # 丸ごとの reset に逃げない（それをすると配線済みの結果を消す）
+            puts "ERROR: impl_1 を $step から reset できない: $msg"
+            exit 1
+        }
+    }
     launch_runs impl_1 -to_step write_bitstream -jobs $jobs
     catch {wait_on_run impl_1}
 }
-if {[get_property PROGRESS [get_runs impl_1]] ne "100%"} {
-    puts "ERROR: impl_1 が完走していない。$projdir の run ログを見る"
+if {![impl_done]} {
+    puts "ERROR: impl_1 が完走していない（STATUS [get_property STATUS [get_runs impl_1]]）。$projdir の run ログを見る"
     exit 1
 }
 
