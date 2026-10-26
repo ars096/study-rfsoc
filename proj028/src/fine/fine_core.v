@@ -88,19 +88,23 @@ module fine_core #(
     wire       d_beat = (s_run && s_dum)  || (s_start && !f_full);
     reg        f_v1, d_v1;
     reg [12:0] d_m1;
-    reg [FW_-1:0] f_rd, f_rd0;
-    reg        f_v0, d_v0;
-    reg [12:0] d_m0;
+    reg [FW_-1:0] f_rd0, f_rdb;
+    (* shreg_extract = "no" *) reg [FW_-1:0] f_rd;
+    reg        f_v0, d_v0, f_vb, d_vb;
+    reg [12:0] d_m0, d_mb;
     assign f_cnt = f_n;
     always @(posedge clk) begin
         if (f_we) fmem[f_wa] <= f_wd;
         // F-5b: 溜めの読みは 2 段（BRAM の出口レジスタ）。全体のビルドで溜めの出口 → 帳簿の加算 → inf_q が WNS −0.186 ns だった。
         //   空のフレームの道（d_*）も同じだけ遅らせる（本物と空の合流の関係は変わらない）
+        //   F-5d: 溜めを 2 フレーム（縦につないだ BRAM）にしたら、出口 → fine_pfb の遅延線（SRL）が WNS −0.076 ns（PE）。
+        //   3 段にし、最後の段は SRL に吸わせない
         if (f_re) f_rd0 <= fmem[f_ra];
-        f_rd <= f_rd0;
-        f_v0 <= f_re && !rst;   f_v1 <= f_v0 && !rst;
-        d_v0 <= d_beat && !rst; d_v1 <= d_v0 && !rst;
-        d_m0 <= s_start ? 13'd0 : f_m; d_m1 <= d_m0;
+        f_rdb <= f_rd0;
+        f_rd  <= f_rdb;
+        f_v0 <= f_re && !rst;   f_vb <= f_v0 && !rst;  f_v1 <= f_vb && !rst;
+        d_v0 <= d_beat && !rst; d_vb <= d_v0 && !rst;  d_v1 <= d_vb && !rst;
+        d_m0 <= s_start ? 13'd0 : f_m; d_mb <= d_m0; d_m1 <= d_mb;
         if (rst) begin f_wa <= 0; f_ra <= 0; f_n <= 0; s_run <= 1'b0; s_dum <= 1'b0; f_m <= 13'd0; end
         else begin
             if (f_we) f_wa <= f_wa + 1'b1;
