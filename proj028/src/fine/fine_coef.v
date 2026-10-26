@@ -8,7 +8,7 @@
 //   a = m >> 2（0..2047）、b = 2047 − a、q = m & 3 として:
 //     t 0: 前半の表[a]・f = 16q + p        t 1: 後半の表[a]・f = 16q + p
 //     t 2: 後半の表[b]・f = 63 − 16q − p   t 3: 前半の表[b]・f = 63 − 16q − p
-// 出力: coef = 16 レーン × 4 タップ × 18 bit（レーン p が [72p +: 72]、タップ t が [18t +: 18]）。LAT 5（addr → coef）
+// 出力: coef = 16 レーン × 4 タップ × 18 bit（レーン p が [72p +: 72]、タップ t が [18t +: 18]）。LAT 6（addr → coef。F-5b で 5 → 6: BRAM の出口の後に 1 段）
 // -DCOEF_FRAC_ERR: t 2・3 の端数を折り返さない（陽性対照）
 
 `timescale 1ns / 1ps
@@ -56,11 +56,21 @@ module fine_coef #(
         q2 <= q1; m2 <= m1; v2 <= v1;
     end
 
+    // F-5b: BRAM の外に 1 段（la3 …）。全体のビルドで BRAM の出口 → DSP 16 個（ファンアウト 336、配線 2.6 ns）が WNS −0.258 ns だった。
+    //   max_fanout で複製させる。以後の段の q・m・v も 1 段遅らせる
+    (* max_fanout = 24 *) reg [VW+SW-1:0] la3, lb3, ha3, hb3;
+    reg [1:0]  q2d;
+    reg [12:0] m2d;
+    reg        v2d;
+    always @(posedge clk) begin
+        la3 <= la2; lb3 <= lb2; ha3 <= ha2; hb3 <= hb2;
+        q2d <= q2; m2d <= m2; v2d <= v2;
+    end
     wire [VW+SW-1:0] w2 [0:3];
-    assign w2[0] = la2;
-    assign w2[1] = ha2;
-    assign w2[2] = hb2;
-    assign w2[3] = lb2;
+    assign w2[0] = la3;
+    assign w2[1] = ha3;
+    assign w2[2] = hb3;
+    assign w2[3] = lb3;
 
     reg signed [SW+6:0]   sf3 [0:63];
     reg signed [VW+6:0]   vr3 [0:3];
@@ -73,13 +83,13 @@ module fine_coef #(
         for (p = 0; p < 16; p = p + 1)
             for (t = 0; t < 4; t = t + 1) begin
 `ifdef COEF_FRAC_ERR
-                f = {q2, 4'd0} + p;
+                f = {q2d, 4'd0} + p;
 `else
-                f = (t < 2) ? ({q2, 4'd0} + p) : (6'd63 - {q2, 4'd0} - p);
+                f = (t < 2) ? ({q2d, 4'd0} + p) : (6'd63 - {q2d, 4'd0} - p);
 `endif
                 sf3[4*p + t] <= $signed(w2[t][VW +: SW]) * $signed({1'b0, f});
             end
-        m3 <= m2; v3 <= v2;
+        m3 <= m2d; v3 <= v2d;
     end
 
     reg signed [VW+7:0] s4;

@@ -32,7 +32,7 @@ export BOARD_REPO PART OUTDIR
 
 PYTHON ?= python3
 
-.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 model-m4 estimate sim-cfft32 sim-cpfb sim-cstage sim-ctwr sim-ctrd sim-fpfb sim-fchain sim-facc s1 sim-ddrtg f5ooc f5
+.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 model-m4 estimate sim-cfft32 sim-cpfb sim-cstage sim-ctwr sim-ctrd sim-fpfb sim-fchain sim-facc s1 sim-ddrtg f5ooc f5 f5-pe
 
 # S-2: PL DDR4 の帯域と容量を測る .bit（PS ＋ MIG ＋ ddr_tg。この PC の Vivado、1 時間前後）。成果物は build/proj028.bit・.hwh。
 # 成否は make の終了状態でなく build/vivado.log の「TIMING (確定)」「CRITICAL WARNING: n 件」「=== wrote」で読む
@@ -159,3 +159,8 @@ f5ooc:
 f5:
 	mkdir -p build-f5
 	VIVADO_LOG=build-f5/vivado.log $(VIVADO) -mode batch -nojournal -log build-f5/vivado.log -source build_f5.tcl -tclargs $(JOBS)
+
+# F-5: 同じものを実装の戦略 Performance_Explore で（出力は build-f5-pe/）。f5 と並べて回してよい（JOBS は合わせて 16 以下に）
+f5-pe:
+	mkdir -p build-f5-pe
+	F5_OUT=build-f5-pe F5_IMPL=Performance_Explore VIVADO_LOG=build-f5-pe/vivado.log $(VIVADO) -mode batch -nojournal -log build-f5-pe/vivado.log -source build_f5.tcl -tclargs $(JOBS)

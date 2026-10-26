@@ -19,6 +19,10 @@ set part    xczu48dr-ffvg1517-1-e
 set outdir  ./build-f5
 set jobs    8
 if {[llength $argv] > 0} { set jobs [lindex $argv 0] }
+# 出力先と実装の戦略は環境変数で（F5_OUT・F5_IMPL。Makefile の f5 / f5-pe）。戦略は読み返して確かめる
+if {[info exists ::env(F5_OUT)] && $::env(F5_OUT) ne ""} { set outdir ./$::env(F5_OUT) }
+set impl_req ""
+if {[info exists ::env(F5_IMPL)] && $::env(F5_IMPL) ne ""} { set impl_req $::env(F5_IMPL) }
 set projdir $outdir/vivado
 puts "PART   : $part"
 puts "OUTDIR : $outdir"
@@ -678,6 +682,11 @@ puts "自作のセル: OOC の run $seen 個（期待 9）・Synth 8-3848 $nd �
 if {$seen != 9 || $nd > 0 || $rm > 0} { puts "ERROR: 自作のセルの合成で止める"; exit 1 }
 
 # ------------------------------------------------------------------ 合成〜ビットストリーム
+if {$impl_req ne ""} {
+    if {[catch {set_property strategy $impl_req [get_runs impl_1]} msg]} { puts "ERROR: impl_1 の strategy を $impl_req にできない: $msg"; exit 1 }
+    if {[get_property strategy [get_runs impl_1]] ne $impl_req} { puts "ERROR: impl_1 の strategy が要求と違う"; exit 1 }
+}
+puts "IMPL      : impl_1 の strategy = [get_property strategy [get_runs impl_1]]"
 launch_runs impl_1 -to_step write_bitstream -jobs $jobs
 catch {wait_on_run impl_1}
 for {set try 1} {$try <= 2 && [get_property PROGRESS [get_runs impl_1]] ne "100%"} {incr try} {
@@ -738,7 +747,12 @@ if {[info exists ::env(VIVADO_LOG)] && [file exists $::env(VIVADO_LOG)]} {
 }
 puts "CRITICAL WARNING: $seen 件"
 set u [report_utilization -return_string]
-proc uf {txt label} { if {[regexp -line "^\\|\\s*${label}\\*?\\s*\\|\\s*(\\d+(?:\\.\\d+)?)\\s*\\|\\s*\\d+\\s*\\|\\s*\\d+\\s*\\|\\s*\\d+\\s*\\|\\s*([\\d.]+)" $txt -> n p]} { return "$n（$p %）" }; return "?" }
+# 正規表現は {} で書く（"" の中の [\d.] がコマンドとして評価され、1 回目のビルドはここで止まった）
+proc uf {txt label} {
+    set re {^\|\s*LABEL\*?\s*\|\s*(\d+(?:\.\d+)?)\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*\d+\s*\|\s*([0-9.]+)}
+    if {[regexp -line [string map [list LABEL $label] $re] $txt -> n p]} { return "$n（$p %）" }
+    return "?"
+}
 puts "資源      : DSP [uf $u DSPs]・LUT [uf $u {CLB LUTs}]・FF [uf $u {CLB Registers}]・BRAM [uf $u {Block RAM Tile}]・URAM [uf $u URAM]"
 set wns [get_property STATS.WNS [get_runs impl_1]]
 set whs [get_property STATS.WHS [get_runs impl_1]]

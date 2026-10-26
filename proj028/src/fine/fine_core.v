@@ -84,14 +84,19 @@ module fine_core #(
     wire       d_beat = (s_run && s_dum)  || (s_start && f_n <  14'd8192);
     reg        f_v1, d_v1;
     reg [12:0] d_m1;
-    reg [FW_-1:0] f_rd;
+    reg [FW_-1:0] f_rd, f_rd0;
+    reg        f_v0, d_v0;
+    reg [12:0] d_m0;
     assign f_cnt = f_n;
     always @(posedge clk) begin
         if (f_we) fmem[f_wa] <= f_wd;
-        if (f_re) f_rd <= fmem[f_ra];
-        f_v1 <= f_re && !rst;
-        d_v1 <= d_beat && !rst;
-        d_m1 <= s_start ? 13'd0 : f_m;
+        // F-5b: 溜めの読みは 2 段（BRAM の出口レジスタ）。全体のビルドで溜めの出口 → 帳簿の加算 → inf_q が WNS −0.186 ns だった。
+        //   空のフレームの道（d_*）も同じだけ遅らせる（本物と空の合流の関係は変わらない）
+        if (f_re) f_rd0 <= fmem[f_ra];
+        f_rd <= f_rd0;
+        f_v0 <= f_re && !rst;   f_v1 <= f_v0 && !rst;
+        d_v0 <= d_beat && !rst; d_v1 <= d_v0 && !rst;
+        d_m0 <= s_start ? 13'd0 : f_m; d_m1 <= d_m0;
         if (rst) begin f_wa <= 13'd0; f_ra <= 13'd0; f_n <= 14'd0; s_run <= 1'b0; s_dum <= 1'b0; f_m <= 13'd0; end
         else begin
             if (f_we) f_wa <= f_wa + 13'd1;
@@ -179,7 +184,7 @@ module fine_core #(
         assign yy[30*p +: 30] = {yi[15*p +: 15], yr[15*p +: 15]};
     end endgenerate
     // 空のフレームは PFB の遅れ（PFB_LAT 拍、f_v1 → y_v）だけ遅らせて、待ち行列の入口で合流させる
-    localparam integer PFB_LAT = 10;
+    localparam integer PFB_LAT = 11;   // F-5b: fine_pfb の係数の段を 1 つ足して 10 → 11
     reg [PFB_LAT-1:0] dv_sh;
     reg [12:0]        dm_sh [0:PFB_LAT-1];
     integer di;

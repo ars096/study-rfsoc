@@ -6,7 +6,7 @@
 //   - m（フレームの中のビート）はここで数える。**s_first（ch の流れの最初の拍）で m と「埋まったフレームの数」fr を 0 に戻す**
 //     （ch ごとに履歴を空にする。末尾の 3 フレームで履歴が埋まり、本体のフレームは y_fr = 3）
 //   - y = sat15((Σ_t c·x + 2^11) >>> 12)（端数を 4 bit 残す）。タップ t（0 = いちばん古い）は fr ≧ 3 − t のときだけ（ほかは履歴 0）
-// 段は g21_pfb_core と同じ（入力 → y_v が LAT 7、係数は fine_coef の LAT 5 に合わせて入力を 3 拍遅らせる）
+// 段は g21_pfb_core と同じ（入力 → y_v が LAT 8、係数は fine_coef の LAT 6 に合わせて入力を 4 拍遅らせる。F-5b で係数の段を 1 つ足した）
 // -DNO_CH_RESET: s_first で fr を戻さない（陽性対照: 前の ch の履歴を拾う）
 // valid の段はどれもリセットで 0 にする（F-4 の sim: 段の数がリセットの長さより多く、明けた後に不定の y_v が残って下流の数えを壊した）
 
@@ -34,7 +34,7 @@ module fine_pfb #(
     localparam integer HW = 16 * XW;        // 128（1 成分）
     localparam integer PW = XW + CW;        // 26
     localparam integer AW = PW + 2;         // 28
-    localparam integer DLY = 3;
+    localparam integer DLY = 4;
 
     // ---- m と fr（ch の頭で戻す）----
     reg [12:0] m_cnt;

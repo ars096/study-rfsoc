@@ -44,6 +44,7 @@ module coarse_pfb (
         else if (c != 2'd3) c <= c + 2'd1;
     end
     reg [1:0] c1, c2, c3, c4, c5;
+    reg       c6;
     always @(posedge clk) begin c1 <= c; c2 <= c1; c3 <= c2; c4 <= c3; c5 <= c4; end
     genvar r, k;
     generate for (r = 0; r < 64; r = r + 1) begin : g_r
@@ -72,17 +73,18 @@ module coarse_pfb (
             s2 <= pr[6] + pr[7] + pr[8];
             sa <= s0 + s1 + s2;
         end
-        reg signed [37:0] acc;
+        reg signed [37:0] acc, fsum;
         reg signed [17:0] zr;
         wire signed [37:0] accn = (c5 == 2'd0) ? sa : acc + sa;
-        wire signed [37:0] rnd = (accn + (1 <<< 17)) >>> 18;
+        wire signed [37:0] rnd = (fsum + (1 <<< 17)) >>> 18;
         always @(posedge clk) begin
             acc <= accn;
-            if (c5 == 2'd2) zr <= (rnd > 131071) ? 131071 : (rnd < -131071) ? -131071 : rnd[17:0];
+            if (c5 == 2'd2) fsum <= accn;
+            if (c6) zr <= (rnd > 131071) ? 131071 : (rnd < -131071) ? -131071 : rnd[17:0];
         end
         assign m_z[18*r +: 18] = zr;
     end endgenerate
-    // 遅れ: c = 0 の拍 → xs（+1）→ m1（+2）→ m2（+3）→ s（+4）→ sa（+5）→ acc（c5 = c の 5 拍後に積む）。c5 == 2 で zr、その次の拍に valid
-    always @(posedge clk) m_valid <= !rst && (c5 == 2'd2);
+    // 遅れ: c = 0 の拍 → xs（+1）→ m1（+2）→ m2（+3）→ s（+4）→ sa（+5）→ acc（c5 = c の 5 拍後に積む）。c5 == 2 で fsum、その次の拍（c6）で zr、さらに次の拍に valid
+    always @(posedge clk) begin c6 <= !rst && (c5 == 2'd2); m_valid <= !rst && c6; end
 endmodule
 `default_nettype wire

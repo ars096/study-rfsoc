@@ -40,7 +40,7 @@ module coarse_post #(
     wire rst = ~aresetn;
     // ---- 制御 ----
     reg [17:0] gain [0:31];
-    reg [31:0] nacc;
+    reg [31:0] nacc, nacc_m1;
     wire wr_go = s_axi_awvalid && s_axi_wvalid && !s_axi_bvalid && !rst;
     wire nacc_we = wr_go && (s_axi_awaddr == 12'h004);   // NACC を書くと数えを始め直す
     assign s_axi_awready = wr_go;
@@ -49,13 +49,13 @@ module coarse_post #(
     integer i;
     always @(posedge clk) begin
         if (rst) begin
-            s_axi_bvalid <= 1'b0; nacc <= 32'd0;
+            s_axi_bvalid <= 1'b0; nacc <= 32'd0; nacc_m1 <= 32'hFFFF_FFFF;
             for (i = 0; i < 32; i = i + 1) gain[i] <= 18'd0;
         end else begin
             if (s_axi_bvalid && s_axi_bready) s_axi_bvalid <= 1'b0;
             if (wr_go) begin
                 s_axi_bvalid <= 1'b1;
-                if (s_axi_awaddr == 12'h004) nacc <= s_axi_wdata;
+                if (s_axi_awaddr == 12'h004) begin nacc <= s_axi_wdata; nacc_m1 <= s_axi_wdata - 32'd1; end
                 if (s_axi_awaddr[11:7] == 5'b00010) gain[s_axi_awaddr[6:2]] <= s_axi_wdata[17:0];   // 0x100..0x17C
             end
         end
@@ -70,7 +70,9 @@ module coarse_post #(
     wire [31:0] clip_r [0:31];
     // 区切り: v3 のブロックを数え、NACC 個目で閉じる
     reg [31:0] bcnt, seq;
-    wire close = (nacc != 32'd0) && (bcnt == nacc - 32'd1);
+    reg v4, close4;
+    // F-5b: nacc − 1 はレジスタで持ち、NACC と同じクロックで書く（全体のビルドで bcnt == nacc − 1 → seq が WNS −0.153 ns）
+    wire close = (nacc != 32'd0) && (bcnt == nacc_m1);
     generate for (k = 0; k < 32; k = k + 1) begin : g_k
         localparam integer M2 = (k % 2 == 0) ? (k / 2) : (31 - (k - 1) / 2);
         wire signed [FW-1:0] fr = s_f[2*FW*M2 +: FW];
@@ -99,15 +101,21 @@ module coarse_post #(
         // 2 乗は符号付きで別に（符号なしと混ぜると式全体が符号なしになり、−127 の 2 乗を誤る）
         wire signed [15:0] sq_r = qr * qr;
         wire signed [15:0] sq_i = qi * qi;
-        wire [16:0] pw = {1'b0, sq_r} + {1'b0, sq_i};
-        wire [1:0] nclip = {1'b0, cr} + {1'b0, ci};
+        // F-5b: 2 乗の和を 1 段で受けてから積む（全体のビルドで qr → 2 乗 → 和 → 64 bit の積算が論理 16 段・WNS −0.426 ns だった）。
+        //   区切り（close）と v も 1 段遅らせる（v4・close4）。NACC を書いたクロックの v3 は bcnt と同じく数えない（v4 を落とす）
+        reg [16:0] pw;
+        reg [1:0]  nclip;
+        always @(posedge clk) begin
+            pw    <= {1'b0, sq_r} + {1'b0, sq_i};
+            nclip <= {1'b0, cr} + {1'b0, ci};
+        end
         // 電力と飽和の数え（2 面）
         reg [63:0] pacc, pout;
         reg [31:0] cacc, cout;
         always @(posedge clk) begin
             if (rst || nacc_we) begin pacc <= 64'd0; cacc <= 32'd0; if (rst) begin pout <= 64'd0; cout <= 32'd0; end end
-            else if (v3 && nacc != 32'd0) begin
-                if (close) begin
+            else if (v4 && nacc != 32'd0) begin
+                if (close4) begin
                     pout <= pacc + pw; cout <= cacc + nclip;
                     pacc <= 64'd0; cacc <= 32'd0;
                 end else begin
@@ -120,16 +128,24 @@ module coarse_post #(
         assign clip_r[k] = cout;
     end endgenerate
     always @(posedge clk) begin
+        v4 <= v3 && !rst && !nacc_we; close4 <= close;
+    end
+    always @(posedge clk) begin
         v1 <= s_valid && !rst; v2 <= v1 && !rst; v3 <= v2 && !rst;
         m_valid <= v3 && !rst;
         if (v3) m_y <= m_y_w;
     end
     always @(posedge clk) begin
-        if (rst || nacc_we) begin bcnt <= 32'd0; if (rst) seq <= 32'd0; end
+        if (rst || nacc_we) bcnt <= 32'd0;
         else if (v3 && nacc != 32'd0) begin
-            if (close) begin bcnt <= 32'd0; seq <= seq + 32'd1; end
+            if (close) bcnt <= 32'd0;
             else bcnt <= bcnt + 32'd1;
         end
+    end
+    // SEQ は POW・CLIP の写し（v4・close4）と同じクロックで進める（PS が SEQ を見てから読む）
+    always @(posedge clk) begin
+        if (rst) seq <= 32'd0;
+        else if (v4 && close4 && nacc != 32'd0) seq <= seq + 32'd1;
     end
 
     // ---- 読み出し ----

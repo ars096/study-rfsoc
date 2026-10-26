@@ -204,6 +204,9 @@ module ct_wr #(
         if (re1) for (i = 0; i < 32; i = i + 1) rot[16 * i +: 16] <= rd2[(rk1 + i) & 31];
         re2 <= re1;
     end
+    // 溜めの中身はリセットしない（位置 ft・fh はリセットする）。F-5b: 書きを rst・start の分岐の外に出した
+    //   （全体のビルドで AXI4-Lite の書き → start → 溜め（LUTRAM）の WE、ファンアウト 592 が WNS −0.191 ns だった）
+    always @(posedge clk) if (re2) fq[ft] <= rot;
     always @(posedge clk) begin
         if (rst || start) begin
             full <= 2'b00; rp <= 1'b0; ak <= 6'd0; rk <= 6'd0; rq <= {QBW{1'b0}}; outs <= 4'd0; m_axi_awvalid <= 1'b0;
@@ -217,7 +220,7 @@ module ct_wr #(
             end
             infl <= infl + (can_rd ? 3'd1 : 3'd0) - (re2 ? 3'd1 : 3'd0);
             // 溜め
-            if (re2) begin fq[ft] <= rot; ft <= ft + 2'd1; end
+            if (re2) ft <= ft + 2'd1;
             fn <= fn + (re2 ? 3'd1 : 3'd0) - (w_fire ? 3'd1 : 3'd0);
             if (w_fire) begin fh <= fh + 2'd1; wq <= wq + 1'b1; end
             // AW（先に出してよいのは 8 本まで）
