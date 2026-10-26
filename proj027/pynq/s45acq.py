@@ -24,6 +24,7 @@ proj023 手順 4d: **SAM45-Wide（BIT_KIND 1）の裏 WideBackend**（`--wide`�
 import collections
 import gc
 import os
+import resource
 import time
 import traceback
 
@@ -44,7 +45,7 @@ ADC_NAMES = ("ADC_A", "ADC_B", "ADC_C", "ADC_D")
 NW = 2
 NS_OF_BW = {256: 1, 128: 2, 64: 3, 32: 4, 16: 5, 8: 6}
 FLAGS_OK_MASK = 0x7EF                      # 窓の FLAGS で異常に数えるもの（[4] FFT IP に待たされた は正常。fine.py と同じ）
-VERSION = "proj025-0.1"                 # proj025: 2G-2（--g22、FULL の流れ 2 本）を足した。proj024: 2G-1 の写しの起こし（中身は proj023-0.1 と同じ）。proj023: SAM45-Wide（SLICE の流れ、--wide）。proj019-0.2: SNAP・LMX の出力の強さ
+VERSION = "proj027-0.1"                 # proj027: 2G-4（--g24、FULL の流れ 4 本）を足した。2G-2 の道を形（G2Geom）の表で広げた。proj025: 2G-2（--g22、FULL の流れ 2 本）を足した。proj024: 2G-1 の写しの起こし（中身は proj023-0.1 と同じ）。proj023: SAM45-Wide（SLICE の流れ、--wide）。proj019-0.2: SNAP・LMX の出力の強さ
 
 
 def malloc_tune(mmap_threshold=32 << 20, trim_threshold=1 << 30):
@@ -179,34 +180,57 @@ def g2_if_mhz(c):
     return W_FS_MHZ - np.asarray(c, np.float64) * (G2_DF_HZ / 1e6)
 
 
-def default_settings_g22():
-    return dict(kind="g22", tint=0.04096, cfg=0, fmt="f32", src=[0, 1], shift=[7, 7], wins=[dict() for _ in range(4 * NW)])
+class G2Geom:
+    """proj027 3c: 多コアの 2G の形（2G-2・2G-4）。G22Backend・FakeG22Backend・Acq はこの表を読む（2G-2 の値は上の G2_* と同じ）。
+    窓 j = 2·コア ＋ s（FULL は s 0）。raws はコアごとの RAW の流れの本数（2G-2 はコア 0 だけ、2G-4 は 4 コアとも = F-5）"""
+
+    def __init__(self, name, kind, bit_kind, ncore, nch, frame, raws, ds=1):
+        self.name, self.kind, self.bit_kind, self.ncore, self.nch, self.frame, self.raws, self.ds = name, kind, bit_kind, ncore, nch, frame, list(raws), ds
+        self.pl_nacc = BASE_BEATS // frame             # PL のダンプ = BASE 10.24 ms
+        self.df_hz = W_FS_MHZ * 1e6 / (2 * nch)        # fs / N
+        self.win = [c * NW for c in range(ncore)]
+        self.keys = [f"{'ABCD'[c]}0" for c in range(ncore)]
+
+    def if_mhz(self, c):
+        """FULL の ch c の IF（ナイキストゾーン 2）"""
+        return W_FS_MHZ - np.asarray(c, np.float64) * (self.df_hz / 1e6)
 
 
-def check_g22(st):
+G2_GEOM = G2Geom("2G-2", "g22", 10, G2_NCORE, G2_NCH, G2_FRAME, raws=[1, 0], ds=G2_DS_BEATS)
+# proj027: 2G-4（BIT_KIND 3、FULL の流れ 4 本 = コア 0〜3 の s 0、32768 ch・FRAME 4096・PL_NACC 640）。D_S は 4d-2 の sim（D_eff 6,145 = 1 ＋ 1.5·4096）
+G4_GEOM = G2Geom("2G-4", "g24", 3, 4, 32768, 4096, raws=[1, 1, 1, 1], ds=1)
+G2_GEOMS = {g.kind: g for g in (G2_GEOM, G4_GEOM)}
+
+
+def default_settings_g22(g=G2_GEOM):
+    return dict(kind=g.kind, tint=0.04096, cfg=0, fmt="f32", src=list(range(g.ncore)), shift=[7] * g.ncore, wins=[dict() for _ in range(4 * NW)])
+
+
+def check_g22(st, g=G2_GEOM):
     src, sh = st.get("src"), st.get("shift")
-    if not isinstance(src, list) or len(src) != G2_NCORE or any(x not in range(4) for x in src):
+    if not isinstance(src, list) or len(src) != g.ncore or any(x not in range(4) for x in src):
         raise ValueError(f"src {src}（コアごとに A〜D = 0〜3）")
-    if not isinstance(sh, list) or len(sh) != G2_NCORE or any(x not in range(16) for x in sh):
+    if not isinstance(sh, list) or len(sh) != g.ncore or any(x not in range(16) for x in sh):
         raise ValueError(f"shift {sh}（コアごとに 0..15）")
 
 
-def g22_cfgs(st):
-    """START の設定（窓 8 本の枠。A0・B0 = コア 0・1 の FULL、残りは空）。送る i ↔ ch c = G2_NCH − 1 − i（IF の昇順）"""
+def g22_cfgs(st, g=G2_GEOM):
+    """START の設定（窓 8 本の枠。A0・B0（2G-4 は C0・D0 も）= コア 0・1（〜3）の FULL、残りは空）。送る i ↔ ch c = nch − 1 − i（IF の昇順）"""
     n_sum = check_tint(st["tint"])
     out = [dict(kind="none", active=False, bundle=0, n_sum=1, pl_nacc=0, nacc=0, ns=0, g=0, shift=0) for _ in range(4 * NW)]
-    for c, j in enumerate(G2_WIN):
-        out[j] = dict(kind="full", core=c, src=st["src"][c], shift=st["shift"][c], active=True, nacc=n_sum * G2_PL_NACC, n_sum=n_sum,
-                      pl_nacc=G2_PL_NACC, bundle=1, g=0, ns=0, nch=G2_NCH, frame=G2_FRAME, ds=G2_DS_BEATS,
-                      if_mhz=float(g2_if_mhz(G2_NCH - 1 - 2047)), df_hz=G2_DF_HZ)
+    for c, j in enumerate(g.win):
+        out[j] = dict(kind="full", core=c, src=st["src"][c], shift=st["shift"][c], active=True, nacc=n_sum * g.pl_nacc, n_sum=n_sum,
+                      pl_nacc=g.pl_nacc, bundle=1, g=0, ns=0, nch=g.nch, frame=g.frame, ds=g.ds,
+                      if_mhz=float(g.if_mhz(g.nch - 1 - 2047)), df_hz=g.df_hz)
     return out
 
 
 def g22_tp_slots(src):
-    """TP の欄（ADC）の割り付け {(コア, s): 欄}。s 0 = FULL の TP（SRC の ADC）、0xFF = コアの TP（コアの ADC = c）。
-    同じ ADC の 2 本を 1 つの欄に混ぜない: コア 0 の FULL → src0、コア 1 の FULL → src1（空いていれば）、コア c のコアの TP → c（空いていれば）"""
+    """TP の欄（ADC）の割り付け {(コア, s): 欄}。s 0 = FULL の TP（SRC の ADC）、0xFF = コアの TP（コアの ADC = c）。コアの数は len(src)。
+    同じ ADC の 2 本を 1 つの欄に混ぜない: コア c の FULL → src[c]（空いていれば。コアの順に）、その後にコア c のコアの TP → c（空いていれば）"""
     out, used = {}, set()
-    for key, slot in [((c, 0), src[c]) for c in range(G2_NCORE)] + [((c, 0xFF), c) for c in range(G2_NCORE)]:
+    nc = len(src)
+    for key, slot in [((c, 0), src[c]) for c in range(nc)] + [((c, 0xFF), c) for c in range(nc)]:
         if slot not in used:
             out[key] = slot
             used.add(slot)
@@ -284,7 +308,8 @@ class Bundler:
             dropped = self._close("欠け")
         bad = int(m["n"]) != self.pl_nacc
         if self.cur is None:
-            self.cur = dict(jb=jb, ms=[mi], acc=np.array(spec, dtype=np.uint64), m=dict(m), sat=int(m["sat"]),
+            acc = spec if (self.n_sum == 1 and not isinstance(spec, np.ndarray)) else np.array(spec, dtype=np.uint64)   # proj029 2: LazyRec は写さない
+            self.cur = dict(jb=jb, ms=[mi], acc=acc, m=dict(m), sat=int(m["sat"]),
                             flags=int(m["flags"]), h=int(m["h"]), n=int(m["n"]), bad="N" if bad else None)
         else:
             c = self.cur
@@ -449,6 +474,30 @@ class HwBackend:
         self.ring_crc = 0
         self.stall_at = getattr(opts, "posctl_ring_stall", 0.0)
         self.n_pump = 0
+        self.lazy_wins = set()                     # proj029 2: SPEC を写さずに渡す窓（--fast-ring・n_sum 1 の FULL。START で決める）
+        self.n_mat = 0                             # proj029 2: 周の終わりに写した LazyRec の数（使い切れなかった分）
+
+    def release(self):
+        """proj029 2: 周の終わり。列に残った LazyRec（その周で使い切れなかった分）を写して CRC を照らし、リングの R を進める。
+        **R を進めた後にリングの上を指すものを残さない**（PL が上書きしてよい場所になる）"""
+        rg = self.ring
+        if rg is None or not rg.hold:
+            return
+        for d in self.q:
+            if not any(not isinstance(x[2], np.ndarray) for x in d):
+                continue
+            keep = []
+            for seq, hw, pay in d:
+                if not isinstance(pay, np.ndarray):
+                    pay, ok = pay.materialize()
+                    self.n_mat += 1
+                    if not ok:
+                        self.ring_crc += 1
+                        continue
+                keep.append((seq, hw, pay))
+            d.clear()
+            d.extend(keep)
+        rg.release()
 
     def open(self):
         import spectrometer as S
@@ -526,6 +575,7 @@ class HwBackend:
         self.ring.read()
         for d in self.q:
             d.clear()
+        self.ring.release()                        # proj029 2: 列を空にしたので、写していないレコードも残っていない
 
     def pump(self):
         """1 周の頭に 1 回: リングを [R, W) まで読み、SPEC は窓ごとの列へ、TP は TpStream へ"""
@@ -556,7 +606,7 @@ class HwBackend:
         if self.ring is None:
             return None
         r = self.ring.regs()
-        return dict(w=r["w"], r=r["r"], drop=r["drop"], rec=r["rec"], peak=r["peak"], err=r["err"], crc=self.ring_crc,
+        return dict(w=r["w"], r=r["r"], drop=r["drop"], rec=r["rec"], peak=r["peak"], err=r["err"], crc=self.ring_crc, mat=self.n_mat,
                     tp_rec_lost=sum(t.rec_lost for t in getattr(self, "tps", [])))
 
     def close(self):
@@ -898,6 +948,9 @@ class FakeBackend:
     def pump(self):
         return 0
 
+    def release(self):
+        pass
+
     def snap(self, adc, n, nacc, timeout=5.0):
         """偽物: 3000.25 MHz（第 2 ナイキストで 1095.75 MHz に見える）の正弦波 ＋ ガウス雑音、16 bit の上位 14 bit"""
         rng = np.random.default_rng(adc)
@@ -1220,11 +1273,13 @@ class G21Backend(HwBackend):
         """リングを [R, W) まで読み、SPEC は窓 A0 の列へ、TP は FULL の TP（s 0）とコアの TP（s 0xFF）をそれぞれの欄へ"""
         self.n_pump += 1
         t0 = time.perf_counter()
-        recs = self.ring.read()
-        t1 = time.perf_counter()
         c0 = self.core.adc
+        lazy = ((lambda core, s, ty: ty == TYPE_SPEC and core == c0 and s == 0)       # proj029 2: 窓 A0 の SPEC を写さずに
+                if 0 in self.lazy_wins and self.running else None)
+        recs = self.ring.read(lazy)
+        t1 = time.perf_counter()
         for core, s, seq, hw, pay, crc_ok, tail_ok in recs:
-            if not (crc_ok and tail_ok):
+            if crc_ok is False or not tail_ok:     # crc_ok None = LazyRec（PL の CRC は記録のときに C で照らす）
                 self.ring_crc += 1
                 continue
             if core != c0:
@@ -1426,7 +1481,9 @@ class FakeG21Backend(FakeBackend):
 # ================================================================ proj025: 2G-2（FULL の流れ 2 本、65536 ch × 2）
 class G22Backend(HwBackend):
     """2G-2（BIT_KIND 10）の裏。コア 0（ADC_A）・コア 1（ADC_B）の FULL の流れ（どちらも s 0、SRC で 4 ADC から選ぶ）を窓 A0・B0 に置く（残りの 6 窓は空）。
-    G21Backend をコア 2 個に広げたもの。TP の欄は g22_tp_slots（同じ ADC の 2 本を混ぜない）。SNAP はコア 0 の RAW の流れ（s 1）。コア 1 は RAW を持たない（E-5）"""
+    G21Backend をコア 2 個に広げたもの。TP の欄は g22_tp_slots（同じ ADC の 2 本を混ぜない）。SNAP はコア 0 の RAW の流れ（s 1）。コア 1 は RAW を持たない（E-5）。
+    proj027: 形（コアの数・NCH・FRAME・RAW の本数）は self.G から読む（G24Backend は G だけを替えた子）"""
+    G = G2_GEOM
 
     def open(self):
         import spectrometer as S
@@ -1444,9 +1501,9 @@ class G22Backend(HwBackend):
             raise RuntimeError("RFDC に xrfdc のドライバが当たっていない")
         S.check_tiles(self.ol.rfdc, 2)
         time.sleep(self.o.settle)
-        self.cores, tmm = SC.discover(self.ol, bit_kind=SC.BIT_KIND_G22, ncore=G2_NCORE, bit_rev_min=1)
-        if [c.adc for c in self.cores] != list(range(G2_NCORE)):
-            raise RuntimeError(f"コアの CORE_PORT が {[c.adc for c in self.cores]}（期待 [0, 1] = ADC_A・ADC_B）")
+        self.cores, tmm = SC.discover(self.ol, bit_kind=self.G.bit_kind, ncore=self.G.ncore, bit_rev_min=1)
+        if [c.adc for c in self.cores] != list(range(self.G.ncore)):
+            raise RuntimeError(f"コアの CORE_PORT が {[c.adc for c in self.cores]}（期待 {list(range(self.G.ncore))}）")
         self.tc = TB.TimeCore(tmm)
         self.wms = [c.m for c in self.cores]
         self.fsts = []
@@ -1454,15 +1511,16 @@ class G22Backend(HwBackend):
             fs = c.full()
             if [x.s for x in fs] != [0]:
                 raise RuntimeError(f"{c.name} の FULL の流れが s = 0 の 1 本でない（{[x.s for x in fs]}）")
-            for a, want in ((SC.S_NCH, G2_NCH), (SC.S_FRAME_BEATS, G2_FRAME)):
+            for a, want in ((SC.S_NCH, self.G.nch), (SC.S_FRAME_BEATS, self.G.frame)):
                 if fs[0].rd(a) != want:
                     raise RuntimeError(f"{c.name} の FULL の流れの {a:#x} が {fs[0].rd(a)}（期待 {want}）")
             prm = int(c.m.read(W.A_BASE + S.R_TP_PARAM)) & 0xFFFFFFFF
             if prm != S.TP_PARAM_EXPECT:
                 raise RuntimeError(f"{c.name} の TP_PARAM {prm:08x}（期待 {S.TP_PARAM_EXPECT:08x}）")
             self.fsts.append(fs[0])
-        if [len(c.raw()) for c in self.cores] != [1, 0] or self.cores[1].nstream != 1:
-            raise RuntimeError(f"RAW の流れがコア 0 だけに 1 本でない（{[len(c.raw()) for c in self.cores]}・コア 1 の NSTREAM {self.cores[1].nstream}）")
+        nraw = [len(c.raw()) for c in self.cores]
+        if nraw != self.G.raws or any(c.nstream != 1 + r for c, r in zip(self.cores, self.G.raws)):
+            raise RuntimeError(f"RAW の流れの本数が {nraw}・NSTREAM {[c.nstream for c in self.cores]}（期待 {self.G.raws}・{[1 + r for r in self.G.raws]}）")
         self.wins = list(self.fsts)
         self.ftps = [_WinTp(c.m, f.base) for c, f in zip(self.cores, self.fsts)]   # FULL の TP（流れのブロックの 0x100〜）
         self.tc.configure(src=self.o.path, tol=1)
@@ -1470,7 +1528,7 @@ class G22Backend(HwBackend):
         self.TpStream = make_tp_reader(S)
         c0 = self.cores[0]
         self.ids = dict(win="/".join(f"{f.rd(SC.S_SID):08x}" for f in self.fsts), adc=f"{c0.if_id:08x}", time=f"{self.tc.rd(0x00):08x}",
-                        proj=f"{c0.proj:08x}", kind="g22", lmx_vco="7864.32", lmx_pwr="31")
+                        proj=f"{c0.proj:08x}", kind=self.G.kind, lmx_vco="7864.32", lmx_pwr="31")
         self.clock = Clock(None, {})
         self._open_ring()
         self.ids["read"] = "ring"
@@ -1488,29 +1546,32 @@ class G22Backend(HwBackend):
             raise RuntimeError("ol.s45_ring_0 が無い")
         self.ring = PR.Ring(rip.mmio, ring_mib_of(self.o, G_RING_MIB) << 20)
         self.ring.enable(True)
-        self.jmap = {(c.adc, 0): j for c, j in zip(self.cores, G2_WIN)}
+        self.jmap = {(c.adc, 0): j for c, j in zip(self.cores, self.G.win)}
         self.amap = {}
         self.q = [collections.deque() for _ in range(4 * NW)]
         self.raws = self.cores[0].raw()
-        self.full = SC.snap_stream(self.cores)     # SNAP の流れ = コア 0 の RAW（s 1）
+        self.full = self.raws[0]                   # SNAP の流れ = コア 0 の RAW（s 1）。proj027: 2G-4 は 4 コアとも RAW があり snap_stream（1 本の前提）が使えないので直に
         if self.full.kind != SC.KIND_RAW or self.full.s != 1:
             raise RuntimeError(f"RAW の流れが s 1 に無い（{self.full.name}）")
         self.fkey = (self.cores[0].adc, self.full.s)
-        self.log(f"リング: BASE {self.ring.base:#x} / SIZE {self.ring.size}（2G-2: FULL 2 本・512 KiB のレコード × 2）")
+        self.log(f"リング: BASE {self.ring.base:#x} / SIZE {self.ring.size}（{self.G.name}: FULL {self.G.ncore} 本・{self.G.nch * 8 >> 10} KiB のレコード × {self.G.ncore}）")
 
     def poll_win(self, j):
-        if j not in G2_WIN:
+        if j not in self.G.win:
             return None
         return super().poll_win(j)
 
     def pump(self):
-        """リングを [R, W) まで読み、SPEC は窓 A0・B0 の列へ、TP は (コア, s) の欄へ（tp_slot）"""
+        """リングを [R, W) まで読み、SPEC は窓 A0・B0（2G-4 は〜D0）の列へ、TP は (コア, s) の欄へ（tp_slot）"""
         self.n_pump += 1
         t0 = time.perf_counter()
-        recs = self.ring.read()
+        lw, jm = self.lazy_wins, self.jmap
+        lazy = ((lambda core, s, ty: ty == TYPE_SPEC and jm.get((core, s)) in lw)    # proj029 2: その窓の SPEC を写さずに
+                if lw and self.running else None)
+        recs = self.ring.read(lazy)
         t1 = time.perf_counter()
         for core, s, seq, hw, pay, crc_ok, tail_ok in recs:
-            if not (crc_ok and tail_ok):
+            if crc_ok is False or not tail_ok:     # crc_ok None = LazyRec（PL の CRC は記録のときに C で照らす）
                 self.ring_crc += 1
                 continue
             ty = int(hw[0]) >> 40 & 0xFF
@@ -1560,13 +1621,13 @@ class G22Backend(HwBackend):
         if not self.clock.ok and not force:
             raise RuntimeError("時刻を答えられない（錨が無い・PPS が来ていない）。ANCHOR か force=1")
         self.disarm()
-        check_g22(st)
+        check_g22(st, self.G)
         self.tint_beats = check_tint(st["tint"]) * BASE_BEATS
         for c in self.cores:
             if c.base_beats != BASE_BEATS:
                 raise RuntimeError(f"{c.name} の BASE_BEATS {c.base_beats}（{BASE_BEATS} を期待）")
-        self.cfgs = g22_cfgs(st)
-        cfs = [self.cfgs[j] for j in G2_WIN]
+        self.cfgs = g22_cfgs(st, self.G)
+        cfs = [self.cfgs[j] for j in self.G.win]
         for f, cf in zip(self.fsts, cfs):
             f.wr(SC.S_CTRL, 1 << 1)                # STOP
             f.wr(SC.S_REC_CTRL, 0)
@@ -1581,7 +1642,7 @@ class G22Backend(HwBackend):
             got = f.rd(SC.S_SRC)
             if got != (0x8000_0000 | cf["src"]):
                 raise RuntimeError(f"{c.name}: WRST の後の SRC {got:#010x}（書いた {cf['src']}。期待 {0x8000_0000 | cf['src']:#010x}）")
-            if f.rd(SC.S_NCH) != G2_NCH or f.rd(SC.S_FRAME_BEATS) != G2_FRAME:
+            if f.rd(SC.S_NCH) != self.G.nch or f.rd(SC.S_FRAME_BEATS) != self.G.frame:
                 raise RuntimeError(f"{c.name}: NCH {f.rd(SC.S_NCH)}・FRAME_BEATS {f.rd(SC.S_FRAME_BEATS)}")
         self.slots = g22_tp_slots([cf["src"] for cf in cfs])
         for i, (c, f, cf) in enumerate(zip(self.cores, self.fsts, cfs)):
@@ -1605,7 +1666,7 @@ class G22Backend(HwBackend):
 
     def begin(self):
         S, T, W, SC = self.S, self.T, self.W, self.SC
-        cfs = [self.cfgs[j] for j in G2_WIN]
+        cfs = [self.cfgs[j] for j in self.G.win]
         runts, f0s = [], []
         for f, cf in zip(self.fsts, cfs):
             rd64 = lambda a, f=f: f.rd(a) | (f.rd(a + 4) << 32)
@@ -1613,13 +1674,13 @@ class G22Backend(HwBackend):
             if f.rd(SC.S_RUN_SHIFT) != cf["shift"]:
                 raise RuntimeError(f"RUN_SHIFT {f.rd(SC.S_RUN_SHIFT)}（書いた値 {cf['shift']}）")
             f0s.append(rd64(SC.S_RUN_F0))
-        runts += [T.tp_run_t(self.cores[i].m) for i in range(G2_NCORE) if (i, 0xFF) in self.slots]
+        runts += [T.tp_run_t(self.cores[i].m) for i in range(self.G.ncore) if (i, 0xFF) in self.slots]
         bad = [i for i, t in enumerate(runts) if t != self.sa + 1]
         if len(set(f0s)) != 1:
-            raise RuntimeError(f"2 本の RUN_F0 が揃っていない {f0s}（同じ格子で RUN に入っていない）")
+            raise RuntimeError(f"{len(f0s)} 本の RUN_F0 が揃っていない {f0s}（同じ格子で RUN に入っていない）")
         run_f0 = f0s[0]
         self.seq = [0] * (4 * NW)
-        for f, j in zip(self.fsts, G2_WIN):
+        for f, j in zip(self.fsts, self.G.win):
             self.seq[j] = f.rd(SC.S_SEQ)
         self.tps = [_EmptyTp() for _ in range(4)]
         self.anch = [None] * 4
@@ -1628,8 +1689,8 @@ class G22Backend(HwBackend):
             if s == 0:
                 ftp = self.ftps[i]
                 ftf0 = ftp.rd(S.R_TP_F0_LO) | (ftp.rd(S.R_TP_F0_HI) << 32)
-                if ftf0 != run_f0 * (G2_FRAME // 512):
-                    raise RuntimeError(f"コア {i} の FULL の TP の F0 {ftf0}（FULL の RUN_F0 {run_f0} × 16 = {run_f0 * 16} を期待）")
+                if ftf0 != run_f0 * (self.G.frame // 512):
+                    raise RuntimeError(f"コア {i} の FULL の TP の F0 {ftf0}（FULL の RUN_F0 {run_f0} × {self.G.frame // 512} = {run_f0 * (self.G.frame // 512)} を期待）")
                 self.tps[slot] = self.TpStream(ftp, TP_N, ftf0)
                 self.tp_kind[slot] = "full"
             else:
@@ -1647,7 +1708,7 @@ class G22Backend(HwBackend):
 
     def tp_time(self, i, f):
         if self.tp_kind.get(i) == "full":
-            return f * 512 - G2_DS_BEATS             # 小フレーム f の頭（K_F 0）。FULL のデータは DUMP_T より 1 ビート前
+            return f * 512 - self.G.ds             # 小フレーム f の頭（K_F 0）。FULL のデータは DUMP_T より 1 ビート前
         return super().tp_time(i, f)
 
     def snap(self, adc, n, nacc, timeout=5.0):
@@ -1683,23 +1744,31 @@ class G22Backend(HwBackend):
         return out
 
 
+class G24Backend(G22Backend):
+    """proj027: 2G-4（BIT_KIND 3）の裏。コア 0〜3（ADC_A〜D）の FULL の流れ（どれも s 0、SRC で 4 ADC から選ぶ）を窓 A0・B0・C0・D0 に置く。
+    G22Backend と形だけが違う（4 コアとも RAW 1 本 = NSTREAM 2。SNAP はコア 0 の RAW）"""
+    G = G4_GEOM
+
+
 class FakeG22Backend(FakeBackend):
-    """PL なしの 2G-2（偽物は束ねない: ダンプ = tint。2 窓の中身の形・鍵・IF の軸・DUMP_T の進み 8192·nacc・TP の欄の割り付けを受け側で確かめる）"""
+    """PL なしの 2G-2（偽物は束ねない: ダンプ = tint。2 窓の中身の形・鍵・IF の軸・DUMP_T の進み 8192·nacc・TP の欄の割り付けを受け側で確かめる）。
+    proj027: 形は self.G から（FakeG24Backend は G だけを替えた子）"""
+    G = G2_GEOM
 
     def open(self):
         super().open()
         rng = np.random.default_rng(3)
         self.base = [None] * (4 * NW)
-        for j in G2_WIN:
-            self.base[j] = rng.integers(1 << 40, 1 << 41, G2_NCH, dtype=np.uint64)
-        self.bit_kind = 10
+        for j in self.G.win:
+            self.base[j] = rng.integers(1 << 40, 1 << 41, self.G.nch, dtype=np.uint64)
+        self.bit_kind = self.G.bit_kind
 
     def start(self, st, at_beat, force):
         if not self.clock.ok and not force:
             raise RuntimeError("時刻を答えられない（錨が無い・PPS が来ていない）。ANCHOR か force=1")
-        check_g22(st)
-        self.cfgs = g22_cfgs(st)
-        for j in G2_WIN:
+        check_g22(st, self.G)
+        self.cfgs = g22_cfgs(st, self.G)
+        for j in self.G.win:
             cf = self.cfgs[j]
             cf.update(bundle=0, n_sum=1, pl_nacc=cf["nacc"])
         self.cfg = st["cfg"]
@@ -1716,7 +1785,7 @@ class FakeG22Backend(FakeBackend):
         return r
 
     def poll_win(self, j):
-        if j not in G2_WIN:
+        if j not in self.G.win:
             return None
         return super().poll_win(j)
 
@@ -1724,6 +1793,11 @@ class FakeG22Backend(FakeBackend):
         if i not in self.tp_use:
             return self.tps[i]
         return super().poll_tp(i)
+
+
+class FakeG24Backend(FakeG22Backend):
+    """proj027: PL なしの 2G-4（4 窓 A0〜D0・32768 ch・DUMP_T の進み 4096·nacc）"""
+    G = G4_GEOM
 
 
 # ================================================================ 取得の本体
@@ -1735,9 +1809,11 @@ class Acq:
         self.wide = bool(getattr(opts, "wide", False))               # proj023: SAM45-Wide（SLICE の流れ）
         self.g21 = bool(getattr(opts, "g21", False))                 # proj024: 2G-1（FULL の流れ 1 本）
         self.g22 = bool(getattr(opts, "g22", False))                 # proj025: 2G-2（FULL の流れ 2 本）
-        if self.wide + self.g21 + self.g22 > 1:
-            raise SystemExit("--wide・--g21・--g22 は同時に使えない")
-        self.st = (default_settings_g22() if self.g22 else default_settings_g21() if self.g21 else
+        self.g24 = bool(getattr(opts, "g24", False))                 # proj027: 2G-4（FULL の流れ 4 本）
+        if self.wide + self.g21 + self.g22 + self.g24 > 1:
+            raise SystemExit("--wide・--g21・--g22・--g24 は同時に使えない")
+        self.g2 = G4_GEOM if self.g24 else G2_GEOM if self.g22 else None   # proj027: 多コアの 2G の形（2G-2・2G-4 は同じ道）
+        self.st = (default_settings_g22(self.g2) if self.g2 else default_settings_g21() if self.g21 else
                    default_settings_wide() if self.wide else default_settings())
         self.state = self.IDLE
         self.seq = 0
@@ -1747,12 +1823,21 @@ class Acq:
         self.posctl = dict(corrupt=opts.posctl_corrupt, gap=opts.posctl_gap)
         self.proto = int(getattr(opts, "proto", P.VERSION))          # proj021 2-3c: 送る版（1 = 今までの v1）
         self.f32_trunc = bool(getattr(opts, "posctl_f32_trunc", False))
+        self.fast = None                                            # proj029 1: --fast で SPEC の記録（FULL）の中身と CRC を C で（s45fast）
+        if getattr(opts, "fast", False):
+            import s45fast
+            self.fast = s45fast
+        self.fast_ring = bool(getattr(opts, "fast_ring", False))   # proj029 2: --fast-ring で SPEC のレコードを写さずにリングの上から（n_sum 1 の FULL）
+        if self.fast_ring and self.fast is None:
+            raise SystemExit("--fast-ring は --fast と一緒に")
         self.hist = np.zeros(1001, np.int64)      # 1 周の時間（0.1 ms 刻み、100 ms で頭打ち）
         self.cal = getattr(opts, "tp_cal", None)    # TP の dBm の較正（s45cal、specd が起動時に読む）。bit の ID は open の後で照らす
         self.cal_msg = "較正ファイルが無い" if self.cal is None else "未確認"
         self.tp_last = [None] * 4                  # ADC ごとの直近の TP（σ_x²、最後に書き出した記録の平均）
         self.tpj = [TpJump(phase=250 * i) for i in range(4)]    # proj021 B2: TP の跳ねの見張り（tpjump.py。START で初めから。B2b: σ の計算し直しを ADC ごとにずらす）
         self.tpj_on = not getattr(opts, "no_tp_jump", False)   # --no-tp-jump: 見張りを止める（1 周の重さの比べ）
+        self.t_put = 0.0                            # proj029 1c: その周の put の時間の和
+        self.f_put = 0                              # proj029 1d: その周の put の中のページフォルト
         self._reset_counters()
 
     def log(self, *a):
@@ -1791,6 +1876,15 @@ class Acq:
         if d["pending"] is not None:
             if rtype == P.T_EVENT or self.ring.cap - self.ring.used() >= self.ring.cap // 4:
                 self._flush_drop()                    # EVENT（小さく、START・STOP を落としたくない）は空きがあれば割り込む
+        t_put0 = time.perf_counter()               # proj029 1c: 窓の記録の内訳（put）
+        f_put0 = resource.getrusage(resource.RUSAGE_SELF).ru_minflt    # proj029 1d: put の中のページフォルト
+        try:
+            self._put1(rtype, payload_parts, crc, d)
+        finally:
+            self.t_put += time.perf_counter() - t_put0
+            self.f_put += resource.getrusage(resource.RUSAGE_SELF).ru_minflt - f_put0
+
+    def _put1(self, rtype, payload_parts, crc, d):
         seq = self._next_seq()
         if self.posctl["gap"] and seq % self.posctl["gap"] == 0:
             return                                    # 陽性対照: 番号だけ進めて黙って捨てる（受け側の「説明のない欠け」が数えるはず）
@@ -1837,12 +1931,12 @@ class Acq:
                     return dict(ok=False, code="STATE", msg=f"{self.state} の間は SET できない（STOP の後に）")
                 st = self.st
                 new = dict(tint=st["tint"], cfg=st["cfg"], fmt=st.get("fmt", "f32"), wins=[dict(w) for w in st["wins"]])
-                if self.g22:
-                    new.update(kind="g22", src=list(st["src"]), shift=list(st["shift"]))
+                if self.g2 is not None:
+                    new.update(kind=self.g2.kind, src=list(st["src"]), shift=list(st["shift"]))
                     for k, v in cmd["kv"].items():
                         self._set1_g22(new, k, v)
                     check_tint(new["tint"])
-                    check_g22(new)
+                    check_g22(new, self.g2)
                     self.st = new
                     return dict(ok=True)
                 if self.g21:
@@ -1924,23 +2018,25 @@ class Acq:
 
     def _set1_g22(self, new, k, v):
         """proj025: tint・fmt・cfg と、A0.src・B0.src（コア 0・1 の FULL の入力の ADC: A〜D か 0〜3。次の WRST で効く。2 コアに同じ ADC も可 = E-4）・
-        A0.shift・B0.shift（RUN で効く）・all.shift・shift（両方）。src だけ（窓なし）と、流れの無い窓（A1・C0 など）は ERR"""
+        A0.shift・B0.shift（RUN で効く）・all.shift・shift（両方）。src だけ（窓なし）と、流れの無い窓（A1・C0 など）は ERR。
+        proj027: 2G-4 は A0〜D0（コア 0〜3）。窓の鍵とコアの数は self.g2 から"""
+        g = self.g2
         if k in ("tint", "fmt", "cfg"):
             return self._set1(new, k, v)
         name, _, field = k.partition(".")
         nu = name.upper()
+        keys = "・".join(f"{w}.src・{w}.shift" for w in g.keys)
         if not field:
             if nu == "SHIFT":
-                cs, field = list(range(G2_NCORE)), "shift"
+                cs, field = list(range(g.ncore)), "shift"
             else:
-                raise ValueError(f"知らない設定 {k}（2G-2 は A0.src・B0.src・A0.shift・B0.shift・all.shift・shift。src は窓を付ける）")
+                raise ValueError(f"知らない設定 {k}（{g.name} は {keys}・all.shift・shift。src は窓を付ける）")
         elif nu == "ALL" and field == "shift":
-            cs = list(range(G2_NCORE))
-        elif nu in ("A0", "B0"):
-            cs = ["A0", "B0"].index(nu)
-            cs = [cs]
+            cs = list(range(g.ncore))
+        elif nu in g.keys:
+            cs = [g.keys.index(nu)]
         else:
-            raise ValueError(f"知らない設定 {k}（2G-2 の流れは A0・B0 の 2 本）")
+            raise ValueError(f"知らない設定 {k}（{g.name} の流れは {'・'.join(g.keys)} の {g.ncore} 本）")
         if field == "src":
             u = str(v).upper()
             if u in ("A", "B", "C", "D"):
@@ -2056,6 +2152,9 @@ class Acq:
         self.start_at = sa
         self.active = [bool(cf.get("active", True)) for cf in self.be.cfgs]
         self.bund = [Bundler(cf["n_sum"], cf["pl_nacc"]) if cf.get("bundle") else None for cf in self.be.cfgs]
+        if hasattr(self.be, "lazy_wins"):          # proj029 2: --fast-ring の窓（n_sum 1 の FULL だけ。n_sum ≧ 2 は今までの道で足す）
+            self.be.lazy_wins = {j for j, (cf, b) in enumerate(zip(self.be.cfgs, self.bund))
+                                 if self.fast_ring and b is not None and b.n_sum == 1 and cf.get("kind") == "full"}
         self.ndump_target = int(cmd.get("n") or 0)
         utc = self.be.clock.utc_ns(sa)
         self.event(dict(ev="START", start_at=sa, utc_ns=utc, n=self.ndump_target, forced=self.forced, version=VERSION,
@@ -2218,8 +2317,49 @@ class Acq:
         utc = self.be.clock.utc_ns(m["t"], None, src)
         if utc:
             utc -= ((cf.get("ds", G_DS_BEATS) + 3 * cf.get("frame", G_FRAME) // 2) * 125) // 32
-        raw = np.ascontiguousarray(np.asarray(spec, np.uint64)[::-1])
         fm = self.st.get("fmt", "f32")
+        if not isinstance(spec, np.ndarray) and hasattr(spec, "crc_exp"):
+            # proj029 2: PL のリングの上のレコード（LazyRec）。PL の CRC の照らし・逆順・丸め・出口の CRC を C で（写さない）
+            F = self.fast
+            first = True
+            for f in (("u64", "f32") if fm == "both" else (fm,)):
+                code = P.FMT_RAW if f == "u64" else P.FMT_F32
+                hd = P.SPEC2_H.pack(j // NW, j % NW, src, 1, 0, cf["shift"], code, int(getattr(self.be, "bit_kind", 11)),
+                                    spec.n, int(cf["n_sum"]), m["cfg"], m["k"], cf["nacc"], m["sat"], m["flags"], h, 0, 0,
+                                    m["t"], utc, P.BASE_NS, cf["if_mhz"], cf["df_hz"])
+                pc = F.PC_TRUNC if (self.f32_trunc and f == "f32") else 0
+                if first:
+                    data, crc, crc_pl = F.ring_spec(spec, hd, f, posctl=pc)
+                    if crc_pl != spec.crc_exp:     # 今までの道（Ring.read で捨てる）と同じく、記録を出さずに数える
+                        self.be.ring_crc += 1
+                        self.n_miss[j] += 1
+                        if self.be.ring_crc <= 5:
+                            self.log(f"{win_key(j)}: PL のレコードの CRC が合わない（seq {m['seq']}）。記録を出さない")
+                        return
+                    first = False
+                else:
+                    v = spec.view()
+                    data, crc = F.spec_u64(v, hd) if f == "u64" else F.spec_f32(v, hd, posctl=pc)
+                self._put(P.T_SPEC, [hd, data], crc)
+            self.h_or |= int(m["h"]); self.fl_or |= int(m["flags"]); self.sat += int(m["sat"])
+            return
+        if self.fast is not None:
+            # proj029 1: 逆順・float32 への丸め・CRC を C の 1 回のなめで（出す bytes は下の Python の道と同じ。test_s45fast.py で照合）
+            F = self.fast
+            spec = np.asarray(spec, np.uint64)
+            for f in (("u64", "f32") if fm == "both" else (fm,)):
+                code = P.FMT_RAW if f == "u64" else P.FMT_F32
+                hd = P.SPEC2_H.pack(j // NW, j % NW, src, 1, 0, cf["shift"], code, int(getattr(self.be, "bit_kind", 11)),
+                                    spec.size, int(cf["n_sum"]), m["cfg"], m["k"], cf["nacc"], m["sat"], m["flags"], h, 0, 0,
+                                    m["t"], utc, P.BASE_NS, cf["if_mhz"], cf["df_hz"])
+                if f == "u64":
+                    data, crc = F.spec_u64(spec, hd)
+                else:
+                    data, crc = F.spec_f32(spec, hd, posctl=F.PC_TRUNC if self.f32_trunc else 0)
+                self._put(P.T_SPEC, [hd, data], crc)
+            self.h_or |= int(m["h"]); self.fl_or |= int(m["flags"]); self.sat += int(m["sat"])
+            return
+        raw = np.ascontiguousarray(np.asarray(spec, np.uint64)[::-1])
         for f in (("u64", "f32") if fm == "both" else (fm,)):
             if f == "u64":
                 data, code = raw, P.FMT_RAW
@@ -2282,13 +2422,19 @@ class Acq:
 
     def _loop_once(self):
         ts = time.perf_counter()
+        f_loop0 = resource.getrusage(resource.RUSAGE_SELF).ru_minflt    # proj029 1d: この周のページフォルト
         be = self.be
         nrec = be.pump()                           # proj021 2-3a: リングを 1 回読んで振り分ける（axi・偽物では何もしない）
         t_p = time.perf_counter()
         n_spec = 0                                 # proj025 4c: この周で書いた SPEC の記録（束）の数
+        t_poll = t_bund = t_rec = 0.0              # proj029 1c: 窓の記録の内訳（poll_win・束ね・記録（put を含む）。put は self.t_put）
+        self.t_put = 0.0
+        self.f_put = 0
         for j in range(4 * NW):
             for _ in range(64):                    # 溜まったぶんを全部（リングでは止まりの後に何個も来る）
+                ta = time.perf_counter()
                 r = be.poll_win(j)
+                t_poll += time.perf_counter() - ta
                 if r is None:
                     break
                 m, spec, miss = r
@@ -2296,7 +2442,9 @@ class Acq:
                 self.pl_dumps[j] += 1
                 bu = self.bund[j]
                 if bu is not None:                 # proj021 2-3b: 束ねる（INTERFACE 5.1）
+                    ta = time.perf_counter()
                     got, dropped = bu.add(m, spec)
+                    t_bund += time.perf_counter() - ta
                     if dropped is not None:
                         self._bdrop(j, dropped)
                     if got is None:
@@ -2306,9 +2454,14 @@ class Acq:
                     self.kgap[j] += 1
                 self.last_k[j] = m["k"]
                 self.n_dump[j] += 1
+                ta = time.perf_counter()
                 self._spec_record(j, m, spec)
+                t_rec += time.perf_counter() - ta
                 n_spec += 1
+        be.release()                               # proj029 2: 使い切れなかった LazyRec を写してから R を進める
         t_w = time.perf_counter()
+        t_wput = self.t_put                        # 窓の記録の中の put（TP の put は数えない）
+        f_wput = self.f_put
         for i in range(4):
             be.poll_tp(i)
             self._flush_tp(i)
@@ -2329,7 +2482,9 @@ class Acq:
                 self.n_loop_log += 1
             lp = getattr(be, "last_pump", (0.0, 0.0))
             self.log(f"1 周が {dt * 1e3:.1f} ms（周 {self.n_loop}・リングのレコード {nrec}・SPEC の記録 {n_spec}）: リングの読み {lp[0] * 1e3:.1f}・振り分け {lp[1] * 1e3:.1f}・"
-                     f"窓の記録 {(t_w - t_p) * 1e3:.1f}・TP {(t_t - t_w) * 1e3:.1f}・時刻の確かめ {(t_c - t_t) * 1e3:.1f} ms")
+                     f"窓の記録 {(t_w - t_p) * 1e3:.1f}・TP {(t_t - t_w) * 1e3:.1f}・時刻の確かめ {(t_c - t_t) * 1e3:.1f} ms"
+                     f"（窓の記録の内訳: poll {t_poll * 1e3:.2f}・束ね {t_bund * 1e3:.2f}・記録 {(t_rec - t_wput) * 1e3:.2f}・put {t_wput * 1e3:.2f} ms）"
+                     f"（フォルト: 周 {resource.getrusage(resource.RUSAGE_SELF).ru_minflt - f_loop0}・put {f_wput}）")
         self.n_loop += 1
         if self.ndump_target and self._dumps_min() >= self.ndump_target:
             self._stop("n に達した")
@@ -2337,7 +2492,9 @@ class Acq:
     # ---- 本体
     def run(self):
         self._rt()
-        if self.g22:
+        if self.g24:
+            self.be = (FakeG24Backend if self.o.fake else G24Backend)(self.o, self.log)
+        elif self.g22:
             self.be = (FakeG22Backend if self.o.fake else G22Backend)(self.o, self.log)
         elif self.g21:
             self.be = (FakeG21Backend if self.o.fake else G21Backend)(self.o, self.log)
@@ -2358,8 +2515,15 @@ class Acq:
             else:
                 self.log(f"TP の較正: {self.cal.get('_file')}（" + "・".join(
                     f"{a} K {c['k_db']:+.2f}{' 暫定' if c.get('provisional') else ''}" for a, c in sorted(self.cal["adc"].items())) + "）")
-        if (self.g21 or self.g22) and not getattr(self.o, "no_malloc_tune", False):
+        if (self.g21 or self.g2) and not getattr(self.o, "no_malloc_tune", False):
             self.log(malloc_tune()[1])               # proj024 3d: 2G-1 の 1 MiB の配列（Fine・Wide の道は今までどおり）
+        if getattr(self.o, "prefault", False):        # proj029 1d: 溜まりのページを先に触る（運転の最初の ≒ 5 秒のページフォルトを起動に寄せる）
+            t0 = time.perf_counter()
+            n = self.ring.prefault(write=True)
+            self.log(f"溜まりのページを先に触った: {n} ページ・{time.perf_counter() - t0:.2f} 秒")
+        if self.fast is not None:
+            self.log(f"SPEC の記録（FULL）は C（s45fast、CRC {'命令' if self.fast.HW_CRC else '表'}）"
+                     + ("・リングの SPEC のレコードは写さずに（--fast-ring、n_sum 1）" if self.fast_ring else ""))
         gc.collect(); gc.freeze(); gc.disable()
         self.conn.send(dict(ok=True, ids=self.be.ids, version=VERSION))
         self.log(f"準備完了（{'偽物' if self.o.fake else '実機'}、ID {self.be.ids}）")

@@ -317,6 +317,63 @@ sim の環境: この機械（Vivado サーバ、32 コア）の iverilog（/usr
 
 **2f の結論: 実機に載せるのは build-PE/ の proj027.bit・.hwh**（Performance_Explore、WNS +0.032 ns。sha256 は上）。LUT 64.6 % は目安 65 % の内側。既定の戦略でも配線までは閉じた（+0.008）ので、2G-4 は戦略に依らず閉じる線にいる
 
+### 3. PS — 土台と手順（2026-10-26 から）
+
+**土台: proj029 の閉じた commit 5164a02 の `pynq/`**（＋ `tools/loopsum.py`）。proj029 の `pynq/` は proj025-m0 の `pynq/`（B0 で写したもの、proj025 の今の版とも同じ）に C の道を足したもので、
+差は全部「足した」側（変えた既存の行は 5 ファイルで計 16 行）・新しい選択（`--fast`・`--fast-ring`・`--prefault`）は既定で切ってある・C の道（`s45fast.c`・`plring.LazyRec`）は ch の数にも 2G-2 にも縛られていない。
+→ 2G-4 の tint 10.24 ms も、この道で回せる見込みがある（下の 3d）。**写したのは追跡しているファイルだけ**（`git show 5164a02:proj029/…` で 11 個: 足した 6・差し替えた 5。`libs45fast.so` は `.gitignore`）。
+**写した後に `test_fake.sh all` は 23 試験とも通過**（2026-10-26、この PC）
+
+作り（2G-2 の道を広げる。2G-1・2G-2 の道は残し、test_fake の g21・g22 の 7 試験が回し直しの対照になる）:
+- 2G-2 の定数を **形（geometry）の表**にまとめ、`G2_*` の名前は 2G-2 の値のまま残す（`test_ring_fast.py` が使う）。2G-4 の形: **コア 4・NCH 32768・FRAME 4096・PL_NACC 640・D_S +1**（4d-2 の sim の D_eff 6,145 = 1 ＋ 1.5·4096）・
+  **df 62.5 kHz**（fs / N、N = 65536）・IF(c) = 4096 − c·df・**if_mhz = 送る 2047 番目 = ch 30720 = 2176 MHz**・窓 **A0・B0・C0・D0 = コア 0〜3 の FULL（s 0）**（窓 j = 2·コア ＋ s を崩さない）
+- `G22Backend`・`FakeG22Backend` の中の `G2_*` を形の表から読む形にし、**`G24Backend`・`FakeG24Backend` は形だけを替えた子**。違いは RAW: 2G-2 は「コア 0 だけに 1 本・コア 1 は NSTREAM 1」、
+  **2G-4 は 4 コアとも RAW 1 本（NSTREAM 2）**（F-5）。SNAP は 2G-2 と同じく**コア 0 の RAW**（SRC で ADC を選ぶ。コア 1〜3 の RAW は PS からはまだ使わない）。`snap_stream` は「RAW が 1 本」を前提にしているので、G24 はコア 0 の RAW を直に持つ
+- 3a. ID: `s45core` に PROJ_G24 0x0027_0100・BIT_KIND_G24 3（BIT_KINDS[3] = 2G-4 は既に在る）・`TimeCore.IDS` に **0x0203_0102**・
+  CAL[0x0027_0100] は **pps_det_ns 71.5（LPF の分、形 (b)）・adc_to_core_ns None**（未較正。4 の F-2 で測る。proj025 の値は別の Overlay なので持ち込まない）・VERSION proj027-0.1
+- 3c. specd に `--g24`（bits.json の `"kind": "g24"`）。SET のキーは tint・fmt・cfg・**A0〜D0.src・A0〜D0.shift**・all.shift・shift。既定 src = (A, B, C, D)・shift 7。4 コアに同じ ADC も許す（4 の陽性対照）。
+  `src` だけ（窓なし）・A1・E0 など流れの無い窓は ERR。START・begin は 2G-2 と同じ手順を 4 本に（**4 本の RUN_F0 が同じ**・FULL の TP の F0 = RUN_F0 × 8・RUN_T = START_AT ＋ 1）
+- **TP の欄の割り付け**は 2G-2 の決めを 4 コアに: FULL の TP（コア c → 欄 src[c]、空いていれば）を先に、次にコアの TP（コア c → 欄 c、空いていれば）。既定（A, B, C, D）は FULL の TP 4 本だけ、
+  (B, B, B, B) は コア 0 の FULL → B ＋ コア 0・2・3 のコアの TP → A・C・D の 4 本
+- SPEC v2: kind 1・ns 0・nch 32768・中身は IF の昇順（送る i ↔ ch c = 32767 − i）・nacc = n_sum × 640・bit_kind 3。DUMP_T の進みは nacc × 4096（tint 40.96 ms で 2560 × 4096 = 10,485,760、2G-2 と同じ）。
+  受け側の溜め: keep_of(500, 32768) = **62 ダンプ / 窓**
+
+3a・3c の予言（PL なし。test_fake に g24・g24same・g24p・g24cli を足す。2026-10-26、走らせる前に書く）:
+- 既存の 23 試験（g21・g22 の 7 本を含む）は全部 OK（判定に使う数は土台と同じ）
+- **g24**: `SET tint=0.04096 A0.src=D B0.src=C C0.src=B D0.src=A shift=7 fmt=both`・START n=30 → **SPEC 240**（30 × 4 窓 × u64・f32）・組 120・不一致 0・照合 通過。f32 の記録 120 個は
+  窓ごとに 30 個（A0〜D0 = core 0〜3・src 3・2・1・0）、どれも kind 1・s 0・ns 0・nch 32768・nacc 2560・df 62500・bit_kind 3、軸は 4096 − (32767 − i)·df と一致し昇順。
+  **TP の ADC は ABCD**（FULL の 4 本）。同じ試験の中の陽性対照: 1 ch ずらした軸（32768 − i）で 120 個全部 NG
+- **g24same**: `A0.src=B B0.src=B C0.src=B D0.src=B` → 4 窓とも src 1・**TP の ADC は ABCD**（B は FULL 1 本、A・C・D はコアの TP）
+- **g24p**（陽性対照）: `A0.src=E`・`shift=16`・`A1.shift=7`・`E0.src=A`・`src=B`（窓なし）・`tint=0.03` は全部 ERR。`A0.src=B D0.src=B C0.shift=3` は通り、GET に A0.src=B・D0.src=B・C0.shift=3・D0.shift=7
+- **g24cli**: s45client で acquire(80)（62 の上限が効く数）→ A0〜D0 とも手元 **62 ダンプ × 32768 ch**・軸 32768 個の昇順・説明のない欠け 0・CRC 0（4 窓を数えて時間切れにならない）
+- **C の道でも同じ**: `FAST="--fast --fast-ring --prefault" bash test_fake.sh all` が 27 試験とも通過。`test_s45fast.py` に n 32768 を足して照合が OK（今の 22 項目は 65536・131072）、`test_ring_fast.py` 24 項目は OK（2G-2 の形のまま）
+- `_spec_record_full` を時計の偽物で直に呼ぶと、2G-4 の cfg で utc の引き算は **D_eff 6,145 ビート = 24,003.9 ns**（2G-2 は 48,003.9）
+- 外れるとしたら: 2G-2 の 65536・8192・2 を直に書いている所の取り残し（G22Backend の中の `[1, 0]`・`check_tiles`・ログの文言、FakeG22 の `bit_kind = 10`）。偽物は束ねないので nacc の欄は cfg の値そのまま
+- 実機の道（G24Backend）は PL が無いと通らない。4 で初めて走る（ここでは import と、偽物と共有する関数の試験だけ）
+
+**3a・3c 結果（2026-10-26）: 全部 OK・予言は全部当たり**（この PC。`test_fake.sh all` は 23 ＋ 4 = 27 試験を、今の道と `FAST="--fast --fast-ring --prefault"` の両方で）
+| 試験 | 結果 |
+|---|---|
+| 3a の import | BIT_KINDS[3] = 2G-4・PROJ_G24 0x0027_0100・BIT_KIND_G24 3・IDS に 0x0203_0102・CAL[0x0027_0100] は pps_det_ns 71.5・adc_to_core_ns None・VERSION proj027-0.1。形: PL_NACC 640・df 62500・if_mhz 2176.0・鍵 A0〜D0 |
+| g24 | SPEC 240・組 120・不一致 0・照合 通過。f32 の 120 個は窓ごとに 30（A0〜D0 = core 0〜3・src 3・2・1・0）、どれも kind 1・s 0・ns 0・nch 32768・nacc 2560・df 62500・bit_kind 3、軸は 4096 − (32767 − i)·df と一致し昇順。**TP の ADC は ABCD**。GET に A0.src=D・D0.src=A・D0.shift=7 |
+| g24 の中の陽性対照 | 1 ch ずらした軸（32768 − i）では 120 個全部が NG |
+| g24same | 4 窓とも src 1（20 × 4）・**TP の ADC は ABCD**（B は FULL、A・C・D はコアの TP） |
+| g24p（陽性対照） | A0.src=E・shift=16・A1.shift・E0.src・src（窓なし）・tint=0.03 の 6 個とも ERR。A0.src=B D0.src=B C0.shift=3 は通り、GET に D0.shift=7 |
+| g24cli | acquire(80) で A0〜D0 とも手元 62 ダンプ × 32768 ch・軸 32768 個の昇順・説明のない欠け 0・CRC 0 |
+| 既存の 23 試験（g21・g22 の 7 本を含む） | 両方の道で全部 OK（判定に使う数は土台と同じ。2G-2 の道を形の表に広げた後も g22 の 4 本が通った） |
+| C の道 | `test_s45fast.py` は n 32768 を足して 34 項目とも OK（NG 0）、`test_ring_fast.py` 24 項目 OK。FAST の回の specd のログに「SPEC の記録（FULL）は C」。**偽物はリングを通らないので `--fast-ring` は働いていない**（実機だけ） |
+
+- utc の引き算: `_spec_record_full` を遅れ 0 の時計で直に呼んで、2G-4 の cfg で **24,003 ns**（予言 24,003.9 の整数への切り捨て。式は `(D_S ＋ 1.5·L)·125 // 32`）・bit_kind 3・nch 32768・nacc 640・if_mhz 2176・df 62500。2G-2 の cfg で 48,003 ns（土台と同じ）
+- 予言の「外れるとしたら」に書いた取り残しは、全部を形の表に移した（G22Backend・FakeG22Backend の中に `G2_*` は残っていない。`check_tiles(…, 2)` はナイキストゾーンで、bit に依らない）
+- 足したもの: `s45acq.py` に `G2Geom`（G2_GEOM・G4_GEOM）・**G24Backend・FakeG24Backend**（G だけを替えた子）、`check_g22`・`g22_cfgs` は形を引数に（既定は 2G-2）・`g22_tp_slots` はコアの数を len(src) から・
+  RAW の照合はコアごとの本数と NSTREAM を形から・SNAP の流れはコア 0 の RAW を直に（`snap_stream` を使わない）・Acq に `g24`・`g2`（形）・`_set1_g22` の鍵を形から。
+  `specd.py` に `--g24`・`"kind": "g24"`・GET の A0〜D0、`s45core.py` に PROJ_G24・BIT_KIND_G24、`timebase.py` に IDS・CAL、`test_fake.sh` に g24・g24same・g24p・g24cli、`test_s45fast.py` に n 32768
+- **実機の道（G24Backend）はまだ一度も走っていない**。4 で最初に確かめること: discover の CORE_PORT [0, 1, 2, 3]・4 コアとも NSTREAM 2（RAW 1 本）・4 本の WRST の後の SRC = 0x8000_000s・
+  **4 本の RUN_F0 が同じ**・FULL の TP の F0 = RUN_F0 × 8・RUN_T = START_AT ＋ 1・ch → IF = 4096 − c·df（SG の CW で、4 窓とも）・D_S = +1（F-2 の RAW と並べて）・1 BASE の時間（下の 3d）
+
+3d の見込み（tint 10.24 ms、4 の実機で測る。予言は 4 の前に書き直す）: 1 BASE に SPEC の記録が 4 本 × 32768 ch = 2G-2 の 2 本 × 65536 ch と同じ ch の数・同じバイト数（1 MiB）。
+C の道（`--fast --fast-ring --prefault`）で 2G-2 は 6.2 ms（61 %）。2G-4 は記録の本数が倍なので、1 本ごとに掛かる分（put 0.21・poll 0.1 ms ほど）が ≒ 0.6 ms 増え、**≒ 6.8 ms（66 %）**の見込み
+
 ## 決めること（段階 A の終わりまでに並べる）
 
 - ~~PFB を残すか~~ → **残す**（2026-10-23、西村さん。PFB を外しても LUT は 1 % ほどしか減らず、目安 65 % は切れない（proj024 S-1: なし 64〜67 %・あり 65〜68 %）。LUT の余裕はコアの残り（Wide の束ね・切り出しの分が 2G-4 では要らない）で詰める）
@@ -379,4 +436,5 @@ g24_coef を 1 個だけ OOC で合成する（part `-1`・3.906 ns・合成だ�
 - [x] g24_coef の注の「LUT」を DSP に直した（2026-10-23、注だけ）
 - [x] 2f の build.tcl を 4 コアに・ビルド（2026-10-23。**build-PE/（Performance_Explore）が閉じた: WNS +0.032 ns・LUT 64.6 %・BRAM 842・URAM 48・DSP 3,312**。既定は配線まで +0.008 で閉じたが write_bitstream の前に Vivado が落ち、回し直しが配線済みを消した）
 - [x] build.tcl の回し直しを、落ちた段から後だけを reset する形に（2026-10-26。小さな設計で write_bitstream の落ちを作って確かめた。本番のビルドではまだ）
-- [ ] 3. PS（proj029 を土台にできるかを、3 の予言を書くときに確かめる）
+- [x] 3. PS（2026-10-26。**土台は proj029 の 5164a02**（C の道を含む）。2G-2 の道を形の表に広げ、G24Backend・FakeG24Backend は形だけを替えた子。test_fake 27 試験が今の道・C の道とも全部通過、予言は全部当たり。実機の道は 4 で初めて走る）
+- [ ] 4. 実機（4a 立ち上げ・4b ch → IF・4c 30 分・4d F-2・D_eff、4 コアに同じ ADC の陽性対照）。予言は走らせる前に書く

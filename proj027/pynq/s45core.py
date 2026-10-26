@@ -36,6 +36,8 @@ PROJ_G21 = 0x0024_0100           # proj024: 2G-1（BIT_KIND 11・BIT_REV 1、コ
 BIT_KIND_G21 = 11
 PROJ_G22 = 0x0025_0100           # proj025: 2G-2（BIT_KIND 10・BIT_REV 1、コア 2 個。コア 1 は RAW を持たず NSTREAM 1）。discover(ol, bit_kind=BIT_KIND_G22, ncore=2)
 BIT_KIND_G22 = 10
+PROJ_G24 = 0x0027_0100           # proj027: 2G-4（BIT_KIND 3・BIT_REV 1、コア 4 個。4 コアとも RAW を持ち NSTREAM 2）。discover(ol, bit_kind=BIT_KIND_G24, ncore=4)
+BIT_KIND_G24 = 3
 BIT_REV_MIN = 1                  # proj023: Wide の最初の版が 1（proj021 の Fine は 2 以上: 2-2d の仮の読み窓の無い 64 KiB の番地）
 BIT_KIND_EXPECT = 1              # SAM45-Wide（proj023）。proj021 は 2 = SAM45-Fine
 
