@@ -14,6 +14,7 @@ module ct_rd #(
     parameter integer AW  = 32,
     parameter integer IDW = 4,
     parameter integer BL  = 64,                    // バーストの拍数
+    parameter integer NOUT = 4,                    // 先に出すバーストの数（溜めの中 ＋ 来る予定 ≦ NOUT·BL 拍）。1 は直す前（sim の陽性対照）
     parameter [31:0]  ID  = 32'h0280_00C4
 ) (
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axi:m_axi:m_axis, ASSOCIATED_RESET aresetn" *)
@@ -128,14 +129,17 @@ module ct_rd #(
     reg [3:0]  tq_h, tq_t;
     reg [7:0]  rbeat;
     // 出した AR の拍と溜めの拍の合計が FD を超えないように AR を出す
-    reg [7:0]  committed;            // 溜めの中 ＋ 来る予定の拍
-    wire can_ar = busy && ck != 6'd32 && (committed + BL <= FD * 4) && outs < 4'd8;   // 溜めは FD 拍、ただし R を止めて待たせるので 4 バースト分まで先に出す
+    reg [11:0] committed;            // 溜めの中 ＋ 来る予定の拍
+    // 溜めは FD 拍、ただし R を止めて待たせるので NOUT バースト分まで先に出す。
+    //   F-5d（実機）: 前は上限が FD·4 = 64 = BL で、溜めが空になるまで次の AR を出せず（同時に 1 本）、往復の待ちが隙間になって
+    //   読みが ≒ 4.6 GB/s（1 チャンク 297 ms > 286.72 ms）に留まった
+    wire can_ar = busy && ck != 6'd32 && (committed + BL <= NOUT * BL) && outs < 4'd8;
     assign m_axi_rready = (fn < FD);
     always @(posedge clk) begin
         if (rst || start) begin
             busy <= 1'b0; pend <= 1'b0; n_done <= 32'd0; n_drop <= 32'd0; f_drop <= 1'b0; f_rresp <= 1'b0;
             pb_next <= r_base; pb_last <= r_base; pm <= 3'd0; has_prev_pend <= 1'b0; has_prev <= 1'b0;
-            m_axi_arvalid <= 1'b0; ck <= 6'd0; seg <= 1'b0; off <= 32'd0; outs <= 4'd0; committed <= 8'd0;
+            m_axi_arvalid <= 1'b0; ck <= 6'd0; seg <= 1'b0; off <= 32'd0; outs <= 4'd0; committed <= 12'd0;
             fn <= 5'd0; fh <= 4'd0; ft <= 4'd0; tq_h <= 4'd0; tq_t <= 4'd0; rbeat <= 8'd0;
         end else begin
             // チャンクが閉じた: 面の頭を進める
@@ -174,7 +178,7 @@ module ct_rd #(
                 tq_t <= tq_t + 4'd1;
             end
             outs <= outs + (ar_fire ? 4'd1 : 4'd0) - ((r_fire && m_axi_rlast) ? 4'd1 : 4'd0);
-            committed <= committed + ((!m_axi_arvalid && can_ar && !(!seg && (!has_prev || r_hb == 32'd0))) ? BL : 8'd0) - (o_fire ? 8'd1 : 8'd0);
+            committed <= committed + ((!m_axi_arvalid && can_ar && !(!seg && (!has_prev || r_hb == 32'd0))) ? BL[11:0] : 12'd0) - (o_fire ? 12'd1 : 12'd0);
             // R → 溜め
             if (r_fire) begin
                 fd[ft] <= m_axi_rdata;

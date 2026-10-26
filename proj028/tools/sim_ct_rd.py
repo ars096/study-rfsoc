@@ -5,6 +5,7 @@
   python3 tools/sim_ct_rd.py [--bad]
   配置: CHS 8 KiB（128 拍）・HB 4 KiB（64 拍）・3 面。チャンク 0（末尾なし）・1（読み途中に閉じる → 待ち）・2
   --bad（陽性対照: 末尾の番地を 1 拍ずらした RTL）: 中身が違う
+  速さの照合（F-5d）: 同時に出ていた AR の最大（MAXQ）≧ 2。--nout1（陽性対照: 先に出すバースト 1、直す前の形）は MAXQ 1 で落ちる
 """
 import os
 import subprocess
@@ -13,7 +14,8 @@ import sys
 import numpy as np
 
 bad = "--bad" in sys.argv
-tag = "bad" if bad else "ok"
+nout1 = "--nout1" in sys.argv
+tag = "bad" if bad else "nout1" if nout1 else "ok"
 od = "build-sim"
 os.makedirs(od, exist_ok=True)
 rtl = "src/ct_rd.v"
@@ -50,7 +52,7 @@ n2 = 32 * (CHS // 64) + 32 * ((CHS + HB) // 64)
 vvp = os.path.join(od, "tb_ctr_%s.vvp" % tag)
 subprocess.run(["iverilog", "-g2012", "-o", vvp, "-DMB=%d" % MB, "-DBASE=%d" % BASE, "-DCHS=%d" % CHS, "-DPS=%d" % PS, "-DHB=%d" % HB,
                 "-DNEXP=%d" % len(exp), "-DNEXP2=%d" % n2, '-DIN_HEX="%s"' % inhex, '-DOUT_TXT="%s"' % outtxt,
-                "tb/tb_ct_rd.v", rtl], check=True)
+                "tb/tb_ct_rd.v", rtl] + (["-DNOUT=1"] if nout1 else []), check=True)
 p = subprocess.run(["vvp", "-n", vvp], check=True, capture_output=True, text=True)
 out = p.stdout.strip().splitlines()
 print("\n".join(out[-7:]))
@@ -62,11 +64,16 @@ for i, (e, g) in enumerate(zip(exp, got)):
         ndiff += 1
         if first is None:
             first = (i, e[0], int(g[0]), e[1], int(g[1]))
-reg = {l.split()[0]: l.split()[1] for l in out if l.split() and l.split()[0] in ("DONE", "DROP", "FLAGS", "ERRS")}
+reg = {l.split()[0]: l.split()[1] for l in out if l.split() and l.split()[0] in ("DONE", "DROP", "FLAGS", "ERRS", "MAXQ")}
 print("拍: %d（期待 %d）、違う拍 %d、最初の違い %s" % (len(got), len(exp), ndiff, first))
 ok = len(got) == len(exp) and ndiff == 0 and reg.get("DONE") == "3" and reg.get("DROP") == "0" and reg.get("FLAGS") == "0" and reg.get("ERRS") == "0" \
     and any("STATUS（チャンク 1 の直後）3" in l for l in out)
-if bad:
+maxq = int(reg.get("MAXQ", "0"))
+print("同時に出ていた AR の最大: %d（2 以上を期待）" % maxq)
+ok = ok and maxq >= 2
+if nout1:
+    print("結果: %s" % ("不合格（陽性対照として正しく落ちた）" if maxq < 2 else "全部通過（陽性対照が落ちない: 速さの照合が効いていない）"))
+elif bad:
     print("結果: %s" % ("不合格（陽性対照として正しく落ちた）" if ndiff > 0 else "全部通過（陽性対照が落ちない: 照合が効いていない）"))
 else:
     print("結果: %s" % ("全部通過" if ok else "不合格"))

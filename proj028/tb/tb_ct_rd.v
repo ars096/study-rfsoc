@@ -14,7 +14,10 @@ module tb_ct_rd;
     wire [511:0] tdata; wire [21:0] tuser; wire tlast, tvalid; reg tready = 0;
     reg [7:0] awaddr = 0, araddr = 0; reg awvalid = 0, wvalid = 0, arvalid = 0; reg [31:0] wdata = 0;
     wire awready, wready, bvalid, arready, rvalid; wire [1:0] bresp, rresp; wire [31:0] rdata;
-    ct_rd dut (.clk(clk), .aresetn(aresetn), .chunk_done(chunk_done), .chunk_idx(chunk_idx),
+`ifndef NOUT
+`define NOUT 4
+`endif
+    ct_rd #(.NOUT(`NOUT)) dut (.clk(clk), .aresetn(aresetn), .chunk_done(chunk_done), .chunk_idx(chunk_idx),
         .m_axi_arid(), .m_axi_araddr(m_araddr), .m_axi_arlen(m_arlen), .m_axi_arsize(), .m_axi_arburst(), .m_axi_arlock(),
         .m_axi_arcache(), .m_axi_arprot(), .m_axi_arqos(), .m_axi_arvalid(m_arvalid), .m_axi_arready(m_arready),
         .m_axi_rid(4'd0), .m_axi_rdata(m_rdata), .m_axi_rresp(2'b00), .m_axi_rlast(m_rlast), .m_axi_rvalid(m_rvalid), .m_axi_rready(m_rready),
@@ -27,6 +30,8 @@ module tb_ct_rd;
     reg [31:0] arq_a [0:15]; reg [7:0] arq_l [0:15]; reg [3:0] arq_h = 0, arq_t = 0;
     wire [3:0] arq_n = arq_t - arq_h;
     reg [7:0] ri = 0; integer seedr = 9, errs = 0;
+    reg [3:0] maxq = 0;                          // 同時に出ていた AR の最大（速さの照合、F-5d）
+    always @(posedge clk) if (arq_n > maxq) maxq <= arq_n;
     always @(posedge clk) begin
         m_arready <= arq_n < 4'd12 && ($random(seedr) % 4 != 0);
         if (m_arvalid && m_arready) begin
@@ -82,6 +87,7 @@ module tb_ct_rd;
         rd(8'h2C); $display("FLAGS %0d", rd_v);
         rd(8'h20); $display("STATUS %0d", rd_v);
         $display("ERRS %0d", errs);
+        $display("MAXQ %0d", maxq);
         $display("beats %0d", nbeat);
         $finish;
     end

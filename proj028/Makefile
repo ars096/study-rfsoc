@@ -84,11 +84,11 @@ sim-ctwr:
 	$(PYTHON) tools/sim_ct_wr.py > build-sim/sim_ctwr.log & $(PYTHON) tools/sim_ct_wr.py --qb 64 > build-sim/sim_ctwr_qb64.log & $(PYTHON) tools/sim_ct_wr.py --bad > build-sim/sim_ctwr_bad.log & $(PYTHON) tools/sim_ct_wr.py --stall > build-sim/sim_ctwr_stall.log & wait
 	@grep "結果:" build-sim/sim_ctwr.log build-sim/sim_ctwr_qb64.log build-sim/sim_ctwr_bad.log build-sim/sim_ctwr_stall.log
 
-# C-4: corner turn の読み手 ct_rd。出口の拍の並び・中身・tuser・tlast を期待と照らす。ふつうと陽性対照（末尾の番地を 1 拍ずらす）
+# C-4: corner turn の読み手 ct_rd。出口の拍の並び・中身・tuser・tlast と、同時に出ていた AR の数（F-5d）を照らす。ふつうと陽性対照 2 つ（末尾の番地を 1 拍ずらす・先に出すバースト 1）
 sim-ctrd:
 	mkdir -p build-sim
-	$(PYTHON) tools/sim_ct_rd.py > build-sim/sim_ctrd.log & $(PYTHON) tools/sim_ct_rd.py --bad > build-sim/sim_ctrd_bad.log & wait
-	@grep "結果:" build-sim/sim_ctrd.log build-sim/sim_ctrd_bad.log
+	$(PYTHON) tools/sim_ct_rd.py > build-sim/sim_ctrd.log & $(PYTHON) tools/sim_ct_rd.py --bad > build-sim/sim_ctrd_bad.log & $(PYTHON) tools/sim_ct_rd.py --nout1 > build-sim/sim_ctrd_nout1.log & wait
+	@grep "結果:" build-sim/sim_ctrd.log build-sim/sim_ctrd_bad.log build-sim/sim_ctrd_nout1.log
 
 # F-1: 細かい PFB（fine_pfb ＋ fine_coef）を model/fine_fixed.py と bit 単位で。ふつう・valid を落とす・陽性対照 2 つ（端数・ch の頭）。数分
 sim-fpfb:
