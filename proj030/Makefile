@@ -3,7 +3,7 @@ PYTHON ?= python3
 XILINX_VIVADO ?= /tools/Xilinx/Vivado/2024.1
 VIVADO        := $(XILINX_VIVADO)/bin/vivado
 
-.PHONY: model sim-sep sim-all2 ooc-sep
+.PHONY: model sim-sep sim-all2 ooc-sep ooc-chain ooc-q ooc-ref
 
 # M-1 の模型。成否は最後の「まとめ」の行で読む
 model:
@@ -53,3 +53,18 @@ sim-all2:
 	  && grep -q '結果: 全部通過' $(SIMDIR)/all2_gap/check.log \
 	  && grep -q '結果: 不合格' $(SIMDIR)/all2_sh18/check.log && grep -q '結果: 不合格' $(SIMDIR)/all2_bubble/check.log \
 	  && echo "sim-all2: 全部通過（陽性対照 2 本は落ちた）" || (echo "sim-all2: NG"; exit 1)
+
+# ---- P-2・P-3 の OOC（`-1`・256 MHz）。結果は build-ooc/ooc-<名前>.txt ----
+OOC_CHAIN := src/common/cmul.v src/common/dft16f.v src/s2_chain.v
+OOC_Q     := src/s2_q.v
+ooc-chain ooc-q:
+	@n=$(@:ooc-%=%); top=s2_$$n; f="$(if $(filter ooc-chain,$@),$(OOC_CHAIN),$(OOC_Q))"; o=build-ooc/$$n; mkdir -p $$o; \
+	cd $$o && $(VIVADO) -mode batch -nojournal -log vivado.log -source ../../tools/ooc_rtl.tcl -tclargs $$top 3.906 clk $$(for x in $$f; do echo ../../$$x; done) > /dev/null 2>&1; \
+	  grep '^OOC ' vivado.log | tee ../ooc-$$n.txt; m=$$(grep -c 'Synth 8-3848' vivado.log); echo "Synth 8-3848: $$m" | tee -a ../ooc-$$n.txt; \
+	  grep -c 'CRITICAL WARNING' vivado.log | sed 's/^/CRITICAL WARNING: /' | tee -a ../ooc-$$n.txt; [ $$m -eq 0 ]
+
+# 比べる相手: 今の鎖 g24_chain（proj027 の HEAD から ref/ に写した。電力まで含む）
+ooc-ref:
+	@o=build-ooc/ref; mkdir -p $$o; \
+	cd $$o && $(VIVADO) -mode batch -nojournal -log vivado.log -source ../../tools/ooc_rtl.tcl -tclargs g24_chain 3.906 clk ../../src/common/cmul.v ../../ref/dft16.v ../../ref/g24_chain.v > /dev/null 2>&1; \
+	  grep '^OOC ' vivado.log | tee ../ooc-ref.txt
