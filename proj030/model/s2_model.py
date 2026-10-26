@@ -36,7 +36,11 @@ def lane_fft_s2(yf, partner=neg):
     """1 フレームの y（長さ N）→ 2Y（re, im、(16, M)）。partner は −k の番地（陽性対照で替える）。"""
     yp = yf.reshape(F.M, F.LANES).T.astype(np.float64)
     Z = np.fft.fft(yp[:NQ] + 1j * yp[NQ:], axis=1)
-    Zr, Zi = np.rint(Z.real).astype(np.int64), np.rint(Z.imag).astype(np.int64)
+    return sep_Z(np.rint(Z.real).astype(np.int64), np.rint(Z.imag).astype(np.int64), partner)
+
+
+def sep_Z(Zr, Zi, partner=neg):
+    """IP 8 個の出口 Z（re, im、(8, M)、k の順）→ 2Y（re, im、(16, M)）。s2_sep の定義。"""
     kp = partner(np.arange(F.M))
     Y2r = np.concatenate([Zr + Zr[:, kp], Zi + Zi[:, kp]])
     Y2i = np.concatenate([Zi - Zi[:, kp], Zr[:, kp] - Zr])
@@ -184,6 +188,25 @@ def chain_s2(Y2r, Y2i, twr, twi, rows=None):
     Vr, Vi = F.cmul_q(ar, ai, twr[:, rows], twi[:, rows], 19)
     Zr, Zi = dft16_full(Vr, Vi)
     return Zr, Zi, n1 + n2
+
+
+def power_s2(Zr, Zi, twr, twi, shift):
+    """IP 8 個の出口 Z（(8, M)）→ 積分器の 1 フレームぶんの電力 pw[b, k1]（ch k1 + 4096·b、(8, M)）と、書いた q の飽和の数。
+    s2_sep → s2_chain → s2_q の定義（行 r の銀行 b = k2 b、行 4096 − r の銀行 b = k2 15 − b、r = 0・2048 は 8 個だけ）。"""
+    Y2r, Y2i = sep_Z(Zr, Zi)
+    rows = np.arange(F.M // 2 + 1)
+    Qr, Qi, _ = chain_s2(Y2r, Y2i, twr, twi, rows)
+    lo, hi = -(1 << 17), (1 << 17) - 1
+    qr, qi = Qr >> shift, Qi >> shift
+    st = (qr < lo) | (qr > hi) | (qi < lo) | (qi > hi)
+    qr, qi = np.clip(qr, lo, hi), np.clip(qi, lo, hi)
+    p16 = qr * qr + qi * qi
+    pw = np.zeros((8, F.M), dtype=np.int64)
+    pw[:, rows] = p16[:8]
+    mid = rows[1:-1]
+    pw[:, F.M - mid] = p16[15 - np.arange(8)][:, 1:-1]
+    nsat = int(st[:8].sum() + st[8:, 1:-1].sum())
+    return pw, nsat
 
 
 def to_ch(rows, Zr, Zi, bank_err=False):
