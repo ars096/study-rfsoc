@@ -3,16 +3,17 @@
 # 温度のどれかが 95 ℃ を越えたら STOP（README の中止の条件）。specd は先に起こしておく
 cd /home/xilinx/proj027 || exit 1   # root の ~ は /root（4c-b の 1 回目はここで外れた）
 R=${R:-runs/g24_4c30b}
+MIN=${MIN:-30}                              # 取得の分
 AMS=${AMS:-1}                               # 0 = amslog は外で起こしてある
 if [ "$AMS" = 1 ]; then
   python3 amslog.py --out $R.ams.log --period 10 --seconds 2300 &
   sleep 120                                 # 待機の値を 2 分
 fi
-python3 specrecv.py --host 127.0.0.1 --seconds 1950 --json $R.json > $R.recv.log 2>&1 &
+python3 specrecv.py --host 127.0.0.1 --seconds $((MIN * 60 + 150)) --json $R.json > $R.recv.log 2>&1 &
 RP=$!
 sleep 3
 python3 specctl.py --host 127.0.0.1 "SET A0.src=A B0.src=B C0.src=C D0.src=D shift=7 tint=0.01024 fmt=f32" "START n=0" "SEND ON" > $R.ctl.log 2>&1
-for m in $(seq 1 30); do
+for m in $(seq 1 $MIN); do
   sleep 60
   echo "== $m 分 $(date -u +%H:%M:%S)" >> $R.status.log
   python3 specctl.py --host 127.0.0.1 STATUS >> $R.status.log 2>&1
