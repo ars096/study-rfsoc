@@ -46,3 +46,6 @@ __pycache__/
 *.spec.npz
 *.s45
 *.ta.npz
+
+# Vivado が作業ディレクトリに書くクロック配線のデバッグ用ファイル（Host の行を持つ。proj028 で紛れ込んだ）
+clockInfo.txt
