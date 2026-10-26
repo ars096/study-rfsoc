@@ -1,7 +1,9 @@
 # proj030 — レーン FFT の 2-for-1（実のレーン 2 本を複素の IP 1 個に）。段階 M: 模型（`make model`）
 PYTHON ?= python3
+XILINX_VIVADO ?= /tools/Xilinx/Vivado/2024.1
+VIVADO        := $(XILINX_VIVADO)/bin/vivado
 
-.PHONY: model sim-sep
+.PHONY: model sim-sep ooc-sep
 
 # M-1 の模型。成否は最後の「まとめ」の行で読む
 model:
@@ -26,3 +28,10 @@ sim-sep:
 	  && grep -q '結果: 不合格' $(SIMDIR)/sep_addr/check.log && grep -q '結果: 不合格' $(SIMDIR)/sep_swap/check.log \
 	  && grep -q '結果: 不合格' $(SIMDIR)/sep_pos/check.log \
 	  && echo "sim-sep: 全部通過（陽性対照 3 本は落ちた）" || (echo "sim-sep: NG"; exit 1)
+
+# ---- S-1 s2_sep を 1 個 OOC で合成（`-1`・256 MHz）。結果は build-ooc/ooc-sep.txt。Synth 8-3848（ドライバの無いネット）があれば NG ----
+ooc-sep:
+	@mkdir -p build-ooc
+	$(VIVADO) -mode batch -nojournal -log build-ooc/vivado.log -source tools/ooc_rtl.tcl -tclargs s2_sep 3.906 clk src/s2_sep.v > /dev/null 2>&1; \
+	  cd build-ooc && grep '^OOC ' vivado.log | tee ooc-sep.txt; n=$$(grep -c 'Synth 8-3848' vivado.log); echo "Synth 8-3848: $$n" | tee -a ooc-sep.txt; \
+	  grep -c 'CRITICAL WARNING' vivado.log | sed 's/^/CRITICAL WARNING: /' | tee -a ooc-sep.txt; [ $$n -eq 0 ]
