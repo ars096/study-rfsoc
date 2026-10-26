@@ -4,6 +4,8 @@
 
   python3 sim/check_s2.py gen   <dir>            # <dir>/zre.hex・zim.hex（1 行 = 1 ビートの IP 8 個の Z、28 bit × 8）
   python3 sim/check_s2.py check <dir> <tb.log>   # <dir>/y.txt を照らし、最後に「結果: 全部通過 / 不合格」
+  python3 sim/check_s2.py all <dir> <tb.log> <SHIFT> [変種]   # tb_s2_all の <dir>/p.txt（積分器の口）を照らす。
+      判定: 並び・値の一致、ovf・tw_mis・pos_mis・2Y の飽和 0、記憶の最大 cmax ≦ 510（余裕 2 以上）、gap 以外はフレームの境の dmax がフレーム 3 以降で増えない
 """
 import os
 import re
@@ -98,5 +100,63 @@ def check(d, tblog):
     print("結果: " + ("全部通過" if ok else "不合格"))
 
 
+def stream(shift, nrep=2):
+    """s2_q の出口の並び: フレームごとに、組がそろう順の項目から行 r（銀行 k2 0..7）と行 4096 − r（銀行 15 − b）。(行, 飽和の数, p 8 個)。"""
+    twr, twi = F.tw_prod()
+    rr = S.ready_rows()
+    rows = rr[rr >= 0]
+    lo, hi = -(1 << 17), (1 << 17) - 1
+    per = []
+    for yf in frames():
+        Y2r, Y2i = S.lane_fft_s2(yf)
+        Zr, Zi, _ = S.chain_s2(Y2r, Y2i, twr, twi, rows)
+        qr, qi = Zr >> shift, Zi >> shift
+        st = (qr < lo) | (qr > hi) | (qi < lo) | (qi > hi)
+        qr, qi = np.clip(qr, lo, hi), np.clip(qi, lo, hi)
+        pw = qr * qr + qi * qi
+        out = []
+        for j, r in enumerate(rows):
+            out.append((int(r), int(st[:8, j].sum()), pw[:8, j]))
+            if r not in (0, F.M // 2):
+                b = 15 - np.arange(8)
+                out.append((int(F.M - r), int(st[b, j].sum()), pw[b, j]))
+        per.append(out)
+    return [e for _ in range(nrep) for f in per for e in f]
+
+
+def check_all(d, tblog, shift, steady=True):
+    exp = stream(shift)
+    rows = [l.split() for l in open(os.path.join(d, "p.txt"))]
+    log = open(tblog, encoding="utf-8", errors="replace").read()
+    g = {k: int(v) for k, v in re.findall(r"(dmax|cmax|ovf|tw_mis|pos_mis|ysat) (\d+)", log.split("tb_s2_all:")[-1])}
+    dm = [int(v) for v in re.findall(r"frame \d+ dmax (\d+)", log)]
+    nbad = 0
+    first = None
+    for j, (ks, ss, hx) in enumerate(rows[: len(exp)]):
+        r, ns, pw = exp[j]
+        try:
+            v = int(hx, 16)
+            got = [(v >> (37 * b)) & ((1 << 37) - 1) for b in range(8)]
+            same = int(ks) == r and int(ss) == ns and got == [int(a) for a in pw]
+        except ValueError:
+            same = False
+        if not same:
+            nbad += 1
+            if first is None:
+                first = (j, ks, r)
+    nsat = sum(e[1] for e in exp)
+    grow = len(dm) >= 4 and max(dm[2:]) > max(dm[:2])
+    ok = (len(rows) == len(exp) and nbad == 0 and g.get("ovf") == 0 and g.get("tw_mis") == 0 and g.get("pos_mis") == 0
+          and g.get("ysat") == 0 and not (steady and grow) and g.get("cmax", 999) <= 510)
+    print(f"出口 {len(rows)} 行（期待 {len(exp)}）・違い {nbad}・模型の飽和の数 {nsat}・見張り {g}")
+    print(f"フレームの境の dmax {dm}（フレーム 3 以降が 1・2 より増える {grow}）")
+    if first:
+        print(f"  最初の違い: {first[0]} 行目（出た行 {first[1]}・期待 {first[2]}）")
+    print("結果: " + ("全部通過" if ok else "不合格"))
+
+
 if __name__ == "__main__":
+    if sys.argv[1] == "all":
+        check_all(sys.argv[2], sys.argv[3], int(sys.argv[4]), len(sys.argv) < 6 or sys.argv[5] != "gap")
+        sys.exit(0)
     {"gen": lambda: gen(sys.argv[2]), "check": lambda: check(sys.argv[2], sys.argv[3])}[sys.argv[1]]()
