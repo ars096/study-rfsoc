@@ -3,7 +3,7 @@
 // fine_core — 細かい側の全体（proj028 F-4）。ct_rd の出口（荒い ch ごとの流れ）→ 細かいスペクトルのレコード
 //
 //   入口: AXI4-Stream 512 bit（32 サンプル、i 番が [16i +: 16] = {im 8, re 8}）、tuser = {c[15:0], k[4:0], 末尾 1 / 本体 0}、tlast = ch の最後
-//   → 256 bit（16 サンプル）に分ける → **1 フレーム（8192 拍）の溜め**（DDR からの途切れを吸い、フレームがそろってから流す。
+//   → 256 bit（16 サンプル）に分ける → **2 フレーム（16384 拍）の溜め**（DDR からの途切れを吸い、フレームがそろってから流す。
 //     realtime の IP には途切れなく流す、LESSONS）→ fine_pfb（ch の頭で履歴を空に）→ IP の手前の待ち行列（g21_spec と同じ、LESSONS）
 //   → レーン FFT × 16（lane_fft_f、8192 点・bit 反転順）→ fine_chain（＋ fine_tw）→ fine_acc → fine_rdo → 出口: レコード（AXI4-Stream 64 bit）
 //
@@ -22,7 +22,8 @@ module fine_core #(
     parameter HI_FILE = "fine_coef_hi.hex",
     parameter TA_FILE = "fine_tw_a.hex",
     parameter TB_FILE = "fine_tw_b.hex",
-    parameter integer ST_N = 64            // 起動の見張り: IP の 16 レーンの tready がそろって続いたクロック
+    parameter integer ST_N = 64,           // 起動の見張り: IP の 16 レーンの tready がそろって続いたクロック
+    parameter integer FB_LOG = 14          // 溜めの深さ 2^FB_LOG 拍。14 = 2 フレーム（F-5c-0）。13 = 1 フレーム（直す前、sim の陽性対照）
 )(
     input  wire          clk,
     input  wire          rst,
@@ -52,8 +53,8 @@ module fine_core #(
     reg [21:0]  hi_u;
     reg         hi_l;
     reg         new_ch;              // 次の拍は ch の頭
-    wire [13:0] f_cnt;
-    wire        f_room2 = (f_cnt <= 14'd8190);
+    wire [FB_LOG:0] f_cnt;
+    wire        f_room2 = (f_cnt <= (1 << FB_LOG) - 2);
     assign s_axis_tready = !rst && !half && f_room2;
     wire        in_fire = s_axis_tvalid && s_axis_tready;
     wire        f_we    = in_fire || half;
@@ -69,10 +70,12 @@ module fine_core #(
         end
     end
 
-    // ---- 1 フレームの溜め（8192 × FW_）----
-    (* ram_style = "block" *) reg [FW_-1:0] fmem [0:8191];
-    reg [12:0] f_wa, f_ra;
-    reg [13:0] f_n;
+    // ---- 溜め（2^FB_LOG × FW_、既定 2 フレーム）----
+    //   F-5c-0（実機）: 1 フレームの溜めでは、満ちている間は入口を止めるので、本物の枠の 8192 クロックで次の 1 フレームを埋め切れず、
+    //   本物と空の枠が交互になった（1 チャンク 333 ms > 286.72 ms、7 チャンクに 1 つ ct_rd が捨てた）。2 フレームにして、空の枠で溜めた分を次の枠に回す
+    (* ram_style = "block" *) reg [FW_-1:0] fmem [0:(1 << FB_LOG) - 1];
+    reg [FB_LOG-1:0] f_wa, f_ra;
+    reg [FB_LOG:0]   f_n;
     // ---- 枠: 8192 拍ずつ途切れなく回す。枠の頭で 1 フレームそろっていれば本物、そろっていなければ空のフレーム ----
     //   realtime の IP はフレームの間の途切れも halt として進む（IP のモデル・LESSONS）。細かい側の忙しさは 58 % なので、空きを空のフレームで埋める
     reg        s_run;                // 枠の途中
@@ -80,8 +83,9 @@ module fine_core #(
     reg [12:0] f_m;                  // 枠の中の拍
     reg        go;
     wire       s_start = go && !s_run;
-    wire       f_re   = (s_run && !s_dum) || (s_start && f_n >= 14'd8192);
-    wire       d_beat = (s_run && s_dum)  || (s_start && f_n <  14'd8192);
+    wire       f_full = (f_n >= 8192);                   // 1 フレームそろった
+    wire       f_re   = (s_run && !s_dum) || (s_start && f_full);
+    wire       d_beat = (s_run && s_dum)  || (s_start && !f_full);
     reg        f_v1, d_v1;
     reg [12:0] d_m1;
     reg [FW_-1:0] f_rd, f_rd0;
@@ -97,13 +101,13 @@ module fine_core #(
         f_v0 <= f_re && !rst;   f_v1 <= f_v0 && !rst;
         d_v0 <= d_beat && !rst; d_v1 <= d_v0 && !rst;
         d_m0 <= s_start ? 13'd0 : f_m; d_m1 <= d_m0;
-        if (rst) begin f_wa <= 13'd0; f_ra <= 13'd0; f_n <= 14'd0; s_run <= 1'b0; s_dum <= 1'b0; f_m <= 13'd0; end
+        if (rst) begin f_wa <= 0; f_ra <= 0; f_n <= 0; s_run <= 1'b0; s_dum <= 1'b0; f_m <= 13'd0; end
         else begin
-            if (f_we) f_wa <= f_wa + 13'd1;
-            if (f_re) f_ra <= f_ra + 13'd1;
-            if (s_start) begin s_run <= 1'b1; s_dum <= (f_n < 14'd8192); f_m <= 13'd1; end
+            if (f_we) f_wa <= f_wa + 1'b1;
+            if (f_re) f_ra <= f_ra + 1'b1;
+            if (s_start) begin s_run <= 1'b1; s_dum <= !f_full; f_m <= 13'd1; end
             else if (s_run) begin f_m <= f_m + 13'd1; if (f_m == 13'd8191) s_run <= 1'b0; end
-            f_n <= f_n + (f_we ? 14'd1 : 14'd0) - (f_re ? 14'd1 : 14'd0);
+            f_n <= f_n + (f_we ? 1'b1 : 1'b0) - (f_re ? 1'b1 : 1'b0);
         end
     end
     wire [255:0] x_d    = f_rd[255:0];

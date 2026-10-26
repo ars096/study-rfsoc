@@ -31,6 +31,7 @@ def main():
     size = 4 << 20
     R = f5.Ring.__new__(f5.Ring)
     R.g, R.size, R.bo_sync, R.r = FakeRegs(), size, None, 0
+    R.prof = dict(inval=0.0, parse=0.0, crc=0.0, copy=0.0, n=0)
     R.a64 = np.zeros(size // 8, np.uint64)
     R.a8 = R.a64.view(np.uint8)
     R._inval = lambda p, n: None

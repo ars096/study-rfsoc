@@ -11,14 +11,21 @@ module tb_fine_core;
     reg [511:0] tdata = 0; reg [21:0] tuser = 0; reg tlast = 0, tvalid = 0; wire tready;
     wire [63:0] o_d; wire o_l, o_v; reg o_r = 0;
     wire [8:0] flags; wire [31:0] n_rec; wire [16*64-1:0] ip_d; wire [12:0] ip_k1; wire ip_v;
-    fine_core #(.LO_FILE(`LO_HEX), .HI_FILE(`HI_HEX), .TA_FILE(`TA_HEX), .TB_FILE(`TB_HEX)) dut (.clk(clk), .rst(rst),
+`ifndef FB_LOG
+`define FB_LOG 14
+`endif
+    fine_core #(.FB_LOG(`FB_LOG), .LO_FILE(`LO_HEX), .HI_FILE(`HI_HEX), .TA_FILE(`TA_HEX), .TB_FILE(`TB_HEX)) dut (.clk(clk), .rst(rst),
         .s_axis_tdata(tdata), .s_axis_tuser(tuser), .s_axis_tlast(tlast), .s_axis_tvalid(tvalid), .s_axis_tready(tready),
         .shift(4'd7), .m_axis_tdata(o_d), .m_axis_tlast(o_l), .m_axis_tvalid(o_v), .m_axis_tready(o_r),
         .flags(flags), .n_rec(n_rec), .dbg_ip_tdata(ip_d), .dbg_ip_k1(ip_k1), .dbg_ip_v(ip_v));
     integer i, k, fi, fr, seed = 8, nrec_w = 0;
     reg took = 0;
     always @(posedge clk) took <= tvalid && tready;
+`ifdef FULL_RATE
+    always @(posedge clk) o_r <= 1'b1;
+`else
     always @(posedge clk) o_r <= ($random(seed) % 5 != 0);
+`endif
     always @(posedge clk) if (o_v && o_r) begin $fwrite(fr, "%0d %h\n", o_l, o_d); nrec_w = nrec_w + 1; end
     always @(posedge clk) if (ip_v) begin
         $fwrite(fi, "%0d", ip_k1);
@@ -36,7 +43,11 @@ module tb_fine_core;
             if (took && mem[i-1][534]) begin             // ch の最後の拍を渡したら、読み出しの分だけ間を空ける（本番の ch は 163 フレームで十分長い）
                 tvalid = 0; repeat (`CHGAP) @(negedge clk);
             end
+`ifdef FULL_RATE
+            if (i < `NBEAT) begin                        // 全速（速さの照合）: valid を落とさない
+`else
             if (i < `NBEAT && ($random(seed) % 6 != 0)) begin
+`endif
                 tvalid = 1; tdata = mem[i][511:0]; tuser = mem[i][533:512]; tlast = mem[i][534];
             end else tvalid = 0;
         end

@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: BSD-3-Clause
 """proj028 F-4 — fine_core を iverilog で回し、(1) IP の出口と PFB の模型の FFT (2) レコードと「記録した IP の出口を模型に通した値」を比べる。
 
-  python3 tools/sim_fine_core.py [--act-err] [--no-sim]
+  python3 tools/sim_fine_core.py [--act-err | --rate | --rate-old] [--no-sim]
   ch: (c 0, k 7) 本体 5（積む 2）、(c 1, k 5) 末尾 3 ＋ 本体 4（積む 4）、(c 1, k 6) 同じ
   --act-err（-DCORE_ACT_ERR）は陽性対照
+  --rate: 速さの照合（F-5c-0 で足した）。2 ch（c 0 k 7 本体 8・c 1 k 5 末尾 3 ＋ 本体 13）を ch の間も空けず valid を落とさず全速で流し、
+          出口の tready も落とさない。IP の出口で本物のフレームの間に空の枠が挟まらないこと
+          （入口の上限 = 枠の速さなので、溜めが足りていれば本物が続く）。--rate-old は溜めを 1 フレーム（FB_LOG 13、直す前）にした陽性対照
 """
 import os
 import subprocess
@@ -16,11 +19,13 @@ sys.path.insert(0, "model")
 import fine_fixed as F  # noqa: E402
 
 aerr = "--act-err" in sys.argv
-tag = "ok" + ("_act" if aerr else "")
+rate_old = "--rate-old" in sys.argv
+rate = "--rate" in sys.argv or rate_old
+tag = "rate_old" if rate_old else "rate" if rate else "ok" + ("_act" if aerr else "")
 od = "build-sim"
 os.makedirs(od, exist_ok=True)
 SHIFT = 7
-CH = [(0, 7, 0, 5), (1, 5, 3, 4), (1, 6, 3, 4)]       # (c, k, 末尾のフレーム, 本体のフレーム)
+CH = [(0, 7, 0, 8), (1, 5, 3, 13)] if rate else [(0, 7, 0, 5), (1, 5, 3, 4), (1, 6, 3, 4)]       # (c, k, 末尾のフレーム, 本体のフレーム)
 rng = np.random.default_rng(43)
 V, S = F.coef_tables()
 coef = F.coef_beat(V, S)
@@ -53,11 +58,15 @@ src = ["tb/tb_fine_core.v"] + ["src/fine/%s.v" % m for m in ("fine_core", "fine_
     + ["sim/lane_fft_f_model.v"]
 A = os.path.abspath("src/fine")
 vvp = os.path.join(od, "tb_fcore_%s.vvp" % tag)
-cmd = ["iverilog", "-g2012", "-o", vvp, "-DNBEAT=%d" % len(lines), "-DNREC=%d" % nrec, "-DTMAX=8000000", "-DCHGAP=150000", "-DFFT_STALL_AT=5000",
+cmd = ["iverilog", "-g2012", "-o", vvp, "-DNBEAT=%d" % len(lines), "-DNREC=%d" % nrec, "-DTMAX=8000000", "-DCHGAP=%d" % (0 if rate else 150000), "-DFFT_STALL_AT=5000",
        '-DIN_HEX="%s"' % inhex, '-DIP_TXT="%s"' % iptxt, '-DREC_TXT="%s"' % rectxt,
        '-DLO_HEX="%s/fine_coef_lo.hex"' % A, '-DHI_HEX="%s/fine_coef_hi.hex"' % A, '-DTA_HEX="%s/fine_tw_a.hex"' % A, '-DTB_HEX="%s/fine_tw_b.hex"' % A]
 if aerr:
     cmd.append("-DCORE_ACT_ERR")
+if rate:
+    cmd.append("-DFULL_RATE")
+if rate_old:
+    cmd.append("-DFB_LOG=13")
 if "--no-sim" in sys.argv:                       # 記録済みの出口だけを照らす（sim は 40 分以上かかる）
     last = open(os.path.join(od, "sim_fcore_last_%s.txt" % tag)).read().strip()
 else:
@@ -72,6 +81,8 @@ ip = ip[: len(ip) // F.M * F.M]                 # sim の終わりに出かけ�
 fr_all = ip.reshape(-1, F.M, ip.shape[1])
 keep = [i for i in range(len(fr_all)) if np.any(fr_all[i][:, 1:] != 0)]
 print("IP の出口のフレーム: %d（うち空 %d）" % (len(fr_all), len(fr_all) - len(keep)))
+gap = (keep[-1] - keep[0] + 1 - len(keep)) if keep else -1
+print("速さ: 最初と最後の本物のフレームの間に挟まった空の枠 %d（全速の入口なら 0）" % gap)
 ip = fr_all[keep].reshape(-1, ip.shape[1])
 nfr_ip = len(ip) // F.M
 print("IP の出口: %d 拍 = %d フレーム（期待 %d）" % (len(ip), nfr_ip, sum(nt + nb for _, _, nt, nb, _, _ in streams)))
@@ -116,8 +127,12 @@ def word(t):
 n = min(len(got), len(recs))
 dif = sum(1 for a in range(n) if int(got[a][0]) != recs[a][0] or word(got[a][1]) != recs[a][1])
 print("(2) レコード: %d 語（期待 %d）、違う語 %d" % (len(got), len(recs), dif))
-ok = max_d <= 1 and len(got) == len(recs) and dif == 0 and last.startswith("flags 0 n_rec 3")
-if aerr:
+ok = max_d <= 1 and len(got) == len(recs) and dif == 0 and last.startswith("flags 0 n_rec %d" % len(CH))
+if rate:
+    ok = ok and gap == 0
+if rate_old:
+    print("結果: %s" % ("不合格（陽性対照として正しく落ちた）" if gap > 0 else "全部通過（陽性対照が落ちない: 速さの照合が効いていない）"))
+elif aerr:
     print("結果: %s" % ("不合格（陽性対照として正しく落ちた）" if dif > 0 else "全部通過（陽性対照が落ちない: 照合が効いていない）"))
 else:
     print("結果: %s" % ("全部通過" if ok else "不合格"))

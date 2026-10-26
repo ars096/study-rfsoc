@@ -163,6 +163,17 @@ def coarse_pow(cs, nacc):
 def gain_cal(cs, nacc, g0, rounds=3):
     cs.wr(0x004, nacc)
     g = np.full(NCH, g0, dtype=np.int64)
+    # σ < 1 LSB は丸めで 0 に潰れ、比で合わせられない（F-5c-0: ノイズソース OFF で g 256 → σ 0.002）。8 倍ずつ上げてから合わせる
+    while True:
+        for k in range(NCH):
+            cs.wr(0x100 + 4 * k, int(g[k]))
+        p, clip = coarse_pow(cs, nacc)
+        sig = np.sqrt(p / nacc / 2.0)
+        low = (sig < 1.0) & (g < GAIN_MAX)
+        if not low.any():
+            break
+        log(f"利得の下見: g {int(g.min())}〜{int(g.max())} → σ {sig.min():.3f}〜{sig.max():.3f} LSB。σ < 1 の {int(low.sum())} ch を 8 倍")
+        g[low] = np.minimum(g[low] * 8, GAIN_MAX)
     for r in range(rounds):
         for k in range(NCH):
             cs.wr(0x100 + 4 * k, int(g[k]))
@@ -224,6 +235,7 @@ class Ring:
             log("ERROR: リングの BASE・SIZE を書けない")
             sys.exit(1)
         self.r = 0
+        self.prof = dict(inval=0.0, parse=0.0, crc=0.0, copy=0.0, n=0)   # 読みの時間（s）。追いつかないときにどこが遅いかを見る
 
     def enable(self, on):
         self.g.wr(self.R_CTRL, 1 if on else 0)
@@ -248,12 +260,15 @@ class Ring:
         w = self.g.rd(self.R_W)
         n_all = (w - self.r) & 0xFFFFFFFF
         out = []
+        t0 = time.perf_counter()
         if n_all:
             p0 = self.r % self.size
             k = min(n_all, self.size - p0)
             self._inval(p0, k)
             if n_all > k:
                 self._inval(0, n_all - k)
+        tp = time.perf_counter()
+        self.prof["inval"] += tp - t0
         a64, a8 = self.a64, self.a8
         while self.r != w:
             p = self.r % self.size
@@ -269,15 +284,22 @@ class Ring:
                 raise RuntimeError(f"レコードの頭が違う（位置 {self.r}、W {w}）: 0x{h[0]:016x}")
             pb = h[7] & 0xFFFFFFFF
             nb = 64 + pb
+            tc = time.perf_counter()
             crc = zlib.crc32(a8[p:p + nb])
+            self.prof["crc"] += time.perf_counter() - tc
             t0, t1 = [int(x) for x in a64[(p + nb) >> 3:((p + nb) >> 3) + 2]]
             c = h[1] & 0xFFFFFFFF
             kk = h[1] >> 32
             hdr_ok = (h[0] & 0xFFFFFFFF) == NKEEP and pb == REC_BYTES and h[3] == (14 * kk + 7) % 16 and h[4:7] == [0, 0, 0]
             tail_ok = (t0 & 0xFFFFFFFF) == MAGIC_E and (t0 >> 32) == c
-            out.append((kk, c, h[2], h[3], a64[i + 8:i + 8 + (pb >> 3)].copy(), crc == (t1 & 0xFFFFFFFF), tail_ok, hdr_ok))
+            tc = time.perf_counter()
+            body = a64[i + 8:i + 8 + (pb >> 3)].copy()
+            self.prof["copy"] += time.perf_counter() - tc
+            self.prof["n"] += 1
+            out.append((kk, c, h[2], h[3], body, crc == (t1 & 0xFFFFFFFF), tail_ok, hdr_ok))
             self.r = (self.r + 64 + pb + 64) & 0xFFFFFFFF
         self.g.wr(self.R_R, self.r)
+        self.prof["parse"] += time.perf_counter() - tp
         return out
 
     def close(self):
@@ -318,8 +340,9 @@ def main():
     ap.add_argument("--gain-nacc", type=int, default=1 << 20, help="利得を合わせる区切り（ブロック、2^20 ≒ 14.3 ms）")
     ap.add_argument("--gain0", type=int, default=256)
     ap.add_argument("--gain-only", action="store_true")
-    ap.add_argument("--ring-mib", type=int, default=32)
+    ap.add_argument("--ring-mib", type=int, default=64, help="リングの大きさ（CMA は 128 MiB。1 チャンクのレコードは 29.4 MB）")
     ap.add_argument("--out", default="f5_run")
+    ap.add_argument("--trace", action="store_true", help="読みのループごとに ct_wr・ct_rd・fine_top の数えを時刻つきで meta に残す")
     a = ap.parse_args()
     if not 1 <= a.chunks <= 64:
         log("ERROR: --chunks は 1〜64")
@@ -390,14 +413,18 @@ def main():
     t_run = time.time()
     log(f"RUN（1 チャンク {CHUNK_BLK / BLK_RATE * 1e3:.2f} ms・{a.chunks} チャンク × 32 レコードを待つ）")
 
-    spec = np.zeros((a.chunks, NTOT), dtype=np.float64)
+    raw = np.zeros((a.chunks, NTOT), dtype=np.uint64)      # 積算のまま溜め、割るのは最後（F-5c-0: ループで float64 に直すと 1 レコード 3 ms かかり、読みが追いつかなかった）
     seen = np.zeros((a.chunks, NCH), dtype=bool)
     nact = np.zeros((a.chunks, NCH), dtype=np.int64)
     bad = []
     other = 0
+    t_spec = 0.0
+    trace = []
     tmo = (a.chunks + 3) * CHUNK_BLK / BLK_RATE + 5
     try:
         while not seen.all() and time.time() - t_run < tmo:
+            if a.trace:
+                trace.append((round(time.time() - t_run, 4), ctw.rd(0x24), ctr.rd(0x24), ctr.rd(0x28), ctr.rd(0x20), ft.rd(0x14), ring.g.rd(Ring.R_RECCNT)))
             for kk, c, na, sk, body, crc_ok, tail_ok, hdr_ok in ring.read():
                 if not (crc_ok and tail_ok and hdr_ok):
                     bad.append(dict(k=kk, c=c, crc=crc_ok, tail=tail_ok, hdr=hdr_ok))
@@ -408,7 +435,9 @@ def main():
                     bad.append(dict(k=kk, c=c, dup=True))
                 seen[c, kk] = True
                 nact[c, kk] = na
-                spec[c, kk * NKEEP:(kk + 1) * NKEEP] = body / max(na, 1)
+                tc = time.perf_counter()
+                raw[c, kk * NKEEP:(kk + 1) * NKEEP] = body
+                t_spec += time.perf_counter() - tc
             time.sleep(0.01)
     finally:
         ctw.wr(0x04, 0)
@@ -420,9 +449,19 @@ def main():
         w = watch(ctw, ctr, ft, ring)
         ring.close()
     t_el = time.time() - t_run
+    spec = np.empty((a.chunks, NTOT), dtype=np.float32)
+    for c in range(a.chunks):
+        spec[c] = raw[c] / np.repeat(np.maximum(nact[c], 1), NKEEP)
+    del raw
     txt, gbs, adcs = gb_text(ft)
     log(txt)
     meta.update(watch=w, gb_stat1=gbs, adc_stat1=adcs, nact=nact.tolist(), bad=bad, other=other, seconds=t_el)
+    pf = dict(ring.prof, spec=t_spec)
+    meta["prof"] = pf
+    if a.trace:
+        meta["trace"] = dict(cols=["t", "ctw_chunks", "ctr_done", "ctr_drop", "ctr_status", "ft_nrec", "ring_rec"], rows=trace)
+    log(f"PS の読みの時間: {pf['n']} レコード・invalidate {pf['inval']:.2f} s・解く {pf['parse']:.2f} s（うち CRC {pf['crc']:.2f}・写し {pf['copy']:.2f}）・"
+        f"spec へ {t_spec:.2f} s / 経過 {t_el:.2f} s（追いつくには 1 レコード {CHUNK_BLK / BLK_RATE / NCH * 1e3:.2f} ms 以内）")
     log(f"ct_wr: チャンク {w['ct_wr']['chunks']}・溢れ {w['ct_wr']['ovf']}・FLAGS 0x{w['ct_wr']['flags']:x} / "
         f"ct_rd: 読んだ {w['ct_rd']['done']}・捨てた {w['ct_rd']['drop']}・FLAGS 0x{w['ct_rd']['flags']:x}")
     log(f"fine_top: FLAGS 0x{w['fine']['flags']:03x}（{'・'.join(w['fine']['flag_names']) or 'なし'}）・レコード {w['fine']['n_rec']}")
@@ -434,7 +473,7 @@ def main():
     log(f"積んだフレームの数: チャンク 0 = {sorted(set(nact[0][seen[0]].tolist()))}・1 以降 = "
         f"{sorted(set(nact[1:][seen[1:]].tolist())) if a.chunks > 1 else '-'}（157・160 を期待、違う {n_ng}）")
 
-    np.save(a.out + "_spec.npy", spec.astype(np.float32))
+    np.save(a.out + "_spec.npy", spec)
     json.dump(meta, open(a.out + "_meta.json", "w"), indent=1, default=int)
     log(f"保存: {a.out}_spec.npy（{a.chunks} × {NTOT}、float32）・{a.out}_meta.json")
     for c in range(a.chunks):
