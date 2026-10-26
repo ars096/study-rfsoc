@@ -1,7 +1,7 @@
 #!/bin/bash
 # proj027 4c-b: 4c（tint 10.24 ms で 30 分）を AMS の記録つきで。受けを先に、命令を後に。STATUS を 1 分ごと
 # 温度のどれかが 95 ℃ を越えたら STOP（README の中止の条件）。specd は先に起こしておく
-cd ~/proj027
+cd /home/xilinx/proj027 || exit 1   # root の ~ は /root（4c-b の 1 回目はここで外れた）
 R=runs/g24_4c30b
 python3 amslog.py --out $R.ams.log --period 10 --seconds 2300 &
 sleep 120                                   # 待機の値を 2 分
