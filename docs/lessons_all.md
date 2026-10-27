@@ -308,7 +308,7 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 
 - `pkill -f`・`pgrep -f` は自分のコマンド行にも当たる。止めたい名前が同じコマンド行に入っていると、走らせたシェルごと止まる（proj028 F-8 で再び踏んだ）。`ps -eo pid,args | awk '$2 == "vvp"'` のように実行ファイルの名前で選ぶ。待つループ（`while pgrep -f X`）は自分に当たって終わらない（proj030: 2 時間 40 分待った）。ssh の `bash -c '… pgrep -f specd.py …'` も自分に当たって「動いている」と出る（proj030 R-5）。`[s]pecd.py` の形か `kill -0 $pid` で
 
-- **ボードの OS の apt の定時の仕事（apt-daily.service・PackageKit）が取得の 1 周を 313 ms 止めた**（CPU 19 秒、load1 1.2）。tint 10.24 ms・51 MB/s で PL のリング 64 MiB の 94 %（60 MB）まで溜まった（pl_drop 0）。長い取得の溜まりの山が 1 回だけ跳ねたら journal をその分で引く。観測の間は apt-daily.timer・apt-daily-upgrade.timer を止めるのがよい（proj030 R-3、まだ止めていない）
+- **ボードの OS の apt の定時の仕事（apt-daily.service・PackageKit）が取得の 1 周を 313 ms 止めた**（CPU 19 秒、load1 1.2）。tint 10.24 ms・51 MB/s で PL のリング 64 MiB の 94 %（60 MB）まで溜まった（pl_drop 0）。長い取得の溜まりの山が 1 回だけ跳ねたら journal をその分で引く。2026-10-27 にボードで apt-daily.timer・apt-daily-upgrade.timer を止めた（proj030 R-3、手順は proj001/docs/runbook.md の 08）
 - specd の `SHUTDOWN` は `confirm=1` が要り、無いと ERR で断るだけで動き続ける。止めた後の手順（Overlay を載せ直す widef2 など）の前に、止まったかを確かめる（`pgrep -af "[s]pecd.py"`）（proj030 R-5: 待機中の specd を残したまま widef2 が Overlay を載せ直した）
 
 ## 実機・測定

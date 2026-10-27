@@ -393,7 +393,7 @@ DSP・LUT の減りの割合（−30 %・−27 %）より VCCINT の減り（−
   その間のボードの journal: **07:54:27〜07:54:49 に apt-daily.service（Daily apt download activities）と PackageKit が起き、CPU 19.3 秒を使った**（load1 1.2〜1.3）。
   bit にも 2-for-1 にも関係しない（PS は proj027 と同じ）。**リングは 313 ms の止まりで 64 MiB の 94 % まで溜まった**（51 MB/s × 0.31 s ≒ 16 MB では足りず、止まりの後に追いつくまでの分も溜まる）。
   これより長く止まれば pl_drop になる。proj027 の 4f・4g（2.5 時間）で出なかったのは、apt の定時の時刻に当たらなかっただけと読む
-- 運用への示唆: 観測の間はボードの apt の定時の仕事（apt-daily.timer・apt-daily-upgrade.timer・unattended-upgrades）を止めるのがよい（**ボードの設定を変えることなので、まだしていない**）
+- 運用への示唆: 観測の間はボードの apt の定時の仕事（apt-daily.timer・apt-daily-upgrade.timer・unattended-upgrades）を止めるのがよい（→ 2026-10-27 に止めた。結論の「次にやること」2）
 - loop_slow 40,672 は proj027 4f と同じ読み方（1 周が 1 BASE を越えて抱える形、取りこぼしではない）
 
 **R-5 F-2（adc_to_core）— 予言（2026-10-27、配線 P に替えた後（西村さん）、走らせる前に書く）**
@@ -475,6 +475,6 @@ DSP・LUT の減りの割合（−30 %・−27 %）より VCCINT の減り（−
 
 次にやること（proj030 の外）:
 1. **2-for-1 を他の 2G の bit（2G-1・2G-2）と Wide に広げるか**を決める。2G-2 は今でも資源に余裕があり（VCCINT 24.8 A の見積もり）、効くのは主に 2G-4。Wide はレーン FFT の形が違う（窓の鎖）ので模型から
-2. ボードの apt-daily.timer・apt-daily-upgrade.timer を観測の間止めるか（西村さんの判断）
+2. ~~ボードの apt-daily.timer・apt-daily-upgrade.timer を止めるか~~ → **止めた**（2026-10-27、西村さん。`systemctl disable --now`、手順は proj001/docs/runbook.md の 08）
 3. 長い運転（2 時間以上）で proj030 が落ちないこと（proj027 の 4g と同じ形）。30 分は通った
 4. 行 0 の ch（k·fs/16）は ADC の山と重なるので、実機では 2-for-1 の誤りが無いとまでは言えていない。必要なら山の無い入力（ノイズ ON で山が床に埋もれる条件）を長く積んで、行 0 の ch だけを近くの ch と比べる

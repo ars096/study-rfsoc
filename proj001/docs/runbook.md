@@ -512,6 +512,20 @@ Vivado 2023.2 でビルドした RFDC 入りオーバーレイを別世代の PY
 X11 転送は実用に耐えないことが多い。VNC か（サーバが対応していれば）リモートデスクトップを
 立てておく。ただしビルドをスクリプト化しておけば、GUI が必要なのは BD を触るときだけになる。
 
+### 08. ボードの OS の定時の仕事が取得を止める（apt-daily）
+
+PYNQ のボードの Ubuntu は、既定で apt-daily.timer（パッケージ情報の取得）と apt-daily-upgrade.timer（更新の適用）が毎日動く。
+proj030 R-3（2026-10-27）では apt-daily と PackageKit が CPU を 19 秒使い、tint 10.24 ms の取得の 1 周が 313 ms 止まって、PL のリング（64 MiB）が 60 MB まで溜まった。
+**2026-10-27 にボードで 2 つとも止めた**（西村さんの判断）:
+
+```bash
+sudo systemctl disable --now apt-daily.timer apt-daily-upgrade.timer
+systemctl list-timers --all | grep apt     # 何も出なければ止まっている
+```
+
+ボードを焼き直したら（SD カードを作り直したら）もう一度やる。パッケージを更新するときは手で `sudo apt update && sudo apt upgrade` を、観測の無いときに。
+他の定時の仕事（man-db・logrotate・e2scrub_all・fstrim・motd-news）は残してある。取得の溜まりの山が 1 回だけ跳ねたら、その時刻の `journalctl` を引く
+
 ---
 
 ## 分光計に入る前に決めておくこと
