@@ -25,6 +25,23 @@ import numpy as np
 import f5
 from f5 import Regs, Ring, log, NCH, NKEEP, NTOT, CHUNK_BLK, BLK_RATE, CHS, PLANE, GPD, NPLANE, HB
 
+AMS = "/sys/bus/iio/devices/iio:device0/"
+PROBE_NACC = 1 << 20                              # 見張りの POW の区切り（≒ 14 ms。区切り 2 つを待つので ≒ 30〜45 ms 止まる）
+PROBE = []                                         # (時刻, 区間, RUN 中か, PL の温度 °C, PS の温度 °C, 荒い段の ch 2〜30 の POW の和)
+
+
+def temp(ch):
+    try:
+        return int(open(f"{AMS}in_temp{ch}_input").read()) / 1000.0
+    except OSError:
+        return float("nan")
+
+
+def probe(cs, seg, running):
+    """PL（in_temp20）・PS（in_temp7）の温度と、荒い段の POW を 1 つ記録する（RUN の中でも外でも同じ量）"""
+    p, _ = f5.coarse_pow(cs, PROBE_NACC)
+    PROBE.append((round(time.time(), 3), seg, int(running), temp(20), temp(7), float(p[2:31].sum())))
+
 
 def stop(ctw, ctr):
     ctw.wr(0x04, 0)
@@ -54,7 +71,7 @@ def configure(ctw, ctr, ft, shift):
         sys.exit(1)
 
 
-def segment(ol, ctw, ctr, ft, a, out_stem):
+def segment(ol, cs, ctw, ctr, ft, a, out_stem, seg):
     """1 区間: チャンク 1..a.chunks を足し込む。戻り: (acc, nfr, ts, info)"""
     configure(ctw, ctr, ft, a.shift)
     ring = Ring(Regs(ol, "s45_ring_0"), a.ring_mib << 20)
@@ -71,6 +88,7 @@ def segment(ol, ctw, ctr, ft, a, out_stem):
     bad_ex = []
     tmo = (N + 3) * CHUNK_BLK / BLK_RATE + 5
     last_save = 0
+    t_probe = 0.0
     try:
         while not seen[1:].all() and time.time() - t_run < tmo:
             for kk, c, na, sk, body, crc_ok, tail_ok, hdr_ok in ring.read():
@@ -98,6 +116,9 @@ def segment(ol, ctw, ctr, ft, a, out_stem):
                 last_save = int(seen[1:].all(axis=1).sum())
                 np.save(out_stem + "_spec.npy", (acc / np.repeat(np.maximum(nfr, 1), NKEEP)).astype(np.float32))
                 log(f"  途中: {last_save} / {N} チャンク（{time.time() - t_run:.0f} s）・違い {nbad}・捨て {ctr.rd(0x28)}・溢れ {ctw.rd(0x28)}・DROP {ring.g.rd(Ring.R_DROP)}")
+            if time.time() - t_probe >= a.probe_secs:
+                t_probe = time.time()
+                probe(cs, seg, True)
             time.sleep(0.01)
     finally:
         stop(ctw, ctr)
@@ -122,6 +143,7 @@ def main():
     ap.add_argument("--gain-nacc", type=int, default=1 << 20)
     ap.add_argument("--ring-mib", type=int, default=64)
     ap.add_argument("--save-every", type=int, default=0, help="長い区間で途中を保存するチャンクの間隔（0 で保存しない）")
+    ap.add_argument("--probe-secs", type=float, default=1.0, help="温度と荒い段の POW を記録する間隔（RUN の中でも外でも）")
     ap.add_argument("--out", default="f6_seg")
     a = ap.parse_args()
     segs = a.segs.split(",")
@@ -168,15 +190,19 @@ def main():
                 go = f"{a.out}.go{i}"
                 log(f"待つ: 区間 {i}（{name}）は {go} ができたら始める")
                 while not os.path.exists(go):
-                    time.sleep(0.5)
+                    probe(cs, i - 0.5, False)
+                    time.sleep(max(0.0, a.probe_secs - 0.05))
             else:
                 log(f"待つ: {a.wait} s")
-                time.sleep(float(a.wait))
+                t_w = time.time()
+                while time.time() - t_w < float(a.wait):
+                    probe(cs, i - 0.5, False)
+                    time.sleep(max(0.0, a.probe_secs - 0.05))
         p, clip = f5.coarse_pow(cs, a.gain_nacc)
         sig = np.sqrt(p / a.gain_nacc / 2.0)
         log(f"区間 {i}（{name}）: 始め {time.strftime('%H:%M:%S')}・σ {sig.min():.2f}〜{sig.max():.2f} LSB・飽和 {int(clip.sum())}")
         stem = f"{a.out}_s{i}"
-        acc, nfr, ts, info = segment(ol, ctw, ctr, ft, a, stem)
+        acc, nfr, ts, info = segment(ol, cs, ctw, ctr, ft, a, stem, i)
         spec = (acc / np.repeat(np.maximum(nfr, 1), NKEEP)).astype(np.float32)
         np.save(stem + "_spec.npy", spec)
         w, r = info["watch"], info["watch"]["ring"]
@@ -192,6 +218,10 @@ def main():
         log(f"  ch 2〜30 の全電力: チャンクの間の σ {q.std():.3f} %・幅 {q.min():+.3f}〜{q.max():+.3f} %")
         info.update(name=name, ok=ok, sigma=sig.tolist(), clip=clip.tolist(), ts=ts.tolist())
         meta["seg"].append(info)
+        meta["probe"] = dict(cols=["t", "seg", "run", "t_pl", "t_ps", "pow"], rows=PROBE)
+        pr = [x for x in PROBE if x[1] == i]
+        if pr:
+            log(f"  PL の温度 {pr[0][3]:.1f} → {pr[-1][3]:.1f} °C・荒い段の POW（ch 2〜30）{100 * (pr[-1][5] / pr[0][5] - 1):+.3f} %（区間の頭から終わり）")
         json.dump(meta, open(a.out + "_meta.json", "w"), default=float)
     if len(segs) > 1:
         b = [np.array(s["ts"])[:, 2:31].mean() for s in meta["seg"]]
