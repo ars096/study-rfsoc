@@ -356,3 +356,11 @@ sim-cu:
 	@grep -q '結果: 全部通過' $(SIMDIR)/cu_normal/check.log \
 	  && for v in mirror norev nowrite onebit after; do grep -q '結果: 不合格' $(SIMDIR)/cu_$$v/check.log || exit 1; done \
 	  && echo "sim-cu: 全部通過（陽性対照 5 本は落ちた）" || (echo "sim-cu: NG"; exit 1)
+
+# ---- S g24_cu を 1 個 OOC で合成（`-1`・256 MHz）。結果は build-ooc/ooc-cu.txt。Synth 8-3848 があれば NG ----
+.PHONY: ooc-cu
+ooc-cu:
+	@mkdir -p build-ooc
+	OOC_INCDIR=$(CURDIR)/src/g24 $(VIVADO) -mode batch -nojournal -log build-ooc/vivado_cu.log -source tools/ooc_rtl.tcl -tclargs g24_cu 3.906 clk src/g24/g24_cu.v > /dev/null 2>&1; \
+	  cd build-ooc && grep '^OOC ' vivado_cu.log | tee ooc-cu.txt; n=$$(grep -c 'Synth 8-3848' vivado_cu.log); echo "Synth 8-3848: $$n" | tee -a ooc-cu.txt; \
+	  grep -c 'CRITICAL WARNING' vivado_cu.log | sed 's/^/CRITICAL WARNING: /' | tee -a ooc-cu.txt; [ $$n -eq 0 ]

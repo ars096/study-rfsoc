@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # proj030 — 自作の RTL（proj028 の tools/ooc_rtl.tcl の写し） を 1 個 OOC で合成して資源・合成の WNS・ドライバの無いネット（Synth 8-3848）を見る
 #   vivado -mode batch -source tools/ooc_rtl.tcl -tclargs <top> <周期 ns> <クロックのポート> <ファイル...>
+#   include: OOC_INCDIR=/abs/dir（proj031）
 #   generic: OOC_GENERIC="LO_FILE=/abs/a.hex;HI_FILE=/abs/b.hex"
 set part xczu48dr-ffvg1517-1-e
 lassign $argv top period clkport
@@ -16,7 +17,10 @@ if {[info exists ::env(OOC_GENERIC)] && $::env(OOC_GENERIC) ne ""} {
         lappend gens -generic "$k=\"$v\""
     }
 }
-synth_design -top $top -part $part -mode out_of_context {*}$gens
+# include の道は環境変数 OOC_INCDIR（proj031: g24_cu の crc32_d32.vh）
+set incs {}
+if {[info exists ::env(OOC_INCDIR)] && $::env(OOC_INCDIR) ne ""} { lappend incs -include_dirs $::env(OOC_INCDIR) }
+synth_design -top $top -part $part -mode out_of_context {*}$gens {*}$incs
 create_clock -name $clkport -period $period [get_ports $clkport]
 set wns [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]
 set rpt [report_utilization -return_string]

@@ -123,17 +123,12 @@ module g24_cu #(
 `else
     wire [11:0] ad_b = ~addr;       // 4095 − m
 `endif
-    (* ram_style = "ultra" *) reg [RW-1:0] mem [0:4095];
-`ifndef SYNTHESIS
-    // URAM は構成の後に 0（sim はそれに合わせる。書き忘れの陽性対照の CRC は「全部 0」の値になる）
-    integer z;
-    initial for (z = 0; z < 4096; z = z + 1) mem[z] = {RW{1'b0}};
-`endif
-    reg [RW-1:0] ra1, rb1, ra2, rb2;
+    // URAM の本体は型どおりの小さなモジュール（g24_cu_ram、下）に切り出す。g24_cu の中に直に書くと、ポート A が READ_FIRST と読まれ
+    // 「invalid write mode」（Synth 8-5792）で URAM の指定が無視され、BRAM 64 に落ちた（proj031 S の 1〜2 回目。単体の型では URAM 8 に入った）
+    wire [RW-1:0] ra1, rb1;
+    reg  [RW-1:0] ra2, rb2;
+    g24_cu_ram #(.W(RW)) u_ram (.clk(clk), .wea(we_a), .aa(ad_a), .da(din_a), .qa(ra1), .ab(ad_b), .qb(rb1));
     always @(posedge clk) begin
-        if (we_a) mem[ad_a] <= din_a;
-        else      ra1 <= mem[ad_a];
-        rb1 <= mem[ad_b];
         ra2 <= ra1;
         rb2 <= rb1;
     end
@@ -222,4 +217,29 @@ module g24_cu #(
         else if (s_axi_arvalid && s_axi_arready) begin s_axi_rvalid <= 1'b1; s_axi_rdata <= rd; end
         else if (s_axi_rvalid && s_axi_rready) s_axi_rvalid <= 1'b0;
     end
+endmodule
+
+// g24_cu_ram — 4096 × W の URAM（UG901 の型。ポート A は書きと読み（NO_CHANGE: 書く拍は qa を更新しない）、ポート B は読みだけ。読みの遅れ 1）
+module g24_cu_ram #(
+    parameter integer W = 576
+)(
+    input  wire          clk,
+    input  wire          wea,
+    input  wire [11:0]   aa,
+    input  wire [W-1:0]  da,
+    output reg  [W-1:0]  qa,
+    input  wire [11:0]   ab,
+    output reg  [W-1:0]  qb
+);
+    (* ram_style = "ultra" *) reg [W-1:0] mem [0:4095];
+`ifdef __ICARUS__
+    // URAM は構成の後に 0（sim はそれに合わせる。書き忘れの陽性対照の CRC は「全部 0」の値になる）。iverilog だけ
+    integer z;
+    initial for (z = 0; z < 4096; z = z + 1) mem[z] = {W{1'b0}};
+`endif
+    always @(posedge clk) begin
+        if (wea) mem[aa] <= da;
+        else     qa <= mem[aa];
+    end
+    always @(posedge clk) qb <= mem[ab];
 endmodule
