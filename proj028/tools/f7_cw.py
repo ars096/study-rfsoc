@@ -56,7 +56,11 @@ PLANS = {
     # F-8c: 弱いトーン（0 dBm・ATT 13）と 28 dB 強いトーン（+15 dBm・ATT 0）を交互に、継ぎ目の sl で（f ± k·fs/56 の線の dBc がトーンで変わるか）
     "f": [("w1", "0", SEAM - DF / 1e6, DBM_B, 13), ("s1", "0", SEAM - DF / 1e6, 15.0, 0),
           ("w2", "0", SEAM - DF / 1e6, DBM_B, 13), ("s2", "0", SEAM - DF / 1e6, 15.0, 0)],
+    # F-9: 裾の周波数による違い。荒い ch の中心（64k + 32 MHz、bin の中心に正確に乗る）を、周波数の順を混ぜて。1120 MHz は頭と尻に
+    "g": [(f"g{m}{t}", "0", float(m), DBM_B, 13) for m, t in
+          ((1120, "a"), (96, ""), (1888, ""), (352, ""), (1504, ""), (160, ""), (736, ""), (1120, "b"))],
 }
+RK = {1: -56.30, 2: -65.49, 3: -74.02}  # 細かい PFB の応答（bin の中心の線から ±k bin、m4_stitch.design）
 
 _R = None
 
@@ -141,6 +145,11 @@ def ana(stem, f_mhz):
         imgs.append(dict(f=fi, bin=bi, rel_db=10 * np.log10(s[bi - 3:bi + 4].sum() / ptot),
                          above_floor_db=10 * np.log10(s[bi] / loc), model_db=coarse_resp_db(delta) - coarse_resp_db(f - (k + 0.5) * 64e6)))
     res["images"] = imgs
+    ex = {}                                              # 裾の余り: 隣の bin の電力から細かい PFB の応答 R(k) の分を引く（線が bin の中心のとき）
+    for d in (1, 2, 3):
+        pn = (s[b - d] + s[b + d]) / 2 / p0
+        ex[d] = 10 * np.log10(max(pn - 10 ** (RK[d] / 10), 1e-30))
+    res["skirt_ex"] = ex
     kl = {}                                              # f ± k·fs/56 の決まった bin（外部 10 MHz なら bin の上に正確に立つ）
     for kk in list(range(-8, 0)) + list(range(1, 9)):
         Gk = int(round((f + kk * FOUT) / DF * (1 + res["ppm"] * 1e-6)))
@@ -165,7 +174,8 @@ def line(r):
     nb = " ".join(f"{d:+d}:{v:+.1f}" for d, v in r["nb_db"].items())
     im = " ".join(f"{(i['f'] - r['f_sg']) / 1e6:+.3f} MHz {i['rel_db']:+.1f} dB（床 +{i['above_floor_db']:.1f}・模型 {i['model_db']:+.1f}）" for i in r["images"])
     return (f"{r['stem']}: clkin {r['clkin']}・bin {r['bin']}（ch {r['ch']}）端数 {r['x']:+.3f}・ずれ {r['off_bins']:+.3f} bin = {r['ppm']:+.4f} ppm・"
-            f"線 {10 * np.log10(r['ptot']):.2f} dB・床の上 {r['snr_db']:.1f} dB\n    隣（dB）{nb}\n    像 {im}\n"
+            f"線 {10 * np.log10(r['ptot']):.2f} dB・床の上 {r['snr_db']:.1f} dB\n    隣（dB）{nb}・裾の余り（両側の平均 − R(k)、dBc）"
+            + " ".join(f"±{d}:{v:+.1f}" for d, v in r.get("skirt_ex", {}).items()) + f"\n    像 {im}\n"
             "    f+k·fs/56（dBc（床の上 dB））" + " ".join(f"k{k:+d}:{v[0]:+.1f}({v[1]:+.0f})" for k, v in r.get("klines", {}).items()))
 
 
