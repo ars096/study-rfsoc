@@ -21,7 +21,7 @@
 //   ビート m で hmem[m] を読み、{h1, h0, x_r} を同じ番地に書き戻す（次に同じ番地を読むのは 4096 ビート後。wide_pfb は 2048）。
 //   （wide_pfb の注: URAM に置く（2048 × 672 → URAM288 × 10）。2G-2 は BRAM に、下の注）。初期値は要らない（起動の直後は fr でタップを 0 にする）。
 //
-// ---- 係数（外の wide_coef_rom、4 ADC で共有）----
+// ---- 係数（外の wide_coef_rom、4 ADC で共有。proj031: g24_cu、coef_ok が 0 のビートも coef_mis）----
 //   coef は「LAT_C = 2 クロック前に入ったビートの m」の係数（ROM の番地は共通の数えで、このコアの s_m と同じ値のはず）。
 //   coef_m（ROM が読んだ番地）と自分の m を比べ、違えば coef_mis を立てる（粘着、rst で消す）。**共有の食い違いの見張り**
 //   （D-6 の「一番危ないところ」。陽性対照: sim で ROM の番地を 1 ずらす）。
@@ -46,6 +46,7 @@ module g24_pfb_core #(
     input  wire [11:0]       s_m,
     input  wire [1151:0]     coef,          // 2 クロック前のビートの係数（wide_coef_rom）
     input  wire [11:0]       coef_m,
+    input  wire              coef_ok,       // proj031: 共有の g24_cu の OK（coef と同じ段）。0 のビートも coef_mis に数える
     output reg  [16*YW-1:0]  y,             // レーン p が [YW·p +: YW]
     output reg               y_v,
     output reg  [11:0]       y_m,
@@ -101,7 +102,7 @@ module g24_pfb_core #(
     // ---- 2: 係数の見張り ----
     always @(posedge clk) begin
         if (rst) coef_mis <= 1'b0;
-        else if (v2 && coef_m != m2) coef_mis <= 1'b1;
+        else if (v2 && (coef_m != m2 || !coef_ok)) coef_mis <= 1'b1;
     end
 
     // ---- 3: タップの選択。タップ t（0 = いちばん古い x_{r−3}）は fr ≧ 3 − t のときだけ（それ以外は履歴 0）----

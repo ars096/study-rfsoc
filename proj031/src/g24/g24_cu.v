@@ -30,11 +30,17 @@
 `timescale 1ns / 1ps
 
 module g24_cu #(
-    parameter [31:0] COEF_CRC = 32'h891BE197,     // make model-cu の COEF_CRC
-    parameter [31:0] PROJ     = 32'h0031_0100
+    // **integer の 10 進で書く**（32'h で書くと Vivado が CONFIG を読み返しで別の形にする、time_core の注）。COEF_CRC は 2^31 を越えるので 16 bit ずつ 2 つ
+    parameter integer COEF_CRC_HI = 35099,         // 0x891B（make model-cu の COEF_CRC 0x891BE197 の上 16 bit）
+    parameter integer COEF_CRC_LO = 57751,         // 0xE197
+    parameter integer PROJ        = 3211520        // 0x0031_0100（proj031）
 )(
-    input  wire          clk,
-    input  wire          rst,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axi, ASSOCIATED_RESET aresetn" *)
+    input  wire          aclk,
+    (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 aresetn RST" *)
+    (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
+    input  wire          aresetn,
     // 走りの読み
     input  wire [11:0]   addr,
     input  wire          addr_v,
@@ -62,6 +68,14 @@ module g24_cu #(
 );
     localparam integer RW = 576;
     localparam integer NW = 18;
+    localparam [31:0] COEF_CRC = (COEF_CRC_HI << 16) | COEF_CRC_LO;
+    localparam [31:0] PROJ_W   = PROJ;
+    wire clk = aclk;
+
+    // リセットは 3 段で受ける（LESSONS: コアの中で 3 段）
+    (* max_fanout = 64 *) reg rst = 1'b1;
+    reg rst1 = 1'b1, rst2 = 1'b1;
+    always @(posedge clk) begin rst1 <= ~aresetn; rst2 <= rst1; rst <= rst2; end
 
 `include "crc32_d32.vh"
 
@@ -203,7 +217,7 @@ module g24_cu #(
         else if (s_axi_araddr[9:2] == 8'h20 || s_axi_araddr[9:2] == 8'h21) rd = dat[16 + s_axi_araddr[2]];
         else case (s_axi_araddr[9:2])
             8'h00: rd = 32'h6375_0001;
-            8'h01: rd = PROJ;
+            8'h01: rd = PROJ_W;
             8'h02: rd = {27'd0, wrote, vmis, vdone, vbusy, ok};
             8'h03: rd = {20'd0, last_row};
             8'h04: rd = COEF_CRC;

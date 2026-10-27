@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //
 // g24_spec — 2G-4 の分光の本体（コア 1 個ぶん: 1 ADC、FULL の流れ 1 本）。
+// **proj031: PFB の係数は外の共有の g24_cu（URAM）から**（coef_* の口。起動の見張りは係数の OK が立つまで口を開けない。flags[0] は OK が 0 のビートも数える）
 // **proj030: レーン FFT を 2-for-1 に**（proj027 の g24_spec を写して直した。README の P-4）:
 //   IP は 8 個（z_q = y_q + j·y_(q+8)）→ s2_sep（分け、2Y）→ s2_chain（そろった行 r だけ、16 出口）→ s2_q（均し、1 拍に 1 行）→ g24_acc（今のまま）。
 //   s2_q の出口もフレームの最初の行は 0・最後の行は 4095（位置 0 は自己共役の行 0、最後の項目は位置 4095 の k 4095 → 行 1・4095 の順）なので、
@@ -33,8 +34,6 @@ module g24_spec #(
     parameter integer SHIFT_DEFAULT = 7,
     parameter integer FW            = 48,
     parameter integer GF_L2         = 7,       // 格子のフレーム数の log2（128 フレーム = 2.048 ms）。sim では小さくして待ちを縮める
-    parameter LO_FILE = "g24_coef_lo.hex",
-    parameter HI_FILE = "g24_coef_hi.hex",
     parameter TA_FILE = "g24_tw_a.hex",
     parameter TB_FILE = "g24_tw_b.hex"
 )(
@@ -43,6 +42,12 @@ module g24_spec #(
     input  wire [255:0]      s_tdata,
     input  wire              s_tvalid,
     input  wire [63:0]       t_in,
+    // proj031: 共有の係数 g24_cu（g24_pfb の口をそのまま出す）
+    output wire [11:0]       coef_addr,
+    output wire              coef_addr_v,
+    input  wire [1151:0]     coef_in,
+    input  wire [11:0]       coef_m_in,
+    input  wire              coef_ok_in,
     // 制御
     input  wire              cmd_wrst,
     input  wire [3:0]        w_shift,
@@ -100,25 +105,27 @@ module g24_spec #(
     // ---- 起動の見張り（wide_spec と同じ。IP の 16 レーンの tready も見る）----
     wire [NQ-1:0] ln_s_tready;
     wire          ip_ready = &ln_s_tready;
+    wire          coef_ok;                  // proj031: g24_pfb が受けた g24_cu の OK
     reg [15:0] st_run;
     always @(posedge clk) begin
         if (rst) begin
             go <= (ST_N == 0); st_run <= 16'd0;
         end else if (!go) begin
-            if (v_loc && ip_ready) begin
+            if (v_loc && ip_ready && coef_ok) begin   // proj031: 係数の OK が立つまで口を開けない
                 if (st_run == ST_N - 1) go <= 1'b1; else st_run <= st_run + 16'd1;
             end else st_run <= 16'd0;
         end
     end
 
-    // ---- PFB（係数の補間は g24_pfb の中）----
+    // ---- PFB（proj031: 係数は外の共有の g24_cu から。g24_pfb が受けの 1 段を持つ）----
     wire              p_v = v_loc && go;
     wire [16*15-1:0]  y;
     wire              y_v, y_first, coef_mis;
     wire [11:0]       y_m;
     wire [1:0]        y_fr;
     wire [15:0]       pfb_sat;
-    g24_pfb #(.LO_FILE(LO_FILE), .HI_FILE(HI_FILE)) u_pfb (.clk(clk), .rst(rst), .s_tdata(d_loc), .s_tvalid(p_v), .s_m(m_now),
+    g24_pfb u_pfb (.clk(clk), .rst(rst), .s_tdata(d_loc), .s_tvalid(p_v), .s_m(m_now),
+                    .coef_addr(coef_addr), .coef_addr_v(coef_addr_v), .coef_in(coef_in), .coef_m_in(coef_m_in), .coef_ok_in(coef_ok_in), .coef_ok(coef_ok),
                     .y(y), .y_v(y_v), .y_m(y_m), .y_first(y_first), .y_fr(y_fr), .sat_cnt(pfb_sat), .coef_mis(coef_mis));
 
     // ---- IP の手前の待ち行列（wide_spec と同じ。proj023 4b）----

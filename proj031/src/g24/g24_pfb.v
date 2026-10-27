@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //
-// g24_pfb — 2G-4 の PFB（proj027 手順 1c。proj025 の g22_pfb を写した）: g24_coef（係数の補間）＋ 入力の遅延線 ＋ g24_pfb_core（4096 ビート）
+// g24_pfb — 2G-4 の PFB（proj027 手順 1c。proj025 の g22_pfb を写した）: 入力の遅延線 ＋ g24_pfb_core（4096 ビート）
 //
+// **proj031 P-2: 係数は外の共有の g24_cu（URAM、4 コアで 1 組）から**。中の g24_coef（線形補間、DSP 64）を外した。
+//   coef_addr（= s_m を 1 段受けたもの）を外へ出す（使うのは s45_core_0 のものだけ）。g24_cu の LAT 3 ＋ ここの受けの 1 段（coef_q）で、
+//   s_m → 係数が 1 + 3 + 1 = 5 クロック = g24_coef の LAT と同じ。遅延線 DLY 3 は今のまま。値は proj030 と bit 単位で同じ（sim-cu）。
+//   coef_ok_in（g24_cu の OK）は係数と同じ段で受け、g24_pfb_core が「OK が 0 のビート」も coef_mis に数える。coef_ok は g24_spec の起動の見張りにも出す
+// 以下は proj030 までの注:
 // wide_pfb は係数が「入力のビートの 2 クロック後」に届く前提（wide_coef_rom の LAT 2）。g24_coef の LAT は 5 なので、
 // **係数は遅らせる前の s_m で引き、本体への入力（s_tdata・s_tvalid・s_m）を DLY = 5 − 2 = 3 クロック遅らせる**（README 1a）。
 // 食い違えば本体の coef_mis が立つ（粘着）。仕様は model/g24_fixed.py の pfb_int（係数は coef_interp）と bit 単位で同じ。
@@ -11,15 +16,18 @@
 
 `timescale 1ns / 1ps
 
-module g24_pfb #(
-    parameter LO_FILE = "g24_coef_lo.hex",
-    parameter HI_FILE = "g24_coef_hi.hex"
-)(
+module g24_pfb (
     input  wire              clk,
     input  wire              rst,
     input  wire [255:0]      s_tdata,
     input  wire              s_tvalid,
     input  wire [11:0]       s_m,
+    output reg  [11:0]       coef_addr,     // g24_cu の番地（s45_core_0 のものだけ使う）
+    output reg               coef_addr_v,
+    input  wire [1151:0]     coef_in,       // g24_cu の出口（coef_addr の 3 クロック後）
+    input  wire [11:0]       coef_m_in,
+    input  wire              coef_ok_in,
+    output wire              coef_ok,       // 受けた OK（g24_spec の起動の見張りへ）
     output wire [16*15-1:0]  y,
     output wire              y_v,
     output wire [11:0]       y_m,
@@ -34,12 +42,15 @@ module g24_pfb #(
     localparam integer DLY = 3;
 `endif
 
-    wire [1151:0] coef;
-    wire [11:0]   coef_m;
-    wire          coef_v;
-    g24_coef #(.LO_FILE(LO_FILE), .HI_FILE(HI_FILE)) u_coef (
-        .clk(clk), .addr(s_m), .addr_v(s_tvalid), .coef(coef), .m_out(coef_m), .v_out(coef_v)
-    );
+    // 番地を出す 1 段と、共有の出口を受ける 1 段（Wide の coef_q。DSP の A レジスタに吸わせない）
+    (* dont_touch = "true" *) reg [1151:0] coef_q;
+    (* dont_touch = "true" *) reg [11:0]   coef_mq;
+    reg           coef_okq;
+    always @(posedge clk) begin
+        coef_addr <= s_m; coef_addr_v <= s_tvalid;
+        coef_q <= coef_in; coef_mq <= coef_m_in; coef_okq <= coef_ok_in & ~rst;
+    end
+    assign coef_ok = coef_okq;
 
     reg [255:0] dd [0:DLY-1];
     reg [11:0]  dm [0:DLY-1];
@@ -53,7 +64,7 @@ module g24_pfb #(
     g24_pfb_core #(.XW(14), .CW(18), .CF(16), .YW(15)) u_pfb (
         .clk(clk), .rst(rst),
         .s_tdata(dd[DLY-1]), .s_tvalid(dv[DLY-1]), .s_m(dm[DLY-1]),
-        .coef(coef), .coef_m(coef_m),
+        .coef(coef_q), .coef_m(coef_mq), .coef_ok(coef_okq),
         .y(y), .y_v(y_v), .y_m(y_m), .y_first(y_first), .y_fr(y_fr), .sat_cnt(sat_cnt), .coef_mis(coef_mis)
     );
 endmodule

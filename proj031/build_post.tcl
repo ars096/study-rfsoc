@@ -25,11 +25,22 @@ foreach {pname want} {pps_trig AH13 pps_comp AJ13} {
 # 予言（proj025、コアごと）: 係数（g24_coef）2048 × 36 bit × 2 表・2 ポート → RAMB36 4（M-a）。
 #       ひねり係数（g24_tw）64 行・128 行 × 576 bit → 幅で決まり RAMB36（512 × 72）× 8 × 2 = 16（A は 64 行なので RAMB18 に落ちて 12 前後までありうる。
 #       レーン 0 の定数の列が削られて少し減りうる）。合否は「予言の半分に届くか」（中身が 0 なら ROM が消えて 0 になる）
+# ---- proj031: 共有の係数 URAM（g24_cu_0）が URAM に入っているか（合否。推論が落ちると BRAM 64 に移り、ビルドは通る。README の S）----
+puts ""
+puts "---- 係数の URAM（g24_cu_0）----"
+set nu_cu 0
+set nb_cu 0
+foreach x [get_cells -quiet -hierarchical -filter {REF_NAME =~ URAM288*}] { if {[string match "*g24_cu_0*" $x]} { incr nu_cu } }
+foreach x [get_cells -quiet -hierarchical -filter {REF_NAME =~ RAMB*}] { if {[string match "*g24_cu_0*" $x]} { incr nb_cu } }
+set nu_all [llength [get_cells -quiet -hierarchical -filter {REF_NAME =~ URAM288*}]]
+puts "  g24_cu_0: URAM288 $nu_cu 個・RAMB $nb_cu 個（予言 8・0）/ 全体の URAM288 $nu_all 個（予言 56 = 積分器 12 × 4 ＋ 8）"
+if {$nu_cu != 8 || $nb_cu != 0 || $nu_all != 56} { puts "ERROR: 係数の URAM の数が予言と違う（推論が落ちたか、階層の名前が違う）"; exit 1 }
 puts ""
 puts "---- ROM の BRAM（s45_core_0〜3 の中）----"
 # proj027: 係数は 1024 行 × 35 bit × 2 表 → RAMB36 2（M-a・F-2 の OOC）。ひねり係数は proj025 の実測 11.5（A は 32 行に減るが、幅 576 bit で数が決まる）
 set rom_pred {}
-for {set c 0} {$c < $ncore} {incr c} { lappend rom_pred s45_core_$c/inst/u_full/u_spec/u_pfb/u_coef 2 s45_core_$c/inst/u_full/u_spec/u_tw 12 }
+# proj031: 係数の ROM（u_coef）はコアから外した（共有の URAM g24_cu_0、下）
+for {set c 0} {$c < $ncore} {incr c} { lappend rom_pred s45_core_$c/inst/u_full/u_spec/u_tw 12 }
 foreach {cell pred} $rom_pred {
     set n36 0; set n18 0
     foreach x [get_cells -quiet -hierarchical -filter {REF_NAME =~ RAMB36*}] { if {[string first "/$cell/" "/$x"] >= 0} { incr n36 } }
@@ -132,7 +143,7 @@ if {[llength $ffts] > 0} {
     }
 }
 puts "  DSP48E2 $fft_mod [llength $ffts] 個の合計 = $dsp_fft（proj030: 32 × 27 = 864）"
-puts "  DSP48E2 全体            = $dsp_all（proj030 の見込み 2,320 = 54.3 %、コア 1 個 580。proj027 は 3,312）"
+puts "  DSP48E2 全体            = $dsp_all（proj031 の見込み 2,064 = 48.3 %、コア 1 個 516。proj030 は 2,320、proj027 は 3,312）"
 # 段ごと（階層の名前は g24_s45_core.v・g24_core.v・g24_spec.v・core_cmn.v のインスタンス名）
 set ram_names [get_property NAME [get_cells -quiet -hierarchical -filter {REF_NAME =~ RAMB* || REF_NAME =~ URAM*}]]
 for {set c 0} {$c < $ncore} {incr c} {

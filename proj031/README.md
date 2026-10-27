@@ -194,8 +194,74 @@ sim: **比べる相手は proj030 の `g24_coef` の RTL そのもの**（tb の
 - 部品を直した後に `make sim-cu` を回し直して、全部通過・陽性対照 5 本は落ちた（1 回目と同じ）
 - 知見（LESSONS の候補）: **URAM の推論は、使う側のモジュールに直に書かず、型どおりの小さなモジュールに切り出す。Synth 8-5792 は WARNING 1 行で、黙って BRAM に落ちる**（ビルドの照合で URAM の数を見る）
 
+## P-2 コアに組む — 予言（2026-10-27、走らせる前に書く）
+
+直したもの:
+- `g24_pfb`: 中の `g24_coef` を外し、外から `coef_in`・`coef_m_in`・`coef_ok_in` を受ける。`coef_addr`（s_m を 1 段受けたもの）を外へ出す。受けの 1 段 `coef_q`（dont_touch、Wide と同じ）。s_m → 係数は 1 ＋ 3 ＋ 1 = **5（g24_coef と同じ）**で、遅延線 DLY 3 は今のまま
+- `g24_pfb_core`: coef_mis の条件に「OK が 0 のビート」を足した
+- `g24_spec`: **起動の見張り go の条件に OK を足した**（OK が立つまで口を開けない）。`g24_core`・`g24_s45_core`: ポートを通すだけ。LO_FILE・HI_FILE の引数は外した
+- tb 6 本: `sim/cu_src.v`（sim だけの係数の源。中身は g24_cu。URAM に裏口で入れ、リセットが明けたら OK を立てる）。4 コアの tb は源 1 個・番地はコア 0・出口を 4 コアへ（ブロックデザインと同じ）
+
+| sim | 変種 | 予言 |
+|---|---|---|
+| sim-g24p（PFB） | normal | **通過**（y が模型の pfb_int（係数は coef_interp）と bit 単位で一致 = proj030 の PFB の出口と同じ） |
+| | dlyerr・nomask | 落ちる（proj030 と同じ） |
+| sim-g24s（2c） | normal | 通過（proj030 P-4a と同じ判定: A1 PFB の出口・A2 ダンプ 2 本の 32,768 ch が power_s2 と一致・CW ±0.05 dB・flags 0） |
+| | ipq | 落ちる |
+| | **nook（OK を立てない）** | **落ちる: 口が開かずダンプが出ない**（時間切れ） |
+| sim-g24core（2d）・sim-g24s45（2e）・sim-g24ds（4d-2） | normal ・陽性対照 | proj030 と同じ（normal 通過・陽性対照は落ちる） |
+| sim-g24x4（4 コア、共有の源 1 個） | normal | 通過（コア 1〜3 のダンプがコア 0 と違う行 0・FLAGS 0） |
+| | dly | 落ちる |
+| | **cudrop（30,000 拍で OK を落とす）** | **落ちる: 4 コアとも FLAGS の bit 0（coef_mis）** |
+
+- 外れるとしたら: tb の待ち（口の開きは OK を立てた 1 拍後からなので、proj030 と同じ時刻のはず）・cu_src の OK の書き込みと g24_cu の always の競合（リセットの枝以外は ok に書かない）
+
+**P-2 の結果 1 回目（2026-10-27、6 種を並べて ≒ 12 分）: ds 以外は全部通過・陽性対照は全部落ちた。ds は proj030 から持ち越しの落ち**
+
+| sim | normal | 陽性対照 |
+|---|---|---|
+| sim-g24p | 通過（PFB の出口が模型と bit 単位で一致） | dlyerr・nomask 落ちた |
+| sim-g24s | 通過 | ipq 落ちた・**nook はダンプ 0 で時間切れ（口が開かない、予言どおり）** |
+| sim-g24core | 通過 | posctl・tp 落ちた |
+| sim-g24s45 | 通過 | drop 落ちた |
+| sim-g24x4 | 通過（コア 1〜3 のダンプがコア 0 と違う行 0・FLAGS 0） | dly 落ちた・**cudrop は 4 コアとも FLAGS0 = 0x01（coef_mis、予言どおり）** |
+| sim-g24ds | **不合格（NG 3 件）** | posctl も「ほかも落ちた」 |
+
+- **ds の落ちは proj030 から**: proj030（7acee6c）の追跡ファイルを scratchpad に写して sim-g24ds を回すと、**同じ 3 件で落ち、インパルスの行も一字一句同じ**（12 分）。
+  落ちる 3 件はどれも「IP の出口の y が PFB の 4 タップと一致し位置 m がそろう」の側で、判定の道具（check_g24.py ds）が IP の出口を**実のレーン 16 本**として読んでいる。
+  2-for-1（proj030）で IP の出口は z = y_q + j·y_(q+8) の 8 本になったので、道具が合っていない（proj030 の P-4a は ds を回していなかった）。
+  **D_S = +1・D_eff = 6,145 ビートの判定は通っている**（FULL の遅れは IP の手前の T の位相で決まり、2-for-1 にも係数 URAM にも依らない）。道具の直しは proj031 では行わず、持ち越しとして残す（下の「決めること」）
+- 1 回目の後に g24_cu の口を BD 向けにした（aclk・aresetn を 3 段で受ける・COEF_CRC_HI/LO と PROJ を integer の 10 進）。cu_src は中の 3 段のリセットが明けてから OK を立てる。
+  既定の PROJ を 0x0031_0100 に（g24_s45_core・check_g24・tb_g24_x4）。直した後: sim-cu 全部通過（陽性対照 5 本は落ちた）・ooc-cu は URAM 8・LUT 759・FF 2,490・WNS +1.998（clk の名前を aclk に直して）
+- **2 回目（口を直した後、6 種を並べて）: 1 回目と同じ**（ds 以外は全部通過・陽性対照は全部落ちた・PROJ 0x00310100 を 4 コアで読み返し・ds は同じ NG 3 件）
+
+## B 全体の .bit（`make build`・`make build IMPL=Performance_Explore`、`-1`）— 予言（2026-10-27、走らせる前に書く）
+
+ビルドの道具の直し（P-2 の sim の間に書いた）:
+- build.tcl: `set proj proj031`・PROJ 0x0031_0100・add_files（g24_coef → g24_cu・crc32_d32.vh、include_dirs に src/g24）・コアの CONFIG から LO_FILE・HI_FILE を外す・
+  **g24_cu_0 のセル**（smc_ctrl の M07。COEF_CRC は 16 bit ずつ 2 つの integer の引数 COEF_CRC_HI・LO に分けた: 32'h で書いた引数は Vivado が読み返しで形を変える（time_core の注）、
+  0x891BE197 は 2^31 を越えて integer に入らない）・結線は shared_nets の表（g24_cu_0 のリセット・番地 2 本（コア 0 から）・出口 3 本（4 コアへ））・DSP のクロック・
+  **在ってはいけない側**（コア 1〜3 の coef_addr・coef_addr_v は空き・g24_cu_0/addr のネットにはコア 0 の口だけ・g24_cu のセルは 1 個）・陽性対照 (m)（g24_cu_0/addr にコア 1 を期待 → 落ちる）・(n)（コア 0 の coef_addr を「空き」と言わない）・
+  番地の窓（4 KiB、重なりの照合に 97 番）・**OOC の run の Synth 8-5792 で止める**（URAM の推論が落ちた印、S）
+- build_post.tcl: 係数 ROM（u_coef）の行を外し、**g24_cu_0 の URAM288 8・RAMB 0・全体の URAM288 56 を合否**にした・DSP の見込み 2,064
+- Makefile: build の前に `make model-cu`（全部通過のときだけ）、COEF_CRC を環境変数で渡す
+- PS: `G24Backend` が Overlay の後に `g24cu.load()`（ID・PROJ → **PS の係数の CRC と bit の COEF_CRC を書く前に照らす** → 4096 行 → NROW → VERIFY → STAT・CRC）。START の前に OK を読み直す。
+  PROJ_G24 0x0031_0100・timebase.CAL に未較正の行・widef2・f2pair の既定の .bit
+
+| | proj030（build/） | proj031 の予言 | 根拠 |
+|---|---|---|---|
+| DSP | 2,320 | **2,064（48.3 %）ちょうど** | E-1（−64 × 4） |
+| URAM | 48 | **56**（g24_cu_0 に 8） | S の OOC |
+| BRAM | 700 | **692** | −2 × 4 |
+| LUT | 200,932（47.25 %） | **46.9〜47.6 %** | −64 × 4 ＋ g24_cu 757、配置の揺れ ±0.3 ポイント |
+| タイミング（既定） | WNS +0.010 | **閉じる見込みは半分**。落ちるなら最悪経路は g24_cu_0 の出口 → コア 1〜3 の coef_q か、proj030 と同じ gb_up → gb_fifo | E-1。Wide は同じ形で +0.025 |
+| 照合 | 結線・陽性対照 (a)〜(l)・CW 0・8-3848 0 | 同じく全部通過 ＋ (m)(n)・g24_cu の番地の両側・8-5792 0 | |
+
+- 既定と Performance_Explore を並べる（BUILD_JOBS 8 ずつ。他の会話の Vivado と合わせて JOBS 8 の約束を見てから）
+
 ## 決めること
 
 - ~~係数の入れ方~~ → **(c) PS が AXI4-Lite で書く**（2026-10-27、西村さん）
 - PS が係数の値をどこから作るか（補間の表の hex から式で / PC で作った表を持つ）— P の段で
 - 2-for-1 と URAM の係数を 2G-1・2G-2・Wide にも広げるか（proj030 から持ち越し）
+- **sim-g24ds の判定の道具（check_g24.py ds）を 2-for-1 の IP の出口に合わせる**（proj030 から持ち越し。D_S・D_eff の判定は通っている）

@@ -23,7 +23,7 @@ module tb_g24_cu;
     wire [1:0]  bresp, rresp;
     wire [31:0] rdata;
 
-    g24_cu u (.clk(clk), .rst(rst), .addr(addr), .addr_v(addr_v), .coef(coef), .m_out(m_out), .v_out(v_out), .ok_out(ok_out),
+    g24_cu u (.aclk(clk), .aresetn(~rst), .addr(addr), .addr_v(addr_v), .coef(coef), .m_out(m_out), .v_out(v_out), .ok_out(ok_out),
         .s_axi_awaddr(awaddr), .s_axi_awvalid(awvalid), .s_axi_awready(awready), .s_axi_wdata(wdata), .s_axi_wvalid(wvalid),
         .s_axi_wready(wready), .s_axi_bresp(bresp), .s_axi_bvalid(bvalid), .s_axi_bready(bready),
         .s_axi_araddr(araddr), .s_axi_arvalid(arvalid), .s_axi_arready(arready), .s_axi_rdata(rdata), .s_axi_rresp(rresp),

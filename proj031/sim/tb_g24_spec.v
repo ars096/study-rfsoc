@@ -25,10 +25,13 @@ module tb_g24_spec;
     wire [1023:0] ip_td;
     wire [11:0] ip_k1;
     wire ip_v;
+    // proj031: 共有の係数（sim だけの源 cu_src。中身は g24_cu）
+    wire [11:0] cu_a; wire cu_av; wire [1151:0] cu_c; wire [11:0] cu_m; wire cu_v, cu_ok;
+    cu_src u_cu (.clk(clk), .rst(rst), .addr(cu_a), .addr_v(cu_av), .coef(cu_c), .m_out(cu_m), .v_out(cu_v), .ok_out(cu_ok));
     g24_spec #(.ST_N(256), .GF_L2(1), .SHIFT_DEFAULT(7),
-               .LO_FILE(`LO), .HI_FILE(`HI), .TA_FILE(`TA), .TB_FILE(`TB)) u (
+               .TA_FILE(`TA), .TB_FILE(`TB)) u (
         .clk(clk), .rst(rst), .s_tdata(d), .s_tvalid(v), .t_in(t),
-        .cmd_wrst(wrst), .w_shift(4'd`SHIFT), .cmd_run(run), .cmd_stop(stop), .r_nacc(32'd2), .r_ndump(32'd2), .flags_clr(fclr),
+        .coef_addr(cu_a), .coef_addr_v(cu_av), .coef_in(cu_c), .coef_m_in(cu_m), .coef_ok_in(cu_ok), .cmd_wrst(wrst), .w_shift(4'd`SHIFT), .cmd_run(run), .cmd_stop(stop), .r_nacc(32'd2), .r_ndump(32'd2), .flags_clr(fclr),
         .c_shift(c_shift), .go(go), .fa_now(fa_now), .fo(fo), .flags(flags), .st_sched(st_sched), .st_acc(st_acc),
         .commit(commit), .seq(seq), .dk(dk), .df0(df0), .dn(dn), .dsat(dsat), .rd_plane(rd_plane),
         .rd_c(rc), .rd_d(rd),

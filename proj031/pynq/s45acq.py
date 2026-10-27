@@ -1501,6 +1501,7 @@ class G22Backend(HwBackend):
             raise RuntimeError("RFDC に xrfdc のドライバが当たっていない")
         S.check_tiles(self.ol.rfdc, 2)
         time.sleep(self.o.settle)
+        self._load_coef()                          # proj031: 2G-4 は共有の係数 URAM を書く（G22Backend は何もしない）
         self.cores, tmm = SC.discover(self.ol, bit_kind=self.G.bit_kind, ncore=self.G.ncore, bit_rev_min=1)
         if [c.adc for c in self.cores] != list(range(self.G.ncore)):
             raise RuntimeError(f"コアの CORE_PORT が {[c.adc for c in self.cores]}（期待 {list(range(self.G.ncore))}）")
@@ -1534,6 +1535,9 @@ class G22Backend(HwBackend):
         self.ids["read"] = "ring"
         self.bit_kind = c0.bit_kind
         self.anchor()
+
+    def _load_coef(self):
+        self.cu = None
 
     def _open_ring(self):
         import plring as PR
@@ -1746,8 +1750,25 @@ class G22Backend(HwBackend):
 
 class G24Backend(G22Backend):
     """proj027: 2G-4（BIT_KIND 3）の裏。コア 0〜3（ADC_A〜D）の FULL の流れ（どれも s 0、SRC で 4 ADC から選ぶ）を窓 A0・B0・C0・D0 に置く。
-    G22Backend と形だけが違う（4 コアとも RAW 1 本 = NSTREAM 2。SNAP はコア 0 の RAW）"""
+    G22Backend と形だけが違う（4 コアとも RAW 1 本 = NSTREAM 2。SNAP はコア 0 の RAW）。
+    proj031: Overlay の後に**共有の係数 URAM（g24_cu_0）を書いて VERIFY する**（URAM は初期値を持てない。書くまでコアの口は開かない）。
+    係数の補間の表の hex は .bit と同じ場所（g24_coef_lo.hex・g24_coef_hi.hex）。START の前に OK を読み直す"""
     G = G4_GEOM
+
+    def _load_coef(self):
+        import g24cu
+        ip = getattr(self.ol, "g24_cu_0", None)
+        if ip is None:
+            raise RuntimeError("ol.g24_cu_0 が無い（proj031 より前の 2G-4 の .bit。proj030 以前の PS を使う）")
+        d = os.path.dirname(os.path.abspath(self.o.bitfile))
+        self.cu = ip.mmio
+        self.cu_info = g24cu.load(self.cu, os.path.join(d, "g24_coef_lo.hex"), os.path.join(d, "g24_coef_hi.hex"), self.SC.PROJ_G24,
+                                  log=lambda m: print(m, flush=True))
+
+    def start(self, st, at_beat, force):
+        import g24cu
+        g24cu.check_ok(self.cu)
+        return super().start(st, at_beat, force)
 
 
 class FakeG22Backend(FakeBackend):

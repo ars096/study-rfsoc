@@ -54,6 +54,9 @@ module tb_g24_x4;
     wire [NC-1:0] commit;
 
     genvar c;
+    // proj031: 共有の係数（sim だけの源 cu_src。中身は g24_cu）。番地は s45_core_0、出口は 4 コアへ同じものを配る（ブロックデザインと同じ）
+    wire [11:0] cu_a; wire cu_av; wire [1151:0] cu_c; wire [11:0] cu_m; wire cu_v, cu_ok;
+    cu_src u_cu (.clk(clk), .rst(~rstn), .addr(cu_a), .addr_v(cu_av), .coef(cu_c), .m_out(cu_m), .v_out(cu_v), .ok_out(cu_ok));
     generate
         for (c = 0; c < NC; c = c + 1) begin : g_c
             wire [255:0] sd;
@@ -74,9 +77,14 @@ module tb_g24_x4;
             assign f_d[c] = sd;
             assign f_v[c] = sv;
 `endif
+            wire [11:0] ca; wire cav;
+            if (c == 0) begin : g_a
+                assign cu_a = ca; assign cu_av = cav;
+            end
             g24_s45_core #(.BUILD_TAG(32'h2027_0e00 + c), .CORE_PORT(c), .RAW(1), .K_F(0), .ST_N(256), .GF_L2(1), .SHIFT_DEFAULT(7),
-                           .LO_FILE(`LO), .HI_FILE(`HI), .TA_FILE(`TA), .TB_FILE(`TB)) u (
+                           .TA_FILE(`TA), .TB_FILE(`TB)) u (
                 .aclk(clk), .aresetn(rstn),
+                .coef_addr(ca), .coef_addr_v(cav), .coef_in(cu_c), .coef_m_in(cu_m), .coef_ok_in(cu_ok),
                 .s_axis_tdata(c == 0 ? a0 : c == 1 ? a1 : c == 2 ? a2 : a3), .s_axis_tvalid(v), .s_axis_tready(),
                 .s_axis_full_tdata(f_d[c]), .s_axis_full_tvalid(f_v[c]), .s_axis_full_tready(), .full_sel(fsel[c]),
                 .s_axis_raw_tdata(256'd0), .s_axis_raw_tvalid(v), .s_axis_raw_tready(), .raw_sel(rsel[c]),
@@ -148,7 +156,7 @@ module tb_g24_x4;
         // 4 コアとも同じ ID・RAW の流れのブロックを持つ（INTERFACE 2.4・2.5）。CORE_PORT はコアの番号
         for (cc = 0; cc < NC; cc = cc + 1) begin
             reg_chk(cc, 16'h0000, 32'h0203_0101, "IF_ID");
-            reg_chk(cc, 16'h0004, 32'h0030_0100, "PROJ");
+            reg_chk(cc, 16'h0004, 32'h0031_0100, "PROJ");
             reg_chk(cc, 16'h0008, 32'd2, "NSTREAM");
             reg_chk(cc, 16'h0018, cc, "CORE_PORT");
             reg_chk(cc, 16'h4000, 32'h0201_0000, "SID0");

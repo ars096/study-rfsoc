@@ -62,10 +62,13 @@ module tb_g24_s45;
         .gb_stat0(32'd0), .gb_stat1(32'd0), .gb_stat2(32'd0), .gb_stat3(32'd0),
         .adc_stat0(32'd0), .adc_stat1(32'd0), .adc_stat2(32'd0), .adc_stat3(32'd0), .gb_stat_o(), .adc_stat_o());
 
+    // proj031: 共有の係数（sim だけの源 cu_src。中身は g24_cu）
+    wire [11:0] cu_a; wire cu_av; wire [1151:0] cu_c; wire [11:0] cu_m; wire cu_v, cu_ok;
+    cu_src u_cu (.clk(clk), .rst(~rstn), .addr(cu_a), .addr_v(cu_av), .coef(cu_c), .m_out(cu_m), .v_out(cu_v), .ok_out(cu_ok));
     g24_s45_core #(.BUILD_TAG(32'h2024_0e00), .CORE_PORT(0), .K_F(0), .ST_N(256), .GF_L2(1), .SHIFT_DEFAULT(7),
-                   .LO_FILE(`LO), .HI_FILE(`HI), .TA_FILE(`TA), .TB_FILE(`TB)) u (
+                   .TA_FILE(`TA), .TB_FILE(`TB)) u (
         .aclk(clk), .aresetn(rstn),
-        .s_axis_tdata(a0), .s_axis_tvalid(v), .s_axis_tready(),
+        .coef_addr(cu_a), .coef_addr_v(cu_av), .coef_in(cu_c), .coef_m_in(cu_m), .coef_ok_in(cu_ok), .s_axis_tdata(a0), .s_axis_tvalid(v), .s_axis_tready(),
         .s_axis_full_tdata(f_d), .s_axis_full_tvalid(f_v), .s_axis_full_tready(), .full_sel(full_sel),
         .s_axis_raw_tdata(r_d), .s_axis_raw_tvalid(r_v), .s_axis_raw_tready(), .raw_sel(raw_sel),
         .s_axi_awaddr(awaddr), .s_axi_awprot(3'd0), .s_axi_awvalid(awvalid), .s_axi_awready(awready),

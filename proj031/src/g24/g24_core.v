@@ -51,13 +51,17 @@ module g24_core #(
     parameter integer SHIFT_DEFAULT = 7,
     parameter integer TPN_DEFAULT   = 512,     // 1.024 ms（512 ビート × 512）
     parameter integer BUILD_TAG     = 0,
-    parameter LO_FILE = "g24_coef_lo.hex",
-    parameter HI_FILE = "g24_coef_hi.hex",
     parameter TA_FILE = "g24_tw_a.hex",
     parameter TB_FILE = "g24_tw_b.hex"
 )(
     input  wire          aclk,
     input  wire          aresetn,
+    // proj031: 共有の係数 g24_cu（番地は s45_core_0 のものだけ使う。出口は 4 コアへ同じものを配る）
+    output wire [11:0]   coef_addr,
+    output wire          coef_addr_v,
+    input  wire [1151:0] coef_in,
+    input  wire [11:0]   coef_m_in,
+    input  wire          coef_ok_in,
     input  wire [255:0]  s_axis_tdata,
     input  wire          s_axis_tvalid,
     output wire          s_axis_tready,
@@ -180,8 +184,9 @@ module g24_core #(
     wire [14:0]   rd_c_use = fr_ch;
 `endif
     g24_spec #(.K_F(K_F), .ST_N(ST_N), .SHIFT_DEFAULT(SHIFT_DEFAULT), .FW(FW), .GF_L2(GF_L2),
-               .LO_FILE(LO_FILE), .HI_FILE(HI_FILE), .TA_FILE(TA_FILE), .TB_FILE(TB_FILE)) u_spec (
+               .TA_FILE(TA_FILE), .TB_FILE(TB_FILE)) u_spec (
         .clk(aclk), .rst(rst), .s_tdata(s_axis_tdata), .s_tvalid(s_axis_tvalid), .t_in(t_in),
+        .coef_addr(coef_addr), .coef_addr_v(coef_addr_v), .coef_in(coef_in), .coef_m_in(coef_m_in), .coef_ok_in(coef_ok_in),
         .cmd_wrst(cmd_wrst), .w_shift(r_shift), .cmd_run(cmd_run), .cmd_stop(cmd_stop),
         .r_nacc(r_nacc), .r_ndump(r_ndump), .flags_clr(cmd_fclr),
         .c_shift(c_shift), .go(go), .fa_now(fa_now), .fo(fo), .flags(flags), .st_sched(st_sched), .st_acc(st_acc),

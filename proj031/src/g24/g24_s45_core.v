@@ -32,7 +32,7 @@ module g24_s45_core #(
     parameter integer GB_K_RST           = 2,
     parameter integer BIT_KIND           = 3,
     parameter integer BIT_REV            = 1,
-    parameter integer PROJ               = 3145984,   // = 0x0030_0100（proj030。10 進で書く。proj027 の 1 回目は 0x0100 を足し忘れて 2555904 = 0x0027_0000 と書き、2e-2 の照合で落ちた）
+    parameter integer PROJ               = 3211520,   // = 0x0031_0100（proj031。proj030 は 3145984。10 進で書く。proj027 の 1 回目は 0x0100 を足し忘れて 2555904 = 0x0027_0000 と書き、2e-2 の照合で落ちた）
     parameter integer CORE_PORT          = 0,
     parameter integer BASE_BEATS         = 2621440,
     parameter integer K_F                = 0,
@@ -42,8 +42,6 @@ module g24_s45_core #(
     parameter integer SHIFT_DEFAULT      = 7,
     parameter integer RAW                = 1,         // 1 = RAW の流れを持つ（2G-4 は 4 コアとも、F-5）。0 = 持たない（2G-2 のコア 1 の形、proj025 E-5）
     parameter integer RAW_N_ACC_DEFAULT  = 5120,      // 10.24 ms（RAW のフレーム 512 ビート）
-    parameter LO_FILE = "g24_coef_lo.hex",
-    parameter HI_FILE = "g24_coef_hi.hex",
     parameter TA_FILE = "g24_tw_a.hex",
     parameter TB_FILE = "g24_tw_b.hex"
 )(
@@ -53,6 +51,12 @@ module g24_s45_core #(
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
     input  wire          aresetn,
+    // proj031: 共有の係数 g24_cu（番地は s45_core_0 のものだけ使う。出口は 4 コアへ同じものを配る）
+    output wire [11:0]   coef_addr,
+    output wire          coef_addr_v,
+    input  wire [1151:0] coef_in,
+    input  wire [11:0]   coef_m_in,
+    input  wire          coef_ok_in,
     input  wire [255:0]  s_axis_tdata,          // このコアの ADC（コアの TP・ギアボックスの見張り）
     input  wire          s_axis_tvalid,
     output wire          s_axis_tready,
@@ -174,7 +178,7 @@ module g24_s45_core #(
     // ---- FULL の流れ 0 ----
     g24_core #(.SID_S(0), .REC_CORE(CORE_PORT % 16), .K_F(K_F), .ST_N(ST_N), .GF_L2(GF_L2), .N_ACC_DEFAULT(N_ACC_DEFAULT),
                .SHIFT_DEFAULT(SHIFT_DEFAULT), .TPN_DEFAULT(TPN_DEFAULT), .BUILD_TAG(BUILD_TAG),
-               .LO_FILE(LO_FILE), .HI_FILE(HI_FILE), .TA_FILE(TA_FILE), .TB_FILE(TB_FILE)) u_full (
+               .TA_FILE(TA_FILE), .TB_FILE(TB_FILE)) u_full (
         .aclk(aclk), .aresetn(rstn_l), .s_axis_tdata(s_axis_full_tdata), .s_axis_tvalid(s_axis_full_tvalid), .s_axis_tready(),
         .s_axi_awaddr(q_addr[9:0]), .s_axi_awvalid(d_aw && q_dst == 2'd1), .s_axi_awready(awr[1]),
         .s_axi_wdata(q_wdata), .s_axi_wvalid(d_aw && q_dst == 2'd1), .s_axi_wready(wr_[1]), .s_axi_bresp(),
@@ -182,6 +186,7 @@ module g24_s45_core #(
         .s_axi_araddr(q_addr[9:0]), .s_axi_arvalid(d_ar && q_dst == 2'd1), .s_axi_arready(arr[1]),
         .s_axi_rdata(rd[1]), .s_axi_rresp(), .s_axi_rvalid(rv[1]), .s_axi_rready(d_r && q_dst == 2'd1),
         .src_sel(full_sel), .t_in(t_in), .go_in(go_in), .tev_in(tev_in),
+        .coef_addr(coef_addr), .coef_addr_v(coef_addr_v), .coef_in(coef_in), .coef_m_in(coef_m_in), .coef_ok_in(coef_ok_in),
         .m_axis_rec_tdata(g_d), .m_axis_rec_tvalid(g_v), .m_axis_rec_tready(g_r), .m_axis_rec_tlast(g_l), .m_axis_rec_tuser(g_u),
         .rec_drop(g_drop), .dbg_ip_tdata(), .dbg_ip_k1(), .dbg_ip_v());
 

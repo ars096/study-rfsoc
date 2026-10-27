@@ -28,9 +28,12 @@ module tb_g24_core;
     wire [1023:0] ip_td;
     wire [11:0] ip_k1;
     wire        ip_v;
+    // proj031: 共有の係数（sim だけの源 cu_src。中身は g24_cu）
+    wire [11:0] cu_a; wire cu_av; wire [1151:0] cu_c; wire [11:0] cu_m; wire cu_v, cu_ok;
+    cu_src u_cu (.clk(clk), .rst(~rstn), .addr(cu_a), .addr_v(cu_av), .coef(cu_c), .m_out(cu_m), .v_out(cu_v), .ok_out(cu_ok));
     g24_core #(.SID_S(2), .REC_CORE(1), .K_F(0), .ST_N(256), .GF_L2(1), .SHIFT_DEFAULT(7), .TPN_DEFAULT(512), .BUILD_TAG(32'h2024_0d00),
-               .LO_FILE(`LO), .HI_FILE(`HI), .TA_FILE(`TA), .TB_FILE(`TB)) u (
-        .aclk(clk), .aresetn(rstn), .s_axis_tdata(d), .s_axis_tvalid(v), .s_axis_tready(),
+               .TA_FILE(`TA), .TB_FILE(`TB)) u (
+        .aclk(clk), .aresetn(rstn), .coef_addr(cu_a), .coef_addr_v(cu_av), .coef_in(cu_c), .coef_m_in(cu_m), .coef_ok_in(cu_ok), .s_axis_tdata(d), .s_axis_tvalid(v), .s_axis_tready(),
         .s_axi_awaddr(awaddr), .s_axi_awvalid(awvalid), .s_axi_awready(awready), .s_axi_wdata(wdata), .s_axi_wvalid(wvalid),
         .s_axi_wready(wready), .s_axi_bresp(bresp), .s_axi_bvalid(bvalid), .s_axi_bready(1'b1),
         .s_axi_araddr(araddr), .s_axi_arvalid(arvalid), .s_axi_arready(arready), .s_axi_rdata(rdata), .s_axi_rresp(rresp),

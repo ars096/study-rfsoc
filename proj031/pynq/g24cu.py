@@ -75,3 +75,67 @@ def unwords(w):
 
 def crc(r):
     return zlib.crc32(row_bytes(r).tobytes()) & 0xFFFFFFFF
+
+
+# ---------------------------------------------------------------- PL へ書く（g24_cu_0、src/g24/g24_cu.v のレジスタ）
+
+CU_ID = 0x6375_0001
+R_ID, R_PROJ, R_CTRL, R_ROW, R_COEF_CRC, R_CRC, R_NROW, R_DATA = 0x00, 0x04, 0x08, 0x0C, 0x10, 0x14, 0x18, 0x40
+ST_OK, ST_VBUSY, ST_VDONE, ST_VMIS, ST_WROTE = 1, 2, 4, 8, 16
+
+
+class CuError(RuntimeError):
+    pass
+
+
+def status(mm):
+    return dict(stat=int(mm.read(R_CTRL)) & 0x1F, crc=int(mm.read(R_CRC)) & 0xFFFFFFFF,
+                coef_crc=int(mm.read(R_COEF_CRC)) & 0xFFFFFFFF, nrow=int(mm.read(R_NROW)) & 0xFFFF)
+
+
+def load(mm, lo_path, hi_path, proj_expect, timeout=0.5, log=print):
+    """係数を書いて VERIFY し、OK を確かめる。戻り値は status() に時間を足したもの。合わなければ CuError。
+
+    PS が作った係数の CRC と、bit に焼き込まれた COEF_CRC を**書く前に**照らす（違えば、この bit が想定する係数ではない）。
+    書いた後は PL が URAM を読み直して CRC を取り、COEF_CRC と一致したら OK を立てる（g24_cu）。PS は STAT と CRC を読んで照らすだけ。"""
+    import time
+    cid, proj = int(mm.read(R_ID)) & 0xFFFFFFFF, int(mm.read(R_PROJ)) & 0xFFFFFFFF
+    if cid != CU_ID:
+        raise CuError(f"g24_cu_0 の ID {cid:#010x}（期待 {CU_ID:#010x}）")
+    if proj != proj_expect:
+        raise CuError(f"g24_cu_0 の PROJ {proj:#010x}（期待 {proj_expect:#010x}）")
+    r = rows(lo_path, hi_path)
+    w = words(r)
+    want = crc(r)
+    coef_crc = int(mm.read(R_COEF_CRC)) & 0xFFFFFFFF
+    if coef_crc != want:
+        raise CuError(f"bit の COEF_CRC {coef_crc:#010x} が PS の係数の CRC {want:#010x} と違う（hex の版が bit と食い違っている）")
+    t0 = time.time()
+    mm.write(R_CTRL, 2)                                 # CLR
+    for m in range(M):
+        row = w[m]
+        for k in range(NWORD):
+            mm.write(R_DATA + 4 * k, int(row[k]))
+        mm.write(R_ROW, m)
+    t1 = time.time()
+    st = status(mm)
+    if st["nrow"] != M:
+        raise CuError(f"NROW {st['nrow']}（期待 {M}）")
+    mm.write(R_CTRL, 1)                                 # VERIFY（4096 × 21 拍 ≒ 336 µs）
+    while int(mm.read(R_CTRL)) & ST_VBUSY:
+        if time.time() - t1 > timeout:
+            raise CuError("VERIFY が終わらない")
+    st = status(mm)
+    st.update(t_write=t1 - t0, t_verify=time.time() - t1)
+    if (st["stat"] & 0xF) != (ST_OK | ST_VDONE) or st["crc"] != want:
+        raise CuError(f"VERIFY の後 STAT {st['stat']:#04x}・CRC {st['crc']:#010x}（期待 OK・終えた・CRC {want:#010x}）")
+    log(f"係数 URAM: 4096 行を {st['t_write']:.2f} s で書き、VERIFY 通過（CRC {st['crc']:#010x}、STAT {st['stat']:#04x}）")
+    return st
+
+
+def check_ok(mm):
+    """START の前に読み直す（OK が立ったままか。書きや VERIFY が挟まると落ちる）"""
+    st = status(mm)
+    if not st["stat"] & ST_OK:
+        raise CuError(f"係数 URAM の OK が 0（STAT {st['stat']:#04x}）。書き直して VERIFY する")
+    return st
