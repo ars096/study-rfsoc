@@ -11,6 +11,7 @@
 番地は build の address_map（g24_cu_0 = 0xA000_0000 ＋4 KiB）。hex は .bit と同じ場所（このスクリプトのある所）
 """
 import argparse
+import datetime
 import os
 import sys
 
@@ -37,7 +38,7 @@ def main():
 
     def show(tag):
         st = g24cu.status(mm)
-        print(f"{tag}: STAT {st['stat']:#04x}（ok {st['stat'] & 1}・vbusy {st['stat'] >> 1 & 1}・vdone {st['stat'] >> 2 & 1}・vmis {st['stat'] >> 3 & 1}・wrote {st['stat'] >> 4 & 1}）"
+        print(f"{tag}（{datetime.datetime.utcnow().strftime('%H:%M:%S.%f')[:-3]} UTC）: STAT {st['stat']:#04x}（ok {st['stat'] & 1}・vbusy {st['stat'] >> 1 & 1}・vdone {st['stat'] >> 2 & 1}・vmis {st['stat'] >> 3 & 1}・wrote {st['stat'] >> 4 & 1}）"
               f"・CRC {st['crc']:#010x}・COEF_CRC {st['coef_crc']:#010x}・NROW {st['nrow']}", flush=True)
         return st
 

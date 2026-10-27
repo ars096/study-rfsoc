@@ -304,6 +304,22 @@ sim: **比べる相手は proj030 の `g24_coef` の RTL そのもの**（tb の
 - (iv) `cuctl.py load` → STAT 0x15・CRC 0x891BE197 → `START n=50` が通り、**flags 0 に戻る**（START が flags を消す）。ダンプは R-1a と同じ形で通過
 - PL の側の「OK が立つまでコアの口を開けない」は、書かずに START する道を PS が持たない（check_ok）ので実機では試さない（sim の g24s_nook で落ちることを確かめた）
 
+**R-1 の結果（2026-10-27 12:11〜12:17 UTC、ノイズ OFF）: 全部通過・予言どおり**
+- 起動: specd のログに **「係数 URAM: 4096 行を 0.72 s で書き、VERIFY 通過（CRC 0x891be197、STAT 0x15）」**（予言 0.3〜1.5 s の内）。ID proj 00310100・adc 02030101・time 02030102。START が通った。TP の較正は bit の ID が違うので使わない（proj030 と同じ）
+- R-1a（src ABCD・f32・200）: 4 窓 × 200・CRC 0・説明のない欠け 0・**照合 通過**・`g24cw` 全部通過・flags 0・health 0・miss 0。TP −61.4・−59.2・−59.6・−58.6 dBFS（ノイズ OFF）。
+  **床（1 フレームあたりの中央値）A0 5.96・B0 7.89・C0 9.18・D0 8.12**
+- R-1b（src C × 4・fmt both・50）: **B0・C0・D0 が A0 と u64 で bit 単位で同じ 50 / 50 組 × 3**、陽性対照（1 ダンプずらし）は 0 / 49 組 × 3（違う ch 32,739〜32,760）。照合 通過
+- 走らせ方の誤り（データには効いていない）: 1 回目の R-1a は `SEND ON` を打たずに取り、記録が specd の溜まりに残って受けのファイルが空になった。`CLEAR` してから `SEND ON` → START で取り直した（上の値は取り直しのもの）
+
+**R-2 の結果（12:17〜12:19 UTC）: (i)〜(iii) は予言どおり。(iv) の「START で flags が 0 に戻る」は外れ**
+- (i) `START n=0` の間に `cuctl.py drop`（行 1234）: STAT 0x15 → **0x14**（NROW 4097）。**4 窓とも同じダンプ（298）から flags の bit 0 が立ち、その後ずっと 1**。ほかの bit 0・miss 0・pl_drop 0。
+  ダンプ 298 は START の 12.2 s 後で、cuctl を起こした時刻（START の 4.9 s 後）より 7 s 遅い。ボードで `from pynq import MMIO` に 4.0 s かかり、python の起動と係数の作りを足すと書きの時刻に合う（以後は cuctl が書く直前・直後の UTC を出すようにした）
+- (ii) `START n=10` → **`ERR FAIL CuError: 係数 URAM の OK が 0（STAT 0x14）`**、IDLE のまま
+- (iii) `cuctl.py corrupt --row 1234 --bit 5` → **STAT 0x1c・CRC 0x8d342791**。この PC で同じ 1 bit を反転した表の zlib.crc32 も **0x8d342791**（PL の CRC が中身どおり）。START はまた断られた
+- (iv) `cuctl.py load` → 0.73 s で書いて STAT 0x15・CRC 0x891be197 → `START n=50` が通り、4 窓 × 50・照合 通過・`g24cw` 全部通過。**ただし flags の bit 0 は 4 窓とも 1 のまま（外れ）**。
+  原因: `g24_pfb_core` の `coef_mis` は**自分で粘着するレジスタで rst でしか消えない**（proj030 の g24_pfb_core から同じ形、wide_pfb 由来）。START は S_CTRL の bit 8（flags_clr）を書いているが、それが消すのは g24_spec の flags だけで、coef_mis が 1 のまま次の拍に flags[0] をまた立てる。
+  予言を書くときに pfb_core の中を読まなかった。**運用では、OK が一度落ちたら Overlay の載せ直し（specd の起こし直し）まで flags[0] が消えない**。直すか（coef_mis を flags_clr でも消す。RTL とビルドが要る）は「決めること」へ
+
 **R-3 電流（amslog 1 秒）と床を proj030 と交互に**: proj031 → proj030 → proj031 の順に specd を起こし直し（proj030 は `~/proj030` の bit と PS のまま）、それぞれ 2 分待って R-1a と同じ取得（src ABCD・200 ダンプ）
 - 床（1 フレームあたりの中央値）: **proj031 と proj030 の差は 4 窓とも ±0.1 dB 以内**（係数は bit 単位で同じなので、違いは Overlay の載せ直しごとの ADC の揺れだけ）。proj031 どうし（1 回目と 3 回目）の差も同じ程度
 - 電流: **report_power（routed、ベクタなし、proj030 と同じ数え方）は VCCINT 27.6 A・全体 27.1 W**（proj030 28.4 A・27.8 W。DSP 3.78 W・URAM 0.70 W）。
@@ -318,6 +334,8 @@ sim: **比べる相手は proj030 の `g24_coef` の RTL そのもの**（tb の
 **R-5 F-2**: proj030 R-5 と同じ手順・予言（M ≒ 71 ns、66〜76 ns）。ギアボックス・axis_sel4・RAW・time_core の RTL は proj030 と同じ。配線 P と A↔D・B↔C の入れ替えは西村さん
 
 ## 決めること
+
+- **coef_mis を START（flags_clr）で消せるようにするか**（R-2 (iv)）。今は rst でしか消えず、係数を書き直しても Overlay を載せ直すまで flags[0] が 1 のまま。g24_pfb_core に flags_clr を通す小さな直しだが、ビルドが 1 回要る
 
 - ~~係数の入れ方~~ → **(c) PS が AXI4-Lite で書く**（2026-10-27、西村さん）
 - PS が係数の値をどこから作るか（補間の表の hex から式で / PC で作った表を持つ）— P の段で
