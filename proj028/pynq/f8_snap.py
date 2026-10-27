@@ -94,6 +94,9 @@ def main():
     ap.add_argument("--sg", help="SG の HOST[:PORT]（無ければ SG に触らない）")
     ap.add_argument("--f-mhz", type=float, default=1151.999442)
     ap.add_argument("--dbm", type=float, default=0.0)
+    ap.add_argument("--att", help="アッテネータの HOST[:PORT]（無ければ触らない）")
+    ap.add_argument("--att-db", type=float, help="取る間のアッテネータの値（dB）")
+    ap.add_argument("--att-home", type=float, default=13.0, help="終わったら戻す値（dB）")
     ap.add_argument("--out", default="f8_a")
     a = ap.parse_args()
 
@@ -129,10 +132,16 @@ def main():
         sg.set_dbm(a.dbm)
         sg.set_output(True)
         time.sleep(0.5)
+    att = None
+    if a.att and a.att_db is not None:
+        from instr import Atten
+        att = Atten(a.att, log=log)
+        log(f"アッテネータ: {att.set(a.att_db):.2f} dB")
+        time.sleep(0.5)
 
     win = bh4(NS)
     df = FS / NS
-    res = dict(bit=a.bit, clkin=a.clkin, f_mhz=a.f_mhz, dbm=a.dbm, n=a.n, gain=g.tolist(), sg=sg.state() if sg else None, states={})
+    res = dict(bit=a.bit, clkin=a.clkin, f_mhz=a.f_mhz, dbm=a.dbm, att_db=a.att_db if att else None, n=a.n, gain=g.tolist(), sg=sg.state() if sg else None, states={})
     spectra, raw = {}, {}
     ring = None
 
@@ -157,7 +166,8 @@ def main():
         pw = np.array(pw)
         st.update(n_ok=nok, n_gap=gaps, pow_mean=float(pw.mean()), pow_cv=float(pw.std() / pw.mean()), pow=pw.tolist())
         res["states"][name] = st
-        txt = (f"{name}: {nok} 回（欠けで捨てた {gaps}）・標本の電力 {pw.mean():.4g}（回ごとの σ {100 * pw.std() / pw.mean():.2f} %）")
+        st.update(peak_dbfs=float(20 * np.log10(np.abs(np.array(raw[name])).max() / 32768)) if name in raw else None)
+        txt = (f"{name}: 標本の最大 {st['peak_dbfs']:.1f} dBFS・{nok} 回（欠けで捨てた {gaps}）・標本の電力 {pw.mean():.4g}（回ごとの σ {100 * pw.std() / pw.mean():.2f} %）")
         if sg:
             txt += (f"・線 {st['tone']:.1f} dB・床 {st['floor_rel']:+.1f} dB\n    " +
                     " ".join(f"{k}:{v[0]:+.1f}({v[1]:+.0f})" for k, v in st.items() if k.startswith(("k", "i")) and isinstance(v, tuple)))
@@ -183,6 +193,8 @@ def main():
     finally:
         if sg:
             sg.close()
+        if att:
+            log(f"アッテネータを戻した: {att.set(a.att_home):.2f} dB")
     np.savez_compressed(a.out + ".npz", **{f"P_{k}": v for k, v in spectra.items()}, **{f"x_{k}": np.array(v) for k, v in raw.items()})
     json.dump(res, open(a.out + ".json", "w"), indent=1, default=float)
     log(f"保存: {a.out}.npz・{a.out}.json")
