@@ -319,3 +319,30 @@ pynq/timebase.py の CAL には 0x0030_0100 を足さない（別の配置なの
 - ERROR 2 行（`CONFIG.output_width` を読めない）は catch で受けていて、下のポート幅の照合（tdata 8・32・64 OK）で代えている。proj027 のビルドにも同じ 2 行がある
 - 既定の戦略で .bit まで出た（proj027 は既定では write_bitstream の前に落ちた）。実機には **既定（build/）の .bit** を使う（WNS が大きい方）
 - **VCCINT の見込み**: proj027 の 41.5〜43.1 A は LUT 64.6 %・DSP 77.5 %。今は LUT 47 %・DSP 54 % で、Wide（38 A）に近づくはず。実機で INA220 で測る
+
+## R. 実機（2026-10-27、ボードの `~/proj030/`、この会話から ssh）— 手順と予言（走らせる前に書く）
+
+載せるもの: **build/ の proj030.bit・.hwh**（P-4b の既定の戦略。sha256 `8702553d…627111`・`e99399f1…382a00`、ボードで照らして一致）と pynq/（*.py・*.sh・s45fast.c）・tools/loopsum.py・amslog.py・run4c30b.sh（場所だけ ~/proj030 に）。
+PS は proj027 のまま（PROJ_G24 だけ 0x0030_0100）。timebase.CAL に **0x0030_0100 を未較正（adc_to_core None・pps_det_ns 71.5）で足した**（無いと Timebase が START の前に止まる）。widef2・f2pair の既定の .bit を proj030.bit に。
+PL なしの確かめ: `test_fake.sh all` は 27 試験とも通過（この PC、2026-10-27）。
+電流と温度は `amslog.py --period 1` を bit を載せる前から回し続ける（`runs/r_ams.log`、07:21:45 UTC から。載せる前の VCCINT（0x40）15.6 A・PL 45 ℃ = 起動時の既定の PL）
+
+**電力の見積もり**（routed の report_power、ベクタなし。proj027 4c-b と同じ数え方）: **proj030 VCCINT 28.4 A・全体 27.8 W**（proj027 43.5 A・41.0 W、Wide 38.0 A、2G-2 24.8 A）。
+DSP・LUT の減りの割合（−30 %・−27 %）より VCCINT の減り（−35 %）が大きい（IP の中の BRAM・クロックの網も半分になる）
+
+**順番**: R-1 立ち上げ（＋ 4 コアの同等）→ R-2 電流（R-1 から続けて）→ R-3 tint 10.24 ms の 30 分（電流・温度つき）→ R-4 ch の並び（ADC の床の飛び飛びの山の位置を proj027 の記録と比べる。SG なしでできる）→ R-5 F-2（ケーブルの入れ替えは西村さん）→ R-6 CW（SG）
+
+**R-1 立ち上げ**（proj027 4a-P と同じ。配線は今のまま。入力の状態は TP で読む: proj027 の最後（4b の後）は配線 N/S・ノイズ OFF・SG OFF で TP −58〜−62 dBFS）
+- ボード: `specd.py --g24 --bitfile proj030.bit --clkin 0 --ref 10 --prefault --fast --fast-ring` → この PC: SET → START → `specrecv.py --out runs/r1*.s45`
+  - R-1a: `A0.src=A B0.src=B C0.src=C D0.src=D shift=7 tint=0.04096 fmt=f32`・`START n=200` → `g24cw.py --src ABCD`
+  - R-1b: `A0〜D0.src=C fmt=both`・`START n=50` → `g24cw.py --src CCCC --same`、陽性対照 `--posctl-same`
+- 予言:
+  - 起動: ID の proj **00300100**（adc 02030101・time 02030102 は proj027 と同じ）・**START が通る**（G24Backend の照合、proj027 4a-P と同じ項目）。timebase は「未較正」を出す
+  - R-1a: 4 窓 × 200・CRC 0・説明のない欠け 0・照合 通過・頭の欄（core 0〜3・nacc 2560・df 62500・bit_kind 3）・DUMP_T の進み 10,485,760・4 窓の DUMP_T が揃う。TP の ADC は {A, B, C, D}・sat 0。
+    **FLAGS の bit 7（待ち行列のあふれ・pos_mis・2Y の飽和）は 0**（STATUS で 4 コアとも）
+  - **床（1 フレームあたりの中央値）は proj027 の同じ入力の床と ±0.3 dB**（2-for-1 の ε は今と同じ 8.4e-6。入力が proj027 4b のノイズ OFF のままなら A0 6.76・B0 7.65・C0 7.05・D0 7.8 前後）。
+    自信は中: ADC の床は日によって揺れる（proj028 F-6）。入力が違う（ノイズ ON など）ときは判定しない
+  - R-1b: **B0・C0・D0 が A0 と u64 で bit 単位で同じ 50 / 50 組 × 3**、陽性対照は 3 窓とも 0 / 49 組
+  - STATUS（STOP の後）: miss・kgap・r_bad・loop_slow・drop・tp_lost・tp_bad 0。bdrop は 4 以下
+- **R-2 電流（R-1 の間の amslog）**: VCCINT は **26〜31 A**（見積もり 28.4 A。proj027 は実測 / 見積もり = 0.95〜0.99、温度とともに漏れで ≒ +1.5 A）。
+  **Wide の 38 A を 7 A 以上下回る**。PL の温度は proj027（65〜73 ℃）より低い（電力 −13 W）。自信は中（見積もりの当たりは proj027 の 1 回だけ）

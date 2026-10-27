@@ -152,7 +152,7 @@ def combine(paths):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--bitfile", default="proj027.bit")
+    p.add_argument("--bitfile", default="proj030.bit")
     p.add_argument("--raw-core", type=int, default=0, choices=range(4), help="proj027: RAW を取るコア（既定 0。4 コアとも RAW を持つ）")
     p.add_argument("--clkin", default="stock")
     p.add_argument("--ref", type=float, default=10.0)
