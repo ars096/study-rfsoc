@@ -39,16 +39,18 @@ RUN = ("bash -lc 'cd /home/xilinx/proj028 && source /etc/profile.d/pynq_venv.sh 
 
 # 段: (名前, clkin, SG の MHz（None は出力を切る）, SG の dBm, アッテネータ dB)
 F1 = 1100.0
+DBM = -10.0                           # この E8257D は 1100 MHz で −15 dBm 以下が unleveled（−12 から ok）
+DBM_B = 0.0                           # F-7b・c はノイズソースを切って、線を床から 60 dB 以上に
 SEAM = 18 * NKEEP * DF / 1e6          # ch 17 | 18 の継ぎ目 1152 MHz
 PLANS = {
-    "a": [("ref", "stock", None, None, 13), ("s1", "stock", F1, -40, 13), ("e1", "0", F1, -40, 13),
-          ("s2", "stock", F1, -40, 13), ("e2", "0", F1, -40, 13)],
-    "b": [("c0", "0", F1, -40, 13), ("h0", "0", F1 + DF / 2e6, -40, 13),
-          ("q0", "0", F1 + DF / 4e6, -40, 13),
-          ("sl", "0", SEAM - DF / 1e6, -40, 13), ("sr", "0", SEAM, -40, 13),
-          ("sl10", "0", SEAM - 10 * DF / 1e6, -40, 13), ("sr10", "0", SEAM + 10 * DF / 1e6, -40, 13)],
-    "c": [("a13", "0", F1, -40, 13), ("a23", "0", F1, -40, 23), ("a33", "0", F1, -40, 33), ("a43", "0", F1, -40, 43),
-          ("a13b", "0", F1, -40, 13)],
+    "a": [("ref", "stock", None, None, 13), ("s1", "stock", F1, DBM, 13), ("e1", "0", F1, DBM, 13),
+          ("s2", "stock", F1, DBM, 13), ("e2", "0", F1, DBM, 13)],
+    "b": [("c0", "0", F1, DBM_B, 13), ("h0", "0", F1 + DF / 2e6, DBM_B, 13),
+          ("q0", "0", F1 + DF / 4e6, DBM_B, 13),
+          ("sl", "0", SEAM - DF / 1e6, DBM_B, 13), ("sr", "0", SEAM, DBM_B, 13),
+          ("sl10", "0", SEAM - 10 * DF / 1e6, DBM_B, 13), ("sr10", "0", SEAM + 10 * DF / 1e6, DBM_B, 13)],
+    "c": [("a13", "0", F1, DBM_B, 13), ("a23", "0", F1, DBM_B, 23), ("a33", "0", F1, DBM_B, 33), ("a43", "0", F1, DBM_B, 43),
+          ("a13b", "0", F1, DBM_B, 13)],
 }
 
 _R = None
