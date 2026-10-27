@@ -326,3 +326,15 @@ ooc-ref:
 	@o=build-ooc/ref; mkdir -p $$o; \
 	cd $$o && $(VIVADO) -mode batch -nojournal -log vivado.log -source ../../tools/ooc_rtl.tcl -tclargs g24_chain 3.906 clk ../../src/common/cmul.v ../../ref/dft16.v ../../ref/g24_chain.v > /dev/null 2>&1; \
 	  grep '^OOC ' vivado.log | tee ../ooc-ref.txt
+
+# ================================================================ proj031
+.PHONY: model-cu gen-crc
+
+# CRC の式（展開した XOR）を作る。生成物 src/g24/crc32_d32.vh はコミットする（model-cu が生成器の出力と同じかを照らす）
+gen-crc:
+	$(PYTHON) tools/gen_crc32.py src/g24/crc32_d32.vh
+
+# M の模型。成否は「まとめ」の行で読む。最後の行の COEF_CRC が build.tcl の定数
+model-cu:
+	@mkdir -p runs
+	$(PYTHON) model/cu_model.py | tee runs/model_cu.txt
