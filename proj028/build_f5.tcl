@@ -21,6 +21,8 @@ set jobs    8
 if {[llength $argv] > 0} { set jobs [lindex $argv 0] }
 # 出力先と実装の戦略は環境変数で（F5_OUT・F5_IMPL。Makefile の f5 / f5-pe）。戦略は読み返して確かめる
 if {[info exists ::env(F5_OUT)] && $::env(F5_OUT) ne ""} { set outdir ./$::env(F5_OUT) }
+# F-8: F5_SNAP=1 のときだけ、荒い段の入口の生の標本を溜める adc_snap_0 を足す（既定は F-5 と同じものを作る）
+set snap [expr {[info exists ::env(F5_SNAP)] && $::env(F5_SNAP) eq "1"}]
 set impl_req ""
 if {[info exists ::env(F5_IMPL)] && $::env(F5_IMPL) ne ""} { set impl_req $::env(F5_IMPL) }
 set projdir $outdir/vivado
@@ -154,6 +156,7 @@ set rtl [list \
     ./src/fine/fine_top.v ./src/fine/fine_core.v ./src/fine/fine_pfb.v ./src/fine/fine_coef.v ./src/fine/fine_tw.v \
     ./src/fine/fine_chain.v ./src/fine/fine_acc.v ./src/fine/fine_rdo.v ./src/fine/cmul.v ./src/fine/dft16f.v \
     ./src/common/gb_adc.v ./src/common/gb_gate.v ./src/common/s45_ring.v ./src/common/rec_arb.v]
+if {$snap} { lappend rtl ./src/adc_snap.v }
 foreach f $rtl { if {![file exists $f]} { puts "ERROR: $f が無い"; exit 1 } }
 add_files -norecurse [lmap f $rtl {file normalize $f}]
 set hex_files [lmap {par h nrow ncol} $fine_hex {set h}]
@@ -380,6 +383,12 @@ foreach {k want} [list CONFIG.NIN 1 CONFIG.BIT_KIND 28 CONFIG.BIT_REV 1 CONFIG.P
     if {[get_property $k $rcore] != $want} { puts "ERROR: s45_ring_0 の $k が [get_property $k $rcore]（要求 $want）"; exit 1 }
 }
 set cm [create_bd_cell -type module -reference clk_mon clk_mon_0]
+if {$snap} {
+    set sn [create_bd_cell -type module -reference adc_snap adc_snap_0]
+    set_property CONFIG.DW [expr {$spw * 16}] $sn
+    if {[get_property CONFIG.DW $sn] != $spw * 16} { puts "ERROR: adc_snap_0 の DW が要求と違う"; exit 1 }
+}
+set nmi [expr {$snap ? 8 : 7}]
 # リングの使わない入口（s1〜s3 の tvalid・rec_drop0〜3）は定数 0 を明示してつなぐ（つながないと BD 41-759 の CRITICAL WARNING。1 回目のビルドで出た）
 foreach {nm w} {ring_tie0 1 ring_tie00 2} {
     set c [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant $nm]
@@ -426,11 +435,11 @@ set_property -dict [list CONFIG.CONST_WIDTH 1 CONFIG.CONST_VAL 1] $one
 # ---- 相互接続 ----
 # smc_ctrl: S00 = PS、M00 rfdc・M01 clk_mon_0（pl_clk0）・M02 coarse_stage_0・M03 ct_wr_0・M04 ct_rd_0・M05 fine_top_0・M06 s45_ring_0（DSP）
 set smc_ctrl [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect smc_ctrl]
-set_property -dict [list CONFIG.NUM_SI 1 CONFIG.NUM_MI 7 CONFIG.NUM_CLKS 2] $smc_ctrl
+set_property -dict [list CONFIG.NUM_SI 1 CONFIG.NUM_MI $nmi CONFIG.NUM_CLKS 2] $smc_ctrl
 # smc_ddr: S00 = ct_wr_0、S01 = ct_rd_0（DSP）→ M00 = ddr4_0（UI クロック）
 set smc_ddr [create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect smc_ddr]
 set_property -dict [list CONFIG.NUM_SI 2 CONFIG.NUM_MI 1 CONFIG.NUM_CLKS 2] $smc_ddr
-foreach {c k w} {smc_ctrl CONFIG.NUM_MI 7 smc_ctrl CONFIG.NUM_CLKS 2 smc_ddr CONFIG.NUM_SI 2 smc_ddr CONFIG.NUM_CLKS 2} {
+foreach {c k w} [list smc_ctrl CONFIG.NUM_MI $nmi smc_ctrl CONFIG.NUM_CLKS 2 smc_ddr CONFIG.NUM_SI 2 smc_ddr CONFIG.NUM_CLKS 2] {
     if {[get_property $k [get_bd_cells $c]] != $w} { puts "ERROR: $c の $k が [get_property $k [get_bd_cells $c]]（要求 $w）"; exit 1 }
 }
 
@@ -488,6 +497,16 @@ proc nets_f5 {} {
     ]
 }
 foreach {drv loads} [nets_f5] { foreach p $loads { nc $drv $p } }
+# F-8: adc_snap_0 は荒い段の口を横から聞く（DSP クロック・DSP のリセット）
+proc nets_snap {} {
+    return [list \
+        clk_wiz_adc/clk_out2        {adc_snap_0/clk} \
+        rst_dsp/peripheral_aresetn  {adc_snap_0/aresetn} \
+        gb_tap_0/m_data             {adc_snap_0/s_data} \
+        gb_tap_0/m_valid            {adc_snap_0/s_valid} \
+    ]
+}
+if {$snap} { foreach {drv loads} [nets_snap] { foreach p $loads { nc $drv $p } } }
 
 # インタフェース
 ic [BI rfdc {m22_axis} "RFDC の AXI4-Stream 出力（tile 2 slice 2）"] [BI gb_adc_0 {s_axis S_AXIS} "gb_adc_0 の入力"]
@@ -498,7 +517,9 @@ ic [BI gb_gate_0 {m_axis M_AXIS} "gb_gate_0 の出力"] [get_bd_intf_pins gb_dn_
 ic [get_bd_intf_pins gb_dn_0/M_AXIS] [BI gb_tap_0 {s_axis S_AXIS} "gb_tap_0 の入口"]
 ic [get_bd_intf_pins zynq_ultra_ps_e_0/M_AXI_HPM0_FPD] [get_bd_intf_pins smc_ctrl/S00_AXI]
 set mi 0
-foreach {cell what} {rfdc s_axi clk_mon_0 s_axi coarse_stage_0 s_axi ct_wr_0 s_axi ct_rd_0 s_axi fine_top_0 s_axi s45_ring_0 s_axi} {
+set mi_list {rfdc s_axi clk_mon_0 s_axi coarse_stage_0 s_axi ct_wr_0 s_axi ct_rd_0 s_axi fine_top_0 s_axi s45_ring_0 s_axi}
+if {$snap} { lappend mi_list adc_snap_0 s_axi }
+foreach {cell what} $mi_list {
     ic [get_bd_intf_pins smc_ctrl/M[format %02d $mi]_AXI] [BI $cell [list $what [string toupper $what]] "$cell の AXI4-Lite"]
     incr mi
 }
@@ -527,6 +548,13 @@ foreach cell {clk_mon_0 coarse_stage_0 ct_wr_0 ct_rd_0 fine_top_0 s45_ring_0} {
     if {[llength $seg] != 1} { puts "ERROR: $cell/s_axi の番地の区画が 1 個でない（$seg）"; exit 1 }
     assign_bd_address -offset [format 0x%08X $off] -range 4K -target_address_space $ps_data $seg
     set off [expr {$off + 0x1000}]
+}
+if {$snap} {
+    # 標本の窓（addr[18] = 1）が要るので 512K。512K の境に置く
+    set seg [get_bd_addr_segs -quiet -of_objects [get_bd_intf_pins adc_snap_0/s_axi]]
+    if {[llength $seg] != 1} { puts "ERROR: adc_snap_0/s_axi の番地の区画が 1 個でない（$seg）"; exit 1 }
+    assign_bd_address -offset 0xA0180000 -range 512K -target_address_space $ps_data $seg
+    if {[get_property RANGE $seg] != 524288} { puts "ERROR: adc_snap_0 の窓が 512K でない（[get_property RANGE $seg]）"; exit 1 }
 }
 assign_bd_address
 set fh [open $outdir/address_map.rpt w]
@@ -585,6 +613,16 @@ set nchk 0
 foreach {drv loads} [nets_f5] {
     set got [net_pins $drv]
     foreach p $loads { incr nchk; if {[lsearch -exact $got /$p] < 0} { incr ng; puts "  結線: $drv のネットに $p が無い" } }
+}
+if {$snap} {
+    foreach {drv loads} [nets_snap] {
+        set got [net_pins $drv]
+        foreach p $loads { incr nchk; if {[lsearch -exact $got /$p] < 0} { incr ng; puts "  結線: $drv のネットに $p が無い" } }
+    }
+    foreach m {/zynq_ultra_ps_e_0/pl_clk0 /clk_wiz_adc/clk_out1 /ddr4_0/c0_ddr4_ui_clk} {
+        incr nchk
+        if {[lsearch -exact [net_pins adc_snap_0/clk] $m] >= 0} { incr ng; puts "  結線: adc_snap_0/clk のネットに $m が在ってはいけない" }
+    }
 }
 # 在ってはいけない: ドメインの取り違え・リセットの取り違え
 foreach {pin mustnot} {
@@ -670,7 +708,7 @@ if {[llength $bad] > 0} { puts "ERROR: OOC の合成が通らない: $bad"; exit
 # 自作のセルの run: ドライバの無いネット（Synth 8-3848）・$readmemh の失敗で止める
 set nd 0; set seen 0; set rm 0
 foreach n $ooc {
-    if {![regexp {^system_(coarse_stage|ct_wr|ct_rd|fine_top|s45_ring|clk_mon|gb_adc|gb_gate|gb_tap)_} $n]} continue
+    if {![regexp {^system_(coarse_stage|ct_wr|ct_rd|fine_top|s45_ring|clk_mon|gb_adc|gb_gate|gb_tap|adc_snap)_} $n]} continue
     incr seen
     set fh [open [file join [run_dir $n] runme.log] r]; set t [read $fh]; close $fh
     foreach line [split $t "\n"] {
@@ -678,8 +716,9 @@ foreach n $ooc {
         if {[regexp -nocase {Synth 8-4445|could not open .*readmem|readmem.*(not found|cannot|could not)} $line]} { puts "  $n: $line"; incr rm }
     }
 }
-puts "自作のセル: OOC の run $seen 個（期待 9）・Synth 8-3848 $nd 行・\$readmemh の失敗 $rm 行"
-if {$seen != 9 || $nd > 0 || $rm > 0} { puts "ERROR: 自作のセルの合成で止める"; exit 1 }
+set n_own [expr {$snap ? 10 : 9}]
+puts "自作のセル: OOC の run $seen 個（期待 $n_own）・Synth 8-3848 $nd 行・\$readmemh の失敗 $rm 行"
+if {$seen != $n_own || $nd > 0 || $rm > 0} { puts "ERROR: 自作のセルの合成で止める"; exit 1 }
 
 # ------------------------------------------------------------------ 合成〜ビットストリーム
 if {$impl_req ne ""} {

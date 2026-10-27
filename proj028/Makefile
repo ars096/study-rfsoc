@@ -32,7 +32,7 @@ export BOARD_REPO PART OUTDIR
 
 PYTHON ?= python3
 
-.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 model-m4 estimate sim-cfft32 sim-cpfb sim-cstage sim-ctwr sim-ctrd sim-fpfb sim-fchain sim-facc s1 sim-ddrtg f5ooc f5 f5-pe
+.PHONY: all build prog id timing-check clean model-m1 model-m2 model-m3 model-m4 estimate sim-cfft32 sim-cpfb sim-cstage sim-ctwr sim-ctrd sim-fpfb sim-fchain sim-facc s1 sim-ddrtg f5ooc f5 f5-pe f8 sim-snap
 
 # S-2: PL DDR4 の帯域と容量を測る .bit（PS ＋ MIG ＋ ddr_tg。この PC の Vivado、1 時間前後）。成果物は build/proj028.bit・.hwh。
 # 成否は make の終了状態でなく build/vivado.log の「TIMING (確定)」「CRITICAL WARNING: n 件」「=== wrote」で読む
@@ -159,6 +159,21 @@ f5ooc:
 f5:
 	mkdir -p build-f5
 	VIVADO_LOG=build-f5/vivado.log $(VIVADO) -mode batch -nojournal -log build-f5/vivado.log -source build_f5.tcl -tclargs $(JOBS)
+
+# F-8: F-5 に荒い段の入口の生の標本を溜める adc_snap_0 を足したもの（出力は build-f8/）。F-5 の build_f5.tcl を F5_SNAP=1 で
+f8:
+	mkdir -p build-f8
+	F5_OUT=build-f8 F5_SNAP=1 VIVADO_LOG=build-f8/vivado.log $(VIVADO) -mode batch -nojournal -log build-f8/vivado.log -source build_f5.tcl -tclargs $(JOBS)
+
+# F-8: adc_snap の単体の sim（ふつう・valid の欠け・本番の深さ・陽性対照）。成否は各ログの「結果:」
+sim-snap:
+	mkdir -p build-sim
+	iverilog -g2012 -o build-sim/snap.vvp tb/tb_adc_snap.v src/adc_snap.v
+	iverilog -g2012 -DGAPS -o build-sim/snap_gaps.vvp tb/tb_adc_snap.v src/adc_snap.v
+	iverilog -g2012 -DDEPTH_FULL -DGAPS -o build-sim/snap_full.vvp tb/tb_adc_snap.v src/adc_snap.v
+	iverilog -g2012 -DBAD -o build-sim/snap_bad.vvp tb/tb_adc_snap.v src/adc_snap.v
+	vvp -n build-sim/snap.vvp > build-sim/sim_snap.log & vvp -n build-sim/snap_gaps.vvp > build-sim/sim_snap_gaps.log & vvp -n build-sim/snap_full.vvp > build-sim/sim_snap_full.log & vvp -n build-sim/snap_bad.vvp > build-sim/sim_snap_bad.log & wait
+	@grep "結果:" build-sim/sim_snap.log build-sim/sim_snap_gaps.log build-sim/sim_snap_full.log build-sim/sim_snap_bad.log
 
 # F-5: 同じものを実装の戦略 Performance_Explore で（出力は build-f5-pe/）。f5 と並べて回してよい（JOBS は合わせて 16 以下に）
 f5-pe:
