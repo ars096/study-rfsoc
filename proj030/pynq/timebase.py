@@ -42,9 +42,11 @@ CAL = {
     # proj027（2G-4、PROJ 0x0027_0100）: 別の Overlay・別の配置なので proj025 の adc_to_core は持ち込まず、4d の F-2（RAW の流れ = コア 0 の s 1）で測った。
     #   pps_det_ns は 1PPS の入口の LPF（BLP-10.7+）の分で、bit に依らない（形 (b)、proj026）。LPF を外したら 0 に
     # proj030（2G-4 の 2-for-1、PROJ 0x0030_0100）: ギアボックス・time_core・RAW の RTL は proj027 と同じだが、別の Overlay・別の配置なので
-    #   proj027 の値は持ち込まない。F-2 で測るまで adc_to_core は未較正（pps_det_ns は LPF の分で bit に依らない）
-    0x0030_0100: dict(pps_det_ns=71.5, adc_to_core_ns=None, bound_ns=50,
-                      source="proj030: 未較正（F-2 で測る。見込みは proj027 の M ＋ 71.5 = 141〜144 ns）"),
+    #   proj027 の値は持ち込まず、R-5 の F-2 で測った（pps_det_ns は LPF の分で bit に依らない）
+    0x0030_0100: dict(pps_det_ns=71.5, adc_to_core_ns={0: 140.5, 1: 142.8, 2: 141.6, 3: 141.9}, bound_ns=50,
+                      source="proj030 R-5 の F-2（2026-10-27、配線 P・1PPS の入口に LPF BLP-10.7+）: RAW の流れ（コア 0 の s 1、SRC で ADC を選ぶ）の生サンプルで "
+                             "1PPS の縁がコアに入った T − スタンプを 4 ADC、ケーブルを A↔D・B↔C に入れ替えて 2 回（f2_30a・f2_30b）。M = A 69.0・B 71.3・C 70.1・D 70.4 ns。"
+                             "(b): pps_det_ns = LPF の分 71.5、adc_to_core_ns = M ＋ 71.5（LPF を外したら pps_det_ns を 0 に）"),
     0x0027_0100: dict(pps_det_ns=71.5, adc_to_core_ns={0: 143.4, 1: 143.5, 2: 143.4, 3: 141.4}, bound_ns=50,
                       source="proj027 4d の F-2（2026-10-26、配線 P・1PPS の入口に LPF BLP-10.7+）: RAW の流れ（コア 0 の s 1、SRC で ADC を選ぶ）の生サンプルで "
                              "1PPS の縁がコアに入った T − スタンプを 4 ADC、ケーブルを A↔D・B↔C に入れ替えて 2 回（f2_27a・f2_27b）。M = A 71.9・B 72.0・C 71.9・D 69.9 ns。"
