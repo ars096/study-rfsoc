@@ -278,6 +278,45 @@ sim: **比べる相手は proj030 の `g24_coef` の RTL そのもの**（tb の
 - ERROR 2 行（`CONFIG.output_width`）は proj030 と同じ catch のもの
 - 実機には **既定（build/）の .bit** を使う（WNS が大きい方）。sha256 は `a0501af5…9ae6a5`（.bit）・`14edfe76…4531e7`（.hwh）
 
+## R 実機（2026-10-27、ボードの `~/proj031/`、この会話から ssh）— 手順と予言（走らせる前に書く）
+
+載せたもの: build/ の proj031.bit・.hwh（ボードで sha256 一致）・pynq/（*.py・*.sh・*.json・s45fast.c → libs45fast.so は「CRC: 命令」）・tools/loopsum.py・amslog.py・run4c30b.sh（場所を ~/proj031 に直した）・shapecmp.py・**cuctl.py（新しい道具、下）**・
+**g24_coef_lo.hex・g24_coef_hi.hex（.bit の隣。PS が係数を作る元）**。ボードの numpy 1.21.5 で g24cu の CRC は 0x891BE197（0.18 s）。PL なしの確かめ `test_fake.sh all` は全部通過（この PC）。
+ボードの状態（始める前）: PL は空・specd・amslog は止まっている・配線 N/S・ノイズ OFF・SG OFF（proj030 の R-6 の後のまま）
+
+`tools/cuctl.py`（root・specd が Overlay を載せた後に別の process から g24_cu_0 の番地 0xA000_0000 を触る）: `status`・`drop`（行 R を正しい中身のまま書き直す。中身は変わらず **OK だけが落ちる**: g24_cu は ROW の書きで OK を下げる。CLR は OK を変えない）・
+`corrupt`（行 R の 1 bit を反転して 4096 行を書き VERIFY）・`load`（正しく書き直す）
+
+**順番**: R-1 立ち上げ（係数の書き・4 コアの同等・床）→ R-2 陽性対照（係数）→ R-3 電流（R-1 から続けて、proj030 と交互）→ R-4 CW（SG、4 点）→ R-5 F-2（配線 P とケーブルの入れ替えが要る。西村さんに頼む）
+
+**R-1 立ち上げ**（proj030 R-1 と同じ。配線は今のまま = ノイズ OFF）
+- `amslog.py --period 1` を先に起こす（`runs/r_ams.log`）→ `specd.py --g24 --bitfile proj031.bit --clkin 0 --ref 10 --prefault --fast --fast-ring` → R-1a（src ABCD・fmt f32・200 ダンプ）・R-1b（src C × 4・fmt both・50）
+- 予言:
+  - 起動: **specd のログに「係数 URAM: 4096 行を X s で書き、VERIFY 通過（CRC 0x891be197、STAT 0x15）」**。**書きの時間は 0.3〜1.5 s**（E-1 は 77,824 回 × ≒ 10 µs ≒ 0.8 s）。ID の proj 00310100。START が通る。timebase は「未較正」
+  - R-1a: 4 窓 × 200・CRC 0・説明のない欠け 0・照合 通過・`g24cw` 全部通過・flags 0・health 0
+  - R-1b: **B0・C0・D0 が A0 と u64 で bit 単位で同じ 50 / 50 組 × 3**、陽性対照 0 / 49 組
+  - 床: 下の R-3 の交互の比べで判定する（ノイズ OFF の床は proj030 の R-1 の記録（ノイズ ON）と比べられない）
+
+**R-2 陽性対照（係数、specd は R-1 のまま）**
+- (i) `START n=0` で走っている間に `cuctl.py drop` → **4 窓とも、その後のダンプの flags に bit 0（coef_mis）が立つ**（粘着）。STAT は 0x14（ok 0・vdone 1・wrote 1）。取りこぼしは無い（係数の中身は同じ）
+- (ii) STOP → `START n=10` → **PS が断る**（「係数 URAM の OK が 0」、g24cu.check_ok）。ERR が返り、specd は IDLE のまま
+- (iii) `cuctl.py corrupt --row 1234 --bit 5` → **STAT 0x1C（ok 0・vdone 1・vmis 1・wrote 1）・CRC ≠ 0x891BE197**（sim-cu の onebit と同じ形）→ `START` はまた断られる
+- (iv) `cuctl.py load` → STAT 0x15・CRC 0x891BE197 → `START n=50` が通り、**flags 0 に戻る**（START が flags を消す）。ダンプは R-1a と同じ形で通過
+- PL の側の「OK が立つまでコアの口を開けない」は、書かずに START する道を PS が持たない（check_ok）ので実機では試さない（sim の g24s_nook で落ちることを確かめた）
+
+**R-3 電流（amslog 1 秒）と床を proj030 と交互に**: proj031 → proj030 → proj031 の順に specd を起こし直し（proj030 は `~/proj030` の bit と PS のまま）、それぞれ 2 分待って R-1a と同じ取得（src ABCD・200 ダンプ）
+- 床（1 フレームあたりの中央値）: **proj031 と proj030 の差は 4 窓とも ±0.1 dB 以内**（係数は bit 単位で同じなので、違いは Overlay の載せ直しごとの ADC の揺れだけ）。proj031 どうし（1 回目と 3 回目）の差も同じ程度
+- 電流: **report_power（routed、ベクタなし、proj030 と同じ数え方）は VCCINT 27.6 A・全体 27.1 W**（proj030 28.4 A・27.8 W。DSP 3.78 W・URAM 0.70 W）。
+  proj030 の実測 / 見積もり 1.11〜1.13 を当てて **proj031 は 30.5〜31.8 A**（載せて 2 分の後）。**交互に並べた proj030 との差は −0.4〜−1.2 A**（見積もりの差 −0.8 A）。
+  自信は中: 差は温度（載せ直しのたびに上がる）で動く。並びを 031 → 030 → 031 にして、031 の 2 回の平均と 030 を比べる
+
+**R-4 CW（SG、proj030 R-6 と同じ 4 点・+9 dBm・基準 EXT、SG を開いたまま取得）**
+- 予言: 4 点 × 4 窓とも ピークの番号が期待（15235・7239・21575・8787）と一致・軸と SG の差 0 Hz・陽性対照 `--posctl` は落ちる。
+  **窓の形（係数）が proj030 と同じ**: 隣・±2・±3 ch のピークからの比が proj030 R-6 の値と ±0.5 dB（±3 ch は床に近いので ±1 dB）、ピーク / 中央値 ±0.5 dB・TP ±0.3 dB（同じ日の朝の値と）
+  （共役の側の 2 点は、係数の t2・t3 = ポート B（行 4095 − m・レーン逆順）を通る。ポート B の番地・レーンの誤りは sim の CU_MIRROR_ERR・CU_NOREV で落ちることを確かめてある）
+
+**R-5 F-2**: proj030 R-5 と同じ手順・予言（M ≒ 71 ns、66〜76 ns）。ギアボックス・axis_sel4・RAW・time_core の RTL は proj030 と同じ。配線 P と A↔D・B↔C の入れ替えは西村さん
+
 ## 決めること
 
 - ~~係数の入れ方~~ → **(c) PS が AXI4-Lite で書く**（2026-10-27、西村さん）
