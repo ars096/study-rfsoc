@@ -35,7 +35,7 @@ FOUT = FS / 56                         # 荒い ch の出口の速さ（像の�
 WIN = 200
 
 RUN = ("bash -lc 'cd /home/xilinx/proj028 && source /etc/profile.d/pynq_venv.sh 2>/dev/null; "
-       "source /etc/profile.d/xrt_setup.sh 2>/dev/null; python3 f5.py --chunks 3 --clkin {clkin} --out {name}'")
+       "source /etc/profile.d/xrt_setup.sh 2>/dev/null; python3 f5.py --chunks {chunks} --clkin {clkin} --out {name}'")
 
 # 段: (名前, clkin, SG の MHz（None は出力を切る）, SG の dBm, アッテネータ dB)
 F1 = 1100.0
@@ -59,6 +59,11 @@ PLANS = {
     # F-9: 裾の周波数による違い。荒い ch の中心（64k + 32 MHz、bin の中心に正確に乗る）を、周波数の順を混ぜて。1120 MHz は頭と尻に
     "g": [(f"g{m}{t}", "0", float(m), DBM_B, 13) for m, t in
           ((1120, "a"), (96, ""), (1888, ""), (352, ""), (1504, ""), (160, ""), (736, ""), (1120, "b"))],
+    # F-9b: 250〜740 MHz を 64 MHz おきに（352 の外れの確かめ。SG の 500 MHz の帯の境目をまたぐ）
+    "h": [(f"h{m}{t}", "0", float(m), DBM_B, 13) for m, t in
+          ((736, "a"), (352, "a"), (608, ""), (416, ""), (544, ""), (288, ""), (672, ""), (480, ""), (352, "b"), (736, "b"))],
+    # F-9c: 裾の時間の揺れ（--chunks を増やし、--per-chunk でチャンクごとに）
+    "t": [("t1888", "0", 1888.0, DBM_B, 13), ("t736", "0", 736.0, DBM_B, 13)],
 }
 RK = {1: -56.30, 2: -65.49, 3: -74.02}  # 細かい PFB の応答（bin の中心の線から ±k bin、m4_stitch.design）
 
@@ -168,6 +173,17 @@ def ana(stem, f_mhz):
     return res
 
 
+def per_chunk(stem, f_mhz):
+    """チャンクごと（頭のチャンク 0 を除く）の ±1〜±3 bin の両側の平均（線の bin に対して dB）"""
+    spec = np.load(stem + "_spec.npy", mmap_mode="r")
+    b = int(round(f_mhz * 1e6 / DF))
+    rows = []
+    for c in range(1, spec.shape[0]):
+        v = np.asarray(spec[c, b - 3:b + 4], np.float64)
+        rows.append([10 * np.log10((v[3 - d] + v[3 + d]) / 2 / v[3]) for d in (1, 2, 3)])
+    return np.array(rows)
+
+
 def line(r):
     if "ppm" not in r:
         return f"{r['stem']}: SG 切り・clkin {r['clkin']}・g {min(r['gain'])}〜{max(r['gain'])}・床（ch 17）{r['floor_ch'][17]:.4g}"
@@ -188,10 +204,15 @@ def main():
     ap.add_argument("--att-home", type=float, default=13.0)
     ap.add_argument("--ana")
     ap.add_argument("--f-mhz", type=float)
+    ap.add_argument("--chunks", type=int, default=3)
+    ap.add_argument("--per-chunk", action="store_true", help="チャンクごとの隣の高さも出す")
     a = ap.parse_args()
     if a.ana:
         r = ana(a.ana, a.f_mhz)
         print(line(r))
+        if a.per_chunk:
+            pc = per_chunk(a.ana, a.f_mhz)
+            print("チャンクごとの隣 ±1・±2・±3（dB）:\n" + "\n".join(" ".join(f"{v:.1f}" for v in row) for row in pc))
         return 0
     from sg import SG
     from instr import Atten
@@ -214,7 +235,7 @@ def main():
             st = dict(sg=sg.state(), att=at.get(), t=time.strftime("%H:%M:%S"))
             bname = f"{os.path.basename(a.out)}_{name}"
             print(f"== {name}: clkin {clkin}・SG {'切り' if fmhz is None else f'{fmhz:.6f} MHz {dbm:+.1f} dBm'}・ATT {att} dB（{st['t']}）", flush=True)
-            p = subprocess.run(["ssh", a.board, RUN.format(clkin=clkin, name=bname)], capture_output=True, text=True)
+            p = subprocess.run(["ssh", a.board, RUN.format(clkin=clkin, name=bname, chunks=a.chunks)], capture_output=True, text=True)
             keep = [l for l in p.stdout.splitlines() if any(w in l for w in ("ERROR", "結果", "飽和", "利得", "チャンク 1", "ppm"))]
             print("   " + "\n   ".join(keep[-6:]), flush=True)
             stem = os.path.join(os.path.dirname(a.out) or ".", bname)
@@ -223,6 +244,12 @@ def main():
             r = ana(stem, fmhz)
             r.update(step=name, cond=st, rc=p.returncode)
             print("   " + line(r).replace("\n", "\n   "), flush=True)
+            if a.per_chunk and fmhz is not None:
+                pc = per_chunk(stem, fmhz)
+                r["per_chunk"] = pc.tolist()
+                print("   チャンクごとの隣 ±1（dB）: " + " ".join(f"{v:.1f}" for v in pc[:, 0]), flush=True)
+                print("   ±1・±2・±3 の平均 / σ / 最小〜最大: " + "  ".join(
+                    f"{pc[:, d].mean():.2f} / {pc[:, d].std():.2f} / {pc[:, d].min():.1f}〜{pc[:, d].max():.1f}" for d in range(3)), flush=True)
             results.append(r)
             json.dump(results, open(a.out + ".json", "w"), indent=1, default=float)
     finally:
