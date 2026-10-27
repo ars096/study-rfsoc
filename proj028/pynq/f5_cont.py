@@ -12,6 +12,16 @@
     新しい区間の始めの --settle チャンクも捨てる（雑音源の立ち上がり）
 - 区間ごとに: 足したスペクトル（<out>_r<i>_spec.npy、÷ フレームの数）・チャンクの番号の範囲・全電力の列
 - 見張り: ≒ 1 s ごとに PL・PS の温度と荒い段の POW（f5_seg と同じ）。--save-every チャンクごとに meta と区間の途中を保存する
+
+切り替えの形（F-6e、--switch）: 雑音源は入れたまま、**アッテネータ（J7211C）をこの道具が切り替える**
+
+  sudo -E $(which python3) f5_cont.py --switch 13,100 --dwell 40 --att <アッテネータ> --chunks 6000 --out f6e_sw
+
+- RUN の前に、状態（ATT の値）ごとに利得を合わせる（ON と OFF は 25〜34 dB 違い、8 bit に一緒には収まらない。F-6c）
+- ct_wr が書いたチャンクの数が --dwell 増えるごとに、ATT と利得を次の状態に書く。書く前後の数 W0・W1 を読み、
+  チャンク W0〜W1 + 1 を「切り替え」として捨てる（+1 は細かい PFB が前のチャンクの末尾 3 フレームを使う分）
+- 状態はチャンクの電力で見分けない（利得で σ を揃えるので、生の電力は ON も OFF も同じに見える）。切り替えの記録で決める
+- 区間ごとに状態の番号を残す。入力に換算するには、その状態の利得 gains[state] の 2 乗で割る
 """
 import argparse
 import json
@@ -41,17 +51,18 @@ class Runs:
 
     def __init__(self, a):
         self.a = a
-        self.runs = []                  # dict(first, last, n, acc, nfr, ts, p)
+        self.runs = []                  # dict(first, last, n, acc, nfr, ts, p, state)
         self.dropped = []               # (c, 理由)
         self.prev = None                # 決めを待つチャンク (c, p, spec, nfr, ts)
         self.last_kept_p = None
         self.settle_left = 0
+        self.acc_state = {}             # 切り替えの形: 状態 → [acc, nfr, n]（スペクトルは状態ごとに 1 つ。区間ごとには電力の列だけ）
 
     def push(self, item):
         """item を待ちに入れ、前の待ちを決める。決めた item（器を返すため）か None を返す"""
         old = self.prev
         if old is not None:
-            self.decide(old, item[1])
+            self.decide(old, item[1], item[5])
         self.prev = item
         return old
 
@@ -62,9 +73,12 @@ class Runs:
             self.prev = None
         return old
 
-    def decide(self, item, p_next):
-        c, p, spec, nfr, ts = item
+    def decide(self, item, p_next, label_next=None):
+        c, p, spec, nfr, ts, label = item
         db = lambda x, y: abs(10 * np.log10(x / y))       # noqa: E731
+        if label is not None:                          # 切り替えの形: 状態は記録で決まる
+            self.decide_labeled(c, p, spec, nfr, ts, label, p_next if label_next == label else None)
+            return
         near_prev = self.last_kept_p is not None and db(p, self.last_kept_p) <= self.a.mix_db
         near_next = p_next is not None and db(p, p_next) <= self.a.mix_db
         if not (near_prev or near_next):
@@ -92,13 +106,43 @@ class Runs:
         r["ts"].append(ts.tolist())
         r["p"].append(p)
 
+    def decide_labeled(self, c, p, spec, nfr, ts, label, p_next):
+        if label == "切り替え":
+            self.dropped.append((c, "切り替え"))
+            return
+        db = lambda x, y: abs(10 * np.log10(x / y))       # noqa: E731
+        r = self.runs[-1] if self.runs else None
+        if r is None or r["state"] != label:
+            self.runs.append(dict(first=c, last=c, n=0, acc=None, nfr=np.zeros(NCH, np.int64), ts=[], p=[], state=label))
+            if label not in self.acc_state:
+                self.acc_state[label] = [np.zeros(NTOT, np.uint64), np.zeros(NCH, np.int64), 0]
+            self.last_kept_p = None
+            r = self.runs[-1]
+        elif not (db(p, self.last_kept_p) <= self.a.mix_db or (p_next is not None and db(p, p_next) <= self.a.mix_db)):
+            self.dropped.append((c, "混ざり"))         # 同じ状態の中で前後どちらとも違う（切り替えの記録から漏れたなど）
+            return
+        self.last_kept_p = p
+        st = self.acc_state[label]
+        np.add(st[0], spec, out=st[0])
+        st[1] += nfr
+        st[2] += 1
+        r["nfr"] += nfr
+        r["n"] += 1
+        r["last"] = c
+        r["ts"].append(ts.tolist())
+        r["p"].append(p)
+
     def save(self, out):
+        for k, (acc, nfr, n) in self.acc_state.items():
+            if n:
+                np.save(f"{out}_s{k}_spec.npy", (acc / np.repeat(np.maximum(nfr, 1), NKEEP)).astype(np.float32))
         for i, r in enumerate(self.runs):
-            if r["n"]:
+            if r["n"] and r["acc"] is not None:
                 np.save(f"{out}_r{i}_spec.npy", (r["acc"] / np.repeat(np.maximum(r["nfr"], 1), NKEEP)).astype(np.float32))
 
     def summary(self):
-        return [dict(first=r["first"], last=r["last"], n=r["n"], nfr=r["nfr"].tolist(), ts=list(r["ts"]), p=list(r["p"])) for r in self.runs]
+        return [dict(first=r["first"], last=r["last"], n=r["n"], nfr=r["nfr"].tolist(), ts=list(r["ts"]), p=list(r["p"]), state=r.get("state"))
+                for r in self.runs]
 
 
 def main():
@@ -115,6 +159,10 @@ def main():
     ap.add_argument("--settle", type=int, default=2, help="新しい区間の始めに捨てるチャンクの数")
     ap.add_argument("--save-every", type=int, default=200)
     ap.add_argument("--probe-secs", type=float, default=1.0)
+    ap.add_argument("--switch", help="ATT の値（dB）をカンマで。この順に切り替えを繰り返す（例 13,100）")
+    ap.add_argument("--dwell", type=int, default=40, help="1 つの状態に居るチャンクの数（ct_wr の数えで）")
+    ap.add_argument("--att", help="アッテネータの HOST[:PORT]（既定は環境変数 RFSOC_ATT）。リポジトリに書かない")
+    ap.add_argument("--att-home", type=float, default=13.0, help="終わったら戻す ATT")
     ap.add_argument("--out", default="f6c")
     a = ap.parse_args()
     if a.ring_mib & (a.ring_mib - 1):
@@ -142,7 +190,25 @@ def main():
     if not (gbs >> 31 and adcs >> 31):
         log("ERROR: ギアボックスが開始していないか、RFDC の valid を見ていない")
         return 1
-    if a.gains_from:
+    att, states, gains = None, None, None
+    if a.switch:
+        from instr import Atten
+        att = Atten(a.att, log=log)
+        states = [float(v) for v in a.switch.split(",")]
+        gains = []
+        for v in states:
+            att.set(v)
+            time.sleep(0.5)
+            log(f"状態 {len(gains)}（ATT {v:g} dB）の利得:")
+            gs, _, _ = f5.gain_cal(cs, a.gain_nacc, 256)
+            gains.append(gs)
+        meta.update(switch=states, dwell=a.dwell, gains=[x.tolist() for x in gains], att_idn=att.idn)
+        g = gains[0]
+        att.set(states[0])
+        for k in range(NCH):
+            cs.wr(0x100 + 4 * k, int(g[k]))
+        log(f"切り替え: ATT {states} dB を {a.dwell} チャンクずつ。状態 0 から")
+    elif a.gains_from:
         g = np.array(json.load(open(a.gains_from))["gain"], dtype=np.int64)
         cs.wr(0x004, a.gain_nacc)
         for k in range(NCH):
@@ -170,6 +236,19 @@ def main():
     bad_ex, lost = [], []
     n_done, last_save, last_prog, t_probe = 0, 0, 0, 0.0
     saver = 0                                      # 途中保存の子の pid（0 = 無し）
+    sw = []                                        # 切り替えの記録 (W0, W1, 次の状態, 時刻)
+    cur, last_w = 0, 1
+
+    def label_of(c):
+        if states is None:
+            return None
+        st = 0
+        for w0, w1, nxt, _ in sw:
+            if w0 <= c <= w1 + 1:
+                return "切り替え"
+            if c > w1 + 1:
+                st = nxt
+        return st
     tmo = (N + 3) * CHUNK_BLK / BLK_RATE + 10
     try:
         while n_done + len(lost) < N and time.time() - t_run < tmo:
@@ -220,9 +299,23 @@ def main():
                     bi, nf, ts, _ = pend.pop(cc)
                     done_c.add(cc)
                     n_done += 1
-                    old = runs.push((cc, float(ts[2:31].mean()), pool[bi], nf, ts))
+                    old = runs.push((cc, float(ts[2:31].mean()), pool[bi], nf, ts, label_of(cc)))
                     if old is not None:                # 決め終えた器を返す
                         free.append(next(k_ for k_, b_ in enumerate(pool) if b_ is old[2]))
+            if states is not None and n_done + len(lost) < N:
+                w = ctw.rd(0x24)
+                if w - last_w >= a.dwell and w < N:
+                    nxt = (cur + 1) % len(states)
+                    att.write(att.set_cmd.format(db=f"{states[nxt]:.2f}"))    # 読み返しは書いた後（切り替えの窓を短く）
+                    for k in range(NCH):
+                        cs.wr(0x100 + 4 * k, int(gains[nxt][k]))
+                    w1 = ctw.rd(0x24)
+                    got = att.get()
+                    sw.append((w, w1, nxt, round(time.time() - t_run, 3)))
+                    if abs(got - states[nxt]) > 0.01:
+                        log(f"ERROR: アッテネータが {got} dB（要求 {states[nxt]}）。止める")
+                        break
+                    cur, last_w = nxt, w1
             if rss_mb() > RSS_MAX_MB:
                 log(f"ERROR: PS のメモリ {rss_mb():.0f} MB > {RSS_MAX_MB} MB。止める。待ちのチャンク: "
                     + str({c_: int(e_[3].sum()) for c_, e_ in sorted(pend.items())[:10]}) + f"・揃った {n_done}・runs {len(runs.runs)}")
@@ -240,7 +333,7 @@ def main():
                 if saver == 0:
                     try:
                         runs.save(a.out)
-                        m2 = dict(meta, runs=runs.summary(), dropped=runs.dropped, lost=lost, chunks_done=n_done,
+                        m2 = dict(meta, runs=runs.summary(), dropped=runs.dropped, lost=lost, chunks_done=n_done, switches=sw,
                                   probe=dict(cols=["t", "seg", "run", "t_pl", "t_ps", "pow"], rows=f5_seg.PROBE))
                         json.dump(m2, open(a.out + "_meta.json", "w"), default=float)
                     finally:
@@ -249,19 +342,22 @@ def main():
                     f"捨て {ctr.rd(0x28)}・溢れ {ctw.rd(0x28)}・DROP {ring.g.rd(Ring.R_DROP)}・PL {f5_seg.temp(20):.1f} °C")
             if time.time() - t_probe >= a.probe_secs:
                 t_probe = time.time()
-                f5_seg.probe(cs, 0, True)
+                f5_seg.probe(cs, cur, True)
             time.sleep(0.01)
     finally:
         f5_seg.stop(ctw, ctr)
         w = f5.watch(ctw, ctr, ft, ring)
         ring.close()
+        if att is not None:
+            att.set(a.att_home)
+            log(f"アッテネータを {a.att_home:g} dB に戻した")
     runs.flush()                                   # 最後の器は返さなくてよい
     if saver:
         os.waitpid(saver, 0)
     t_el = time.time() - t_run
     runs.save(a.out)
     meta.update(seconds=t_el, chunks_done=n_done, lost=lost, bad=nbad, bad_ex=bad_ex, dup=ndup, nact_ng=nact_ng, other=other, pending=sorted(pend),
-                watch=w, prof=ring.prof, runs=runs.summary(), dropped=runs.dropped,
+                watch=w, prof=ring.prof, runs=runs.summary(), dropped=runs.dropped, switches=sw,
                 probe=dict(cols=["t", "seg", "run", "t_pl", "t_ps", "pow"], rows=f5_seg.PROBE))
     json.dump(meta, open(a.out + "_meta.json", "w"), default=float)
     r = w["ring"]
@@ -272,9 +368,16 @@ def main():
         f"ct_rd 捨て {w['ct_rd']['drop']}・fine FLAGS 0x{w['fine']['flags']:03x}・リング DROP {r['drop']}・PEAK {r['peak']}")
     for i, rr in enumerate(runs.runs):
         p = np.array(rr["p"]) if rr["p"] else np.array([np.nan])
-        log(f"  区間 {i}: チャンク {rr['first']}〜{rr['last']}・足した {rr['n']}・電力 {np.mean(p):.6g}"
-            + (f"（区間 0 に対して {10 * np.log10(np.mean(p) / np.mean(runs.runs[0]['p'])):+.3f} dB）" if i and runs.runs[0]["p"] else ""))
-    log(f"  捨てたチャンク: {runs.dropped}")
+        if states is None:
+            log(f"  区間 {i}: チャンク {rr['first']}〜{rr['last']}・足した {rr['n']}・電力 {np.mean(p):.6g}"
+                + (f"（区間 0 に対して {10 * np.log10(np.mean(p) / np.mean(runs.runs[0]['p'])):+.3f} dB）" if i and runs.runs[0]["p"] else ""))
+    if states is not None:
+        log(f"  切り替え {len(sw)} 回・区間 {len(runs.runs)}（状態ごと: "
+            + "・".join(f"{s_}: {sum(1 for r_ in runs.runs if r_['state'] == s_)} 区間 {sum(r_['n'] for r_ in runs.runs if r_['state'] == s_)} チャンク" for s_ in range(len(states))) + "）")
+        log(f"  捨てたチャンク: {len(runs.dropped)}（切り替え {sum(1 for d in runs.dropped if d[1] == '切り替え')}・混ざり {sum(1 for d in runs.dropped if d[1] == '混ざり')}）")
+        ok = ok and not any(d[1] == "混ざり" for d in runs.dropped)
+    else:
+        log(f"  捨てたチャンク: {runs.dropped}")
     log(f"保存: {a.out}_r*_spec.npy・{a.out}_meta.json / 結果: {'通過' if ok else '不合格'}")
     return 0 if ok else 1
 
