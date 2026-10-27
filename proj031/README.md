@@ -391,6 +391,12 @@ sim: **比べる相手は proj030 の `g24_coef` の RTL そのもの**（tb の
 - cuclr・cuclrno とも、消す前の FLAGS0 は 4 コアとも 1（期待どおり）、**消した後も 4 コアとも 1**（レジスタの違い 4）。実機の R-2 (iv) と同じ形を sim で再現した → tb は直しの有無を見分けられる
 - tb の名前の欄（24 バイトの固定長）に日本語を入れて表示が化けた。値は読めたので判定には効いていない。ASCII（`FLAGS0 pre-clr`・`post-clr`）に直した
 
+**直した後の sim（22:1x JST）: 予言どおり**
+- g24p・g24s・g24core・g24s45・g24x4 は前と同じ（normal は全部通過・陽性対照 dlyerr・nomask・ipq・nook・posctl・tp・drop・dly・cudrop は落ちた）。PROJ の読み返し 0x00310200
+- **cuclr: 通過**（消す前の FLAGS0 は 4 コアとも 1 → 消した後 4 コアとも 0）。**cuclrno: 落ちた**（消した後も 4 コアとも 1 = OK が 0 のままなら、また立つ）
+- g24ds は持ち越しの NG 3 のまま（決めること）。sim-cu は通過（陽性対照 5 本は落ちた）。PL なしの `test_fake.sh all` も通過（PROJ_G24 0x0031_0200）
+- ビルド 2 本を 22:2x JST に流した（既定・Performance_Explore、BUILD_JOBS 4 ずつ、他の会話の Vivado は 0 本）
+
 ## 決めること
 
 - ~~coef_mis を START（flags_clr）で消せるようにするか~~（R-2 (iv)）→ **消す**（2026-10-27、西村さん。B-2 の rev 2）。
