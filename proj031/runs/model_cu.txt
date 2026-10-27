@@ -4,6 +4,6 @@ M-b 2 ポートの組み立て: coef_beat と違う個 0 / 262144（g24cu.read2 
 M-c 18 語: 形 (4096, 18) uint32・往復 True・値の範囲 -7682〜78287（18 bit 符号つき True）
 M-d CRC: zlib 0x891BE197・1 bit ずつ 0x891BE197・32 bit の行列 0x891BE197（src/g24/crc32_d32.vh が生成器の出力と同じ True）
     陽性対照: 1 bit 反転 0x9568DD74・2 行の入れ替え 0x7758A83C・全部 0 0x1A38C519
-  [6.9 s]
+  [7.0 s]
 まとめ: M-a 通過  M-b 通過  M-c 通過  M-d 通過
 COEF_CRC 0x891BE197

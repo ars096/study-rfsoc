@@ -1960,7 +1960,8 @@ foreach n $ooc_names {
 }
 puts "ドライバ   : 自作のセルの OOC の run $nd_seen 個のログに Synth 8-3848（ドライバの無いネット）$nd_ng 行"
 # 期待（proj027）: s45_core 4・time_core_0 1・s45_ring_0 1・gb_adc 4・gb_gate 4・full_sel_0〜3 4・raw_sel_0〜3 4 = 22（proj025 は 15）
-set nd_want [expr {$ncore + 1 + 1 + $nch + $nch + [llength $sel_names]}]
+# proj031: ＋ g24_cu_0 1 = 23（1 回目のビルドは 22 のままで、ここで止まった）
+set nd_want [expr {$ncore + 1 + 1 + $nch + $nch + [llength $sel_names] + 1}]
 if {$nd_seen != $nd_want} { puts "ERROR: 自作のセルの OOC の run が $nd_seen 個（期待 $nd_want。run の名前が変わった？ $ooc_names）"; exit 1 }
 if {$nd_ng > 0} { puts "ERROR: ドライバの無いネットがある（RTL の書き漏れ）"; exit 1 }
 if {$rm_seen != $ncore} { puts "ERROR: s45_core_* の OOC の run が $ncore 個でない（$rm_seen）。run の名前: $ooc_names"; exit 1 }
