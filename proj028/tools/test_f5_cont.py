@@ -21,7 +21,7 @@ C.NTOT, C.NKEEP, C.NCH = 4, 1, 4
 def run(ps, mix):
     R = C.Runs(types.SimpleNamespace(step_db=3.0, mix_db=mix, settle=2))
     for i, p in enumerate(ps, start=1):
-        R.push((i, p, np.full(4, p), np.full(4, 160), np.full(4, p)))
+        R.push((i, p, np.full(4, int(p), np.uint64), np.full(4, 160), np.full(4, p)))
     R.flush()
     return [(r["first"], r["last"], r["n"]) for r in R.runs], [c for c, why in R.dropped if why == "混ざり"]
 
