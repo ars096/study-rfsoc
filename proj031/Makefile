@@ -328,7 +328,7 @@ ooc-ref:
 	  grep '^OOC ' vivado.log | tee ../ooc-ref.txt
 
 # ================================================================ proj031
-.PHONY: model-cu gen-crc
+.PHONY: model-cu gen-crc sim-cu
 
 # CRC の式（展開した XOR）を作る。生成物 src/g24/crc32_d32.vh はコミットする（model-cu が生成器の出力と同じかを照らす）
 gen-crc:
@@ -338,3 +338,21 @@ gen-crc:
 model-cu:
 	@mkdir -p runs
 	$(PYTHON) model/cu_model.py | tee runs/model_cu.txt
+
+# ---- P-1 g24_cu の単体の sim（比べる相手は g24_coef の RTL）。成否は各ログの「結果:」の行で読む ----
+# normal は通るべき、mirror・norev（RTL の陽性対照）・nowrite・onebit・after（tb の陽性対照）は落ちるべき。入力の hex は 1 回だけ作り、全変種は読むだけ
+CU_VARS := normal mirror norev nowrite onebit after
+sim-cu:
+	@mkdir -p $(SIMDIR) && $(PYTHON) sim/check_cu.py gen $(SIMDIR)/cu_words.hex > /dev/null
+	@for v in $(CU_VARS); do \
+	  o=$(SIMDIR)/cu_$$v; mkdir -p $$o; d=""; \
+	  [ $$v = mirror ] && d="-DCU_MIRROR_ERR"; [ $$v = norev ] && d="-DCU_NOREV"; [ $$v = nowrite ] && d="-DTB_NOWRITE"; \
+	  [ $$v = onebit ] && d="-DTB_ONEBIT"; [ $$v = after ] && d="-DTB_AFTERWRITE"; \
+	  ( $(IVERILOG) -g2005 -Wall $$d -I src/g24 -DWORDS=\"$(SIMDIR)/cu_words.hex\" -DLO=\"src/g24/g24_coef_lo.hex\" -DHI=\"src/g24/g24_coef_hi.hex\" \
+	      -o $$o/tb src/g24/g24_cu.v src/g24/g24_coef.v sim/tb_g24_cu.v > $$o/iverilog.log 2>&1 && $(VVP) -n $$o/tb > $$o/tb.log 2>&1; \
+	    $(PYTHON) sim/check_cu.py check $$o/tb.log > $$o/check.log 2>&1 ) & \
+	done; wait; \
+	for v in $(CU_VARS); do printf '%-12s %s\n' "cu_$$v" "$$(grep '結果:' $(SIMDIR)/cu_$$v/check.log || echo '結果の行が無い')"; done
+	@grep -q '結果: 全部通過' $(SIMDIR)/cu_normal/check.log \
+	  && for v in mirror norev nowrite onebit after; do grep -q '結果: 不合格' $(SIMDIR)/cu_$$v/check.log || exit 1; done \
+	  && echo "sim-cu: 全部通過（陽性対照 5 本は落ちた）" || (echo "sim-cu: NG"; exit 1)
