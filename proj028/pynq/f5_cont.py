@@ -15,8 +15,8 @@
 """
 import argparse
 import json
+import os
 import sys
-import threading
 import time
 
 import numpy as np
@@ -92,17 +92,10 @@ class Runs:
         r["ts"].append(ts.tolist())
         r["p"].append(p)
 
-    def snapshot(self):
-        """途中保存のための写し（裏のスレッドが書く間に、足し込みが進んでも壊れないように）"""
-        return [(i, r["acc"].copy(), r["nfr"].copy()) for i, r in enumerate(self.runs) if r["n"]]
-
-    @staticmethod
-    def write(out, snap):
-        for i, acc, nfr in snap:
-            np.save(f"{out}_r{i}_spec.npy", (acc / np.repeat(np.maximum(nfr, 1), NKEEP)).astype(np.float32))
-
     def save(self, out):
-        self.write(out, self.snapshot())
+        for i, r in enumerate(self.runs):
+            if r["n"]:
+                np.save(f"{out}_r{i}_spec.npy", (r["acc"] / np.repeat(np.maximum(r["nfr"], 1), NKEEP)).astype(np.float32))
 
     def summary(self):
         return [dict(first=r["first"], last=r["last"], n=r["n"], nfr=r["nfr"].tolist(), ts=list(r["ts"]), p=list(r["p"])) for r in self.runs]
@@ -176,7 +169,7 @@ def main():
     nbad, ndup, nact_ng, other = 0, 0, 0, 0
     bad_ex, lost = [], []
     n_done, last_save, last_prog, t_probe = 0, 0, 0, 0.0
-    saver = None
+    saver = 0                                      # 途中保存の子の pid（0 = 無し）
     tmo = (N + 3) * CHUNK_BLK / BLK_RATE + 10
     try:
         while n_done + len(lost) < N and time.time() - t_run < tmo:
@@ -237,18 +230,21 @@ def main():
             if n_done - last_prog >= 20:
                 last_prog = n_done
                 log(f"  進み: {n_done}・待ち {len(pend)}・RSS {rss_mb():.0f} MB・{time.time() - t_run:.1f} s")
-            # 途中保存は裏のスレッドで（SD への書きは秒の桁。読みを止めるとリングが溢れる: F-6c の試しで DROP 55）。最後は RUN を止めてから書く
-            if n_done - last_save >= a.save_every and n_done < N and (saver is None or not saver.is_alive()):
+            # 途中保存は fork した子が書く（親は写さずに読みを続ける。子は親のメモリを写しで見る）。
+            # 裏のスレッドで写して書いたら、区間が 3 つのとき写しと書きの間に読みが遅れて 2 チャンク欠けた（F-6c の 2 回目）
+            if saver and os.waitpid(saver, os.WNOHANG)[0]:
+                saver = 0
+            if n_done - last_save >= a.save_every and n_done < N and not saver:
                 last_save = n_done
-                snap = runs.snapshot()
-                m2 = dict(meta, runs=runs.summary(), dropped=list(runs.dropped), lost=list(lost), chunks_done=n_done,
-                          probe=dict(cols=["t", "seg", "run", "t_pl", "t_ps", "pow"], rows=list(f5_seg.PROBE)))
-
-                def _save(snap=snap, m2=m2):
-                    Runs.write(a.out, snap)
-                    json.dump(m2, open(a.out + "_meta.json", "w"), default=float)
-                saver = threading.Thread(target=_save, daemon=True)
-                saver.start()
+                saver = os.fork()
+                if saver == 0:
+                    try:
+                        runs.save(a.out)
+                        m2 = dict(meta, runs=runs.summary(), dropped=runs.dropped, lost=lost, chunks_done=n_done,
+                                  probe=dict(cols=["t", "seg", "run", "t_pl", "t_ps", "pow"], rows=f5_seg.PROBE))
+                        json.dump(m2, open(a.out + "_meta.json", "w"), default=float)
+                    finally:
+                        os._exit(0)
                 log(f"  途中: {n_done} / {N}・欠け {len(lost)}（{time.time() - t_run:.0f} s）・区間 {len(runs.runs)}・捨てた {len(runs.dropped)}・違い {nbad}・"
                     f"捨て {ctr.rd(0x28)}・溢れ {ctw.rd(0x28)}・DROP {ring.g.rd(Ring.R_DROP)}・PL {f5_seg.temp(20):.1f} °C")
             if time.time() - t_probe >= a.probe_secs:
@@ -260,8 +256,8 @@ def main():
         w = f5.watch(ctw, ctr, ft, ring)
         ring.close()
     runs.flush()                                   # 最後の器は返さなくてよい
-    if saver is not None:
-        saver.join()
+    if saver:
+        os.waitpid(saver, 0)
     t_el = time.time() - t_run
     runs.save(a.out)
     meta.update(seconds=t_el, chunks_done=n_done, lost=lost, bad=nbad, bad_ex=bad_ex, dup=ndup, nact_ng=nact_ng, other=other, pending=sorted(pend),
