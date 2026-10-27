@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-3-Clause
+"""proj016 — 「このビートは UTC の何時か」に答える層（proj008 の timebase.py を fs = 4096 MSPS・DSP 256 MHz に置き直したもの）。
+
+**この層の仕事は 2 つだけである。**
+
+1. time_core のビート T と UTC を対応づける（PPS 1 発のスタンプと `time.time()` を結ぶ）
+2. **答えられないときに答えない**（例外 `TimebaseError`。壊れた時刻は正常な時刻に見える）
+
+## ビート
+
+DSP のクロック 1 個 = 1 ビート = 16 サンプル = **3.90625 ns = 125/32 ns ちょうど**。**1 秒 = 256,000,000 ビートちょうど**
+（fs = 4,096,000,000 が整数で、10 MHz の基準に乗っている限り）。ns への換算は整数で行う（`beats_to_ns`）。
+**秒を float で持たない**（UTC の ns は 1.8e18 で、float64 の刻みは 256 ns。proj008 で踏んだ）。
+
+## 錨（anchor）
+
+PPS のスタンプは「同期器を抜けて縁を見たクロックの T」で、本当の縁より数ビート後（定数。`CAL` の pps_det_ns）。
+錨を打つと time_core の ANCHORED を 1 にする。**time_core がリセットされると ANCHORED は 0 に戻り**、ダンプの健全性の [3] に出る。
+
+## ダンプの時刻
+
+ダンプの DUMP_T は「最初のフレームの最初のサンプルがコアに入ったビート」。ADC のサンプルの時刻に直すには、
+ADC からコアの入口までの遅れ（RFDC ＋ ギアボックス、`CAL` の adc_to_core_ns）と、窓ではさらに PFB・DDC の遅れ
+（`WIN_DELAY_BEATS[NS]`、sim で出した値）を**引く**。どちらも要求 100 µs に対して小さいが、黙って 0 にしない:
+未較正のものは `accuracy()` に「未較正」と出す。
+"""
+
+import math
+import time
+
+BEATS_PER_SEC = 256_000_000
+NS_NUM, NS_DEN = 125, 32          # 1 ビート = 125/32 ns（厳密）
+
+# ---- 較正定数（ビットストリームの ID と対）----
+#   pps_det_ns   : PPS の縁 → スタンプ（同期器 3 段 ＋ 入力の遅れ）。proj007 の COMP − TRIG = 58.6 ns（RC）は系統の差
+#   adc_to_core_ns: ADC のサンプル → ギアボックスの出口（コアの入口）。proj007/008 の L_adc − D_pps = 213 ns は fs が違うので使えない
+#   **どちらも T-2（1PPS を ADC にも入れる閉ループ）で測るまで未較正。** 上限の見当（bound_ns）だけ持つ
+#   **T-2（閉ループ）で測れるのは差 M = adc_to_core − pps_det（＋ 2 本のケーブルの差）の 1 つだけ**なので、M を adc_to_core_ns に入れ、
+#   pps_det_ns = 0 とする（式の上では引く量は M で同じ）。
+CAL = {
+    # proj027（2G-4、PROJ 0x0027_0100）: 別の Overlay・別の配置なので proj025 の adc_to_core は持ち込まず、4d の F-2（RAW の流れ = コア 0 の s 1）で測った。
+    #   pps_det_ns は 1PPS の入口の LPF（BLP-10.7+）の分で、bit に依らない（形 (b)、proj026）。LPF を外したら 0 に
+    # proj030（2G-4 の 2-for-1、PROJ 0x0030_0100）: ギアボックス・time_core・RAW の RTL は proj027 と同じだが、別の Overlay・別の配置なので
+    #   proj027 の値は持ち込まず、R-5 の F-2 で測った（pps_det_ns は LPF の分で bit に依らない）
+    0x0030_0100: dict(pps_det_ns=71.5, adc_to_core_ns={0: 140.5, 1: 142.8, 2: 141.6, 3: 141.9}, bound_ns=50,
+                      source="proj030 R-5 の F-2（2026-10-27、配線 P・1PPS の入口に LPF BLP-10.7+）: RAW の流れ（コア 0 の s 1、SRC で ADC を選ぶ）の生サンプルで "
+                             "1PPS の縁がコアに入った T − スタンプを 4 ADC、ケーブルを A↔D・B↔C に入れ替えて 2 回（f2_30a・f2_30b）。M = A 69.0・B 71.3・C 70.1・D 70.4 ns。"
+                             "(b): pps_det_ns = LPF の分 71.5、adc_to_core_ns = M ＋ 71.5（LPF を外したら pps_det_ns を 0 に）"),
+    0x0027_0100: dict(pps_det_ns=71.5, adc_to_core_ns={0: 143.4, 1: 143.5, 2: 143.4, 3: 141.4}, bound_ns=50,
+                      source="proj027 4d の F-2（2026-10-26、配線 P・1PPS の入口に LPF BLP-10.7+）: RAW の流れ（コア 0 の s 1、SRC で ADC を選ぶ）の生サンプルで "
+                             "1PPS の縁がコアに入った T − スタンプを 4 ADC、ケーブルを A↔D・B↔C に入れ替えて 2 回（f2_27a・f2_27b）。M = A 71.9・B 72.0・C 71.9・D 69.9 ns。"
+                             "1 つの Overlay の中でコア 0 とコア 3 の RAW は差 ≦ 0.06 ビート（f2pair、4d-y）。Overlay の載せ直しごとに ADC ごとに ≒ 1 ビート跳ねる（±2 ns）。"
+                             "(b): pps_det_ns = LPF の分 71.5、adc_to_core_ns = M ＋ 71.5（LPF を外したら pps_det_ns を 0 に）"),
+    # proj025（2G-2、PROJ 0x0025_0100）: 別の Overlay・別の配置なので proj024 の adc_to_core は持ち込まず、4d の F-2（RAW の流れ = コア 0 の s 1）で測った。
+    #   pps_det_ns は 1PPS の入口の LPF（BLP-10.7+）の分で、bit に依らない（形 (b)、proj026）。LPF を外したら 0 に
+    0x0025_0100: dict(pps_det_ns=71.5, adc_to_core_ns={0: 141.1, 1: 141.3, 2: 140.5, 3: 140.5}, bound_ns=50,
+                      source="proj025 4d の F-2（2026-10-23、配線 P・1PPS の入口に LPF BLP-10.7+）: RAW の流れ（コア 0 の s 1、SRC で ADC を選ぶ）の生サンプルで "
+                             "1PPS の縁がコアに入った T − スタンプを 4 ADC、ケーブルを A↔D・B↔C に入れ替えて 2 回（f2_25a2・f2_25b。f2_25a は D の σ 0.46 で NG、"
+                             "Overlay を載せ直して回し直した）。M = A 69.6・B 69.8・C 69.0・D 69.0 ns。(b): pps_det_ns = LPF の分 71.5、"
+                             "adc_to_core_ns = M ＋ 71.5（LPF を外したら pps_det_ns を 0 に）"),
+    # proj023（SAM45-Wide、PROJ 0x0023_0100）: ギアボックス・time_core の RTL は proj021 2-5 と同じだが、別の Overlay・別の配置なので
+    #   proj021 の値は持ち込まない（proj017 → 020 → 021 と同じ方針）。H-3 の前に F-2（RAW の流れ = コア 0 の s 2）で測る
+    # proj024（2G-1、PROJ 0x0024_0100）: ギアボックス・time_core の RTL は 567fda2（proj023 のビルド 11）と同じだが、別の Overlay・別の配置なので
+    #   proj023 の値は持ち込まない。F-2（RAW の流れ = s 1、SRC で ADC を選ぶ）で測る
+    0x0024_0100: dict(pps_det_ns=71.5, adc_to_core_ns={0: 140.3, 1: 140.6, 2: 141.3, 3: 141.3}, bound_ns=50,
+                      source="proj024 4d-1 の F-2（2026-10-22、配線 P・1PPS の入口に LPF BLP-10.7+）: RAW の流れ（s 1、SRC で ADC を選ぶ）の生サンプルで "
+                             "1PPS の縁がコアに入った T − スタンプを 4 ADC、ケーブルを A↔D・B↔C に入れ替えて 2 回（f2_24a・f2_24b2。f2_24b は σ で NG、"
+                             "Overlay を載せ直して回し直した）。M = A 68.8・B 69.1・C 69.8・D 69.8 ns。proj026 の (b): pps_det_ns = LPF の分 71.5、"
+                             "adc_to_core_ns = M ＋ 71.5（LPF を外したら pps_det_ns を 0 に）"),
+    0x0023_0100: dict(pps_det_ns=0.0, adc_to_core_ns=None, bound_ns=50,
+                      source="proj023: 未較正（F-2 で測る。見込みは proj021 2-5 の 146〜148 ns）"),
+    # proj021 手順 2-1: 鍵を time_core の PROJ（0x5C）に替えた（ID の 0x00 は IF_ID = bit の種類と版だけになった）。
+    #   ギアボックス・time_core の RTL は 1b と同じ。1b も未較正なので、F-2 で測るまで未較正のまま（1b の値が出たら持ち込める）
+    #   2-5（BIT_REV 3）の bit で F-2 を測った（2026-10-14）。鍵は PROJ なので 2-1〜2-4 の bit にも当たるが、それらは 2-5 で置き換えた
+    #   （INTERFACE 5.2 は (BIT_KIND, BIT_REV) を鍵にする決定。移植のときに鍵を替える）
+    0x0021_0200: dict(pps_det_ns=0.0, adc_to_core_ns={0: 146.0, 1: 146.3, 2: 147.4, 3: 147.5}, bound_ns=50,
+                      source="proj021 2-5 の F-2（2026-10-14、BIT_REV 3）: RAW の流れの生サンプルで 1PPS の縁がコアに入った T − スタンプ（TRIG 系統）を 4 ADC、"
+                             "ADC に入れるケーブルを A↔C・B↔D に入れ替えて 2 回（Overlay も 2 回）。値は各回 5 試行の平均の 2 回の平均"
+                             "（A 36.96・37.80 / B 37.01・37.88 / C 37.30・38.19 / D 37.27・38.24 ビート）。"
+                             "2 回目は 4 ADC とも +0.84〜+0.97 ビート大きく、共通の分 ≒ +0.89 ビート（3.5 ns）は Overlay ごとのずれ、"
+                             "ケーブルの差は 0.05 ビート以下。proj020 より +21.3〜+25.6 ns（1b の群 C のスキッド ≒ +6 ビート = +23 ns）。"
+                             "タイル 224（C・D）が 226（A・B）より 1.2 ns 遅い（proj020・017 と逆の向き）"),
+    # proj021 1b: gb_gate の入口に 2 語のスキッド（群 C）。ギアボックスの遅れが ≒ +2 語（+6 ビート ≒ +23 ns、sim）変わるので、
+    #   proj020 の値は持ち込まず未較正で足す（F-2 で測る）
+    0x0021_7101: dict(pps_det_ns=0.0, adc_to_core_ns=None, bound_ns=50,
+                      source="proj021 1b: 未較正（F-2 で測る。sim の見込みは proj020 の 122〜125 ns ＋ ≒ 23 ns）"),
+    # proj020: time_core・ギアボックスの RTL は proj017 と同じだが、別の Overlay・別の配置なので proj017 の値は持ち込まず、F-2 で測り直した
+    0x0020_7101: dict(pps_det_ns=0.0, adc_to_core_ns={0: 124.7, 1: 124.9, 2: 122.1, 3: 121.9}, bound_ns=50,
+                      source="proj020 P-7（F-2、2026-10-08）: 全帯域の生サンプルで 1PPS の縁がコアに入った T − スタンプ（TRIG 系統）を 4 ADC、"
+                             "ADC に入れるケーブルを A↔C・B↔D に入れ替えて 2 回（Overlay も 2 回）。値は各回 5 試行の中央値の 2 回の平均"
+                             "（A 31.62・32.25 / B 31.69・32.25 / C 31.12・31.38 / D 31.12・31.31 ビート）。"
+                             "2 回目は 4 ADC とも +0.19〜+0.63 ビート大きく、共通の分 ≒ +0.41 ビート（1.6 ns）は Overlay ごとのずれ、"
+                             "A・C と B・D で逆向きの分 ±0.19 ビートはケーブルの差。タイル 226（A・B）が 224（C・D）より 2.6〜3.0 ns 遅い（proj017 と同じ向き）。"
+                             "上限 50 ns は proj016 と同じ見当（45m の配線のケーブルの差は未測）"),
+    # proj017: adc_to_core_ns は ADC ごと（chans の添字 0..3 = ADC_A..D）。F-2 で 4 本とも測るまで None（未較正）。
+    #   proj016 の ADC_A の 121.2 ns は別の Overlay・別の配置なので持ち込まない
+    0x0017_7101: dict(pps_det_ns=0.0, adc_to_core_ns={0: 126.8, 1: 126.4, 2: 122.4, 3: 123.3}, bound_ns=50,
+                      source="proj017 F-2（2026-10-05）: 全帯域の生サンプルで 1PPS の縁がコアに入った T − スタンプ（TRIG 系統）を 4 ADC 同時に、"
+                             "ADC に入れるケーブルを A↔C・B↔D に入れ替えて 2 回（Overlay も 2 回）。値は 2 回の平均"
+                             "（A 32.62・32.29 / B 32.55・32.15 / C 31.27・31.39 / D 31.40・31.74 ビート）。"
+                             "タイル 226（A・B）が 224（C・D）より A−C 1.13・B−D 0.78 ビート（4.4・3.0 ns）遅い（ケーブルと Overlay の差が消える組み合わせ）。"
+                             "上限 50 ns は proj016 と同じ見当（45m の配線のケーブルの差は未測）"),
+    0x0016_7101: dict(pps_det_ns=0.0, adc_to_core_ns=121.2, bound_ns=50,
+                      source="proj016 T-2（2026-10-02）: 全帯域の生サンプルで 1PPS の縁がコアに入った T − スタンプ = +31.04 ビート"
+                             "（+121.2 ns、5 回で σ 0.2 ns、TRIG 系統）。1 エポック（Overlay 1 回）だけ。"
+                             "上限 50 ns の内訳の見当: エポックごとのギアボックスの整数ビート（proj007 では Overlay ごとに数ビート動いた。未測）"
+                             "＋ T-2 の配線の PPS と ADC のケーブルの長さの差（未測）"),
+}
+# 窓の PFB・DDC の遅れ（win_core の入口のビート → そのインパルスの |z|² の重心が wspec に入るまで、ビート）。NS → 値。
+#   make sim-wdelay（2026-10-02、iverilog・k = 5・Δφ = 0）。線形位相なので重心 = 群遅延 ＋ 経路の遅れ。**RTL を変えたら出し直す**
+WIN_DELAY_BEATS = {1: 57.56, 2: 87.21, 3: 136.06, 4: 229.02, 5: 408.09, 6: 748.27, 7: 1427.80, 8: 2781.10}
+# proj017: 窓の最初の z の遅れ F(NS)（WSTART = 窓の始まりのビートから、窓のフレーム 0 の最初の z が wspec に入るまで、ビート）と、
+#   **幅の違う窓の区切りに残る一定の差 X(NS) = F(NS) − D(NS)**。窓の区切りの実効のサンプルの時刻は DUMP_T − D(NS) = WSTART ＋ F0·L ＋ X(NS)。
+#   WSTART と F0·L を時刻の格子で揃えても、X(NS) の差（NS 1 と 6 で 625 ビート = 2.4 µs、NS 1 と 8 で 2548 ビート = 10 µs）は残る
+#   （フレーム 0 は WSTART の後の最初の z で、最初の z は群遅延ぶん遅れて出るため）。2026-10-03 の F-4 で実測と 1 ビート以内で一致し、受け入れた。
+#   **時刻の換算（sample_utc_ns）はもともと DUMP_T − D(NS) なので、この差は換算に含まれている**（区切りが µs だけ違う、という事実の記録）。
+#   make sim-wdelay（2026-10-03、iverilog・k = 5・Δφ = 0）。**RTL を変えたら出し直す**
+WIN_FIRST_Z_BEATS = {1: 72, 2: 122, 3: 211, 4: 384, 5: 722, 6: 1388, 7: 2710, 8: 5344}
+WIN_BOUNDARY_BEATS = {1: 14.44, 2: 34.79, 3: 74.94, 4: 154.98, 5: 313.91, 6: 639.73, 7: 1282.20, 8: 2562.90}
+
+
+class TimebaseError(RuntimeError):
+    """時刻を答えられない。**黙って古い値を返さないための例外。**"""
+
+
+def beats_to_ns(n):
+    """ビート数を ns へ（整数、最近接に丸める）。"""
+    n = int(n)
+    return (n * NS_NUM + NS_DEN // 2) // NS_DEN if n >= 0 else -((-n * NS_NUM + NS_DEN // 2) // NS_DEN)
+
+
+def require_mid_second(t_host, lo=0.25, hi=0.75):
+    """**秒の真ん中で読んだか。** 整数秒は floor(t) で決めるので、秒の境目の近くで読むと 1 秒ずれる。"""
+    frac = float(t_host) % 1.0
+    if not (lo < frac < hi):
+        raise TimebaseError(f"秒の真ん中で読めなかった（frac = {frac:.3f}、要求 {lo}〜{hi}）。やり直す")
+    return frac
+
+
+def pps_is_consistent(d_count, d_stamp, tol=2):
+    """錨からの PPS の数とスタンプの差が整合しているか。スタンプは 1 個ごとに ±1 ビートの量子化（溜まらない）なので ±2。"""
+    return abs(int(d_stamp) - int(d_count) * BEATS_PER_SEC) <= tol
+
+
+class TimeCore:
+    """time_core_0 のレジスタ（src/common/time_core.v の冒頭の表）。mmio は pynq.MMIO か、read(off) / write(off, v) を持つもの。"""
+    ID = 0x0202_0302              # proj021 2-5: IF_ID（IF_VER 2・BIT_KIND 2 = SAM45-Fine・BIT_REV 3・CORE_KIND 2）。2-2d〜2-4 は 0x0202_0202、2-1〜2-2c は 0x0202_0102、旧 0x0021_7101
+    IDS = (0x0202_0102, 0x0202_0202, 0x0202_0302,   # BIT_REV 1（2-1〜2-2c）・2（2-2d〜2-4）・3（2-5〜）。time_core の中身は同じ
+           0x0201_0102,                              # proj023: SAM45-Wide（BIT_KIND 1・BIT_REV 1）
+           0x020B_0102,                              # proj024: 2G-1（BIT_KIND 11・BIT_REV 1）
+           0x020A_0102,                              # proj025: 2G-2（BIT_KIND 10・BIT_REV 1）
+           0x0203_0102)                              # proj027: 2G-4（BIT_KIND 3・BIT_REV 1）
+    PROJ = 0x0021_0200            # 0x5C。CAL の鍵
+    CTRL_ARM, CTRL_CANCEL, CTRL_ASET, CTRL_ACLR, CTRL_NCLR = 1, 2, 8, 16, 256
+
+    def __init__(self, mmio):
+        self.m = mmio
+        idv = self.rd(0x00)
+        if idv >> 24 != 2 or idv & 0xFF != 2:
+            raise TimebaseError(f"time_core の IF_ID 0x{idv:08x}（IF_VER 2・CORE_KIND 2 でない）。載っている .bit が違う")
+        if idv not in self.IDS:
+            raise TimebaseError(f"time_core の IF_ID 0x{idv:08x}（期待 0x{self.ID:08x}: BIT_KIND・BIT_REV が違う）")
+        self.proj = self.rd(0x5C)
+        if self.rd(0x04) != BEATS_PER_SEC:
+            raise TimebaseError(f"time_core の 1 秒のビート数 {self.rd(0x04)}（期待 {BEATS_PER_SEC}）")
+
+    def rd(self, off):
+        return int(self.m.read(off)) & 0xFFFFFFFF
+
+    def wr(self, off, v):
+        self.m.write(off, int(v) & 0xFFFFFFFF)
+
+    def t(self):
+        lo = self.rd(0x18)
+        return (self.rd(0x1C) << 32) | lo           # LO を読むと HI が固定される
+
+    def status(self):
+        s = self.rd(0x08)
+        return dict(pending=bool(s & 1), late=bool(s & 2), far=bool(s & 4), fired=bool(s & 8), anchored=bool(s & 16),
+                    trig_alive=bool(s & 32), comp_alive=bool(s & 64), pol=(s >> 7) & 1, src=(s >> 8) & 1)
+
+    def pps(self, path="trig"):
+        """最後のスタンプ・間隔・数（LO の読みで組を固定してから）。"""
+        b = 0x20 if path == "trig" else 0x30
+        lo = self.rd(b)
+        return dict(stamp=(self.rd(b + 4) << 32) | lo, interval=self.rd(b + 8), count=self.rd(b + 12))
+
+    def counters(self):
+        g = self.rd(0x40)
+        return dict(glitch_trig=g & 0xFFFF, glitch_comp=g >> 16, bad=self.rd(0x44), miss=self.rd(0x48), epoch=self.rd(0x4C))
+
+    def configure(self, pol=0, src="trig", tol=1):
+        self.wr(0x0C, (pol & 1) | ((1 if src == "comp" else 0) << 1) | ((tol & 0xFF) << 8))
+
+    def arm(self, start_at):
+        """START_AT でコアに RUN（・WRST）を配る。**コアの側を先に ARM しておく。**"""
+        self.wr(0x10, start_at & 0xFFFFFFFF)
+        self.wr(0x14, start_at >> 32)
+        self.wr(0x08, self.CTRL_ARM)
+        st = self.status()
+        if st["late"]:
+            raise TimebaseError(f"START_AT {start_at} が近すぎる（今 {self.t()}）")
+        if st["far"]:
+            raise TimebaseError(f"START_AT {start_at} が遠すぎる（≧ 2^40 ビート ≒ 72 分）")
+        if not st["pending"] and not st["fired"]:
+            raise TimebaseError("ARM が効いていない")
+
+    def fired_at(self):
+        lo = self.rd(0x50)
+        return (self.rd(0x54) << 32) | lo
+
+
+class Timebase:
+    """時刻を返す層。**答えられないときは例外を投げる。**"""
+
+    def __init__(self, tc, path="trig", cal=None):
+        self.tc = tc
+        cal = CAL if cal is None else cal
+        key = getattr(tc, "proj", TimeCore.PROJ)
+        if key not in cal:
+            raise TimebaseError(f"PROJ 0x{key:08x} の較正定数を持っていない")
+        self.cal = dict(cal[key])
+        self.path = path
+        self._anchor = None
+
+    def anchor(self, settle=0.05):
+        """直近の PPS のスタンプと UTC の整数秒を結び、time_core の ANCHORED を 1 にする。**秒の真ん中で読む。**"""
+        now = time.time()
+        time.sleep(((0.5 - (now % 1.0)) % 1.0) + settle)
+        st = self.tc.status()
+        if not st[f"{self.path}_alive"]:
+            raise TimebaseError("1.5 秒以内に PPS が来ていない。錨を打てない")
+        ep0 = self.tc.counters()["epoch"]
+        p = self.tc.pps(self.path)
+        tnow = self.tc.t()
+        t_host = time.time()
+        require_mid_second(t_host)
+        if not (0 < tnow - p["stamp"] < BEATS_PER_SEC):
+            raise TimebaseError(f"最後の PPS が 1 秒より前（T − stamp = {tnow - p['stamp']}）")
+        self.tc.wr(0x08, TimeCore.CTRL_ASET)
+        if self.tc.counters()["epoch"] != ep0:
+            raise TimebaseError("錨を打つ間に原点が変わった")
+        self._anchor = dict(epoch=ep0, count=p["count"], stamp=p["stamp"], utc_sec=math.floor(t_host))
+        return dict(self._anchor)
+
+    def check(self):
+        """今も錨が効いているか。効いていなければ例外。"""
+        a = self._anchor
+        if a is None:
+            raise TimebaseError("錨が無い。先に anchor()")
+        st = self.tc.status()
+        c = self.tc.counters()
+        if c["epoch"] != a["epoch"] or not st["anchored"]:
+            raise TimebaseError(f"時刻の原点が変わった（epoch {a['epoch']} → {c['epoch']}、ANCHORED {st['anchored']}）。anchor() を打ち直す")
+        if not st[f"{self.path}_alive"]:
+            raise TimebaseError("PPS が来ていない（ホールドオーバは基準の質で決まる。黙って外挿しない）")
+        p = self.tc.pps(self.path)
+        if not pps_is_consistent(p["count"] - a["count"], p["stamp"] - a["stamp"]):
+            raise TimebaseError(f"PPS の数とスタンプの差が合わない（{p['count'] - a['count']} 発 / {p['stamp'] - a['stamp']} ビート）。"
+                                "PPS を取りこぼしたか、10 MHz の基準がずれている")
+        return p
+
+    def beat_utc_ns(self, beat):
+        """ビート `beat`（time_core の T）がコアに入った時刻の UTC（整数 ns）。遅れの補正はしない（`sample_utc_ns`）。"""
+        self.check()
+        a = self._anchor
+        # スタンプは本当の縁より pps_det 後 → ビートの時刻は pps_det を足す（2026-10-21 まで引いていた。YATSUGATAKE と同じ直し、test_cal_b.py）
+        return a["utc_sec"] * 10**9 + beats_to_ns(int(beat) - a["stamp"]) + int(round(self.cal["pps_det_ns"] or 0))
+
+    def _a2c(self, adc):
+        v = self.cal["adc_to_core_ns"]
+        return v.get(adc) if isinstance(v, dict) else v
+
+    def sample_utc_ns(self, beat, ns=None, adc=0):
+        """コアに `beat` で入ったデータの、ADC のサンプルとしての UTC（整数 ns）。ns = 窓の NS（全帯域・TP は None）。
+        adc = chans の添字（proj017 から adc_to_core_ns は ADC ごと）。"""
+        t = self.beat_utc_ns(beat) - int(round(self._a2c(adc) or 0))
+        if ns is not None and ns in WIN_DELAY_BEATS:
+            t -= int(round(WIN_DELAY_BEATS[ns] * NS_NUM / NS_DEN))
+        return t
+
+    def accuracy(self, ns=None, adc=0):
+        """補正し残した量。データ製品のメタデータに入れる。"""
+        c = self.cal
+        unc = []
+        if c["pps_det_ns"] is None:
+            unc.append("pps_det_ns")
+        if self._a2c(adc) is None:
+            unc.append(f"adc_to_core_ns[{adc}]")
+        if ns is not None and ns not in WIN_DELAY_BEATS:
+            unc.append(f"WIN_DELAY_BEATS[{ns}]")
+        return dict(uncalibrated=unc, bound_ns=c["bound_ns"], source=c["source"])
