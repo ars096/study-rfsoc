@@ -156,7 +156,7 @@ module tb_g24_x4;
         // 4 コアとも同じ ID・RAW の流れのブロックを持つ（INTERFACE 2.4・2.5）。CORE_PORT はコアの番号
         for (cc = 0; cc < NC; cc = cc + 1) begin
             reg_chk(cc, 16'h0000, 32'h0203_0101, "IF_ID");
-            reg_chk(cc, 16'h0004, 32'h0031_0100, "PROJ");
+            reg_chk(cc, 16'h0004, 32'h0031_0200, "PROJ");
             reg_chk(cc, 16'h0008, 32'd2, "NSTREAM");
             reg_chk(cc, 16'h0018, cc, "CORE_PORT");
             reg_chk(cc, 16'h4000, 32'h0201_0000, "SID0");
@@ -188,7 +188,16 @@ module tb_g24_x4;
                 if (snap[0][k] !== snap[cc][k]) begin nmis[cc] = nmis[cc] + 1; if (first_mis[cc] < 0) first_mis[cc] = k; end
             if (f0[cc] != f0[0]) f0_same = 0;
         end
+`ifdef TB_CU_CLR
+        // proj031 rev 2: OK を落とした後（TB_CU_DROP）。立った coef_mis を flags_clr（CTRL の bit 8、PS の START と同じ）で消す。
+        // OK を戻してあれば（TB_CU_BACK）0 に戻るべき、戻していなければ次の拍にまた立つべき（陽性対照）
+        for (cc = 0; cc < NC; cc = cc + 1) reg_chk(cc, 16'h4018, 32'd1, "FLAGS0 pre-clr");
+        for (cc = 0; cc < NC; cc = cc + 1) axi_wr(cc, 16'h4008, 32'h0000_0100);
+        repeat (50) @(posedge clk);
+        for (cc = 0; cc < NC; cc = cc + 1) reg_chk(cc, 16'h4018, 32'd0, "FLAGS0 post-clr");
+`else
         for (cc = 0; cc < NC; cc = cc + 1) reg_chk(cc, 16'h4018, 32'd0, "FLAGS0");
+`endif
         $display("tb_g24_x4: ダンプ %0d・%0d・%0d・%0d・DUMP_F0 %0d・%0d・%0d・%0d・full_sel %0d・%0d・%0d・%0d・raw_sel %0d・%0d・%0d・%0d",
                  nd[0], nd[1], nd[2], nd[3], f0[0], f0[1], f0[2], f0[3], fsel[0], fsel[1], fsel[2], fsel[3], rsel[0], rsel[1], rsel[2], rsel[3]);
         $display("tb_g24_x4: コア 0 と違う行（/ %0d）: コア 1 %0d（最初 %0d）・コア 2 %0d（最初 %0d）・コア 3 %0d（最初 %0d）・レジスタの違い %0d",

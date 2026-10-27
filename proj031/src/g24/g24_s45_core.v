@@ -32,7 +32,7 @@ module g24_s45_core #(
     parameter integer GB_K_RST           = 2,
     parameter integer BIT_KIND           = 3,
     parameter integer BIT_REV            = 1,
-    parameter integer PROJ               = 3211520,   // = 0x0031_0100（proj031。proj030 は 3145984。10 進で書く。proj027 の 1 回目は 0x0100 を足し忘れて 2555904 = 0x0027_0000 と書き、2e-2 の照合で落ちた）
+    parameter integer PROJ               = 3211776,   // = 0x0031_0200（proj031 rev 2、rev 1 は 3211520。proj030 は 3145984。10 進で書く。proj027 の 1 回目は 0x0100 を足し忘れて 2555904 = 0x0027_0000 と書き、2e-2 の照合で落ちた）
     parameter integer CORE_PORT          = 0,
     parameter integer BASE_BEATS         = 2621440,
     parameter integer K_F                = 0,

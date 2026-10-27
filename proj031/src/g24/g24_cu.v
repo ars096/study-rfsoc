@@ -33,7 +33,7 @@ module g24_cu #(
     // **integer の 10 進で書く**（32'h で書くと Vivado が CONFIG を読み返しで別の形にする、time_core の注）。COEF_CRC は 2^31 を越えるので 16 bit ずつ 2 つ
     parameter integer COEF_CRC_HI = 35099,         // 0x891B（make model-cu の COEF_CRC 0x891BE197 の上 16 bit）
     parameter integer COEF_CRC_LO = 57751,         // 0xE197
-    parameter integer PROJ        = 3211520        // 0x0031_0100（proj031）
+    parameter integer PROJ        = 3211776        // 0x0031_0200（proj031 rev 2。rev 1 は 3211520）
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axi, ASSOCIATED_RESET aresetn" *)

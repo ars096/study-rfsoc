@@ -5,6 +5,7 @@
 // AXI の書き → VERIFY → OK の道そのものは sim-cu で確かめる。
 // -DTB_CU_NOOK: OK を立てない（陽性対照。コアの口が開かず、ダンプが出ずに落ちるべき）
 // -DTB_CU_DROP=<拍>: リセットが明けてからその拍で OK を落とす（陽性対照。flags[0] = coef_mis が立つべき）
+// -DTB_CU_BACK=<拍>: 落としてからその拍で OK を戻す（proj031 rev 2: PS が書き直して VERIFY が通った形。flags_clr で coef_mis が消えるべき）
 `timescale 1ns / 1ps
 module cu_src (
     input  wire          clk,
@@ -29,6 +30,10 @@ module cu_src (
 `ifdef TB_CU_DROP
         repeat (`TB_CU_DROP) @(posedge clk);
         #0.1 u.ok = 1'b0;
+`ifdef TB_CU_BACK
+        repeat (`TB_CU_BACK) @(posedge clk);
+        #0.1 u.ok = 1'b1;
+`endif
 `endif
 `endif
     end

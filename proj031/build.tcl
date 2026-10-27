@@ -3,7 +3,8 @@
 #   set proj proj031・PROJ 0x0031_0100・add_files（g24_coef → g24_cu・crc32_d32.vh。sources_1 の include_dirs に src/g24）・
 #   コアの CONFIG から LO_FILE・HI_FILE を外した（係数の hex は PS が読む）・g24_cu_0 のセル（smc_ctrl の M07。COEF_CRC_HI・LO は環境変数 COEF_CRC から。
 #   Makefile が make model-cu の最後の行を渡す）・結線（shared_nets に g24_cu_0 のリセット・番地（s45_core_0 から）・出口 3 本（4 コアへ）、DSP のクロック）・
-#   在ってはいけない側（コア 1〜3 の coef_addr は空き・g24_cu_0/addr のネットにはコア 0 だけ）と陽性対照 (m)(n)・番地の窓・URAM の数（build_post.tcl）。以下は proj030 の注:
+#   在ってはいけない側（コア 1〜3 の coef_addr は空き・g24_cu_0/addr のネットにはコア 0 だけ）と陽性対照 (m)(n)・番地の窓・URAM の数（build_post.tcl）。
+#   rev 2（README の B-2）: PROJ 0x0031_0200 だけ（RTL の直しは g24_pfb_core の coef_mis を flags_clr でも消す）。以下は proj030 の注:
 # proj030 P-4 — proj027 の build.tcl（fe49b9d）を写し、レーン FFT を 2-for-1 にした 2G-4 の .bit。変えたのは: set proj proj030・PROJ 0x0030_0100・
 #   add_files（g24_chain・dft16 → s2_sep・s2_chain・s2_q・dft16f）・IP は 8 × 4 コア（設定は同じ。入力が複素になるだけ）。以下は proj027 の注:
 # proj027 手順 2f — 2G-4（4 ADC × 65536 点、32768 ch × 4、BIT_KIND 3）の .bit。proj025-m0 の build.tcl（2G-2、2 コア）を写して直した:
@@ -292,7 +293,7 @@ foreach {par h nrow ncol} $g24_hex {
 }
 set ncore 4               ;# proj027: コアは 4 個（s45_core_0〜3、F-1）= ギアボックスの ch の数 nch
 set g24_kind 3            ;# BIT_KIND（2G-4）
-set g24_proj [expr {0x00310100}]   ;# proj031（proj030 は 0x0030_0100、proj027 は 0x0027_0100）
+set g24_proj [expr {0x00310200}]   ;# proj031 rev 2（rev 1 は 0x0031_0100。proj030 は 0x0030_0100、proj027 は 0x0027_0100）
 if {$ncore != $nch} { puts "ERROR: ncore（$ncore）が nch（$nch）と違う（2G-4 はコア c = ch c）"; exit 1 }
 
 puts "PART      : $part"

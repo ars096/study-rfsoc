@@ -175,20 +175,22 @@ sim-g24s45: $(CU_WORDS)
 #       RAW の SRC がコアごとに効くか。proj025 の sim-g22x2（2 コア）を 4 コアに。
 #       ふつうと陽性対照（-DX4_DLY: コア 3 の FULL の口に 1 段多い。コア 3 だけ違うべき）の 2 本を同時に。判定は tb の中（「結果:」の行）
 G24X4_RTL := $(filter-out sim/tb_g24_s45.v,$(G24S45_RTL)) sim/tb_g24_x4.v
-G24X4_V ?= normal dly cudrop
+G24X4_V ?= normal dly cudrop cuclr cuclrno
 .PHONY: sim-g24x4
 sim-g24x4: $(CU_WORDS)
 	@o0=$(SIMDIR)/g24s_in; mkdir -p $$o0; [ -f $$o0/x.hex ] || $(PYTHON) sim/check_g24.py spec-gen $$o0; \
 	for v in $(G24X4_V); do \
 	  o=$(SIMDIR)/g24x4_$$v; mkdir -p $$o; ln -sf ../g24s_in/x.hex $$o/x.hex; d="-DFFT_STALL_AT=3"; \
 	  [ $$v = dly ] && d="$$d -DX4_DLY"; [ $$v = cudrop ] && d="$$d -DTB_CU_DROP=30000"; \
+	  [ $$v = cuclr ] && d="$$d -DTB_CU_DROP=30000 -DTB_CU_BACK=100 -DTB_CU_CLR"; [ $$v = cuclrno ] && d="$$d -DTB_CU_DROP=30000 -DTB_CU_CLR"; \
 	  ( $(IVERILOG) -g2005 $$d -DOUT=\"$$o\" $(CU_FLAGS) -DLO=\"src/g24/g24_coef_lo.hex\" -DHI=\"src/g24/g24_coef_hi.hex\" \
 	      -DTA=\"src/g24/g24_tw_a.hex\" -DTB=\"src/g24/g24_tw_b.hex\" -o $$o/tb $(G24X4_RTL) && $(VVP) -n $$o/tb > $$o/tb.log 2>&1 ) & \
 	done; wait; \
 	for v in $(G24X4_V); do printf '%-14s %s\n' "g24x4_$$v" "$$(grep '結果:' $(SIMDIR)/g24x4_$$v/tb.log || echo '結果の行が無い')"; done
 	@grep -q '結果: 全部通過' $(SIMDIR)/g24x4_normal/tb.log && grep -q '結果: 不合格' $(SIMDIR)/g24x4_dly/tb.log \
 	  && grep -q '結果: 不合格' $(SIMDIR)/g24x4_cudrop/tb.log \
-	  && echo "sim-g24x4: 全部通過（陽性対照 2 本は落ちた）" || (echo "sim-g24x4: NG"; exit 1)
+	  && grep -q '結果: 全部通過' $(SIMDIR)/g24x4_cuclr/tb.log && grep -q '結果: 不合格' $(SIMDIR)/g24x4_cuclrno/tb.log \
+	  && echo "sim-g24x4: 全部通過（陽性対照 3 本は落ちた・cuclr は flags_clr で coef_mis が消えた）" || (echo "sim-g24x4: NG"; exit 1)
 
 # 4d-2. FULL の流れの遅れ D_eff = D_S ＋ 1.5·L（tb_g24_ds、proj023 の sim-wds の形）。ADC 4 本・axis_sel4 × 2 はブロックデザインと同じく外に、
 #       FULL・RAW とも SRC 2。インパルスを (i) RAW のダンプの頭・(ii) フレームの境目に G24DS_NIMP 個（組の数 × 2）。

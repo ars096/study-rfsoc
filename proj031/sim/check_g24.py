@@ -660,7 +660,7 @@ def s45(outdir, tblog):
     ok &= all(((w[0] >> 48) & 0xFF) == 0 and (w[0] & 0xFFFFFFFFFF) == (MAGIC | (1 << 32)) for _, w in recs)
 
     # ---- レジスタ（番地の振り分け）----
-    er = {"IF_ID": 0x02030101, "PROJ": 0x00310100, "NSTREAM": 2, "FFT_N": 0, "SID0": 0x02010000, "SID1": 0x02040100, "SID_none": 0,
+    er = {"IF_ID": 0x02030101, "PROJ": 0x00310200, "NSTREAM": 2, "FFT_N": 0, "SID0": 0x02010000, "SID1": 0x02040100, "SID_none": 0,
           "NCH0": 32768, "NCH1": 0, "SRC0": 0x80000002, "SRC1": 0x80000001, "SEQ0": 1, "SEQ1": 2, "FLAGS0": 0, "FLAGS1": 0}
     rbad = [(k, regs.get(k), v) for k, v in er.items() if regs.get(k) != v]
     print(f"check s45 レジスタ: {len(er)} 個・違う {len(rbad)}" + "".join(f"（{k}: {g if g is None else hex(g)} / 期待 {hex(v)}）" for k, g, v in rbad))

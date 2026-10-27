@@ -125,7 +125,7 @@ module g24_spec #(
     wire [1:0]        y_fr;
     wire [15:0]       pfb_sat;
     g24_pfb u_pfb (.clk(clk), .rst(rst), .s_tdata(d_loc), .s_tvalid(p_v), .s_m(m_now),
-                    .coef_addr(coef_addr), .coef_addr_v(coef_addr_v), .coef_in(coef_in), .coef_m_in(coef_m_in), .coef_ok_in(coef_ok_in), .coef_ok(coef_ok),
+                    .coef_addr(coef_addr), .coef_addr_v(coef_addr_v), .coef_in(coef_in), .coef_m_in(coef_m_in), .coef_ok_in(coef_ok_in), .coef_ok(coef_ok), .clr(flags_clr),
                     .y(y), .y_v(y_v), .y_m(y_m), .y_first(y_first), .y_fr(y_fr), .sat_cnt(pfb_sat), .coef_mis(coef_mis));
 
     // ---- IP の手前の待ち行列（wide_spec と同じ。proj023 4b）----

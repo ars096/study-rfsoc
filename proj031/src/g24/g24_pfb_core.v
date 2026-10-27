@@ -23,7 +23,7 @@
 //
 // ---- 係数（外の wide_coef_rom、4 ADC で共有。proj031: g24_cu、coef_ok が 0 のビートも coef_mis）----
 //   coef は「LAT_C = 2 クロック前に入ったビートの m」の係数（ROM の番地は共通の数えで、このコアの s_m と同じ値のはず）。
-//   coef_m（ROM が読んだ番地）と自分の m を比べ、違えば coef_mis を立てる（粘着、rst で消す）。**共有の食い違いの見張り**
+//   coef_m（ROM が読んだ番地）と自分の m を比べ、違えば coef_mis を立てる（粘着、rst か clr で消す。proj031 rev 2: clr = g24_spec の flags_clr = PS の START）。**共有の食い違いの見張り**
 //   （D-6 の「一番危ないところ」。陽性対照: sim で ROM の番地を 1 ずらす）。
 //
 // ---- 段（入力のクロックを 0）----
@@ -47,6 +47,7 @@ module g24_pfb_core #(
     input  wire [1151:0]     coef,          // 2 クロック前のビートの係数（wide_coef_rom）
     input  wire [11:0]       coef_m,
     input  wire              coef_ok,       // proj031: 共有の g24_cu の OK（coef と同じ段）。0 のビートも coef_mis に数える
+    input  wire              clr,           // proj031 rev 2: coef_mis を消す（flags_clr。食い違いが続いていれば次の拍にまた立つ）
     output reg  [16*YW-1:0]  y,             // レーン p が [YW·p +: YW]
     output reg               y_v,
     output reg  [11:0]       y_m,
@@ -101,7 +102,7 @@ module g24_pfb_core #(
 
     // ---- 2: 係数の見張り ----
     always @(posedge clk) begin
-        if (rst) coef_mis <= 1'b0;
+        if (rst || clr) coef_mis <= 1'b0;
         else if (v2 && (coef_m != m2 || !coef_ok)) coef_mis <= 1'b1;
     end
 

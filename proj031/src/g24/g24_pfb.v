@@ -27,6 +27,7 @@ module g24_pfb (
     input  wire [1151:0]     coef_in,       // g24_cu の出口（coef_addr の 3 クロック後）
     input  wire [11:0]       coef_m_in,
     input  wire              coef_ok_in,
+    input  wire              clr,           // proj031 rev 2: coef_mis を消す（g24_spec の flags_clr）
     output wire              coef_ok,       // 受けた OK（g24_spec の起動の見張りへ）
     output wire [16*15-1:0]  y,
     output wire              y_v,
@@ -64,7 +65,7 @@ module g24_pfb (
     g24_pfb_core #(.XW(14), .CW(18), .CF(16), .YW(15)) u_pfb (
         .clk(clk), .rst(rst),
         .s_tdata(dd[DLY-1]), .s_tvalid(dv[DLY-1]), .s_m(dm[DLY-1]),
-        .coef(coef_q), .coef_m(coef_mq), .coef_ok(coef_okq),
+        .coef(coef_q), .coef_m(coef_mq), .coef_ok(coef_okq), .clr(clr),
         .y(y), .y_v(y_v), .y_m(y_m), .y_first(y_first), .y_fr(y_fr), .sat_cnt(sat_cnt), .coef_mis(coef_mis)
     );
 endmodule

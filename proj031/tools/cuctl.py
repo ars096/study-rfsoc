@@ -20,7 +20,7 @@ sys.path.insert(0, HERE)
 import g24cu  # noqa: E402
 
 BASE = 0xA000_0000
-PROJ = 0x0031_0100
+PROJ = 0x0031_0200
 
 
 def main():
