@@ -395,3 +395,11 @@ DSP・LUT の減りの割合（−30 %・−27 %）より VCCINT の減り（−
   これより長く止まれば pl_drop になる。proj027 の 4f・4g（2.5 時間）で出なかったのは、apt の定時の時刻に当たらなかっただけと読む
 - 運用への示唆: 観測の間はボードの apt の定時の仕事（apt-daily.timer・apt-daily-upgrade.timer・unattended-upgrades）を止めるのがよい（**ボードの設定を変えることなので、まだしていない**）
 - loop_slow 40,672 は proj027 4f と同じ読み方（1 周が 1 BASE を越えて抱える形、取りこぼしではない）
+
+**R-5 F-2（adc_to_core）— 予言（2026-10-27、配線 P に替えた後（西村さん）、走らせる前に書く）**
+- 手順は proj027 4d と同じ: specd を止め、ボードで root: `widef2.py --clkin 0 --ref 10 --adc 0,1,2,3 --out f2_30a` →（西村さん）ADC のケーブルを A↔D・B↔C → `--out f2_30b` → `--combine`
+- 予言:
+  - 起動の照合が通る（BIT_KIND 3・コア 4 個・4 コアとも RAW 1 本）・RAW の SRC の読み返しが書いた ADC
+  - (a) 4 ADC × 5 試行とも縁が見える（最大 / σ ≧ 20）・1 回の中の σ ≦ 0.4 ビート・2 回の差 ≦ 1 ビート。(p) 4 ADC × 5 試行とも縁が見えない
+  - **M ≒ 71 ns（66〜76 ns）**: ギアボックス・axis_sel4・RAW・time_core の RTL は proj027 と同じ（M = 69.9〜72.0 ns）。別の配置と Overlay の載せ直しごとの跳ね（ADC ごとに ≒ 1 ビート = 3.9 ns）で ±5 ns
+  - σ が 0.4 を越えたら、Overlay を載せ直して回し直し、そのことを書く（proj027 と同じ決め）
