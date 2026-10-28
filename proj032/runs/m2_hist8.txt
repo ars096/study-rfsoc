@@ -1,0 +1,126 @@
+T = 8 LSB（8 bit の rms の目標）
+  N1 W   128  -47 dBFS: s  2・誤差 18 bit 4.71e-05 → 8 bit 6.27e-04・飽和 0
+  N1 W   128  -30 dBFS: s  5・誤差 18 bit 1.00e-06 → 8 bit 6.50e-04・飽和 0
+  N1 W   128  -20 dBFS: s  7・誤差 18 bit 1.34e-07 → 8 bit 1.04e-03・飽和 0
+  L1 W   128: CW -28 dBFS で 8 bit が飽和（線は ch の雑音の +50.1 dB、作られた線は ch の雑音の -22.9 dB）
+  L1 W   128: 飽和しない最大 CW -30 dBFS・線は ch の雑音の +48.1 dB（s 5）
+  N1 W    64  -47 dBFS: s  2・誤差 18 bit 9.51e-05 → 8 bit 1.28e-03・飽和 0
+  N1 W    64  -30 dBFS: s  4・誤差 18 bit 2.00e-06 → 8 bit 3.37e-04・飽和 0
+  N1 W    64  -20 dBFS: s  6・誤差 18 bit 2.23e-07 → 8 bit 5.12e-04・飽和 0
+  L1 W    64: CW -34 dBFS で 8 bit が飽和（線は ch の雑音の +47.4 dB、作られた線は ch の雑音の -18.0 dB）
+  L1 W    64: 飽和しない最大 CW -36 dBFS・線は ch の雑音の +45.4 dB（s 4）
+  N1 W    32  -47 dBFS: s  1・誤差 18 bit 2.70e-04 → 8 bit 1.47e-03・飽和 0
+  N1 W    32  -30 dBFS: s  4・誤差 18 bit 5.39e-06 → 8 bit 6.61e-04・飽和 0
+  N1 W    32  -20 dBFS: s  6・誤差 18 bit 5.51e-07 → 8 bit 1.03e-03・飽和 0
+  L1 W    32: CW -32 dBFS で 8 bit が飽和（線は ch の雑音の +52.3 dB、作られた線は ch の雑音の -17.6 dB）
+  L1 W    32: 飽和しない最大 CW -34 dBFS・線は ch の雑音の +50.3 dB（s 4）
+  N1 W    16  -47 dBFS: s  1・誤差 18 bit 5.51e-04 → 8 bit 2.92e-03・飽和 0
+  N1 W    16  -30 dBFS: s  3・誤差 18 bit 1.11e-05 → 8 bit 3.63e-04・飽和 0
+  N1 W    16  -20 dBFS: s  5・誤差 18 bit 1.10e-06 → 8 bit 5.26e-04・飽和 0
+  L1 W    16: CW -40 dBFS で 8 bit が飽和（線は ch の雑音の +47.3 dB、作られた線は ch の雑音の -12.0 dB）
+  L1 W    16: 飽和しない最大 CW -42 dBFS・線は ch の雑音の +45.3 dB（s 3）
+  N1 W     8  -47 dBFS: s  0・誤差 18 bit 7.09e-04 → 8 bit 7.09e-04・飽和 0
+  N1 W     8  -30 dBFS: s  3・誤差 18 bit 1.36e-05 → 8 bit 7.01e-04・飽和 0
+  N1 W     8  -20 dBFS: s  5・誤差 18 bit 1.38e-06 → 8 bit 1.05e-03・飽和 0
+  L1 W     8: CW -38 dBFS で 8 bit が飽和（線は ch の雑音の +52.3 dB、作られた線は ch の雑音の -9.0 dB）
+  L1 W     8: 飽和しない最大 CW -40 dBFS・線は ch の雑音の +50.3 dB（s 3）
+  → N1 の最悪 2.92e-03・強い線の余裕（幅の最悪）ch の雑音の +45.3 dB・判定 ×
+T = 12 LSB（8 bit の rms の目標）
+  N1 W   128  -47 dBFS: s  2・誤差 18 bit 4.71e-05 → 8 bit 6.27e-04・飽和 0
+  N1 W   128  -30 dBFS: s  4・誤差 18 bit 1.00e-06 → 8 bit 1.68e-04・飽和 0
+  N1 W   128  -20 dBFS: s  6・誤差 18 bit 1.34e-07 → 8 bit 2.60e-04・飽和 0
+  L1 W   128: CW -40 dBFS で 8 bit が飽和（線は ch の雑音の +38.0 dB、作られた線は ch の雑音の -21.9 dB）
+  L1 W   128: 飽和しない最大 CW -42 dBFS・線は ch の雑音の +36.2 dB（s 4）
+  N1 W    64  -47 dBFS: s  1・誤差 18 bit 9.63e-05 → 8 bit 5.06e-04・飽和 0
+  N1 W    64  -30 dBFS: s  4・誤差 18 bit 1.98e-06 → 8 bit 3.32e-04・飽和 0
+  N1 W    64  -20 dBFS: s  6・誤差 18 bit 2.29e-07 → 8 bit 5.20e-04・飽和 0
+  L1 W    64: CW -34 dBFS で 8 bit が飽和（線は ch の雑音の +47.1 dB、作られた線は ch の雑音の -16.9 dB）
+  L1 W    64: 飽和しない最大 CW -36 dBFS・線は ch の雑音の +45.2 dB（s 4）
+  N1 W    32  -47 dBFS: s  1・誤差 18 bit 2.69e-04 → 8 bit 1.44e-03・飽和 0
+  N1 W    32  -30 dBFS: s  3・誤差 18 bit 5.36e-06 → 8 bit 1.81e-04・飽和 0
+  N1 W    32  -20 dBFS: s  5・誤差 18 bit 5.64e-07 → 8 bit 2.60e-04・飽和 0
+  L1 W    32: CW -42 dBFS で 8 bit が飽和（線は ch の雑音の +42.2 dB、作られた線は ch の雑音の -15.6 dB）
+  L1 W    32: 飽和しない最大 CW -44 dBFS・線は ch の雑音の +40.3 dB（s 3）
+  N1 W    16  -47 dBFS: s  0・誤差 18 bit 5.31e-04 → 8 bit 5.31e-04・飽和 0
+  N1 W    16  -30 dBFS: s  3・誤差 18 bit 1.12e-05 → 8 bit 3.72e-04・飽和 0
+  N1 W    16  -20 dBFS: s  5・誤差 18 bit 1.10e-06 → 8 bit 5.22e-04・飽和 0
+  L1 W    16: CW -40 dBFS で 8 bit が飽和（線は ch の雑音の +47.4 dB、作られた線は ch の雑音の -11.8 dB）
+  L1 W    16: 飽和しない最大 CW -42 dBFS・線は ch の雑音の +45.4 dB（s 3）
+  N1 W     8  -47 dBFS: s  0・誤差 18 bit 7.01e-04 → 8 bit 7.01e-04・飽和 0
+  N1 W     8  -30 dBFS: s  2・誤差 18 bit 1.37e-05 → 8 bit 2.14e-04・飽和 0
+  N1 W     8  -20 dBFS: s  4・誤差 18 bit 1.38e-06 → 8 bit 2.60e-04・飽和 0
+  L1 W     8: CW -54 dBFS で 8 bit が飽和（線は ch の雑音の +36.3 dB、作られた線は ch の雑音の -9.1 dB）
+  L1 W     8: 飽和しない最大 CW -56 dBFS・線は ch の雑音の +34.4 dB（s 2）
+  → N1 の最悪 1.44e-03・強い線の余裕（幅の最悪）ch の雑音の +34.4 dB・判定 ×
+T = 16 LSB（8 bit の rms の目標）
+  N1 W   128  -47 dBFS: s  1・誤差 18 bit 4.71e-05 → 8 bit 2.54e-04・飽和 0
+  N1 W   128  -30 dBFS: s  4・誤差 18 bit 1.00e-06 → 8 bit 1.68e-04・飽和 0
+  N1 W   128  -20 dBFS: s  6・誤差 18 bit 1.34e-07 → 8 bit 2.60e-04・飽和 0
+  L1 W   128: CW -40 dBFS で 8 bit が飽和（線は ch の雑音の +38.0 dB、作られた線は ch の雑音の -21.9 dB）
+  L1 W   128: 飽和しない最大 CW -42 dBFS・線は ch の雑音の +36.2 dB（s 4）
+  N1 W    64  -47 dBFS: s  1・誤差 18 bit 9.63e-05 → 8 bit 5.06e-04・飽和 0
+  N1 W    64  -30 dBFS: s  3・誤差 18 bit 1.98e-06 → 8 bit 9.74e-05・飽和 2
+  N1 W    64  -20 dBFS: s  5・誤差 18 bit 2.29e-07 → 8 bit 1.33e-04・飽和 0
+  L1 W    64: CW -34 dBFS で 8 bit が飽和（線は ch の雑音の +47.1 dB、作られた線は ch の雑音の -16.9 dB）
+  L1 W    64: 飽和しない最大 CW -36 dBFS・線は ch の雑音の +45.2 dB（s 4）
+  N1 W    32  -47 dBFS: s  0・誤差 18 bit 2.69e-04 → 8 bit 2.69e-04・飽和 0
+  N1 W    32  -30 dBFS: s  3・誤差 18 bit 5.36e-06 → 8 bit 1.81e-04・飽和 0
+  N1 W    32  -20 dBFS: s  5・誤差 18 bit 5.64e-07 → 8 bit 2.60e-04・飽和 0
+  L1 W    32: CW -42 dBFS で 8 bit が飽和（線は ch の雑音の +42.2 dB、作られた線は ch の雑音の -15.6 dB）
+  L1 W    32: 飽和しない最大 CW -44 dBFS・線は ch の雑音の +40.3 dB（s 3）
+  N1 W    16  -47 dBFS: s  0・誤差 18 bit 5.31e-04 → 8 bit 5.31e-04・飽和 0
+  N1 W    16  -30 dBFS: s  2・誤差 18 bit 1.12e-05 → 8 bit 1.24e-04・飽和 1
+  N1 W    16  -20 dBFS: s  4・誤差 18 bit 1.10e-06 → 8 bit 1.34e-04・飽和 0
+  L1 W    16: CW -64 dBFS で 8 bit が飽和（線は ch の雑音の +23.1 dB、作られた線は ch の雑音の -11.9 dB）
+  N1 W     8  -47 dBFS: s  0・誤差 18 bit 6.83e-04 → 8 bit 6.83e-04・飽和 0
+  N1 W     8  -30 dBFS: s  2・誤差 18 bit 1.38e-05 → 8 bit 2.14e-04・飽和 0
+  N1 W     8  -20 dBFS: s  4・誤差 18 bit 1.42e-06 → 8 bit 2.74e-04・飽和 0
+  L1 W     8: CW -50 dBFS で 8 bit が飽和（線は ch の雑音の +40.5 dB、作られた線は ch の雑音の -9.1 dB）
+  L1 W     8: 飽和しない最大 CW -52 dBFS・線は ch の雑音の +38.4 dB（s 2）
+  → N1 の最悪 6.83e-04・強い線の余裕（幅の最悪）ch の雑音の +nan dB・判定 通過
+T = 24 LSB（8 bit の rms の目標）
+  N1 W   128  -47 dBFS: s  1・誤差 18 bit 4.71e-05 → 8 bit 2.54e-04・飽和 0
+  N1 W   128  -30 dBFS: s  3・誤差 18 bit 1.00e-06 → 8 bit 1.08e-03・飽和 85
+  N1 W   128  -20 dBFS: s  5・誤差 18 bit 1.34e-07 → 8 bit 7.92e-05・飽和 4
+  L1 W   128: CW -64 dBFS で 8 bit が飽和（線は ch の雑音の +13.6 dB、作られた線は ch の雑音の -22.5 dB）
+  N1 W    64  -47 dBFS: s  0・誤差 18 bit 9.29e-05 → 8 bit 1.42e-04・飽和 7
+  N1 W    64  -30 dBFS: s  3・誤差 18 bit 1.97e-06 → 8 bit 9.71e-05・飽和 1
+  N1 W    64  -20 dBFS: s  5・誤差 18 bit 2.29e-07 → 8 bit 1.31e-04・飽和 0
+  L1 W    64: CW -62 dBFS で 8 bit が飽和（線は ch の雑音の +19.7 dB、作られた線は ch の雑音の -17.7 dB）
+  L1 W    64: 飽和しない最大 CW -64 dBFS・線は ch の雑音の +17.8 dB（s 3）
+  N1 W    32  -47 dBFS: s  0・誤差 18 bit 2.72e-04 → 8 bit 2.72e-04・飽和 0
+  N1 W    32  -30 dBFS: s  2・誤差 18 bit 5.48e-06 → 8 bit 8.00e-04・飽和 81
+  N1 W    32  -20 dBFS: s  4・誤差 18 bit 5.62e-07 → 8 bit 8.49e-05・飽和 3
+  L1 W    32: CW -64 dBFS で 8 bit が飽和（線は ch の雑音の +20.2 dB、作られた線は ch の雑音の -15.4 dB）
+  N1 W    16  -47 dBFS: s  0・誤差 18 bit 5.42e-04 → 8 bit 5.42e-04・飽和 0
+  N1 W    16  -30 dBFS: s  2・誤差 18 bit 1.09e-05 → 8 bit 1.26e-04・飽和 1
+  N1 W    16  -20 dBFS: s  4・誤差 18 bit 1.11e-06 → 8 bit 1.33e-04・飽和 0
+  L1 W    16: CW -64 dBFS で 8 bit が飽和（線は ch の雑音の +23.2 dB、作られた線は ch の雑音の -12.1 dB）
+  N1 W     8  -47 dBFS: s  0・誤差 18 bit 6.81e-04 → 8 bit 6.81e-04・飽和 0
+  N1 W     8  -30 dBFS: s  1・誤差 18 bit 1.36e-05 → 8 bit 1.16e-03・飽和 93
+  N1 W     8  -20 dBFS: s  3・誤差 18 bit 1.39e-06 → 8 bit 7.52e-05・飽和 3
+  L1 W     8: CW -64 dBFS で 8 bit が飽和（線は ch の雑音の +26.4 dB、作られた線は ch の雑音の -9.4 dB）
+  → N1 の最悪 1.16e-03・強い線の余裕（幅の最悪）ch の雑音の +nan dB・判定 ×
+T = 32 LSB（8 bit の rms の目標）
+  N1 W   128  -47 dBFS: s  0・誤差 18 bit 4.71e-05 → 8 bit 2.41e-03・飽和 214
+  N1 W   128  -30 dBFS: s  3・誤差 18 bit 1.00e-06 → 8 bit 1.08e-03・飽和 85
+  N1 W   128  -20 dBFS: s  5・誤差 18 bit 1.34e-07 → 8 bit 7.92e-05・飽和 4
+  L1 W   128: CW -64 dBFS で 8 bit が飽和（線は ch の雑音の +13.6 dB、作られた線は ch の雑音の -22.5 dB）
+  N1 W    64  -47 dBFS: s  0・誤差 18 bit 9.29e-05 → 8 bit 1.42e-04・飽和 7
+  N1 W    64  -30 dBFS: s  2・誤差 18 bit 1.97e-06 → 8 bit 1.20e-02・飽和 731
+  N1 W    64  -20 dBFS: s  4・誤差 18 bit 2.29e-07 → 8 bit 2.33e-03・飽和 190
+  L1 W    64: CW -64 dBFS で 8 bit が飽和（線は ch の雑音の +17.8 dB、作られた線は ch の雑音の -10.2 dB）
+  N1 W    32  -47 dBFS: s  0・誤差 18 bit 2.70e-04 → 8 bit 2.70e-04・飽和 0
+  N1 W    32  -30 dBFS: s  2・誤差 18 bit 5.54e-06 → 8 bit 7.91e-04・飽和 76
+  N1 W    32  -20 dBFS: s  4・誤差 18 bit 5.80e-07 → 8 bit 7.45e-05・飽和 6
+  L1 W    32: CW -64 dBFS で 8 bit が飽和（線は ch の雑音の +20.1 dB、作られた線は ch の雑音の -16.4 dB）
+  N1 W    16  -47 dBFS: s  0・誤差 18 bit 5.46e-04 → 8 bit 5.46e-04・飽和 0
+  N1 W    16  -30 dBFS: s  1・誤差 18 bit 1.11e-05 → 8 bit 1.26e-02・飽和 743
+  N1 W    16  -20 dBFS: s  3・誤差 18 bit 1.08e-06 → 8 bit 2.86e-03・飽和 225
+  L1 W    16: CW -64 dBFS で 8 bit が飽和（線は ch の雑音の +23.2 dB、作られた線は ch の雑音の -11.3 dB）
+  N1 W     8  -47 dBFS: s  0・誤差 18 bit 6.83e-04 → 8 bit 6.83e-04・飽和 0
+  N1 W     8  -30 dBFS: s  1・誤差 18 bit 1.36e-05 → 8 bit 8.77e-04・飽和 89
+  N1 W     8  -20 dBFS: s  3・誤差 18 bit 1.35e-06 → 8 bit 1.25e-04・飽和 4
+  L1 W     8: CW -64 dBFS で 8 bit が飽和（線は ch の雑音の +26.0 dB、作られた線は ch の雑音の -8.8 dB）
+  → N1 の最悪 1.26e-02・強い線の余裕（幅の最悪）ch の雑音の +nan dB・判定 ×
+陽性対照（T 2）: N1 が 落ちた（期待どおり）

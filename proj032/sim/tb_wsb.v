@@ -3,6 +3,7 @@
 //   記録（sim/check_wsb.py が照らす）: in（窓ごとの入口の標本）・fi（FFT の入口の枠、札つき）・fo（FFT の出口の枠、札つき）・dmp（閉じたダンプの流れ）・run（g0）
 //   構成（`CFG）: 0 3 lane とも幅の和 256 MHz（6・2・6 窓、NS を混ぜる）/ 1 2 lane（128 + 64 + 32 + 16 + 8 + 8・32 × 8）/ 2 1 lane に 128 × 2 だけ
 //   陽性対照 ENG_POSCTL（eng.v）: 選びの NS の優先を外す → 幅の広い窓が遅れ、flags[1] と値の不一致
+//   D-2: 窓 w ≧ TB_S は履歴を DDR に（枠 w、DDR の枠 w − TB_S、8 bit の利得 g = 10）。DDR は sim/axi_mem_model.v（遅れ 20〜300 クロック、+MEM_SLOW で 1500〜2500）
 `timescale 1ns / 1ps
 module tb_wsb;
     localparam integer H = 14, W = 20;
@@ -16,7 +17,10 @@ module tb_wsb;
 `define NCYC 900000
 `endif
 `ifndef DLY
-`define DLY 64
+`define DLY 1024
+`endif
+`ifndef TB_S
+`define TB_S 14
 `endif
     localparam integer E = (`CFG == 0) ? 3 : (`CFG == 1) ? 2 : 1;
     reg clk = 0; always #1.953 clk = ~clk;
@@ -41,11 +45,12 @@ module tb_wsb;
             act = 14'b00000000000011;
         end
     end
-    wire [H*3-1:0] cfg_ns; wire [H*4-1:0] cfg_sl; wire [H*2-1:0] cfg_fl; wire [H*4-1:0] cfg_sh;
+    wire [H*3-1:0] cfg_ns; wire [H*4-1:0] cfg_sl; wire [H*2-1:0] cfg_fl; wire [H*4-1:0] cfg_sh, cfg_g;
     genvar g;
     generate for (g = 0; g < H; g = g + 1) begin : cf
         assign cfg_ns[g*3 +: 3] = ns[g]; assign cfg_fl[g*2 +: 2] = fl[g];
         assign cfg_sl[g*4 +: 4] = g;     assign cfg_sh[g*4 +: 4] = 4'd5 + g % 3;
+        assign cfg_g[g*4 +: 4]  = 4'd10;
     end endgenerate
 
     // ---- 入口: lane ごとに、来るべき標本の数 due[w] から NS・番号の小さい順に 1 / クロック ----
@@ -85,12 +90,21 @@ module tb_wsb;
 
     reg  run = 0, stop = 0;
     wire go; wire [31:0] g0;
-    wire [E-1:0] dv; wire [E*4-1:0] dw; wire [E*32-1:0] dk; wire [E*12-1:0] dch; wire [E*64-1:0] dd; wire [E*8-1:0] flags;
-    wsb #(.H(H), .E(E), .S(H), .W(W), .G_L2(`G_L2), .D(`DLY)) dut (
+    wire [E-1:0] dv; wire [E*4-1:0] dw; wire [E*32-1:0] dk; wire [E*12-1:0] dch; wire [E*64-1:0] dd; wire [E*16-1:0] flags;
+    wire [2*E+1:0] dflags;
+    wire [31:0] awaddr; wire [7:0] awlen; wire awvalid, awready, wlast, wvalid, wready, bvalid; wire [63:0] wdata;
+    wire [E*32-1:0] araddr; wire [E-1:0] arvalid, arready, rvalid, rlast; wire [E*128-1:0] rdata;
+    wsb #(.H(H), .E(E), .S(`TB_S), .W(W), .G_L2(`G_L2), .D(`DLY)) dut (
         .clk(clk), .rst(rst), .y_v(yv), .y_ch(ych), .y_re(yr), .y_im(yi),
-        .cfg_ns(cfg_ns), .cfg_fl(cfg_fl), .cfg_sl(cfg_sl), .cfg_sh(cfg_sh),
+        .cfg_ns(cfg_ns), .cfg_fl(cfg_fl), .cfg_sl(cfg_sl), .cfg_sh(cfg_sh), .cfg_g(cfg_g), .ddr_base(32'd0),
         .ng(32'd1), .ndump(32'd2), .cmd_run(run), .cmd_stop(stop),
-        .go(go), .g0(g0), .d_v(dv), .d_w(dw), .d_k(dk), .d_ch(dch), .d_data(dd), .flags(flags));
+        .go(go), .g0(g0), .d_v(dv), .d_w(dw), .d_k(dk), .d_ch(dch), .d_data(dd), .flags(flags), .dflags(dflags),
+        .m_awaddr(awaddr), .m_awlen(awlen), .m_awvalid(awvalid), .m_awready(awready), .m_wdata(wdata), .m_wlast(wlast),
+        .m_wvalid(wvalid), .m_wready(wready), .m_bvalid(bvalid),
+        .m_araddr(araddr), .m_arvalid(arvalid), .m_arready(arready), .m_rdata(rdata), .m_rvalid(rvalid), .m_rlast(rlast));
+    axi_mem_model #(.NR(E)) u_mem (.clk(clk), .rst(rst), .awaddr(awaddr), .awvalid(awvalid), .awready(awready),
+        .wdata(wdata), .wvalid(wvalid), .wready(wready), .wlast(wlast), .bvalid(bvalid),
+        .araddr(araddr), .arvalid(arvalid), .arready(arready), .rdata(rdata), .rvalid(rvalid), .rlast(rlast));
 
     // ---- 記録 ----
     integer ffi, ffo, fdm, k;
@@ -99,20 +113,20 @@ module tb_wsb;
     end
     generate for (g = 0; g < E; g = g + 1) begin : lg
         wire        pv8 = dut.en[g].u.pv[8], pf8 = dut.en[g].u.pf[8];
-        wire [54:0] tg8 = dut.en[g].u.tg8;
+        wire [58:0] tg8 = dut.en[g].u.tg8;
         wire [17:0] fr8 = dut.en[g].u.fr8, fi8 = dut.en[g].u.fi8;
         wire        mv  = dut.en[g].u.m_tv;
         wire [11:0] mk  = dut.en[g].u.m_tu[11:0];
         wire [63:0] md  = dut.en[g].u.m_td;
-        wire [54:0] hd  = dut.en[g].u.tq_head;
+        wire [58:0] hd  = dut.en[g].u.tq_head;
         reg         ivld, ovld;
         always @(posedge clk) begin
             if (pv8) begin
-                if (pf8) begin ivld = tg8[54]; if (ivld) $fwrite(ffi, "F %0d %0d\n", g, tg8[53:50]); end
+                if (pf8) begin ivld = tg8[58]; if (ivld) $fwrite(ffi, "F %0d %0d\n", g, tg8[57:54]); end
                 if (ivld) $fwrite(ffi, "%0d %0d %0d\n", g, $signed(fr8), $signed(fi8));      // 行に機関の番号（E ≧ 2 で機関の行が混ざる）
             end
             if (mv) begin
-                if (mk == 0) begin ovld = hd[54]; if (ovld) $fwrite(ffo, "O %0d %0d\n", g, hd[53:50]); end
+                if (mk == 0) begin ovld = hd[58]; if (ovld) $fwrite(ffo, "O %0d %0d\n", g, hd[57:54]); end
                 if (ovld) $fwrite(ffo, "%0d %0d %0d\n", g, $signed(md[31:0]), $signed(md[63:32]));
             end
             if (dv[g]) $fwrite(fdm, "%0d %0d %0d %0d %0d\n", g, dw[g*4 +: 4], dk[g*32 +: 32], dch[g*12 +: 12], dd[g*64 +: 64]);
@@ -128,10 +142,10 @@ module tb_wsb;
         @(posedge clk);
         frun = $fopen("wsb_run.log", "w");
         $fwrite(frun, "g0 %0d G_L2 %0d E %0d CFG %0d\n", g0, `G_L2, E, `CFG);
-        for (w = 0; w < H; w = w + 1) $fwrite(frun, "w %0d %0d %0d %0d %0d\n", w, act[w], ns[w], fl[w], 5 + w % 3);
+        for (w = 0; w < H; w = w + 1) $fwrite(frun, "w %0d %0d %0d %0d %0d %0d %0d\n", w, act[w], ns[w], fl[w], 5 + w % 3, w >= `TB_S, 10);
         $fclose(frun);
         repeat (`NCYC) @(posedge clk);
-        $display("flags = %h", flags);
+        $display("flags = %h dflags = %h", flags, dflags);
         $fclose(fin); $fclose(ffi); $fclose(ffo); $fclose(fdm);
         $finish;
     end

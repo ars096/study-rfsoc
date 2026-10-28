@@ -2,6 +2,7 @@
 """check_wsb — tb_wsb の記録を、窓ごとの形（Fine の wspec_core を窓ごとに 1 組）の模型と照らす（E-4・M-1）。
 
   1. 入口: 窓ごとの標本 y → z = sat18(round(y / 2^bs))（bs = 0, 0, 1, 1, 2）→ フレーム r = 4096 個ずつ
+     DDR の窓（D-2）は z' = sat8(round(z / 2^g))·2^g
   2. FFT の入口（fi）: 窓 w の札のついた枠が、PFB の式 sat18((Σ_t c[a + 4096 t]·z_{r−3+t}[a] + 2^15) >> 16) と r = 0, 1, 2, … の順に bit 単位で一致
   3. FFT の出口（fo）: 機関ごとに入口の枠と同じ順で、札の窓が同じ・値が倍精度の FFT と ±1 で一致（札の取り違えを見る）
   4. 積分: fo の値から q = sat18(Y >> sh)・p = q_re² + q_im²、F0 = g0·2^e・N = ng·2^e（e = G_L2 − 12 − NS）でダンプ k を積み、
@@ -23,9 +24,11 @@ g0, GL2, E, CFG = int(h[1]), int(h[3]), int(h[5]), int(h[7])
 win = {}
 for l in run[1:]:
     if l.startswith("w "):
-        _, w, act, ns, fl, sh = l.split()
+        p = l.split()
+        _, w, act, ns, fl, sh = p[:6]
+        ddr, gg = (int(p[6]), int(p[7])) if len(p) > 6 else (0, 0)
         if int(act):
-            win[int(w)] = dict(ns=int(ns), fl=int(fl), sh=int(sh))
+            win[int(w)] = dict(ns=int(ns), fl=int(fl), sh=int(sh), ddr=ddr, g=gg)
 
 def sat(a, b=18):
     return np.clip(a, -(1 << (b - 1)), (1 << (b - 1)) - 1)
@@ -40,6 +43,9 @@ for w, v in win.items():
     bs = [0, 0, 0, 1, 1, 2][v["ns"]]
     rnd = (1 << (bs - 1)) if bs else 0
     z = sat((a + rnd) >> bs)
+    if v["ddr"]:                                   # D-2: DDR の窓は 8 bit（h = sat8(round(z / 2^g))）を h·2^g に戻して PFB へ
+        g = v["g"]
+        z = sat((z + ((1 << (g - 1)) if g else 0)) >> g, 8) << g
     nfr = len(z) // NF
     v["zr"] = z[:nfr * NF, 0].reshape(nfr, NF)
     v["zi"] = z[:nfr * NF, 1].reshape(nfr, NF)
@@ -55,6 +61,8 @@ def pfb(w, r):
         acc_r += c * v["zr"][f]; acc_i += c * v["zi"][f]
     return sat((acc_r + (1 << 15)) >> 16), sat((acc_i + (1 << 15)) >> 16)
 
+fails = []
+
 def frames(fn, tag):
     """記録の行: 枠の頭「tag e w」、値「e re im」（機関の行は混ざって並ぶので、機関ごとに枠を組む）。順は機関ごとの順"""
     out = []  # (e, w, re/im[], 機関の中の順)
@@ -66,11 +74,11 @@ def frames(fn, tag):
             if e in cur: out.append(cur[e])
             cur[e] = [e, int(p[2]), []]
         else:
-            cur[int(p[0])][2].append((int(p[1]), int(p[2])))
+            iv = lambda t: int(t) if t.lstrip("-").isdigit() else 1 << 40      # 不定値（x）は必ず不一致になる値に
+            cur[int(p[0])][2].append((iv(p[1]), iv(p[2])))
     out += cur.values()
     return [(e, w, np.array(x, dtype=np.int64)) for e, w, x in out if len(x) == NF]
 
-fails = []
 # ---- 2. FFT の入口 ----
 fi = frames("wsb_fi.log", "F")
 seen = {w: 0 for w in win}
@@ -113,7 +121,10 @@ for e in range(E):
 # ---- 4. 積分 ----
 got = {}
 for l in open(os.path.join(d, "wsb_dmp.log")):
-    e, w, k, ch, v = map(int, l.split())
+    try:
+        e, w, k, ch, v = map(int, l.split())
+    except ValueError:
+        fails.append(f"dmp: 不定値の行 {l.strip()}"); continue
     key = (w, k)
     got.setdefault(key, {})
     if ch in got[key]:
@@ -125,8 +136,8 @@ for w, v in win.items():
     F0, N = g0 << e_w, NG << e_w
     for k in range(NDUMP):
         lo, hi = F0 + k * N, F0 + (k + 1) * N
-        if hi >= len(X[w]):           # 次のフレーム（読み出し）まで出口に出ていない
-            if (w, k) in got:
+        if hi >= len(X[w]):           # 読み出すフレーム hi が出口に出きっていない（sim の終わりで途中まで流れていることがある）
+            if (w, k) in got and hi > len(X[w]):
                 fails.append(f"dmp: 窓 {w} ダンプ {k} は早すぎる")
             continue
         acc = np.zeros(NF, dtype=np.int64)

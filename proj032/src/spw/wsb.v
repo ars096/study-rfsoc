@@ -7,6 +7,7 @@
 //   - 枠の中の番地 a（P0）。全機関の FFT の tready が 1 になってから回し始め（go）、以後は止めない
 //   - PFB の係数 ROM（番地 a。Fine の pfb4_rom を 1 組）。履歴の枠は全部の面を番地 a で毎クロック読む（読みの番地の選びが要らない）
 //   - 時刻の格子: rst から 2^G_L2 クロックごとに gidx を数え、RUN で g0 = gidx + 2
+// D-2: 枠 S 以上の窓は DDR に履歴を置く（DDR の枠 k = cfg_sl[w] − S < NK）。書き手 ddrw 1 つ・読み手 ddrr を機関ごとに。DDR の口は AXI4（書き 64 bit・読み 128 bit）
 // 積分器 w の読み書きは、機関 cfg_fl[w] のものだけを受ける。読みは機関の S2 に番地 → S3 番地のレジスタ → S4 読み → S5 出力のレジスタ → S6 機関ごとの選び
 
 `timescale 1ns / 1ps
@@ -17,7 +18,9 @@ module wsb #(
     parameter integer S    = 6,
     parameter integer W    = 20,
     parameter integer G_L2 = 19,
-    parameter integer D    = 64
+    parameter integer D    = 1024,
+    parameter integer LEAD = 960,
+    parameter integer NK   = 8
 )(
     input  wire                 clk,
     input  wire                 rst,
@@ -28,6 +31,8 @@ module wsb #(
     input  wire [H*2-1:0]       cfg_fl,
     input  wire [H*4-1:0]       cfg_sl,     // 窓ごとの履歴の枠（S 以上は枠なし）
     input  wire [H*4-1:0]       cfg_sh,
+    input  wire [H*4-1:0]       cfg_g,
+    input  wire [31:0]          ddr_base,
     input  wire [31:0]          ng, ndump,
     input  wire                 cmd_run, cmd_stop,
     output reg                  go,
@@ -37,7 +42,24 @@ module wsb #(
     output wire [E*32-1:0]      d_k,
     output wire [E*12-1:0]      d_ch,
     output wire [E*64-1:0]      d_data,
-    output wire [E*8-1:0]       flags
+    output wire [E*16-1:0]      flags,
+    output wire [2*E+1:0]       dflags,     // {読み手 E × 2, 書き手 2}
+    // DDR（AXI4）
+    output wire [31:0]          m_awaddr,
+    output wire [7:0]           m_awlen,
+    output wire                 m_awvalid,
+    input  wire                 m_awready,
+    output wire [63:0]          m_wdata,
+    output wire                 m_wlast,
+    output wire                 m_wvalid,
+    input  wire                 m_wready,
+    input  wire                 m_bvalid,
+    output wire [E*32-1:0]      m_araddr,
+    output wire [E-1:0]         m_arvalid,
+    input  wire [E-1:0]         m_arready,
+    input  wire [E*128-1:0]     m_rdata,
+    input  wire [E-1:0]         m_rvalid,
+    input  wire [E-1:0]         m_rlast
 );
     integer i;
     genvar g, b;
@@ -74,20 +96,39 @@ module wsb #(
     wire [E-1:0]         i_we;
     wire [63:0]          i_wd [0:E-1];
     reg  [63:0]          i_rd [0:E-1];
+    wire [E-1:0]         dw_v, fl_v, rq_v;
+    wire [E*4-1:0]       dw_k, dw_w, fl_w;
+    wire [E*3-1:0]       dw_f;
+    wire [E*10-1:0]      dw_row;
+    wire [E*64-1:0]      dw_d;
+    wire [3:0]           rq_k [0:E-1];
+    wire [31:0]          rq_r [0:E-1];
+    wire [63:0]          dd [0:E-1];
     generate for (g = 0; g < E; g = g + 1) begin : en
-        eng #(.H(H), .S(S), .W(W), .G_L2(G_L2), .D(D)) u (
+        eng #(.H(H), .S(S), .W(W), .G_L2(G_L2), .D(D), .LEAD(LEAD)) u (
             .clk(clk), .rst(rst),
             .in_v(y_v[g]), .in_w(y_ch[g*4 +: 4]), .in_re(y_re[g*W +: W]), .in_im(y_im[g*W +: W]),
-            .cfg_ns(cfg_ns), .cfg_sl(cfg_sl), .cfg_sh(cfg_sh),
+            .cfg_ns(cfg_ns), .cfg_sl(cfg_sl), .cfg_sh(cfg_sh), .cfg_g(cfg_g),
             .go(go), .a(a), .g0(g0), .ng(ng), .ndump(ndump), .cmd_run(cmd_run), .cmd_stop(cmd_stop),
             .rdy(rdy[g]),
             .hw_v(hw_v[g]), .hw_s(hw_s[g]), .hw_b(hw_b[g]), .hw_a(hw_a[g]), .hw_d(hw_d[g]),
+            .dw_v(dw_v[g]), .dw_k(dw_k[g*4 +: 4]), .dw_w(dw_w[g*4 +: 4]), .dw_f(dw_f[g*3 +: 3]), .dw_row(dw_row[g*10 +: 10]), .dw_d(dw_d[g*64 +: 64]),
+            .fl_v(fl_v[g]), .fl_w(fl_w[g*4 +: 4]), .rq_v(rq_v[g]), .rq_k(rq_k[g]), .rq_r(rq_r[g]), .dd(dd[g]),
             .hq(hq), .c0(c0), .c1(c1), .c2(c2), .c3(c3),
             .i_rw(i_rw[g]), .i_ra(i_ra[g]), .i_rd(i_rd[g]),
             .i_we(i_we[g]), .i_ww(i_ww[g]), .i_wa(i_wa[g]), .i_wd(i_wd[g]),
             .d_v(d_v[g]), .d_w(d_w[g*4 +: 4]), .d_k(d_k[g*32 +: 32]), .d_ch(d_ch[g*12 +: 12]), .d_data(d_data[g*64 +: 64]),
-            .flags(flags[g*8 +: 8]));
+            .flags(flags[g*16 +: 16]));
+        ddrr u_rd (.clk(clk), .rst(rst), .go(go), .a(a), .base(ddr_base), .rq_v(rq_v[g]), .rq_k(rq_k[g]), .rq_r(rq_r[g]),
+            .m_araddr(m_araddr[g*32 +: 32]), .m_arlen(), .m_arsize(), .m_arburst(), .m_arvalid(m_arvalid[g]), .m_arready(m_arready[g]),
+            .m_rdata(m_rdata[g*128 +: 128]), .m_rvalid(m_rvalid[g]), .m_rlast(m_rlast[g]), .m_rready(),
+            .dd(dd[g]), .flags(dflags[2 + g*2 +: 2]));
     end endgenerate
+    ddrw #(.E(E), .NK(NK)) u_wr (.clk(clk), .rst(rst), .base(ddr_base),
+        .dw_v(dw_v), .dw_k(dw_k), .dw_w(dw_w), .dw_f(dw_f), .dw_row(dw_row), .dw_d(dw_d), .fl_v(fl_v), .fl_w(fl_w),
+        .m_awaddr(m_awaddr), .m_awlen(m_awlen), .m_awsize(), .m_awburst(), .m_awvalid(m_awvalid), .m_awready(m_awready),
+        .m_wdata(m_wdata), .m_wstrb(), .m_wlast(m_wlast), .m_wvalid(m_wvalid), .m_wready(m_wready),
+        .m_bvalid(m_bvalid), .m_bready(), .flags(dflags[1:0]));
 
     // ---- 履歴の枠: 書きは持ち主の機関から、読みは全部の面を番地 a で ----
     generate for (g = 0; g < S; g = g + 1) begin : sl

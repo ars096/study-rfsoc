@@ -6,6 +6,8 @@
 機関の幅の和 256 MHz ちょうど（窓 ≦ 14）の全部の組み合わせで、最悪の遅れ（負なら間に合う）を出す。
 
   python3 model/eng_sched.py
+
+D-2: 選びを枠の頭の LEAD 前にした形（run_lead）。DDR の窓は DDR に書き終わってから選べる。
 """
 import random
 
@@ -56,6 +58,33 @@ KEYS = {
     "NS → 番号（RTL）": lambda ns, a: (ns[a[2]], a[2]),
     "到着の順":         lambda ns, a: (a[1], a[2]),
 }
+def run_lead(ns, ddr, seed, LEAD, JD, slots=300):
+    """D-2: 選びを枠の頭の LEAD クロック前に（その時までに着いた仕事から）。DDR の窓は着いてから JD 遅れて選べる（DDR に書き終わるまで）。
+    戻り値: 始まり −（着き ＋ 周期）の最悪 [チップ内, DDR]"""
+    rnd = random.Random(seed)
+    P = [4096 * 2 ** n for n in ns]
+    base = [rnd.randrange(4096) for _ in ns]
+    T = 4096 * slots
+    arr = []
+    for w, p in enumerate(P):
+        k = 1
+        while base[w] + k * p < T:
+            a = base[w] + k * p
+            arr.append((a + (JD if ddr[w] else 0) + rnd.randrange(65), a, w)); k += 1
+    arr.sort()
+    q, i, t, wo = [], 0, 4096, [-1e9, -1e9]
+    while t < T:
+        while i < len(arr) and arr[i][0] <= t - LEAD:
+            q.append(arr[i]); i += 1
+        if q:
+            j = min(q, key=lambda a: (ns[a[2]], a[2]))
+            q.remove(j)
+            k = 1 if ddr[j[2]] else 0
+            wo[k] = max(wo[k], t - (j[1] + P[j[2]]))
+        t += 4096
+    return wo
+
+
 if __name__ == "__main__":
     cs = combos()
     for name, key in KEYS.items():
@@ -66,3 +95,13 @@ if __name__ == "__main__":
                     a, b = run(c, s, J, key)
                     w = max(w, a); mp = max(mp, b); bad += a >= 0
             print(f"{name}・揺れ {J:3d}: 組み合わせ {len(cs)}・最悪の遅れ {w:+.0f} クロック・間に合わない回 {bad}・窓ごとの待ちの最大 {mp}")
+    # D-2: 選びの前倒しと DDR の窓（窓ごとに半々で DDR）
+    for LEAD, JD in ((8, 0), (960, 0), (960, 2000), (960, 4000)):
+        wo = [-1e9, -1e9]
+        for c in cs:
+            for sd in range(10):
+                rnd = random.Random(sd + 99)
+                ddr = [rnd.random() < 0.5 for _ in c]
+                a2 = run_lead(c, ddr, sd, LEAD, JD)
+                wo = [max(wo[0], a2[0]), max(wo[1], a2[1])]
+        print(f"前倒し {LEAD:4d}・DDR の窓の遅れ {JD:4d}: 始まり −（着き＋周期）の最悪 チップ内 {wo[0]:+.0f}・DDR {wo[1]:+.0f}")
