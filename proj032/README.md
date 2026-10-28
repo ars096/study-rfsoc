@@ -612,6 +612,19 @@ LUT の内訳は f32cv 300 × 3・ring128 1,458（CRC の XOR の木を含む）
 - OOC（ksink_ooc、配置後）: DSP 2・LUT 3,675（+538: t0 の選び・足し算）・URAM 6・WNS +0.577 ns
 - 残り（R-1b）: コアのレジスタ（共通部・流れのブロック・WRST / RUN の ARM と START_AT・T の格子に揃えた rst）。今は wsb の rst が WRST、cmd_run が RUN
 
+**コアのレジスタ（R-1b、`src/spw/spw_regs.v`）**:
+- 共通部（IF_ID {2, 7, 1, 1}・PROJ・NSTREAM 14・CAPS・BASE_BEATS・BUILD・CORE_PORT）、SpW に固有の 0x80 CORE_FLAGS・0x84 NG・0x88 NDUMP・0x8C WRST_BAD・0x90 WRST_CNT、
+  流れのブロック（SID・PARAM {fmt 1}・CTRL・N_ACC = NG·M の読み・SHIFT・FLAGS = その窓の機関の FLAGS・NCH・FRAME_BEATS・SRC・CFG_ID・RUN_CFG・WRST_CFG・RUN_SHIFT・RUN_T・RUN_F0、
+  0x100〜 WK・WDPHI・WNS・WCUR・WCUR_DPHI・WSTART（= t0）・WRST_T・**WFL・WSL・WG・WCUR2**）。帳簿（SEQ・DUMP_*）は 0（レコードに入る）
+- CTRL の RUN・STOP・ARM_RUN・取り消し・FLAGS を消す・WRST・ARM_WRST は**どの流れに打ってもコアに効く**。発火（time_core の go_out）で WRST → 明けて RUN
+- **WRST の前に約束を H クロックで数え、破れていれば断る**（効いている設定もデータの道もそのまま、WRST_BAD に印）: [1] lane ごとの幅の和 ≦ 256 MHz・[2] DDR の窓の和 ≦ 256 MHz・
+  [3] チップ内の枠の重なり・[4] DDR の枠 ≧ NK か重なり・[5] WNS が 1..5 の外。WFL ≧ E の窓は止める窓として数えない（**データの道はまだ止める窓を扱えない**）
+- sim（`sim/tb_spw_regs.v`、照らし 27 か所）: T1 自己記述・T2 WRST（長さ 10 クロック・14 窓の設定の取り込み）・T3 約束を破る 5 種を断る（設定は変わらない・印・CORE_FLAGS）・
+  T4 予約（ARM_WRST ＋ ARM_RUN を流れ 9 に打ち、発火で WRST の明けの後に RUN 1 回・NG・NDUMP・SHIFT・CFG_ID・N_ACC・RUN_F0 の取り込み）・T5 取り消し・STOP で全部通過。
+  陽性対照（REGS_POSCTL: lane の和を数えない）は T3 の lane の和の超えが通って落ちた。1 回目は tb の作り（T2 で窓を狭めたので 128 MHz を足しても 256 を越えなかった・RUN_F0 で窓の NS の取り違え）で落ちた
+- OOC（配置後）: LUT 1,598・FF 2,027・WNS +1.336 ns（4 ADC で LUT +1.5 %。見積もりの「TP・RAW・コアの上位 3,700」と一部重なる）
+- 残り: データの道とつなぐ上位（spw_core: 粗い PFB → 頭 → ddcb → wsb → dsink → ring128 ＋ spw_regs）、止める窓、time_core の T と発火、SAM45-Fine と同じ TP・ギアボックスの共通部
+
 ## 結果
 
 -
