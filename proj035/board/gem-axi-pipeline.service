@@ -1,0 +1,14 @@
+[Unit]
+Description=GEM1 (eth0) AXI_MAX_PIPELINE = 0x0808 (study-rfsoc proj035)
+DefaultDependencies=no
+After=sysinit.target
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/sbin/gem-axi-pipeline.py
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
