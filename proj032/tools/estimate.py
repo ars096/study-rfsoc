@@ -27,10 +27,10 @@ rows = []   # (名前, LUT, DSP, RAMB36, URAM, 出典)
 
 def L_LANES(h):   # light の lane: 2 段目 ⌈h/4⌉・3 段目 ⌈h/8⌉・4 段目 ⌈h/16⌉
     return (h + 3) // 4 + (h + 7) // 8 + (h + 15) // 16
-DDCB_REF = dict(H=14, E=3, LUT=18_366)     # E-3 の ddcb の OOC（配置後）の LUT。下の DDCB_LUT が lane の数で比例させる
+DDCB_REF = dict(H=14, E=3, LUT=15_725)     # M-3: 20 bit・小数 4 の ddcb の OOC（配置後）の LUT（24 bit は 18,158）。下の DDCB_LUT が lane の数で比例させる
 def DDCB_LUT(h, e):
     # 実数は H 14・E 3。lane（light 685・final 2,151 の配置後の実数）と、窓ごとのつなぎ（残り）に分けて比例させる
-    lanes_ref = 685 * L_LANES(14) + 2_151 * 3
+    lanes_ref = 685 * L_LANES(14) + 2_151 * 3          # 24 bit の lane。20 bit では lane も縮むが、比例の割り振りにだけ使う
     glue_ref = DDCB_REF["LUT"] - lanes_ref
     return 685 * L_LANES(h) + 2_151 * e + glue_ref * h / 14
 def add(name, lut, dsp, bram, uram, src):

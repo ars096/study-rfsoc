@@ -151,40 +151,29 @@ module hbmc #(
     end endgenerate
 
     // 和の木: R 項ずつ（R = 2 は hb2 と同じ形、R = 3 は 3 入力の加算で段と LUT を減らす。整数の和なので値は同じ）
+    //   別のモジュール hbsum に置き、そこだけ use_dsp = "no"（M-3: 20 bit にすると合成が加算を DSP に寄せた。信号に付けると掛け算まで LUT になった）
     localparam integer T  = L + 1;
     function integer nlv_of(input integer t, input integer r);
         integer c, k; begin c = t; k = 0; while (c > 1) begin c = (c + r - 1) / r; k = k + 1; end nlv_of = (k > 0) ? k : 1; end
     endfunction
     localparam integer NLV = nlv_of(T, R);
-    function integer cnt_at(input integer lv);
-        integer c, k; begin c = T; for (k = 0; k < lv; k = k + 1) c = (c + R - 1) / R; cnt_at = c; end
-    endfunction
-    reg signed [PW-1:0] tr [0:(NLV+1)*T-1], ti [0:(NLV+1)*T-1];
-    localparam signed [PW-1:0] RND = 1 <<< (SH - 1);
+    localparam integer MW = W + 19;
+    wire [T*MW-1:0] mrf, mif;
+    genvar gt;
+    generate for (gt = 0; gt < T; gt = gt + 1) begin : pk
+        assign mrf[gt*MW +: MW] = mr[gt]; assign mif[gt*MW +: MW] = mi[gt];
+    end endgenerate
+    wire signed [PW-1:0] sr, si;
+    hbsum #(.T(T), .R(R), .MW(MW), .PW(PW), .SH(SH)) u_sr (.clk(clk), .m(mrf), .s(sr));
+    hbsum #(.T(T), .R(R), .MW(MW), .PW(PW), .SH(SH)) u_si (.clk(clk), .m(mif), .s(si));
     reg [NLV:0]         tv;
     reg [CW-1:0]        tc [0:NLV];
-    reg signed [PW-1:0] ar, ai;
-    integer lv, n, j;
+    integer lv;
     always @(posedge clk) begin
-        for (n = 0; n < T; n = n + 1) begin
-            tr[n] <= (n == 0) ? mr[n] + RND : mr[n];
-            ti[n] <= (n == 0) ? mi[n] + RND : mi[n];
-        end
-        for (lv = 0; lv < NLV; lv = lv + 1)
-            for (n = 0; n < T; n = n + 1)
-                if (R * n < cnt_at(lv)) begin
-                    ar = 0; ai = 0;
-                    for (j = 0; j < R; j = j + 1)
-                        if (R * n + j < cnt_at(lv)) begin ar = ar + tr[lv*T + R*n + j]; ai = ai + ti[lv*T + R*n + j]; end
-                    tr[(lv+1)*T + n] <= ar;
-                    ti[(lv+1)*T + n] <= ai;
-                end
         tv <= {tv[NLV-1:0], v3 & ~rst};
         tc[0] <= c3;
         for (lv = 1; lv <= NLV; lv = lv + 1) tc[lv] <= tc[lv-1];
     end
-    wire signed [PW-1:0] sr = tr[NLV*T];
-    wire signed [PW-1:0] si = ti[NLV*T];
     wire                 v4 = tv[NLV];
 
     wire signed [PW-1:0] rr = sr >>> SH;
@@ -198,4 +187,39 @@ module hbmc #(
         out_v  <= v4 & ~rst;
         out_ch <= tc[NLV];
     end
+endmodule
+
+// hbsum — hbmc の和の木（T 項 → 1、R 項ずつ、段ごとにレジスタ。丸めの +2^(SH−1) は項 0 で足す）。LUT で作る
+(* use_dsp = "no" *)
+module hbsum #(
+    parameter integer T = 5, parameter integer R = 3, parameter integer MW = 43, parameter integer PW = 49, parameter integer SH = 17
+)(
+    input  wire                 clk,
+    input  wire [T*MW-1:0]      m,
+    output wire signed [PW-1:0] s
+);
+    function integer nlv_of(input integer t, input integer r);
+        integer c, k; begin c = t; k = 0; while (c > 1) begin c = (c + r - 1) / r; k = k + 1; end nlv_of = (k > 0) ? k : 1; end
+    endfunction
+    localparam integer NLV = nlv_of(T, R);
+    function integer cnt_at(input integer lv);
+        integer c, k; begin c = T; for (k = 0; k < lv; k = k + 1) c = (c + R - 1) / R; cnt_at = c; end
+    endfunction
+    localparam signed [PW-1:0] RND = 1 <<< (SH - 1);
+    reg signed [PW-1:0] tr [0:(NLV+1)*T-1];
+    reg signed [PW-1:0] ar;
+    integer lv, n, j;
+    always @(posedge clk) begin
+        for (n = 0; n < T; n = n + 1)
+            tr[n] <= (n == 0) ? $signed(m[n*MW +: MW]) + RND : $signed(m[n*MW +: MW]);
+        for (lv = 0; lv < NLV; lv = lv + 1)
+            for (n = 0; n < T; n = n + 1)
+                if (R * n < cnt_at(lv)) begin
+                    ar = 0;
+                    for (j = 0; j < R; j = j + 1)
+                        if (R * n + j < cnt_at(lv)) ar = ar + tr[lv*T + R*n + j];
+                    tr[(lv+1)*T + n] <= ar;
+                end
+    end
+    assign s = tr[NLV*T];
 endmodule
