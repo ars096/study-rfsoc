@@ -528,22 +528,21 @@ systemctl list-timers --all | grep apt     # 何も出なければ止まって�
 
 ### 09. ボードの送り出しが ≒ 200 Mbit/s で止まる（GEM の AXI_MAX_PIPELINE）
 
-RFSoC4x2 の PS の Ethernet（eth0 = GEM1、0xFF0C0000、ドライバ macb）は、AXI_MAX_PIPELINE（0xFF0C0054）が既定の 0x0101（AXI の要求が読み書き 1 本ずつ）のままで、送り出しが TCP ≒ 200 Mbit/s で止まる。
-**0x0808 にすると ≒ 424 Mbit/s**（proj035、2026-10-28）。0x2020 は書いた直後に GEM が止まるので、0x0808 より大きくしない。
-**ただし 0x0808 だと、2G-4 を運用の形（ネットワークの tint 30.72 ms）で回すと取得が追いつかない**（proj035）。**今は 0x0101 のまま運用し、下のユニットは disabled にしてある**（2026-10-28）。2G の束ねの取得を C にした後で確かめ直す。
-レジスタは起動のたびに 0x0101 に戻る（リンクの down / up では戻らない）ので、使うときは起動のときに systemd の oneshot で書く（ボードには入れてあり、disabled）:
+RFSoC4x2 の PS の Ethernet（eth0 = GEM1、0xFF0C0000、ドライバ macb）は、AXI_MAX_PIPELINE（0xFF0C0054）の**下の byte（読みの要求の数、送信で DDR から読む）**が既定の 1 のままで、送り出しが TCP ≒ 194 Mbit/s で止まる（上の byte は書き = 受信）。
+**0x0102（読み 2 本）にすると ≒ 348 Mbit/s**（proj035、2026-10-28）。**読みを 4 本以上にしない**: 送り出しは 403〜420 Mbit/s まで上がるが、GEM の深い読みが CPU の DDR の読みを遅くし（8 本・16 MB/s の送り出しで読みの遅れ 151 → 190 ns）、2G-4 の取得（ネットワークの tint 30.72 ms）が追いつかなくなる。0x2020 は GEM が止まる。
+レジスタは起動のたびに 0x0101 に戻る（リンクの down / up では戻らない）ので、**起動のときに systemd の oneshot で書く**（2026-10-28 にボードに入れて有効）:
 
 ```bash
 # この PC の study-rfsoc から（ボードの root に鍵で入れる）
 scp proj035/board/gem-axi-pipeline.py root@<board>:/usr/local/sbin/
 scp proj035/board/gem-axi-pipeline.service root@<board>:/etc/systemd/system/
 ssh root@<board> 'chmod 755 /usr/local/sbin/gem-axi-pipeline.py && systemctl daemon-reload && systemctl enable gem-axi-pipeline.service'
-# 起動し直して確かめる: 「gem1 AXI_MAX_PIPELINE 0x0101 -> 0x0808」が出て active (exited)
-ssh root@<board> 'systemctl status gem-axi-pipeline --no-pager | tail -3'
+# 起動し直して確かめる: 「gem1 AXI_MAX_PIPELINE 0x0101 -> 0x0102」が出て active (exited)
+ssh root@<board> 'journalctl -u gem-axi-pipeline -b --no-pager | tail -2'
 ```
 
-ボードを焼き直したら（SD カードを作り直したら）もう一度やる。読み返しが 0x0808 でなければユニットは failed になる。
-速くなったぶん、ボードから制限なしで大量に送る（scp・iperf3 など ≒ 420 Mbit/s）と、2G-4 の取得（tint 10.24 ms）が追いつかなくなり PL のリングで落ちる（proj035）。運用の送り出し（予算 20 MB/s）や 300 Mbit/s までの送り出しでは落ちない。**観測中にボードから大きなファイルを送らない**
+ボードを焼き直したら（SD カードを作り直したら）もう一度やる。読み返しが 0x0102 でなければユニットは failed になる。
+ボードから制限なしで大量に送る（scp・iperf3 など）と、2G-4 の取得が追いつかなくなることがある（proj035。0x0808 では ≒ 420 Mbit/s で落ちた）。**観測中にボードから大きなファイルを送らない**
 
 ---
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=GEM1 (eth0) AXI_MAX_PIPELINE = 0x0808 (study-rfsoc proj035)
+Description=GEM1 (eth0) AXI_MAX_PIPELINE = 0x0102 (study-rfsoc proj035)
 DefaultDependencies=no
 After=sysinit.target
 Before=network-pre.target
