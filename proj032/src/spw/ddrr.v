@@ -86,17 +86,28 @@ module ddrr #(
     reg  [6:0]   beat;
     wire [2:0]   rq_hd = arq[ar_p[2:0]];
     reg  [9:0]   cnt [0:1];         // 半分ごとに入った拍（512 で埋まった）
-    (* ram_style = "block" *) reg [127:0] buf0 [0:255], buf1 [0:255], buf2 [0:255], buf3 [0:255];
-    wire [7:0]   wad = {rq_hd[2], beat};
+    // 溜め: BRAM 4 つ（512 行 × 64 bit）。行 = 4 標本の組の番号 q（半分 1 bit ＋ 組 8 bit）、タップ t の組 q は BRAM (t + q) mod 4 に
+    //   書き: 拍（タップ t、組 2j と 2j+1 の 8 標本）は BRAM (t + 2j) と (t + 2j + 1) の 2 つに 64 bit ずつ（同じ BRAM に重ならない）
+    //   読み: 番地 a の組 q を 4 つの BRAM から同じ行で読むと、BRAM m にタップ (m − q) mod 4 が出る
+    //   （D-2 の最初の版はタップごとに 128 bit 幅の BRAM 2 つ・半分しか使わず、機関ごとに 8。D-2b でこの形にして 4）
+    (* ram_style = "block" *) reg [63:0] bm0 [0:511], bm1 [0:511], bm2 [0:511], bm3 [0:511];
+    wire [8:0]   ql = {rq_hd[2], beat, 1'b0}, qh = {rq_hd[2], beat, 1'b1};
+    wire [1:0]   ml = rq_hd[1:0] + {beat[0], 1'b0}, mh = rq_hd[1:0] + {beat[0], 1'b1};
+    // BRAM ごとに書く番地とデータを先に選び、書き込みは 1 文に（D-2b の 1 回目は if / else if の 2 文で書き、BRAM にならず LUTRAM に: LUT +19,000）
+    wire [3:0]   wen;
+    wire [8:0]   wa [0:3];
+    wire [63:0]  wd [0:3];
+    genvar       gm;
+    generate for (gm = 0; gm < 4; gm = gm + 1) begin : wsel
+        assign wen[gm] = m_rvalid && (ml == gm || mh == gm);
+        assign wa[gm]  = (ml == gm) ? ql : qh;
+        assign wd[gm]  = (ml == gm) ? m_rdata[63:0] : m_rdata[127:64];
+    end endgenerate
     always @(posedge clk) begin
-        if (m_rvalid) begin
-            case (rq_hd[1:0])
-                2'd0: buf0[wad] <= m_rdata;
-                2'd1: buf1[wad] <= m_rdata;
-                2'd2: buf2[wad] <= m_rdata;
-                default: buf3[wad] <= m_rdata;
-            endcase
-        end
+        if (wen[0]) bm0[wa[0]] <= wd[0];
+        if (wen[1]) bm1[wa[1]] <= wd[1];
+        if (wen[2]) bm2[wa[2]] <= wd[2];
+        if (wen[3]) bm3[wa[3]] <= wd[3];
     end
     // 埋まりの数え: 拍で増やし、区画の最後の番地（使い終えた時）で 0 に。DDR の仕事でない枠でも同じ所で消す
     //   （次の仕事の区画はどれも消した後に読み始めるので、拍を落とさない。act で絞ると、使わなかった区画の数が残り、次の仕事で数え違える）
@@ -120,18 +131,20 @@ module ddrr #(
         else if (go && act && a[9:0] == 10'd0 && cnt[a[10]] != 10'd512) flags[0] <= 1'b1;
     end
 
-    // ---- 読み（P0 の a → P1 行 → P2 標本を選ぶ）----
-    reg  [127:0] q0, q1, q2, q3;
-    reg  [2:0]   s1, s2;
+    // ---- 読み（P0 の a → P1 行 → P2 タップを並べ替えて標本を選ぶ）----
+    reg  [63:0]  q0, q1, q2, q3;
+    reg  [1:0]   s1, r1;            // 組の中の標本・組の番号の下 2 bit
     always @(posedge clk) begin
-        q0 <= buf0[{a[10], a[9:3]}]; q1 <= buf1[{a[10], a[9:3]}];
-        q2 <= buf2[{a[10], a[9:3]}]; q3 <= buf3[{a[10], a[9:3]}];
-        s1 <= a[2:0];
+        q0 <= bm0[{a[10], a[9:2]}]; q1 <= bm1[{a[10], a[9:2]}];
+        q2 <= bm2[{a[10], a[9:2]}]; q3 <= bm3[{a[10], a[9:2]}];
+        s1 <= a[1:0]; r1 <= a[3:2];
     end
+    // タップ t は BRAM (t + q) mod 4
+    wire [63:0]  qq [0:3];
+    assign qq[0] = q0, qq[1] = q1, qq[2] = q2, qq[3] = q3;
     reg  [63:0]  ddr_q;
-    always @(posedge clk) begin
-        s2 <= s1;
-        ddr_q <= {q3[s1*16 +: 16], q2[s1*16 +: 16], q1[s1*16 +: 16], q0[s1*16 +: 16]};
-    end
+    integer      t;
+    always @(posedge clk)
+        for (t = 0; t < 4; t = t + 1) ddr_q[t*16 +: 16] <= qq[(t + r1) % 4][s1*16 +: 16];
     assign dd = ddr_q;
 endmodule
