@@ -44,9 +44,11 @@ CAL = {
     # proj030（2G-4 の 2-for-1、PROJ 0x0030_0100）: ギアボックス・time_core・RAW の RTL は proj027 と同じだが、別の Overlay・別の配置なので
     #   proj027 の値は持ち込まず、R-5 の F-2 で測った（pps_det_ns は LPF の分で bit に依らない）
     # proj031（2G-4 の 2-for-1 ＋ 係数 URAM、PROJ 0x0031_0100）: 別の Overlay・別の配置なので proj030 の値は持ち込まない。**未較正**（R の F-2 で測って埋める）
-    # proj031 rev 2（PROJ 0x0031_0200、coef_mis を START で消す直し）: rev 1 と別の配置なので値は持ち込まない。**未較正**（R の F-2 は rev 2 で測る）
-    0x0031_0200: dict(pps_det_ns=71.5, adc_to_core_ns=None, bound_ns=50,
-                      source="proj031 rev 2: 未較正（F-2 の前。pps_det_ns は LPF の分 71.5 で bit に依らない、形 (b)）"),
+    # proj031 rev 2（PROJ 0x0031_0200、coef_mis を START で消す直し）: rev 1 と別の配置なので値は持ち込まず、R-5 の F-2 で測った（rev 1 は未較正のまま）
+    0x0031_0200: dict(pps_det_ns=71.5, adc_to_core_ns={0: 140.9, 1: 141.1, 2: 141.6, 3: 141.9}, bound_ns=50,
+                      source="proj031 rev 2 R-5 の F-2（2026-10-28、配線 P・1PPS の入口に LPF BLP-10.7+）: RAW の流れ（コア 0 の s 1、SRC で ADC を選ぶ）の生サンプルで "
+                             "1PPS の縁がコアに入った T − スタンプを 4 ADC、ケーブルを A↔D・B↔C に入れ替えて 2 回（f2_31a・f2_31b）。M = A 69.4・B 69.6・C 70.1・D 70.4 ns。"
+                             "(b): pps_det_ns = LPF の分 71.5、adc_to_core_ns = M ＋ 71.5（LPF を外したら pps_det_ns を 0 に）"),
     0x0031_0100: dict(pps_det_ns=71.5, adc_to_core_ns=None, bound_ns=50,
                       source="proj031: 未較正（F-2 の前。pps_det_ns は LPF の分 71.5 で bit に依らない、形 (b)）"),
     0x0030_0100: dict(pps_det_ns=71.5, adc_to_core_ns={0: 140.5, 1: 142.8, 2: 141.6, 3: 141.9}, bound_ns=50,
