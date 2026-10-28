@@ -9,6 +9,24 @@ set tag $top
 if {[info exists ::env(OOC_TAG)] && $::env(OOC_TAG) ne ""} { set tag $::env(OOC_TAG) }
 set outdir ./build-ooc/$tag
 file mkdir $outdir
+# OOC_FFT=1: FFT IP win_fft（複素 4096 点・入力 18 bit・unscaled・realtime・use_mults_resources・use_luts。proj021 の build.tcl と同じ設定）を作って一緒に合成する（E-4 の機関）
+if {[info exists ::env(OOC_FFT)] && $::env(OOC_FFT) eq "1"} {
+    create_project -in_memory -part $part
+    create_ip -name xfft -vendor xilinx.com -library ip -module_name win_fft -dir $outdir
+    set wfft [get_ips win_fft]
+    set req [list CONFIG.transform_length 4096 CONFIG.implementation_options pipelined_streaming_io CONFIG.data_format fixed_point \
+                  CONFIG.input_width 18 CONFIG.scaling_options unscaled CONFIG.output_ordering natural_order CONFIG.xk_index true \
+                  CONFIG.throttle_scheme realtime CONFIG.aresetn true CONFIG.run_time_configurable_transform_length false \
+                  CONFIG.cyclic_prefix_insertion false CONFIG.channels 1 CONFIG.complex_mult_type use_mults_resources CONFIG.butterfly_type use_luts]
+    set_property -dict [concat $req [list CONFIG.target_clock_frequency 256 CONFIG.phase_factor_width 18 CONFIG.rounding_modes convergent_rounding CONFIG.ovflo false]] $wfft
+    set ng 0
+    foreach {k v} $req { if {![string equal -nocase [get_property $k $wfft] $v]} { puts "ERROR: win_fft $k = [get_property $k $wfft]（要求 $v）"; incr ng } }
+    set ow ""; catch {set ow [get_property CONFIG.output_width $wfft]}
+    if {$ow ne "" && $ow != 31} { puts "ERROR: win_fft の出力の幅 [get_property CONFIG.output_width $wfft]（期待 31）"; incr ng }
+    if {$ng} { exit 1 }
+    generate_target all $wfft
+    synth_ip $wfft
+}
 foreach f $files { read_verilog $f }
 # generic は環境変数 OOC_GENERIC（「名前=値」を ; で区切る）。$readmemh の hex は絶対パスで渡す（LESSONS: 読めないと ROM が 0 になり BRAM が消えるだけで通る）
 set gens {}

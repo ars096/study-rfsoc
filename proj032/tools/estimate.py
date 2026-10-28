@@ -45,12 +45,14 @@ add(f"頭の NCO ＋ light 1 段目 × {H}", H * 791, H * 10, H * nco_bram, 0,
     "E-3 実（配置後）: head_core")
 add(f"後段の共有（light 2〜4 段目・final {E} 本、ddcb）", DDCB_LUT(H, E), 10 * L_LANES(H) + 36 * E, 0, 0,
     "E-3 実（配置後）: ddcb の OOC（H・E が違うときは lane の数で比例）")
-add(f"機関（窓の PFB ＋ FFT ＋ 積分の制御）× {E}", E * 5_900, E * 42, E * 19, 0,
-    "推: Fine の u_ws（42 DSP・5,890 LUT・FFT 15 ＋ 係数 4）")
-add(f"窓ごとの積分器 × {H}", H * 300, 0, 0, H * 1, "推: 4096 × 48 bit = URAM 1、制御 300 LUT")
-hist_kbit = S * 5 * 4096 * 36 / 1000
-add(f"チップ内の履歴（5 フレーム × 36 bit）× {S}", S * 200, 0, hist_kbit / KB_RAMB36, 0,
-    "推: 737 kbit / 窓。ここでは全部 BRAM に置いて数える（URAM の残りに寄せれば減る）")
+# E-4: wsb（機関 E ＋ 履歴の枠 S ＋ 積分器 H）の OOC（配置後、H 14・E 3・S 6）: DSP 126・LUT 21,843・RAMB36 124・RAMB18 90・URAM 14。
+#   機関 1 組 ≒ 6,630 LUT（自前 ≒ 2,750 ＋ FFT の IP 3,848）・DSP 42・RAMB18 30。残り 1,953 LUT（上位の選び 375 と機関 0 に寄った共有の論理）は H に比例させる
+WSB_ENG_LUT, WSB_REST_LUT = 6_630, 21_843 - 3 * 6_630
+add(f"機関（窓の PFB ＋ FFT ＋ 電力・積分の制御）× {E}", E * WSB_ENG_LUT + WSB_REST_LUT * H / 14, E * 42, E * 15 + 4, 0,
+    "E-4 実（配置後）: wsb の OOC。BRAM は FFT 15 / 機関 ＋ 係数の ROM 4（全機関で共有）")
+add(f"窓ごとの積分器 × {H}", 0, 0, 0, H * 1, "E-4 実: 4096 × 64 bit = URAM 1（読み書きの選びの LUT は上の行）")
+add(f"チップ内の履歴（5 フレーム × 36 bit）× {S}", 0, 0, S * 20, 0,
+    "E-4 実: 5 面 × RAMB36 4（LUT は上の行）")
 add("DDR の道（書き手・読み手・溜め）", 3_000, 0, 13, 0, "推: proj028 の ct_wr。BRAM は D-1 の実機から: 書きのバースト 2 KiB × 2 面 × 窓 14")
 add("TP・RAW・コアの上位", 3_700, 24, 10, 0, "E-1 実: Fine の u_tp・u_raw・u_win の上位")
 
