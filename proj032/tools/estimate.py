@@ -24,27 +24,34 @@ psplit = not a.no_psplit
 NADC = 4
 
 rows = []   # (名前, LUT, DSP, RAMB36, URAM, 出典)
+
+def L_LANES(h):   # light の lane: 2 段目 ⌈h/4⌉・3 段目 ⌈h/8⌉・4 段目 ⌈h/16⌉
+    return (h + 3) // 4 + (h + 7) // 8 + (h + 15) // 16
+DDCB_REF = dict(H=14, E=3, LUT=18_366)     # E-3 の ddcb の OOC（配置後）の LUT。下の DDCB_LUT が lane の数で比例させる
+def DDCB_LUT(h, e):
+    # 実数は H 14・E 3。lane（light 685・final 2,151 の配置後の実数）と、窓ごとのつなぎ（残り）に分けて比例させる
+    lanes_ref = 685 * L_LANES(14) + 2_151 * 3
+    glue_ref = DDCB_REF["LUT"] - lanes_ref
+    return 685 * L_LANES(h) + 2_151 * e + glue_ref * h / 14
 def add(name, lut, dsp, bram, uram, src):
     rows.append((name, lut, dsp, bram, uram, src))
 
 # ---- ADC ごと ----
-add("粗い PFB（共有部分）", 11_400, 312, 0, 0, "E-2 実: OOC NH 1 から頭 1 つ分を引いた")
-add(f"粗い PFB の頭ごとの選択・実数化 × {H}", H * (861 if psplit else 1_426), H * 4, 0, 0,
-    "E-2 実: OOC NH 1・8・16 の傾き" + ("（偶奇の 2 組）" if psplit else ""))
+add("粗い PFB（共有部分）", 10_077, 312, 0, 0, "E-3 実（配置後）: OOC NH 1 の 10,866 から頭 1 つ分を引いた")
+add(f"粗い PFB の頭ごとの選択・実数化 × {H}", H * (789 if psplit else 1_426), H * 4, 0, 0,
+    "E-3 実（配置後）: NH 1 と NH 14（偶奇の 2 組）の傾き" + ("" if psplit else "（偶奇なしは合成の数）"))
 nco_bram = 2 if a.nco_p == 14 else 0.5
-add(f"頭の NCO ＋ light 1 段目 × {H}", H * 816, H * 10, H * nco_bram, 0,
-    "E-2b 実: head_core の OOC（NCO 1 標本 ＋ hb2s C 2）")
-add("light 2〜4 段目（全窓で共有）", 4_500, 70, 0, 0,
-    "推: 頭の出口 128 MS/s × H = 8 標本 / クロック。Fine の hb2（2 標本で 10 DSP・494 LUT）× 7 ＋ 窓ごとの履歴")
-add("final（全窓で共有）", 6_000, 108, 0, 0,
-    "推: 入口 2·256·E MS/s = 6 標本 / クロック。Fine の final（2 標本で 36 DSP・1,741 LUT）× 3 ＋ 窓ごとの履歴")
+add(f"頭の NCO ＋ light 1 段目 × {H}", H * 791, H * 10, H * nco_bram, 0,
+    "E-3 実（配置後）: head_core")
+add(f"後段の共有（light 2〜4 段目・final {E} 本、ddcb）", DDCB_LUT(H, E), 10 * L_LANES(H) + 36 * E, 0, 0,
+    "E-3 実（配置後）: ddcb の OOC（H・E が違うときは lane の数で比例）")
 add(f"機関（窓の PFB ＋ FFT ＋ 積分の制御）× {E}", E * 5_900, E * 42, E * 19, 0,
     "推: Fine の u_ws（42 DSP・5,890 LUT・FFT 15 ＋ 係数 4）")
 add(f"窓ごとの積分器 × {H}", H * 300, 0, 0, H * 1, "推: 4096 × 48 bit = URAM 1、制御 300 LUT")
 hist_kbit = S * 5 * 4096 * 36 / 1000
 add(f"チップ内の履歴（5 フレーム × 36 bit）× {S}", S * 200, 0, hist_kbit / KB_RAMB36, 0,
     "推: 737 kbit / 窓。ここでは全部 BRAM に置いて数える（URAM の残りに寄せれば減る）")
-add("DDR の道（書き手・読み手・溜め）", 3_000, 0, 8, 0, "推: proj028 の ct_wr（BRAM 64 は corner turn の溜め。ここは 1 窓ぶんの溜め）")
+add("DDR の道（書き手・読み手・溜め）", 3_000, 0, 13, 0, "推: proj028 の ct_wr。BRAM は D-1 の実機から: 書きのバースト 2 KiB × 2 面 × 窓 14")
 add("TP・RAW・コアの上位", 3_700, 24, 10, 0, "E-1 実: Fine の u_tp・u_raw・u_win の上位")
 
 per = [sum(r[i] for r in rows) for i in (1, 2, 3, 4)]

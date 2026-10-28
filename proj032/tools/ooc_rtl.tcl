@@ -29,3 +29,14 @@ report_timing -max_paths 5 -file $outdir/timing_$top.rpt
 set dsp [llength [get_cells -quiet -hierarchical -filter {REF_NAME == DSP48E2}]]
 proc uf {txt label} { if {[regexp -line "^\\|\\s*${label}\\*?\\s*\\|\\s*(\\d+(?:\\.\\d+)?)\\s*\\|" $txt -> n]} { return $n }; return "?" }
 puts "OOC $top: DSP $dsp・LUT [uf $rpt {CLB LUTs}]・FF [uf $rpt {CLB Registers}]・BRAM [uf $rpt {Block RAM Tile}]・URAM [uf $rpt URAM]・WNS $wns（$period ns）"
+# OOC_PLACE=1: opt_design・place_design まで進めて数え直す（合成の LUT は LUT の詰め合わせ前の数。LUTRAM の 2 出力の詰めなど）
+if {[info exists ::env(OOC_PLACE)] && $::env(OOC_PLACE) eq "1"} {
+    opt_design
+    place_design
+    set wns [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]
+    set rpt [report_utilization -return_string]
+    set fh [open $outdir/util_${top}_placed.rpt w]; puts $fh $rpt; close $fh
+    report_utilization -hierarchical -hierarchical_depth 3 -file $outdir/util_${top}_placed_hier.rpt
+    report_timing -max_paths 5 -file $outdir/timing_${top}_placed.rpt
+    puts "OOC placed $top: DSP $dsp・LUT [uf $rpt {CLB LUTs}]・FF [uf $rpt {CLB Registers}]・BRAM [uf $rpt {Block RAM Tile}]・URAM [uf $rpt URAM]・WNS $wns（$period ns）"
+}
