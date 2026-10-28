@@ -12,7 +12,7 @@
 //   NU 2: 1 語 = 1 拍。NU 1: 2 語 = 1 拍（出口は最大 0.5 拍 / クロック = 2 GB/s）
 // 頭の語（u64、リトルエンディアン）:
 //   w0 magic "S45R" / rec_ver 2 / type 5（SpW の窓）/ core = ADC / s = 窓 w      w1 SEQ（この受け手のレコードの番号）/ DUMP_K
-//   w2 DUMP_F0・w3 DUMP_T（まだ 0: 時刻の道は PS のレジスタの設計で）
+//   w2 DUMP_F0 = (g0 ＋ k·ng)·2^(G_L2 − 12 − NS)（窓のフレーム）・w3 DUMP_T = t0[w] ＋ (g0 ＋ k·ng)·2^G_L2（R-1: ダンプの最初のフレームの z 0 のビート。ng は下 16 bit）
 //   w4 log2 NFFT 12 / NS / SHIFT / G / fmt 1（f32）/ src = ADC / DUMP_H 0        w5 DUMP_N = ng·2^(G_L2 − 12 − NS) / DUMP_SAT 0
 //   w6 DUMP_CFG 0 / FLAGS 0                                                       w7 本体のバイト数 16384 / 0
 // flags（粘着）: [0] 札の FIFO の溢れ [1] 出口の FIFO の溢れ [2] ダンプを捨てた [3] ダンプの途中で ch が飛んだ
@@ -37,6 +37,8 @@ module dsink #(
     input  wire [H*4-1:0]       cfg_sh,
     input  wire [H*4-1:0]       cfg_g,
     input  wire [31:0]          ng,
+    input  wire [31:0]          g0,
+    input  wire [H*64-1:0]      t0,
     output wire [127:0]         m_tdata,
     output wire                 m_tvalid,
     input  wire                 m_tready,
@@ -124,7 +126,7 @@ module dsink #(
     // ---- 読みの側: レコードを 1 つずつ ----
     localparam [1:0] R_IDLE = 2'd0, R_PRE = 2'd3, R_HDR = 2'd1, R_BODY = 2'd2;
     reg  [1:0]   rs;
-    reg  [1:0]   pre;                   // R_PRE: 頭の値（下の 2 段）が cur に揃うのを待つ
+    reg  [2:0]   pre;                   // R_PRE: 頭の値（下の 4 段）が cur に揃うのを待つ
     reg  [1:0]   cur, rr;
     reg  [1:0]   hb;
     reg  [11:0]  left;                  // 本体の残りの語（読みを出す数）
@@ -132,7 +134,7 @@ module dsink #(
     reg  [4:0]   oc;                    // 出口の拍で、出すと決めて出口から出ていないもの
     reg  [3:0]   cw;
     reg  [31:0]  ck;
-    reg  [63:0]  w0, w1h, w4, w5;
+    reg  [63:0]  w0, w1h, w2, w3, w4, w5;
     wire         o_room = oc < 5'd10;
     wire [12:0]  avail = wpv[cur] - rp[cur];
     // 出口の FIFO（{last, 拍}）
@@ -182,19 +184,19 @@ module dsink #(
                     for (i = E - 1; i >= 0; i = i - 1)
                         if (!t_empty[(rr + i) % E]) cur <= (rr + i) % E;
                     if (|(~t_empty)) begin
-                        rs <= R_PRE; pre <= 2'd0; hb <= 2'd0;
+                        rs <= R_PRE; pre <= 3'd0; hb <= 2'd0;
                     end
                 end
                 R_PRE: begin
-                    pre <= pre + 2'd1;
-                    if (pre == 2'd2) rs <= R_HDR;
+                    pre <= pre + 3'd1;
+                    if (pre == 3'd4) rs <= R_HDR;
                 end
                 R_HDR: begin
                     if (o_room) begin
                         op <= 1'b1;
                         case (hb)
                             2'd0: od <= {1'b0, ck, seq, w0};
-                            2'd1: od <= {1'b0, 128'd0};
+                            2'd1: od <= {1'b0, w3, w2};
                             2'd2: od <= {1'b0, w5, w4};
                             default: od <= {1'b0, {32'd0, 32'd16384}, 64'd0};
                         endcase
@@ -207,7 +209,7 @@ module dsink #(
             endcase
         end
     end
-    // 頭の値（cur と札の頭から毎クロック 2 段で作る。R_PRE で 3 クロック待ってから R_HDR で出す）
+    // 頭の値（cur と札の頭から毎クロック 4 段で作る。R_PRE で 5 クロック待ってから R_HDR で出す）
     wire [35:0]  th = t_head[cur];
     always @(posedge clk) begin
         cw   <= th[35:32];
@@ -218,6 +220,21 @@ module dsink #(
         w0   <= {4'd0, cw, ADC[7:0], 8'd5, 8'd2, 32'h5235_3453};
         w4   <= {16'd0, ADC[7:0], 8'd1, 4'd0, g_c, 4'd0, sh_c, 5'd0, ns_c, 8'd12};
         w5   <= {32'd0, ng << (G_L2 - 12 - ns_c)};
+    end
+    // 時刻: k·ng（DSP）→ g0 ＋ → 格子からフレーム・ビートへ
+    reg  [47:0]  kn;
+    reg  [63:0]  t0c, t0d;
+    reg  [47:0]  gk;
+    reg  [2:0]   ns_d, ns_e;
+    always @(posedge clk) begin
+        kn   <= ck * ng[15:0];
+        t0c  <= t0[cw*64 +: 64];
+        ns_d <= ns_c;
+        gk   <= {16'd0, g0} + kn;
+        t0d  <= t0c;
+        ns_e <= ns_d;
+        w2   <= {16'd0, gk} << (G_L2 - 12 - ns_e);
+        w3   <= t0d + ({16'd0, gk} << G_L2);
     end
 
     always @(posedge clk) begin

@@ -581,7 +581,36 @@ LUT の内訳は f32cv 300 × 3・ring128 1,458（CRC の XOR の木を含む）
 
 **決めた（2026-10-28）: 受け手の溜めはまず NU 2（URAM 2 / 機関、URAM 100 %）**。書き出しが 1 GB/s まで落ちても捨てない。全体で入らなければ NU 1（85 %）に下げる
 
-**変更案（INTERFACE、YATSUGATAKE に入れるとき）**: 4.4 のレコードに type 5（SpW の窓、s = 窓の番号）と fmt 1（f32、PL が丸めた値。u64 → double → float と同じ）を足す。リングは ADC ごとに 1 つ（HP の口 1 本ずつ）
+**変更案（INTERFACE、YATSUGATAKE に入れるとき）**: 4.4 のレコードに type 5（SpW の窓、s = 窓の番号）と fmt 1（f32、PL が丸めた値。u64 → double → float と同じ）を足す。リングは ADC ごとに 1 つ（HP の口 1 本ずつ）。
+**4.5 の決定「リングの中は常に u64 の生の積分値。PL は切らない・丸めない」を SpW では改めることになる**（理由: u64 の山は口 1 本の上限 4.1 GB/s を越える、K-1・D-3）。4.5 の「照合は試験の命令で（u64 と f32 の両方）」は、SpW では PL の丸めと PS の丸めが同じ値になることの照合（sim の check_ring）に置き換わる
+
+### R-1: PS のレジスタとレコードの時刻（案、2026-10-28）
+
+正典（YATSUGATAKE の docs/spec/interface.md・timing.md、origin/main 2026-10-28）の形に SpW の窓を載せる。
+
+- **コアと流れ**: ADC ごとにコア `s45_core_i`（64 KiB、BIT_KIND 7 = SpW8）。窓 w = 流れ s（KIND 3 DDC、s = 0..13）のブロック（0x4000 + 0x400·s）。
+  DDC に固有の設定（0x100〜）は今と同じ WK・WDPHI・WNS に、**SpW に固有の FL（lane = 機関）・SL（履歴の枠: < S はチップ内、≧ S は DDR）・G（DDR の 8 bit の利得）** を足す
+- **RUN・WRST はコアで 1 つ（案）**: 機関の選びの約束（lane ごとに幅の和 ≦ 256 MHz・DDR の窓の和 ≦ 256 MHz）は窓の組で決まるので、窓を 1 本ずつ入れ替えると途中で約束が崩れうる。
+  流れのブロックの CTRL の RUN・WRST・ARM は受けるが、**どの流れに打ってもコアの全部の窓に効く**（specd は今も全部の流れに同じ START_AT で ARM するので、PS の手順は変わらない）。
+  設定は WRST で取り込み、WRST の前に PS が上の約束を確かめる（PL も lane の和を数えて、破れていれば WRST を断り FLAGS に）
+- **N_ACC・N_DUMP もコアで 1 つ**: 区切りは全窓で同じ格子（ng 格子 = 5 で BASE 10.24 ms。どの NS のフレーム長も G = 2.048 ms を割り切る）
+- **DUMP_T（PS が束ねに使う: m = round(DUMP_T / BASE)）**: SAM45-Fine と同じ意味 = **ダンプの最初のフレームの最初の z が機関に入ったビートの T**。
+  eng の書きの側で、ダンプの頭のフレームの z 0 のときに time_core の T を窓ごとに取っておき（LUTRAM、窓 14 × 64 bit × 2 面）、ダンプを流す仕事の札で d_* に添える。
+  DUMP_F0 = F0 ＋ k·N（窓のフレーム）、DUMP_N = N。時刻の補正は DDC と同じ式（D_eff = D(NS) ＋ 1.5·L(NS)。D(NS) は SpW の鎖の sim で測る）
+- **格子は time_core の T に揃える**: wsb の gidx（今は rst から数える）を T[63:19] に替える（RUN の g0 = START_AT の格子 ＋ 2）
+- **帳簿の seqlock**（流れのブロックの SEQ・DUMP_* を AXI4-Lite で読む）: レコードに全部入るので、SpW では最後のダンプの写しだけ（試験と移行用）
+- まだ決めないもの: 診断（0x200〜）の中身、DDR の窓の利得 G の決め方（PS が M-2 の式で）
+
+**決めた（2026-10-28）: RUN・WRST はコアで 1 つ。**
+
+**時刻の道の RTL（R-1a）**:
+- `wsb`: 入口に time_core の T（`t_now`）。rst（= WRST）の後に窓 w の最初の標本が入口に来たビートを `t0[w]` に取る（機関は rst の後の標本を全部フレーム 0 から数え、書きの側は go を待たない）
+- `dsink`: レコードの頭に **DUMP_F0 = (g0 ＋ k·ng)·2^(G_L2 − 12 − NS)**・**DUMP_T = t0[w] ＋ (g0 ＋ k·ng)·2^G_L2**（k·ng は DSP 2、ng は下 16 bit）。頭の値の段を 2 → 4 段にした
+- sim（tb が窓ごとにフレームの頭の標本が入口に入ったビートを `wsb_t.log` に、`check_ring.py` が DUMP_F0 と DUMP_T を照らす。揺れの許し ≦ 16 ビート）:
+  CFG 2・TB_S 1 / CFG 0・TB_S 14 / CFG 0・TB_S 6 / CFG 1・TB_S 6 で **DUMP_F0 一致・DUMP_T の差の最大 0 ビート**、ほかの照合も全部通過。
+  照合の陽性対照（窓 0 のフレームの頭の時刻を 20 ビートずらす）は落ちた。tb の入口は窓のフレームの頭を待たせないので揺れが 0。実際の ddcb の lane の揺れは数ビートの見込み（時刻の補正の D(NS) と一緒に測る）
+- OOC（ksink_ooc、配置後）: DSP 2・LUT 3,675（+538: t0 の選び・足し算）・URAM 6・WNS +0.577 ns
+- 残り（R-1b）: コアのレジスタ（共通部・流れのブロック・WRST / RUN の ARM と START_AT・T の格子に揃えた rst）。今は wsb の rst が WRST、cmd_run が RUN
 
 ## 結果
 

@@ -9,6 +9,7 @@
   - SEQ は 0 から 1 ずつ（受け手で捨てたダンプは SEQ を取らない）
   - 本体 = そのダンプ（窓 s・DUMP_K）の 4096 ch の u64 を f32 に丸めたもの（u < 2^53: float32(float64(u))）、ch の順
   - 頭の NS・SHIFT・G・DUMP_N が wsb_run.log の窓の設定と合う
+  - R-1: DUMP_F0 = (g0 ＋ K·ng)·2^(G_L2 − 12 − NS)、DUMP_T = そのフレームの頭の標本が入口に入ったビート（wsb_t.log）± 揺れ（≦ 16 ビート）
   - 流れの中の揃ったダンプは全部、レコードになっているか捨てた数（EXT_CNT）に入っている: 揃ったダンプ − レコード = EXT_CNT
 """
 import os
@@ -23,6 +24,12 @@ import numpy as np
 def main(d):
     run = open(os.path.join(d, "wsb_run.log")).read().split("\n")
     g_l2 = int(run[0].split()[3])
+    g0 = int(run[0].split()[1])
+    tf = {}
+    for l in open(os.path.join(d, "wsb_t.log")):
+        a, b, c = l.split()
+        tf[(int(a), int(b))] = int(c)
+    tmax = 0
     cfg = {}
     for l in run[1:]:
         f = l.split()
@@ -40,7 +47,7 @@ def main(d):
     # PAD の後ろ（リングの端まで）は書かれない場所なので x のまま。0 に読み替える（PAD で飛ばすので照らさない）
     raw = bytes.fromhex("".join(l.strip() for l in open(os.path.join(d, "wsb_ring.log"))).replace("x", "0"))
     errs = []
-    pos, seq, recs, pads, late = 0, 0, {}, 0, 0
+    pos, seq, recs, pads, late, nt = 0, 0, {}, 0, 0, 0
     while pos < len(raw):
         h = raw[pos:pos + 64]
         w = struct.unpack("<8Q", h)
@@ -70,6 +77,16 @@ def main(d):
         c = cfg[s]
         if (ns, sh, g, dn) != (c["ns"], c["sh"], c["g"], 1 << (g_l2 - 12 - c["ns"])):
             errs.append("SEQ %d 窓 %d: NS %d SHIFT %d G %d DUMP_N %d" % (sq, s, ns, sh, g, dn))
+        f0 = (g0 + dk) << (g_l2 - 12 - c["ns"])           # ng = 1（tb）
+        if w[2] != f0:
+            errs.append("SEQ %d 窓 %d K %d: DUMP_F0 %d（期待 %d）" % (sq, s, dk, w[2], f0))
+        if (s, f0) in tf:
+            dt = w[3] - tf[(s, f0)]
+            tmax = max(tmax, abs(dt))
+            if abs(dt) > 16:
+                errs.append("SEQ %d 窓 %d K %d: DUMP_T が入口の時刻と %d ビート違う" % (sq, s, dk, dt))
+        else:
+            nt += 1
         got = np.frombuffer(body, dtype="<u4")
         ref = full.get((s, dk))
         if ref is None:
@@ -83,7 +100,7 @@ def main(d):
         recs[(s, dk)] = sq
         pos += 128 + P
     miss = [key for key in full if key not in recs]
-    print("照らさないレコード（流れの記録を閉じた後）%d" % late)
+    print("照らさないレコード（流れの記録を閉じた後）%d・DUMP_T を照らせないレコード %d・DUMP_T と入口の時刻の差の最大 %d ビート" % (late, nt, tmax))
     print("レコード %d（PAD %d）・REC_CNT %d・揃ったダンプ %d・レコードにないダンプ %d・EXT_CNT %d・DROP_CNT %d・PEAK %d B・sflags %s"
           % (len(recs), pads, rec_cnt, len(full), len(miss), ext_cnt, drop_cnt, peak, sflags))
     if len(recs) != rec_cnt:

@@ -67,6 +67,12 @@ module tb_wsb;
     reg  signed [W-1:0] vr, vi;
     integer fin, rr;
     reg     dm_on = 1;                    // 記録を取っている（終わりの待ちの間は取らない）
+    // R-1: time_core の T の真似（上位の bit も通るよう大きな値から）。窓ごとにフレームの頭（標本 4096·r）が入口に入るビートを wsb_t.log に
+    reg  [63:0] tnow = 64'h0000_0012_3456_7000;
+    always @(posedge clk) tnow <= tnow + 64'd1;
+    integer nsmp [0:H-1];
+    integer ftl;
+    initial begin ftl = $fopen("wsb_t.log", "w"); for (w = 0; w < H; w = w + 1) nsmp[w] = 0; end
     initial begin
         fin = $fopen("wsb_in.log", "w");
         for (w = 0; w < H; w = w + 1) due[w] = 0;
@@ -89,6 +95,8 @@ module tb_wsb;
                     rr = $random; vi = rr >>> 15; if (($random & 255) == 0) vi = ($random & 1) ? 20'sh7FFFF : 20'sh80000;
                     yv[e] <= 1'b1; ych[e*4 +: 4] <= best; yr[e*W +: W] <= vr; yi[e*W +: W] <= vi;
                     if (dm_on) $fwrite(fin, "%0d %0d %0d\n", best, vr, vi);
+                    if (dm_on && nsmp[best] % 4096 == 0) $fwrite(ftl, "%0d %0d %0d\n", best, nsmp[best] / 4096, tnow + 64'd1);   // wsb が t_now を取るのは次のクロック
+                    nsmp[best] = nsmp[best] + 1;
                 end
             end
         end
@@ -98,12 +106,14 @@ module tb_wsb;
     wire go; wire [31:0] g0;
     wire [E-1:0] dv; wire [E*4-1:0] dw; wire [E*32-1:0] dk; wire [E*12-1:0] dch; wire [E*64-1:0] dd; wire [E*16-1:0] flags;
     wire [2*E+1:0] dflags;
+    wire [H*64-1:0] t0w;
     wire [31:0] awaddr; wire [7:0] awlen; wire awvalid, awready, wlast, wvalid, wready, bvalid; wire [63:0] wdata;
     wire [E*32-1:0] araddr; wire [E-1:0] arvalid, arready, rvalid, rlast; wire [E*128-1:0] rdata;
     wsb #(.H(H), .E(E), .S(`TB_S), .W(W), .G_L2(`G_L2), .D(`DLY)) dut (
         .clk(clk), .rst(rst), .y_v(yv), .y_ch(ych), .y_re(yr), .y_im(yi),
         .cfg_ns(cfg_ns), .cfg_fl(cfg_fl), .cfg_sl(cfg_sl), .cfg_sh(cfg_sh), .cfg_g(cfg_g), .ddr_base(32'd0),
         .ng(32'd1), .ndump(32'd2), .cmd_run(run), .cmd_stop(stop),
+        .t_now(tnow), .t0(t0w),
         .go(go), .g0(g0), .d_v(dv), .d_w(dw), .d_k(dk), .d_ch(dch), .d_data(dd), .flags(flags), .dflags(dflags),
         .m_awaddr(awaddr), .m_awlen(awlen), .m_awvalid(awvalid), .m_awready(awready), .m_wdata(wdata), .m_wlast(wlast),
         .m_wvalid(wvalid), .m_wready(wready), .m_bvalid(bvalid),
@@ -116,7 +126,7 @@ module tb_wsb;
     // ---- K-2: 受け手 → リング → PS の DDR の模型 ----
     wire [127:0] st_d; wire st_v, st_r, st_l; wire [E-1:0] sdrop; wire [3:0] sflags;
     dsink #(.E(E), .H(H), .NU(`TB_NU), .G_L2(`G_L2), .ADC(0)) u_sink (.clk(clk), .rst(rst),
-        .d_v(dv), .d_w(dw), .d_k(dk), .d_ch(dch), .d_data(dd), .cfg_ns(cfg_ns), .cfg_sh(cfg_sh), .cfg_g(cfg_g), .ng(32'd1),
+        .d_v(dv), .d_w(dw), .d_k(dk), .d_ch(dch), .d_data(dd), .cfg_ns(cfg_ns), .cfg_sh(cfg_sh), .cfg_g(cfg_g), .ng(32'd1), .g0(g0), .t0(t0w),
         .m_tdata(st_d), .m_tvalid(st_v), .m_tready(st_r), .m_tlast(st_l), .drop(sdrop), .flags(sflags));
     reg  [11:0] la_aw, la_ar; reg la_awv = 0, la_wv = 0, la_arv = 0; reg [31:0] la_wd;
     wire la_awr, la_wr, la_bv, la_arr, la_rv; wire [31:0] la_rd; wire [1:0] la_br, la_rr;
@@ -225,7 +235,7 @@ module tb_wsb;
         $fclose(frun);
         repeat (`NCYC) @(posedge clk);
         $display("flags = %h dflags = %h", flags, dflags);
-        dm_on = 0; $fclose(fdm); $fclose(fin); $fclose(ffi); $fclose(ffo);   // 記録はここまで。揃ったダンプがリングに届くのを待つ（HP_SLOW で 14 ダンプ ≒ 12 万クロック）
+        dm_on = 0; $fclose(fdm); $fclose(fin); $fclose(ftl); $fclose(ffi); $fclose(ffo);   // 記録はここまで。揃ったダンプがリングに届くのを待つ（HP_SLOW で 14 ダンプ ≒ 12 万クロック）
         repeat (200000) @(posedge clk);
         ps_drain;
         $display("ring: REC_CNT %0d DROP_CNT %0d EXT_CNT %0d PEAK %0d sflags %h", u_ring.rec_cnt, u_ring.drop_cnt, u_ring.ext_cnt, u_ring.peak, sflags);

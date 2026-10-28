@@ -20,6 +20,8 @@ module wsb_ooc #(
     output wire [E*64-1:0]  d_data,
     output wire [E*16-1:0]  flags,
     output wire [2*E+1:0]   dflags,
+    input  wire [63:0]      t_now,
+    output wire [H*64-1:0]  t0,
     output wire [31:0]      m_awaddr,
     output wire [7:0]       m_awlen,
     output wire             m_awvalid,
@@ -46,7 +48,7 @@ module wsb_ooc #(
         .clk(clk), .rst(rst), .y_v(y_v), .y_ch(y_ch), .y_re(y_re), .y_im(y_im),
         .cfg_ns(cns), .cfg_fl(cfl), .cfg_sl(csl), .cfg_sh(csh), .cfg_g(cg), .ddr_base(ddr_base), .ng(ng), .ndump(ndump),
         .cmd_run(cmd_run), .cmd_stop(cmd_stop), .go(go), .g0(g0),
-        .d_v(d_v), .d_w(d_w), .d_k(d_k), .d_ch(d_ch), .d_data(d_data), .flags(flags), .dflags(dflags),
+        .d_v(d_v), .d_w(d_w), .d_k(d_k), .d_ch(d_ch), .d_data(d_data), .flags(flags), .dflags(dflags), .t_now(t_now), .t0(t0),
         .m_awaddr(m_awaddr), .m_awlen(m_awlen), .m_awvalid(m_awvalid), .m_awready(m_awready), .m_wdata(m_wdata), .m_wlast(m_wlast),
         .m_wvalid(m_wvalid), .m_wready(m_wready), .m_bvalid(m_bvalid),
         .m_araddr(m_araddr), .m_arvalid(m_arvalid), .m_arready(m_arready), .m_rdata(m_rdata), .m_rvalid(m_rvalid), .m_rlast(m_rlast));

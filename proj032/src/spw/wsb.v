@@ -44,6 +44,9 @@ module wsb #(
     output wire [E*64-1:0]      d_data,
     output wire [E*16-1:0]      flags,
     output wire [2*E+1:0]       dflags,     // {読み手 E × 2, 書き手 2}
+    // R-1: 時刻。t_now = time_core の T（同じクロック）。t0[w] = rst（WRST）の後に窓 w の最初の標本が入口に来たビートの T（フレーム 0 の z 0）
+    input  wire [63:0]          t_now,
+    output wire [H*64-1:0]      t0,
     // DDR（AXI4）
     output wire [31:0]          m_awaddr,
     output wire [7:0]           m_awlen,
@@ -80,6 +83,20 @@ module wsb #(
             if (cmd_run) g0 <= gidx + 32'd2;
         end
     end
+    // ---- R-1: 窓ごとのフレーム 0 の時刻 ----
+    //   機関は rst の後の標本を全部フレーム 0 から数える（書きの側は go を待たない）。フレームは 2^(12 + NS) クロックの間隔で来るので、
+    //   ダンプ k の最初のフレーム F0 + k·N の z 0 は t0[w] ＋ (g0 ＋ k·ng)·2^G_L2（入口の lane の待ちのぶん数ビート揺れる）。dsink が DUMP_T に
+    reg  [63:0]          t0r [0:H-1];
+    reg  [H-1:0]         t0v;
+    integer              e;
+    always @(posedge clk) begin
+        if (rst) t0v <= {H{1'b0}};
+        else for (e = 0; e < E; e = e + 1)
+            if (y_v[e] && !t0v[y_ch[e*4 +: 4]]) begin t0v[y_ch[e*4 +: 4]] <= 1'b1; t0r[y_ch[e*4 +: 4]] <= t_now; end
+    end
+    generate for (g = 0; g < H; g = g + 1) begin : t0o
+        assign t0[g*64 +: 64] = t0r[g];
+    end endgenerate
     wire signed [17:0]   c0, c1, c2, c3;
     pfb4_rom #(.P(0)) u_rom0 (.clk(clk), .addr_a(a), .addr_b(12'd4095 - a), .c_a(c0), .c_b(c3));
     pfb4_rom #(.P(1)) u_rom1 (.clk(clk), .addr_a(a), .addr_b(12'd4095 - a), .c_a(c1), .c_b(c2));
