@@ -18,6 +18,7 @@ ap.add_argument("--E", type=int, default=3, help="ADC ごとの機関（帯域�
 ap.add_argument("--S", type=int, default=8, help="ADC ごとの、PFB の履歴をチップ内に持つ窓")
 ap.add_argument("--no-psplit", action="store_true", help="頭を偶奇の 2 組に分けない")
 ap.add_argument("--nco-p", type=int, default=14, help="NCO の位相の bit（14: RAMB36 2 / 頭、12: RAMB18 1 / 頭）")
+ap.add_argument("--nu", type=int, default=2, help="受け手の機関ごとの URAM（K-2）")
 a = ap.parse_args()
 H, E, S = a.H, a.E, a.S
 psplit = not a.no_psplit
@@ -56,6 +57,8 @@ add(f"チップ内の履歴（5 フレーム × 36 bit）× {S}", 0, 0, S * 20, 
 add("DDR の道（書き手・読み手 × E・溜め）", 25_861 - 21_843, 0, 194.5 - 169, 0,
     "D-2b 実（配置後）: wsb の OOC の DDR の道あり − なし（DDR の枠 8・機関 3）。BRAM は読み手の溜め 4 × 3・書き手 8・遅れの輪 2 × 3")
 add("TP・RAW・コアの上位", 3_700, 24, 10, 0, "E-1 実: Fine の u_tp・u_raw・u_win の上位")
+add(f"ダンプの受け手（f32・溜め URAM {a.nu} × {E}）＋ リング（128 bit）", 3_137 if a.nu == 2 else 3_109, 0, 2, a.nu * E,
+    "K-2 実（配置後）: ksink_ooc（dsink ＋ ring128、NU %d）" % a.nu)
 
 per = [sum(r[i] for r in rows) for i in (1, 2, 3, 4)]
 tot = [NADC * v for v in per]

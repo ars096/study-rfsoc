@@ -33,8 +33,8 @@ def lane_sets(hmax=14):
     return out
 
 
-def emit(wins, seed):
-    """wins: [(ns, lane)]。戻り値: 枠ごとの、ダンプを流す機関の数（格子 B の前後）"""
+def emit(wins, seed, per_engine=False):
+    """wins: [(ns, lane)]。戻り値: 枠ごとの、ダンプを流す機関の数（格子 B の前後）。per_engine なら機関ごとの印のリスト"""
     rnd = random.Random(seed)
     P = [SLOT * 2 ** ns for ns, _ in wins]
     B = SLOT * 2 ** 5 * 4                               # 格子（全窓の周期の倍数）
@@ -51,14 +51,14 @@ def emit(wins, seed):
     while t < T:
         while i < len(arr) and arr[i][0] <= t - LEAD:
             q[wins[arr[i][1]][1]].append(arr[i]); i += 1
-        n = 0
+        n = [0] * E
         for e in range(E):
             if q[e]:
                 j = min(q[e], key=lambda a: (wins[a[1]][0], a[1]))
                 q[e].remove(j)
-                n += j[2]
+                n[e] = int(j[2])
         if t >= B - SLOT:
-            out.append(n)
+            out.append(n if per_engine else sum(n))
         t += SLOT
     return out
 
@@ -69,6 +69,47 @@ def peak(ns_slot, wb, R):
     for n in ns_slot:
         occ = max(0.0, occ + SLOT * (n * wb - R))
         pk = max(pk, occ)
+    return pk
+
+
+def sink(slots, R, early, G=64):
+    """K-2: 受け手の溜め（機関ごとの FIFO）とレコード単位の書き出しの模型。語 = 64 bit = f32 2 つ。
+    機関は流す枠で 0.5 語 / クロック（ダンプ 1 つ = 2048 語）。書き出しは合計 R 語 / クロックで、レコード（頭 8 ＋ 本体 2048 ＋ 尾 8 語）を 1 つずつ、機関を順番に。
+    early = False: ダンプが揃ってから選ぶ / True: 流れ始めたら選ぶ（本体がまだ来ていなければ書き出しは待つ）。
+    戻り値: 機関ごとの溜めの最大 [語]。G クロックずつ進める"""
+    occ = [0.0] * E                      # 溜めの中の語（本体）
+    pend = [[] for _ in range(E)]        # 溜めの中のダンプ: [書かれた語, 書き出した語]
+    pk = [0.0] * E
+    cur, rr, hdr = None, 0, 0.0
+    for sl in slots + [[0] * E] * 16:
+        for _ in range(SLOT // G):
+            for e in range(E):
+                if sl[e]:
+                    if not pend[e] or pend[e][-1][0] >= 2048:
+                        if _ == 0:
+                            pend[e].append([0.0, 0.0])
+                    d = pend[e][-1]
+                    d[0] = min(2048.0, d[0] + 0.5 * G)
+                    occ[e] += 0.5 * G
+            budget = R * G
+            while budget > 1e-9:
+                if cur is None:
+                    for i in range(E):
+                        e = (rr + i) % E
+                        if pend[e] and (early or pend[e][0][0] >= 2048):
+                            cur, rr, hdr = e, (e + 1) % E, 16.0
+                            break
+                    if cur is None:
+                        break
+                d = pend[cur][0]
+                h = min(budget, hdr); hdr -= h; budget -= h
+                m = min(budget, d[0] - d[1]); d[1] += m; occ[cur] -= m; budget -= m
+                if d[1] >= 2048 and hdr <= 0:
+                    pend[cur].pop(0); cur = None
+                elif m < 1e-9 and h < 1e-9:
+                    break                    # 本体がまだ来ていない（early）: 書き出しは待つ
+            for e in range(E):
+                pk[e] = max(pk[e], occ[e])
     return pk
 
 
@@ -113,5 +154,32 @@ def main():
         print("  %s: u64 %.0f KiB・f32 %.0f KiB" % (n, max(0, tot * 8 * (1 - R / 24)) / 1024, max(0, tot * 4 * (1 - R / 12)) / 1024))
 
 
+def main_k2():
+    cfgs = [("NS 5 × 14（5・5・4）", [(5, i % 3) for i in range(14)]), ("NS 1 × 6（2・2・2）", [(1, i % 3) for i in range(6)])]
+    rnd = random.Random(33)
+    ls = lane_sets()
+    for _ in range(300):
+        wins = []
+        for e in rnd.sample(range(E), E):
+            s = rnd.choice([c for c in ls if len(c) <= H - len(wins)])
+            wins += [(ns, e) for ns in s]
+        cfgs.append(("乱数", wins))
+    print("K-2: 機関ごとの溜めの最大 [KiB]（語 64 bit、書き出し R 語 / クロック = R × 2.05 GB/s、レコードを機関の順番で）")
+    for R in (0.25, 0.5, 0.75, 1.0, 1.5, 2.0):
+        for early in (False, True):
+            w = 0.0
+            for name, wins in cfgs:
+                sl = emit(wins, 0, per_engine=True)
+                w = max(w, max(sink(sl, R, early)))
+            print("  R %.2f（%.2f GB/s）・%s: %.1f KiB" % (R, R * 8 * F_CLK / 1e9, "流れ始めたら" if early else "揃ってから  ", w * 8 / 1024))
+
+
+F_CLK = 256e6
+
+
 if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "k2":
+        main_k2()
+        sys.exit(0)
     main()
