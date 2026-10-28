@@ -55,7 +55,7 @@ proj001〜023 で踏んだ穴と、次以降の proj でも従う決まりを 1 
 - `$readmemh` の hex は絶対パスで渡し、ラッパの文字列・Synth 8-4445 の有無・配置後の BRAM の数で照合する。URAM は初期値を持てないので ROM は BRAM に置く。— 読めないと ROM が 0 になり、BRAM が消えるだけでビルドが通る（proj023）
 - Vivado 2024.1 は OOC・synth_1・impl_1 で終わり際に落ちる（segfault・tcmalloc・Stack limit。毎回違う run）。落ちた印のある run と、それに依って始まらなかった run だけを 2 回まで回し直す（proj012〜015・023）。**親の Vivado も `open_run` で落ちる**（run の外）ので、後段だけを回す口（`make post`）を持つ（proj025）
 - 取得の 1 周の時間（loop_max）は余裕の物差しにならない。1 BASE の処理 ＋ 寝る 3 ms が BASE を越えると 1 周が 2 BASE を抱え、時間が二値的に倍に跳ぶ。余裕は loops / dumps から 1 BASE の処理時間に直して読む（proj025 4c）
-- `ram_style = "ultra"` の溢れは、コアごとの OOC の run の中では見えない（place の前の UTLZ-1 で止まる）。複数コアは URAM・BRAM の総数をビルドの前に足す（proj025）
+- `ram_style = "ultra"` の溢れは、コアごとの OOC の run の中では見えない（place の前の UTLZ-1 で止まる）。複数コアは URAM・BRAM の総数をビルドの前に足す（proj025）。URAM の推論は型どおりの小さなモジュールに切り出す（Synth 8-5792 は WARNING 1 行で黙って BRAM に落ちる、proj031）
 - run は名前の文字列で持ち、その場で `[get_runs $n]` を渡す。dcp を読むときは `set proj` の名前で 1 個に絞る（glob しない）。— 同じ build/ に残っていた古い proj の dcp を読み、取り違えた（proj015・021）
 - 速度グレードの検証用ビルドの .bit を実機に載せない。BUILD_TAG の指紋（速度グレード・プリセットの有無）を PS が読む。指紋に commit やビルド時刻を入れない（配置が組み替わり、同じ RTL の作り直しが WNS まで再現しなくなる）（proj011・021）
 - CRITICAL WARNING は runme.log だけでなく vivado.log の本体（BD を組むとき）も拾う。— BD 41-759 を 3 回のビルドで見落とした（proj024 2f）
@@ -81,12 +81,12 @@ proj001〜023 で踏んだ穴と、次以降の proj でも従う決まりを 1 
 - 長く走るカウンタの判定は飽和する数えにする。区切りの判定は等号でなく `≥`。— 32 bit の数えが 16.8 s ごとに巻き戻り、判定が落ちていた（proj013・015）
 - 丸めて捨てるのは SHIFT の 1 か所だけ。雑音の床が数 LSB² 以上になる SHIFT を選ぶ。絶対強度は abs = (Σp/N_ACC − 2/3)·4^SHIFT·4^(4−G)/2³¹（−2/3 は切り捨ての偏り）（proj010・014・019）
 - 1 フレームは 8192 / 4.096 GS/s = 2.000 µs（2.048 µs ではない）（proj019）
-- 共有の ROM は番地も一緒に返し、各コアが照合して粘着の FLAGS を立てる。— タイル間の位相差はこれで見えた（proj023）
+- 共有の ROM は番地も一緒に返し、各コアが照合して粘着の FLAGS を立てる。— タイル間の位相差はこれで見えた（proj023）。粘着の元のレジスタは START の flags_clr でも消す（rst だけだと Overlay の載せ直しまで消えない、proj031）
 - 同期器には `ASYNC_REG` を付け、自作の CDC は持たない（AXI4-Lite の乗り換えは SmartConnect）。CDC は report_cdc の分類で読み、既知の CDC（ギアボックスの FIFO、PS の書き込み順で守るハンドシェイク）と照らす（proj006・007・010・012）
 - PL → DDR の書き手は自作の AXI4（バースト ≦ 16 拍、4 KiB の境を越えない）。リングはレコードを丸ごと捨てて DROP_CNT を数え、出口のリセット（rst_rec）を起動のやり直しのリセットと分ける（proj021）
 - ソースは src/common・src/<bit>・src/board に分ける（境目は「別の bit で中身が変わるか」）（proj021）
 - 自作の AXI4-Lite の口はリセット中に ready を出さない。PS が最初に読むものは、止まりうるクロック（MIG の UI など）の側に置かない。— ddr_tg がリセット中も arready を出し、較正の前の読みで OS ごと止まった（proj028）
-- レーン FFT の 2-for-1 で 2G-4 は DSP −30 %・LUT −17 ポイント・VCCINT 43 → 32 A（精度は同じ）。出口の余裕 0 の待ち行列は、書きから出口までの段の遅れの分も深さに足す（proj030）
+- レーン FFT の 2-for-1 で 2G-4 は DSP −30 %・LUT −17 ポイント・VCCINT 43 → 32 A（精度は同じ）。係数を URAM に置いて DSP をさらに 256 減らしても電流は減らなかった（+0.5 A、proj031）。出口の余裕 0 の待ち行列は、書きから出口までの段の遅れの分も深さに足す（proj030）
 - → 全部: docs/lessons_all.md の「設計の規約」
 
 ## sim と模型
