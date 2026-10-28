@@ -790,34 +790,40 @@ def ds(outdir, posctl=False):
       f"RAW: SNAP {nsnap} 個に写ったインパルス {len(hits)} 個（(i) は {len(imp_i)} 個）、値はどれも 16 bit の {4 * A}")
     J(all(traw[t] == t for t in traw), "RAW: T_raw = tb が ADC に入れた T（ずれ 0）: " + ", ".join(f"{traw[t] - t:+d}" for t in sorted(traw)))
     # ---- FULL: IP の出口 ----
-    lanes = {}
+    # proj030 から IP は 2-for-1 の 8 個で、IP q の入口は z_q = y_q + j·y_(q+8)（g24_spec）。出口 Z を逆 FFT した z の実部がレーン q、虚部がレーン q＋8
+    ips = {}
     nx = 0
     for line in open(os.path.join(outdir, "lanes.txt")):
-        r, k1, p, re_, im_ = line.split()
+        r, k1, q, re_, im_ = line.split()
         if re_ == "x":
             nx += 1
             continue
-        lanes.setdefault((int(r), int(p)), {})[int(k1)] = int(re_) + 1j * int(im_)
+        ips.setdefault((int(r), int(q)), {})[int(k1)] = int(re_) + 1j * int(im_)
     J(nx == 0, f"IP の出口に x・z の値 {nx}")
+    J(all(q < 8 for _, q in ips), f"IP の出口は 8 個ぶん（0 でない出口の IP の番号 {sorted({q for _, q in ips})}）")
+    lanes = {}                                                  # (r, レーン) → (y0, m)
+    for (r, q), d in ips.items():
+        Z = np.zeros(F.M, dtype=complex)
+        for k1, val in d.items():
+            Z[k1] = val
+        z = np.fft.ifft(Z)
+        for lane, part in ((q, z.real), (q + 8, z.imag)):
+            m = int(np.argmax(np.abs(part)))
+            y0 = int(round(part[m]))
+            if y0 != 0:
+                lanes[(r, lane)] = (y0, m)
     used = set()
     c = F.coef_interp()
     ds_, ms, rows, bad = [], [], [], 0
     for t_imp, p, kind in imps:
         g0 = (t_imp - KF) // F.M
         got = {}
-        for (r, pp), d in lanes.items():
+        for (r, pp), (y0, m) in lanes.items():
             lab = ff + r
             if pp != p or not (g0 - 1 <= lab <= g0 + 5):        # 足は g..g＋3（g は g0 か g0 ＋ 1）。±6 では前のインパルスの足が同じレーンに入る（4d-2 の 1 回目）
                 continue
-            Y = np.zeros(F.M, dtype=complex)
-            for k1, val in d.items():
-                Y[k1] = val
-            yr = np.fft.ifft(Y)
-            m = int(np.argmax(np.abs(yr)))
-            y0 = int(round(yr[m].real))
-            if y0 != 0:
-                got[lab] = (y0, m)
-                used.add((r, pp))
+            got[lab] = (y0, m)
+            used.add((r, pp))
         mset = {m for _, m in got.values()}
         if len(mset) != 1:
             bad += 1
