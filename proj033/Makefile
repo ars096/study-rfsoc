@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # proj033 — 2G-1-Fast にレーン FFT の 2-for-1（README）。模型（M-1・M-2）と部品の単体の sim（P-1〜）。P-4 で proj024-m0 の Makefile を写して後ろに足す
+# Vivado のインストール先（OOC が使う）。settings64.sh を .bashrc で source しないこと（VERSIONS.md）
+XILINX_VIVADO ?= /tools/Xilinx/Vivado/2024.1
+VIVADO        := $(XILINX_VIVADO)/bin/vivado
 PYTHON   ?= python3
 IVERILOG ?= iverilog
 VVP      ?= vvp
 SIMDIR   := build-sim
 
-.PHONY: model sim-sep sim-all2
+.PHONY: model sim-sep sim-all2 ooc-sep ooc-chain ooc-q ooc-ref ooc-all
 
 # M-1・M-2: 2-for-1 の式・鎖の全体・溜めの深さ・(B) の鎖と均しの待ち行列。成否は最後の「まとめ」の行で読む
 model:
@@ -47,3 +50,17 @@ sim-all2:
 	  && grep -q '結果: 不合格' $(SIMDIR)/all2_d2/check.log && grep -q '結果: 不合格' $(SIMDIR)/all2_nornd/check.log \
 	  && grep -q '結果: 不合格' $(SIMDIR)/all2_bubble/check.log \
 	  && echo "sim-all2: 全部通過（陽性対照 3 本は落ちた）" || (echo "sim-all2: NG"; exit 1)
+
+# ---- S 部品の OOC（`-1`・256 MHz、合成まで）。結果は build-ooc/ooc-<名前>.txt。Synth 8-3848（ドライバの無いネット）があれば NG ----
+# ooc-ref は比べる相手の今の鎖 g21_chain（proj024-m0 から ref/ に写した。電力まで含む）。4 本は出力先が別なので並べてよい（ooc-all）
+OOC_sep   := s2_sep    src/s2_sep.v
+OOC_chain := s2_chain  src/common/cmul.v src/common/dft16f.v src/s2_chain.v
+OOC_q     := s2_q      src/s2_q.v
+OOC_ref   := g21_chain src/common/cmul.v ref/dft16.v ref/g21_chain.v
+ooc-sep ooc-chain ooc-q ooc-ref:
+	@n=$(@:ooc-%=%); set -- $(OOC_$(@:ooc-%=%)); top=$$1; shift; o=build-ooc/$$n; mkdir -p $$o; \
+	cd $$o && $(VIVADO) -mode batch -nojournal -log vivado.log -source ../../tools/ooc_rtl.tcl -tclargs $$top 3.906 clk $$(for x in "$$@"; do echo ../../$$x; done) > /dev/null 2>&1; \
+	  grep '^OOC ' vivado.log | tee ../ooc-$$n.txt; m=$$(grep -c 'Synth 8-3848' vivado.log); echo "Synth 8-3848: $$m" | tee -a ../ooc-$$n.txt; \
+	  grep -c 'CRITICAL WARNING' vivado.log | sed 's/^/CRITICAL WARNING: /' | tee -a ../ooc-$$n.txt; [ $$m -eq 0 ]
+ooc-all:
+	$(MAKE) -j4 ooc-sep ooc-chain ooc-q ooc-ref
