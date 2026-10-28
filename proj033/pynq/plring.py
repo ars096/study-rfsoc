@@ -521,7 +521,7 @@ def do_soak(cores, ring, a):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--bitfile", default="proj024.bit")
+    p.add_argument("--bitfile", default="proj033.bit")
     p.add_argument("--clkin", default="stock")
     p.add_argument("--ref", type=float, default=10.0)
     p.add_argument("--settle", type=float, default=5.0)

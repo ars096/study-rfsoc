@@ -2,7 +2,7 @@
 
 日付: 2026-10-28（起こし）
 土台: タグ **proj024-m0**（2G-1-Fast の .bit、build-PE、sha256 fdb04d80…）。2-for-1 の部品・模型は **proj030**（commit 1a3e733 の時点の `proj030/`）から写す予定。仕様は YATSUGATAKE の 55f38b2 ＋ PR #51（2G-1 → 2G-1-Fast、ADR 0022）
-状態: **進行中**（M-1・M-2 模型・P-1〜P-3 部品の sim・S の OOC は全部通過。E-1: DSP 924 → 628・LUT 22.2 → 16.2 %・BRAM 673 → ≒ 587。次は P-4 コアに組む）
+状態: **進行中**（M-1・M-2 模型・P-1〜P-3 部品の sim・S の OOC・P-4 コアの段の sim は全部通過。E-1: DSP 924 → 628・LUT 22.2 → 16.2 %・BRAM 673 → ≒ 587。D_eff は 24,577 ビートのまま。次は B-1 全体の .bit）
 
 着手の前に [`../LESSONS.md`](../LESSONS.md) を全部読む（知見の全部は [`../docs/lessons_all.md`](../docs/lessons_all.md)）。
 
@@ -211,7 +211,10 @@ proj030 の `src/s2_chain.v`・`src/s2_q.v`・`sim/tb_s2_all.v` を写して直�
 - `sim/lane_fft_g21_model.v`（IP の行動模型）: 虚部の入力を読む（proj024 までは捨てていた）
 - `sim/check_g21.py`: 記録した IP の出口から先の模型を、`F.chain_Y` から **`S2.power_s2(…, "(i)")`** に（spec・core・s45 の 3 か所）。`ds` は proj031 の直し（575ae63）と同じく、IP q の出口の逆 FFT の実部をレーン q・虚部をレーン q＋8 に
 - Makefile の 2c・2d・2e・4d-2 の RTL の一覧: g21_chain・dft16 → s2_sep・s2_chain・s2_q・dft16f
-- **まだ直していないもの**: build.tcl（`set proj`・`add_files`・PROJ の ID 0x0024_0100・資源の照合）、pynq/ の ID の照合。B-1 の前に直す
+- **B-1 の前の直し（P-4a の sim の後に入れた）**: build.tcl（`set proj proj033`・`add_files`・**PROJ 0x0033_0100** の 3 か所・`fft_out_w` の注・資源の表示の期待値（IP 8 個・DSP 264 / 628）・段ごとの数えに u_sep・u_q）、
+  `g21_s45_core` の PROJ の既定（3342592 = 0x0033_0100）、`check_g21.py` の s45 のレジスタの期待、pynq/ の `PROJ_G21`・`--bitfile` の既定（proj033.bit）。
+  `timebase.CAL` に **0x0033_0100 を未較正（adc_to_core_ns None・pps_det_ns 71.5）で足した**（別の配置なので F-2 を測り直す、LESSONS）。
+  確かめ: sim-g21s45（normal）を回し直して通過（レジスタ 15 個・違い 0）、`pynq/test_fake.sh all` は全部通過（PL なし、この PC）
 
 ### P-4a コアの段の sim — 予言（走らせる前に書く、2026-10-28）
 

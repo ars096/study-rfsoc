@@ -32,7 +32,7 @@ KIND_FULL, KIND_SLICE, KIND_DDC, KIND_RAW = 1, 2, 3, 4
 KIND_NAMES = {KIND_FULL: "FULL", KIND_SLICE: "SLICE", KIND_DDC: "DDC", KIND_RAW: "RAW"}
 ADC_NAMES = ("ADC_A", "ADC_B", "ADC_C", "ADC_D")
 PROJ_EXPECT = 0x0023_0100        # proj023 の .bit（追跡のため。照合には使わない）。proj021 は 0x0021_0200
-PROJ_G21 = 0x0024_0100           # proj024: 2G-1（BIT_KIND 11・BIT_REV 1、コア 1 個）。discover(ol, bit_kind=BIT_KIND_G21, ncore=1)
+PROJ_G21 = 0x0033_0100           # proj033: 2G-1-Fast の 2-for-1（proj024 は 0x0024_0100。BIT_KIND 11・BIT_REV 1、コア 1 個）。discover(ol, bit_kind=BIT_KIND_G21, ncore=1)
 BIT_KIND_G21 = 11
 BIT_REV_MIN = 1                  # proj023: Wide の最初の版が 1（proj021 の Fine は 2 以上: 2-2d の仮の読み窓の無い 64 KiB の番地）
 BIT_KIND_EXPECT = 1              # SAM45-Wide（proj023）。proj021 は 2 = SAM45-Fine
@@ -241,7 +241,7 @@ def table(cores, tmm=None):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--list", action="store_true", help="自己記述の表を出す")
-    p.add_argument("--bitfile", default="proj024.bit")
+    p.add_argument("--bitfile", default="proj033.bit")
     p.add_argument("--no-load", action="store_true", help="Overlay を download=False で（載っている .bit をそのまま読む）")
     p.add_argument("--clkin", default="stock")
     p.add_argument("--ref", type=float, default=10.0)
