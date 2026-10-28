@@ -351,6 +351,12 @@ YATSUGATAKE の 2G-4 のビルドと同じ時間帯（西村さん了承、2026-
   読み（確かめていない）: 見積もりに入らない一定の分（PL を空にした VCCINT は 2.6 A、proj030 の片付け）があるとすれば、それを除いた減りは 14.2 → 10.7 A で −25 %。残りは、ベクタなしのトグル率が 2-for-1 の部品で外れた分
 - 載せる前の 32 A は、別の会話が 10-28 の昼に載せた bit が 12 時間残っていた値（ボードには誰もいなかった）
 
+**R-3 の結果（2026-10-28 22:31〜23:02 UTC、033、ノイズ ON・TP −31.3 dBFS・src A・SHIFT 7・tint 40.96 ms、受けはこの PC）: 全部通過・予言どおり**
+- 受け: SPEC 43,964・TP 43,965・22.04 GB・CRC 0・欠け 0・説明のない欠け 0・逆戻り 0・kgap 0・tdev 0・**照合 通過**・health 0・flags 0・sat 0
+- STATUS（1 分ごと 30 回 ＋ STOP の後、`runs/r3.status.log`）: 30 分を通して miss・kgap・drop・forced・skip・pl_drop・pl_crc・pl_err・r_bad・loop_slow・tp_lost・tp_rec_lost・tp_bad 0・flags 0x000。
+  **loop_max 15.1 ms・pl_peak 3.1 MB**（31 回とも動かない。proj024 4c の 15.11 ms・3.1 MB と同じ）。STOP の後の bdrop 1 は止めたときの束ねの途中の分（proj024 4c と同じ）
+- **VCCINT 13.27〜13.82 A（中央値 13.53 A、始め・中・終わりの 3 分とも 13.53〜13.54）・温度 40〜46 ℃** で 30 分を通して平ら（予言: R-2c の 13.3 A から ≦ +1 A、当たり）
+
 **R-5 F-2（adc_to_core）— 手順と予言（2026-10-29、R-3 の後、走らせる前に書く）**
 - 手順は proj024 4d-1 と同じ（配線 P: 1PPS を分配して PPS Clk と ADC_A〜D に、LPF は PPS Clk の枝だけ）: specd を `SHUTDOWN confirm=1` で止め、ボードで root: `widef2.py --clkin 0 --ref 10 --adc 0,1,2,3 --out f2_33a` →（西村さん）ADC のケーブルを A↔D・B↔C → `--out f2_33b` → `--combine`
 - 予言: 起動の照合が通る（BIT_KIND 11・コア 1 個・RAW の s 1）。(a) 4 ADC × 5 試行とも縁が見える（最大 / σ ≧ 20）・1 回の中の σ ≦ 0.4 ビート・2 回の差 ≦ 1 ビート。(p) 全部見えない。
