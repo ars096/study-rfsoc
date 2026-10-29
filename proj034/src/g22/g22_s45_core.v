@@ -31,7 +31,7 @@ module g22_s45_core #(
     parameter integer GB_K_RST           = 2,
     parameter integer BIT_KIND           = 10,
     parameter integer BIT_REV            = 1,
-    parameter integer PROJ               = 2425088,   // = 0x0025_0100（10 進で書く）
+    parameter integer PROJ               = 3408128,   // = 0x0034_0100（10 進で書く。proj034、proj025 は 0x0025_0100）
     parameter integer CORE_PORT          = 0,
     parameter integer BASE_BEATS         = 2621440,
     parameter integer K_F                = 0,

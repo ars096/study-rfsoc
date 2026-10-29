@@ -39,6 +39,10 @@ NS_NUM, NS_DEN = 125, 32          # 1 ビート = 125/32 ns（厳密）
 #   **T-2（閉ループ）で測れるのは差 M = adc_to_core − pps_det（＋ 2 本のケーブルの差）の 1 つだけ**なので、M を adc_to_core_ns に入れ、
 #   pps_det_ns = 0 とする（式の上では引く量は M で同じ）。
 CAL = {
+    # proj034（2G-2 の 2-for-1、PROJ 0x0034_0100）: ギアボックス・time_core・RAW の RTL は proj025 と同じだが、別の Overlay・別の配置なので
+    #   proj025 の値は持ち込まない（LESSONS）。R の F-2 で測る。pps_det_ns は LPF の分で bit に依らない
+    0x0034_0100: dict(pps_det_ns=71.5, adc_to_core_ns=None, bound_ns=50,
+                      source="proj034: 未較正（R の F-2 で測る。見込みは proj025 の M 69.0〜69.8 ns に配置の差 ±5 ns）"),
     # proj025（2G-2、PROJ 0x0025_0100）: 別の Overlay・別の配置なので proj024 の adc_to_core は持ち込まず、4d の F-2（RAW の流れ = コア 0 の s 1）で測った。
     #   pps_det_ns は 1PPS の入口の LPF（BLP-10.7+）の分で、bit に依らない（形 (b)、proj026）。LPF を外したら 0 に
     0x0025_0100: dict(pps_det_ns=71.5, adc_to_core_ns={0: 141.1, 1: 141.3, 2: 140.5, 3: 140.5}, bound_ns=50,

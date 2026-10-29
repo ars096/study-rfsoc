@@ -160,8 +160,8 @@ sim-g22a:
 	  && echo "sim-g22a: 全部通過（陽性対照は落ちた）" || (echo "sim-g22a: NG"; exit 1)
 
 # 2c. g22_spec（分光の本体）。ふつう（流し始めの tready の下げあり）と陽性対照（-DIPQ_POSCTL: 待ち行列なし。落ちるべき）
-G22S_RTL := src/common/cmul.v src/common/dft16.v src/g22/g22_coef.v src/g22/g22_pfb_core.v src/g22/g22_pfb.v \
-            src/g22/g22_tw.v src/g22/g22_chain.v src/g22/g22_acc.v src/g22/g22_spec.v sim/lane_fft_g22_model.v sim/tb_g22_spec.v
+G22S_RTL := src/common/cmul.v src/common/dft16f.v src/g22/g22_coef.v src/g22/g22_pfb_core.v src/g22/g22_pfb.v \
+            src/g22/g22_tw.v src/s2_sep.v src/s2_chain.v src/s2_q.v src/g22/g22_acc.v src/g22/g22_spec.v sim/lane_fft_g22_model.v sim/tb_g22_spec.v
 sim-g22s:
 	@o0=$(SIMDIR)/g22s_in; mkdir -p $$o0; $(PYTHON) sim/check_g22.py spec-gen $$o0; \
 	for v in normal ipq; do \
@@ -189,8 +189,8 @@ sim-recfr:
 # 2d. g22_core（FULL の流れのブロック・SPEC のレコード 512 KiB・FULL の TP・SRC）。入力は 2c と同じ x.hex（sim-g22s の g22s_in を作る）。
 #     ふつう・陽性対照 2 本（-DG22C_POSCTL: 積分器の読みの口に 1 段多い / -DG22C_TP_POSCTL: TP の F0 の × 32 を忘れる）。
 #     G22CORE_V で回す変種を選べる（コア 2 個の環境で 3 本を同時に回して 20 分前後。512 KiB のレコードを出す 13 万クロックが長い）
-G22CORE_RTL := src/common/cmul.v src/common/dft16.v src/common/adc_ev.v src/common/tp_core.v src/common/rec_fr.v src/common/rec_arb.v \
-               src/g22/g22_coef.v src/g22/g22_pfb_core.v src/g22/g22_pfb.v src/g22/g22_tw.v src/g22/g22_chain.v src/g22/g22_acc.v \
+G22CORE_RTL := src/common/cmul.v src/common/dft16f.v src/s2_sep.v src/s2_chain.v src/s2_q.v src/common/adc_ev.v src/common/tp_core.v src/common/rec_fr.v src/common/rec_arb.v \
+               src/g22/g22_coef.v src/g22/g22_pfb_core.v src/g22/g22_pfb.v src/g22/g22_tw.v src/g22/g22_acc.v \
                src/g22/g22_spec.v src/g22/g22_core.v sim/lane_fft_g22_model.v sim/tb_g22_core.v
 G22CORE_V ?= normal posctl tp
 sim-g22core:

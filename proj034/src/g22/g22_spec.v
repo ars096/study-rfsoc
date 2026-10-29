@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 //
-// g22_spec — 2G-2 の分光の本体（コア 1 個ぶん: 1 ADC、FULL の流れ 1 本）。proj025 手順 2c。AXI・レコードは持たない（外の g22_core が包む。2d）
+// g22_spec — 2G-2 の分光の本体（コア 1 個ぶん: 1 ADC、FULL の流れ 1 本）。
+// **proj034: レーン FFT を 2-for-1 に**（proj025-m0 の g22_spec を写して直した。proj033 が g21_spec に入れた直しと同じ型。README の P-4）:
+//   IP は 8 個（z_q = y_q + j·y_(q+8)）→ s2_sep（分け、2Y）→ s2_chain（そろった行 r だけ、16 出口、2Y を 2 bit 丸めて SH 18）→ s2_q（均し、1 拍に 1 行）→ g22_acc（今のまま）。
+//   s2_q の出口もフレームの最初の行は 0・最後の行は 8191（位置 0 は自己共役の行 0、最後の項目は位置 8191 の k 8191 → 行 1・8191 の順）なので、
+//   帳簿（fs・ls・t_act・t_first・t_plane・ダンプを閉じる時機）は今のまま。待ち行列の遅れ（最大 ≒ 2,050 拍）は fs・ls が吸う。
+//   flags[3]・[5] は IP 8 個で見る。flags[7] = s2_q の ovf ｜ s2_sep の pos_mis ｜ 2Y の 27 bit の飽和（粘着。proj025 では 0 の予約）
+//   dbg_ip_tdata は IP 8 個ぶんを下に詰め、上の 8 個ぶんは 0
+// 以下は proj025 の注: proj025 手順 2c。AXI・レコードは持たない（外の g22_core が包む。2d）
 //
 // proj024（proj024-m0）の g21_spec を 8192 ビートのフレームに縮めたもの。g21_spec は src/common/wide_spec.v（567fda2）を写して直したもの:
 //   入力（axis_sel4 で選んだ ADC。D-8）→ 起動の見張り → g22_pfb（PFB T = 4、係数の補間を中に持つ）→ lane_fft_g22 × 16（IP、8192 点・
@@ -11,12 +18,12 @@
 //   - **SHIFT は RUN で取り込む**（2d で直した。INTERFACE 2.5 の FULL の約束・spec_core と同じ。2c までは Wide（SLICE）を写して WRST で取り込んでいた。
 //     RUN の F0 は 2 格子（≧ 32 フレーム）先なので、鎖の途中のフレームは積まない。WRST は SHIFT を変えない）
 //   - 出口は bit 反転順: フレームの最初の k1 は 0、最後は 8191（bitrev(8191) = 8191）。fs = (k1 == 0)、最後の行 = (k1 == 8191)
-//   - flags[6]（出口の k1 の飛び）は「次の k1 = bitrev(bitrev(k1) + 1)」で見る。flags[7]（積分器の書き込みの衝突）は起きない形なので 0
+//   - flags[6]（出口の k1 の飛び）は「次の k1 = bitrev(bitrev(k1) + 1)」で見る（IP の出口の k1。proj034 でも同じ）
 // DUMP_T = K_F ＋ 8192·DUMP_F0（コアの入口でのそのダンプの最初のビートの T）。
 //
 // ---- 異常フラグ（粘着。flags_clr で消す。並びは wide_spec と同じ）----
 //   [0] coef_mis / [1] tw_mis / [2] 口を開けた後に入力が途切れた / [3] IP の 16 レーンの valid・k1 が揃わない / [4] IP の TLAST の事象 /
-//   [5] IP の手前の待ち行列のあふれか、16 レーンの tready の不揃い / [6] 出口の k1 の飛び / [7] 0（予約）
+//   [5] IP の手前の待ち行列のあふれか、IP の tready の不揃い / [6] 出口の k1 の飛び / [7] proj034: 2-for-1 の道の異常（上の注）
 
 `timescale 1ns / 1ps
 
@@ -74,6 +81,7 @@ module g22_spec #(
     output wire              dbg_ip_v
 );
     localparam integer NL = 16;
+    localparam integer NQ = NL / 2;      // proj034: IP の数
 
     function [12:0] brev13(input [12:0] n);
         integer b;
@@ -90,7 +98,7 @@ module g22_spec #(
     assign fa_now = tk[13 +: FW];
 
     // ---- 起動の見張り（wide_spec と同じ。IP の 16 レーンの tready も見る）----
-    wire [NL-1:0] ln_s_tready;
+    wire [NQ-1:0] ln_s_tready;
     wire          ip_ready = &ln_s_tready;
     reg [15:0] st_run;
     always @(posedge clk) begin
@@ -146,9 +154,9 @@ module g22_spec #(
     assign dbg_ipq = {q_stall, 2'b00, q_n};
 
     // ---- IP の位相（wide_spec と同じ診断。出口の位相は k1 = 0 を出したクロックの m）----
-    wire [NL-1:0]    ln_m_tvalid, ln_m_tlast, ln_ev_fs, ln_ev_unexp, ln_ev_miss, ln_ev_halt;
-    wire [NL*64-1:0] ln_m_tdata;
-    wire [NL*16-1:0] ln_m_tuser;
+    wire [NQ-1:0]    ln_m_tvalid, ln_m_tlast, ln_ev_fs, ln_ev_unexp, ln_ev_miss, ln_ev_halt;
+    wire [NQ*64-1:0] ln_m_tdata;
+    wire [NQ*16-1:0] ln_m_tuser;
     reg [12:0] ph_in, ph_out;
     reg        ph_in_v, st_seen;
     reg [15:0] st_at;
@@ -175,14 +183,15 @@ module g22_spec #(
     // ---- レーン FFT（IP）× 16 ----
     genvar p;
     generate
-        for (p = 0; p < NL; p = p + 1) begin : g_lane
-            wire signed [14:0] yp = q_out[15*p +: 15];
+        for (p = 0; p < NQ; p = p + 1) begin : g_lane
+            wire signed [14:0] ya = q_out[15*p +: 15];
+            wire signed [14:0] yb = q_out[15*(p + NQ) +: 15];
             (* dont_touch = "true" *) reg ln_rstn = 1'b0;
             always @(posedge clk) ln_rstn <= ~rst;
             lane_fft_g22 u_fft (
                 .aclk(clk), .aresetn(ln_rstn),
                 .s_axis_config_tdata(8'h01), .s_axis_config_tvalid(!go), .s_axis_config_tready(),
-                .s_axis_data_tdata({16'h0000, yp[14], yp}), .s_axis_data_tvalid(q_vin), .s_axis_data_tready(ln_s_tready[p]),
+                .s_axis_data_tdata({yb[14], yb, ya[14], ya}), .s_axis_data_tvalid(q_vin), .s_axis_data_tready(ln_s_tready[p]),
                 .s_axis_data_tlast(q_out[15*NL]),
                 .m_axis_data_tdata(ln_m_tdata[64*p +: 64]), .m_axis_data_tuser(ln_m_tuser[16*p +: 16]),
                 .m_axis_data_tvalid(ln_m_tvalid[p]), .m_axis_data_tlast(ln_m_tlast[p]),
@@ -190,29 +199,47 @@ module g22_spec #(
                 .event_tlast_missing(ln_ev_miss[p]), .event_data_in_channel_halt(ln_ev_halt[p]));
         end
     endgenerate
-    assign dbg_ip_tdata   = ln_m_tdata;
+    assign dbg_ip_tdata   = {{(NL-NQ)*64{1'b0}}, ln_m_tdata};
     assign dbg_pfb_sat    = pfb_sat;
     assign dbg_have_first = have_first;
     assign dbg_ip_k1      = ln_m_tuser[12:0];
     assign dbg_ip_v       = ln_m_tvalid[0];
 
-    // ---- 鎖（＋ ひねり係数の積）----
-    wire [16*28-1:0] yr, yi;
+    // ---- 分け（2Y、29 bit の Z から 30 bit）----
+    wire [NQ*29-1:0] zr, zi;
     generate
-        for (p = 0; p < NL; p = p + 1) begin : g_y
-            assign yr[28*p +: 28] = ln_m_tdata[64*p      +: 28];
-            assign yi[28*p +: 28] = ln_m_tdata[64*p + 32 +: 28];
+        for (p = 0; p < NQ; p = p + 1) begin : g_z
+            assign zr[29*p +: 29] = ln_m_tdata[64*p      +: 29];
+            assign zi[29*p +: 29] = ln_m_tdata[64*p + 32 +: 29];
         end
     endgenerate
-    wire [12:0]  tw_addr, tw_k1, pk1;
+    wire [16*30-1:0] y2r, y2i;
+    wire [12:0]      y2k;
+    wire             y2v, pos_mis;
+    s2_sep u_sep (.clk(clk), .rst(rst), .z_re(zr), .z_im(zi), .z_k1(ln_m_tuser[12:0]), .z_v(ln_m_tvalid[0]), .clr(flags_clr),
+                  .y_re(y2r), .y_im(y2i), .y_k(y2k), .y_v(y2v), .pos_mis(pos_mis));
+
+    // ---- 鎖（＋ ひねり係数の積。そろった行 r だけ、16 出口）----
+    wire [12:0]  tw_addr, tw_k1;
     wire [575:0] tw;
     g22_tw #(.A_FILE(TA_FILE), .B_FILE(TB_FILE)) u_tw (.clk(clk), .addr(tw_addr), .tw(tw), .k1_out(tw_k1));
+    wire [16*18-1:0] c_qr, c_qi;
+    wire [15:0]      qsat;
+    wire [12:0]      qk;
+    wire             qv, ysat, tw_mis;
+    s2_chain u_chain (.clk(clk), .rst(rst), .y_re(y2r), .y_im(y2i), .y_k(y2k), .y_v(y2v),
+                      .tw_addr(tw_addr), .tw(tw), .tw_k1(tw_k1), .shift(c_shift),
+                      .q_re(c_qr), .q_im(c_qi), .q_sat(qsat), .q_k(qk), .q_v(qv), .y_sat(ysat), .tw_mis(tw_mis));
+
+    // ---- 均し（1 拍に 1 行 → 電力。出口は g22_chain と同じ口）----
     wire [8*37-1:0] pw;
-    wire            pv, tw_mis;
+    wire            pv, q_ovf2;
+    wire [12:0]     pk1;
     wire [3:0]      psat;
-    g22_chain u_chain (.clk(clk), .rst(rst), .y_re(yr), .y_im(yi), .y_k1(ln_m_tuser[12:0]), .y_v(ln_m_tvalid[0]),
-                       .tw_addr(tw_addr), .tw(tw), .tw_k1(tw_k1), .shift(c_shift),
-                       .p(pw), .p_v(pv), .p_k1(pk1), .p_sat(psat), .tw_mis(tw_mis));
+    wire [11:0]     q_dmax;
+    wire [10:0]     q_cmax;
+    s2_q u_q (.clk(clk), .rst(rst), .clr(flags_clr), .q_re(c_qr), .q_im(c_qi), .q_sat(qsat), .q_k(qk), .q_v(qv),
+              .p(pw), .p_v(pv), .p_k1(pk1), .p_sat(psat), .ovf(q_ovf2), .dmax(q_dmax), .cmax(q_cmax));
 
     // ---- RUN: SHIFT を取り込む（2d。FULL の約束）----
     always @(posedge clk) begin
@@ -320,13 +347,13 @@ module g22_spec #(
     reg        f_lane;
     integer li;
     always @* begin
-        f_lane = (ln_m_tvalid != {NL{1'b0}}) && (ln_m_tvalid != {NL{1'b1}});
-        for (li = 1; li < NL; li = li + 1)
+        f_lane = (ln_m_tvalid != {NQ{1'b0}}) && (ln_m_tvalid != {NQ{1'b1}});
+        for (li = 1; li < NQ; li = li + 1)
             if (ln_m_tvalid[li] && ln_m_tuser[16*li +: 13] != ln_m_tuser[12:0]) f_lane = 1'b1;
     end
-    wire [7:0] f_now = {1'b0,
+    wire [7:0] f_now = {q_ovf2 | pos_mis | (qv & ysat),
                         k1_seen && ln_m_tvalid[0] && ln_m_tuser[12:0] != k1_exp,
-                        q_ovf || (q_vin && ln_s_tready != {NL{1'b0}} && ln_s_tready != {NL{1'b1}})
+                        q_ovf || (q_vin && ln_s_tready != {NQ{1'b0}} && ln_s_tready != {NQ{1'b1}})
 `ifdef IPQ_POSCTL
                         || (q_vin && !ip_ready)
 `endif

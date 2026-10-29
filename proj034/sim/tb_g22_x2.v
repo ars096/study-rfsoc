@@ -147,8 +147,8 @@ module tb_g22_x2;
         // RAW = 0 のコアの形（INTERFACE 2.4・2.5）と、コア 0 との違い
         reg_chk(0, 16'h0000, 32'h020A_0101, "IF_ID");
         reg_chk(1, 16'h0000, 32'h020A_0101, "IF_ID");
-        reg_chk(0, 16'h0004, 32'h0025_0100, "PROJ");
-        reg_chk(1, 16'h0004, 32'h0025_0100, "PROJ");
+        reg_chk(0, 16'h0004, 32'h0034_0100, "PROJ");   // proj034
+        reg_chk(1, 16'h0004, 32'h0034_0100, "PROJ");   // proj034
         reg_chk(0, 16'h0008, 32'd2, "NSTREAM");
         reg_chk(1, 16'h0008, 32'd1, "NSTREAM");
         reg_chk(0, 16'h0018, 32'd0, "CORE_PORT");

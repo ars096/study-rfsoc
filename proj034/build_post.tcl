@@ -118,7 +118,7 @@ set dsp_fft 0
 foreach c $ffts { incr dsp_fft [count_under $dsp_names $c] }
 puts ""
 puts "---- FFT IP の資源（$fft_mod）----"
-puts "  $fft_mod の個数         = [llength $ffts]（期待 32 = 16 × 2 コア）"
+puts "  $fft_mod の個数         = [llength $ffts]（期待 16 = 8 × 2 コア。proj034 の 2-for-1）"
 if {[llength $ffts] > 0} {
     set c0 [lindex $ffts 0]
     report_utilization -cells $c0 -file $outdir/lane_fft_util.rpt
@@ -128,12 +128,12 @@ if {[llength $ffts] > 0} {
         if {[regexp {^\|\s*(CLB LUTs|CLB Registers|Block RAM Tile|URAM|DSPs)\s*\|} $line]} { puts "    [string trim $line]" }
     }
 }
-puts "  DSP48E2 $fft_mod 32 個の合計 = $dsp_fft（S-1 から 32 × 33 = 1056）"
-puts "  DSP48E2 全体            = $dsp_all（proj025 の見込み ≒ 37 %、コア 1 個 ≒ 800）"
+puts "  DSP48E2 $fft_mod 16 個の合計 = $dsp_fft（proj025 の 1 個 33 から 16 × 33 = 528）"
+puts "  DSP48E2 全体            = $dsp_all（proj034 の E-1 は 1,256）"
 # 段ごと（階層の名前は g22_s45_core.v・g22_core.v・g22_spec.v・core_cmn.v のインスタンス名）
 set ram_names [get_property NAME [get_cells -quiet -hierarchical -filter {REF_NAME =~ RAMB* || REF_NAME =~ URAM*}]]
 for {set c 0} {$c < $ncore} {incr c} {
-foreach sub {u_full/u_spec/u_pfb u_full/u_spec/g_lane u_full/u_spec/u_tw u_full/u_spec/u_chain u_full/u_spec/u_acc u_full/u_tp u_full/u_rec u_cmn/g_tp.u_tp g_raw.u_raw} {
+foreach sub {u_full/u_spec/u_pfb u_full/u_spec/g_lane u_full/u_spec/u_tw u_full/u_spec/u_sep u_full/u_spec/u_chain u_full/u_spec/u_q u_full/u_spec/u_acc u_full/u_tp u_full/u_rec u_cmn/g_tp.u_tp g_raw.u_raw} {
     puts [format "  s45_core_%d/%-24s DSP48E2 %4d・RAMB/URAM のセル %4d" $c $sub [count_in $dsp_names "/s45_core_$c/inst/$sub"] [count_in $ram_names "/s45_core_$c/inst/$sub"]]
 }
 }

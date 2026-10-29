@@ -26,6 +26,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "model"))
 import g22_fixed as F  # noqa: E402
+import s2_model as S2  # noqa: E402  proj034: IP の出口（8 個の複素の Z）から先は 2-for-1 の定義（S2.power_s2、鎖の入口は (i)）
 from g2_model import core_fft, design, pfb_float  # noqa: E402
 
 
@@ -392,7 +393,7 @@ def spec(outdir, tblog, shift):
             a1bad += 1
     print(f"check spec A1（PFB の出口）: {len(rows)} ビート（{len(rows) / F.M:.2f} フレーム）・模型と違うビート {a1bad}")
     ok &= a1bad == 0 and len(rows) >= 7 * F.M
-    # ---- A2: IP の出口 → 鎖 → 積む ----
+    # ---- A2: IP の出口 → 2-for-1 の鎖（power_s2）→ 積む ----
     twr, twi = F.tw_prod()
     frames = []
     cur = None
@@ -416,12 +417,9 @@ def spec(outdir, tblog, shift):
     lo, hi = -(1 << 17), (1 << 17) - 1
     pw_fr, sat_fr = [], []
     for Yr, Yi, _ in frames:
-        Zr, Zi = F.chain_Y(Yr, Yi, twr, twi)
-        qr, qi = Zr >> shift, Zi >> shift
-        sat = (qr < lo) | (qr > hi) | (qi < lo) | (qi > hi)
-        qr, qi = np.clip(qr, lo, hi), np.clip(qi, lo, hi)
-        pw_fr.append(qr * qr + qi * qi)
-        sat_fr.append(int(sat.sum()))
+        pw, ns = S2.power_s2(Yr[:S2.NQ], Yi[:S2.NQ], twr, twi, shift, "(i)")   # proj034: ip.txt の下 8 個が IP の Z
+        pw_fr.append(pw)
+        sat_fr.append(ns)
     # ---- B: 浮動小数点の PFB ＋ FFT ----
     yfl = pfb_float(xs[: nfr * F.N].astype(np.float64), design(F.N), F.N)
     for dname in ("dump1.txt", "dump2.txt"):
@@ -521,11 +519,9 @@ def core(outdir, tblog):
     esat = 0
     for i in range(hd["dn"]):
         Yr, Yi = frames[hd["df0"] + i - hd["f_first"]]
-        Zr, Zi = F.chain_Y(Yr, Yi, twr, twi)
-        qr, qi = Zr >> CORE_SHIFT, Zi >> CORE_SHIFT
-        esat += int(((qr < lo) | (qr > hi) | (qi < lo) | (qi > hi)).sum())
-        qr, qi = np.clip(qr, lo, hi), np.clip(qi, lo, hi)
-        exp += (qr * qr + qi * qi).astype(object)
+        pw, ns = S2.power_s2(Yr[:S2.NQ], Yi[:S2.NQ], twr, twi, CORE_SHIFT, "(i)")   # proj034
+        esat += ns
+        exp += pw.astype(object)
     nsnap = int(np.sum(snap != exp))
     print(f"check core ダンプ: seq {hd['seq']}・dk {hd['dk']}・df0 {hd['df0']}・dn {hd['dn']}・dsat {hd['dsat']}（模型 {esat}）・"
           f"凍った面と模型の違う ch {nsnap}")
@@ -663,13 +659,13 @@ def s45(outdir, tblog):
     ok &= all(((w[0] >> 48) & 0xFF) == 0 and (w[0] & 0xFFFFFFFFFF) == (MAGIC | (1 << 32)) for _, w in recs)
 
     # ---- レジスタ（番地の振り分け）----
-    er = {"IF_ID": 0x020A0101, "PROJ": 0x00250100, "NSTREAM": 2, "FFT_N": 0, "SID0": 0x02010000, "SID1": 0x02040100, "SID_none": 0,
+    er = {"IF_ID": 0x020A0101, "PROJ": 0x00340100, "NSTREAM": 2, "FFT_N": 0, "SID0": 0x02010000, "SID1": 0x02040100, "SID_none": 0,
           "NCH0": 65536, "NCH1": 0, "SRC0": 0x80000002, "SRC1": 0x80000001, "SEQ0": 1, "SEQ1": 2, "FLAGS0": 0, "FLAGS1": 0}
     rbad = [(k, regs.get(k), v) for k, v in er.items() if regs.get(k) != v]
     print(f"check s45 レジスタ: {len(er)} 個・違う {len(rbad)}" + "".join(f"（{k}: {g if g is None else hex(g)} / 期待 {hex(v)}）" for k, g, v in rbad))
     ok &= not rbad
 
-    # ---- SPEC（2d と同じ: IP の出口 → chain_Y → 積む）----
+    # ---- SPEC（2d と同じ: IP の出口 → power_s2 → 積む）----
     lines = open(os.path.join(outdir, "dump1.txt")).read().split("\n")
     hd = dict(zip(lines[0].split()[1::2], [int(v) for v in lines[0].split()[2::2]]))
     twr, twi = F.tw_prod()
@@ -689,9 +685,7 @@ def s45(outdir, tblog):
     exp = np.zeros((8, F.M), dtype=object)
     for i in range(hd["dn"]):
         Yr, Yi = frames[hd["df0"] + i - hd["f_first"]]
-        Zr, Zi = F.chain_Y(Yr, Yi, twr, twi)
-        qr, qi = np.clip(Zr >> CORE_SHIFT, lo, hi), np.clip(Zi >> CORE_SHIFT, lo, hi)
-        exp += (qr * qr + qi * qi).astype(object)
+        exp += S2.power_s2(Yr[:S2.NQ], Yi[:S2.NQ], twr, twi, CORE_SHIFT, "(i)")[0].astype(object)   # proj034
     if spec_r:
         tu, w = spec_r[0]
         ebody = [int(exp[c >> F.KB, c & (F.M - 1)]) for c in range(8 * F.M)]
@@ -795,34 +789,44 @@ def ds(outdir, posctl=False):
       f"RAW: SNAP {nsnap} 個に写ったインパルス {len(hits)} 個（(i) は {len(imp_i)} 個）、値はどれも 16 bit の {4 * A}")
     J(all(traw[t] == t for t in traw), "RAW: T_raw = tb が ADC に入れた T（ずれ 0）: " + ", ".join(f"{traw[t] - t:+d}" for t in sorted(traw)))
     # ---- FULL: IP の出口 ----
-    lanes = {}
+    # proj034: IP は 2-for-1 の 8 個で、IP q の入口は z_q = y_q + j·y_(q+8)（g22_spec）。出口 Z を逆 FFT した z の実部がレーン q、虚部がレーン q＋8
+    # （proj033 の check_g21.py ds・proj031 の check_g24.py ds の直し 575ae63 と同じ形）
+    ips = {}
     nx = 0
     for line in open(os.path.join(outdir, "lanes.txt")):
-        r, k1, p, re_, im_ = line.split()
+        r, k1, q, re_, im_ = line.split()
         if re_ == "x":
             nx += 1
             continue
-        lanes.setdefault((int(r), int(p)), {})[int(k1)] = int(re_) + 1j * int(im_)
+        ips.setdefault((int(r), int(q)), {})[int(k1)] = int(re_) + 1j * int(im_)
     J(nx == 0, f"IP の出口に x・z の値 {nx}")
+    lanes = {}                                                  # (r, レーン) → (y0, m)
+    nz_ip = set()
+    for (r, q), d in ips.items():
+        Z = np.zeros(F.M, dtype=complex)
+        for k1, val in d.items():
+            Z[k1] = val
+        if np.any(Z != 0):
+            nz_ip.add(q)
+        z = np.fft.ifft(Z)
+        for lane, part in ((q, z.real), (q + 8, z.imag)):
+            m = int(np.argmax(np.abs(part)))
+            y0 = int(round(part[m]))
+            if y0 != 0:
+                lanes[(r, lane)] = (y0, m)
+    J(all(q < 8 for q in nz_ip), f"IP の出口は 8 個ぶん（0 でない出口の IP の番号 {sorted(nz_ip)}）")
     used = set()
     c = F.coef_interp()
     ds_, ms, rows, bad = [], [], [], 0
     for t_imp, p, kind in imps:
         g0 = (t_imp - KF) // F.M
         got = {}
-        for (r, pp), d in lanes.items():
+        for (r, pp), (y0, m) in lanes.items():
             lab = ff + r
             if pp != p or not (g0 - 1 <= lab <= g0 + 5):        # 足は g..g＋3（g は g0 か g0 ＋ 1）。±6 では前のインパルスの足が同じレーンに入る（4d-2 の 1 回目）
                 continue
-            Y = np.zeros(F.M, dtype=complex)
-            for k1, val in d.items():
-                Y[k1] = val
-            yr = np.fft.ifft(Y)
-            m = int(np.argmax(np.abs(yr)))
-            y0 = int(round(yr[m].real))
-            if y0 != 0:
-                got[lab] = (y0, m)
-                used.add((r, pp))
+            got[lab] = (y0, m)
+            used.add((r, pp))
         mset = {m for _, m in got.values()}
         if len(mset) != 1:
             bad += 1

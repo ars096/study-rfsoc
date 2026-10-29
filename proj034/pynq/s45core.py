@@ -34,7 +34,7 @@ ADC_NAMES = ("ADC_A", "ADC_B", "ADC_C", "ADC_D")
 PROJ_EXPECT = 0x0023_0100        # proj023 の .bit（追跡のため。照合には使わない）。proj021 は 0x0021_0200
 PROJ_G21 = 0x0024_0100           # proj024: 2G-1（BIT_KIND 11・BIT_REV 1、コア 1 個）。discover(ol, bit_kind=BIT_KIND_G21, ncore=1)
 BIT_KIND_G21 = 11
-PROJ_G22 = 0x0025_0100           # proj025: 2G-2（BIT_KIND 10・BIT_REV 1、コア 2 個。コア 1 は RAW を持たず NSTREAM 1）。discover(ol, bit_kind=BIT_KIND_G22, ncore=2)
+PROJ_G22 = 0x0034_0100           # proj034: 2G-2 の 2-for-1（proj025 は 0x0025_0100。BIT_KIND 10・BIT_REV 1、コア 2 個。コア 1 は RAW を持たず NSTREAM 1）。discover(ol, bit_kind=BIT_KIND_G22, ncore=2)
 BIT_KIND_G22 = 10
 BIT_REV_MIN = 1                  # proj023: Wide の最初の版が 1（proj021 の Fine は 2 以上: 2-2d の仮の読み窓の無い 64 KiB の番地）
 BIT_KIND_EXPECT = 1              # SAM45-Wide（proj023）。proj021 は 2 = SAM45-Fine

@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: BSD-3-Clause
+# proj034 P-4 — proj025-m0 の build.tcl を写し、レーン FFT を 2-for-1 にした 2G-2 の .bit。変えたのは: set proj proj034・PROJ 0x0034_0100・
+#   add_files（g22_chain・dft16 → s2_sep・s2_chain・s2_q・dft16f）・IP は 8 個 × 2 コア（設定は同じ。入力が複素になるだけ）・資源の表示の期待値（build_post.tcl）。以下は proj025 の注:
 # proj025 手順 2f — 2G-2（2 ADC × 131072 点、65536 ch × 2、BIT_KIND 10）の .bit。proj024-m0 の build.tcl（2G-1）を写して直した:
 #   1. コアは **s45_core_0・s45_core_1 の 2 個**（E-1: Wide の形。module reference の g22_s45_core。コア 0 は RAW = 1、コア 1 は RAW = 0、E-5）。
 #      CORE_PORT はコア c = ADC c（ch 0 = ADC_A・ch 1 = ADC_B）。ギアボックスの制御はコア c が ch c を握り、ch 2・3 は定数（gb_tie_*）と rst_dsp
@@ -23,7 +25,7 @@
 #      $readmemh が読めないと ROM は 0 になり、BRAM が消えるだけでビルドは通る → ラッパの文字列・合成のログ・配置後の BRAM の数で止める（proj023 3b と同じ）
 #   6. ID: BIT_KIND 11・BIT_REV 1・PROJ 0x0024_0100（s45_core_0・time_core_0・s45_ring_0）。s45_ring_0 の入口は 1 本
 #   7. 遅いビットの検証ビルド（GB_SLOW）と FFT_OPT は外した（2G-1 の IP は 1 通り）
-#   8. 資源の数え: lane_fft_g22 16 個・段ごと（u_pfb・g_lane・u_chain・u_tw・u_acc・TP）・ROM の BRAM・URAM
+#   8. 資源の数え: lane_fft_g22 16 個（proj034 は 8 個 / コア）・段ごと（u_pfb・g_lane・u_chain・u_tw・u_acc・TP。proj034 は u_sep・u_q も）・ROM の BRAM・URAM
 #
 # （以下は proj023 の build.tcl の記録）
 # proj023 手順 3b — SAM45-Wide（proj023/README の手順 3b・D-1〜D-7）:
@@ -163,7 +165,7 @@
 # RFDC・Clocking Wizard・ギアボックス・spec_core の本体は proj010 と同一。
 # ナイキストゾーン（2）は実行時に PYNQ から設定する（pynq/spectrometer.py）。
 
-set proj         proj025
+set proj         proj034
 # proj015: **既定の part を -1 に**（実機の .bit を -1 で配置配線する。チップの刻印が未確認で、遅い方で閉じたものだけを載せる）。
 #   -1 のビルドは board_part を使わず、src/board/ps_preset.tcl（make ps-preset で書き出したボードプリセットの PS の設定）を当てる。
 #   -2（board_part の宣言値）は PART=xczu48dr-ffvg1517-2-e で build-2-e/ に（board_part ＋ プリセット。proj014 までの build/ と同じ作り）
@@ -251,7 +253,7 @@ set fft_mod     lane_fft_g22 ;# **名前は RTL（g22_spec.v）と sim/lane_fft_
 set fft_lane_n  8192
 set fft_order   bit_reversed_order
 set fft_in_w    15        ;# IP の入力（g22_pfb の出口 y、15 bit）
-set fft_out_w   29        ;# unscaled の出力 = 15 + log2(8192) + 1。RTL は 32 bit の欄の下位 28 bit を読む（|Y| < 2^27、proj024 M-7 の 2G-2 の行）
+set fft_out_w   29        ;# unscaled の出力 = 15 + log2(8192) + 1。proj034: 入力は複素（2-for-1）。RTL（g22_spec）は 32 bit の欄の下位 29 bit を読む（|Z| < 2^28、M-1b）
 # フレームの頭と起動の見張り。**RTL の既定と同じ値を明示して読み返す**（sim は GF_L2 1 で回している）
 set g22_kf      0         ;# T ≡ K_F（mod 8192）がフレームの頭
 set g22_st_n    16384     ;# 起動の見張り（ビート）
@@ -275,7 +277,7 @@ foreach {par h nrow ncol} $g22_hex {
 }
 set ncore 2               ;# proj025: コアは 2 個（s45_core_0・s45_core_1、E-1）。ギアボックスの ch は nch（4）
 set g22_kind 10           ;# BIT_KIND（2G-2）
-set g22_proj [expr {0x00250100}]
+set g22_proj [expr {0x00340100}]   ;# proj034（proj025 は 0x00250100）
 
 puts "PART      : $part"
 puts "OUTDIR    : $outdir"
@@ -469,8 +471,9 @@ if {$use_board} {
 
 # proj024: コア（g22_s45_core）とその中身。Wide の wide_* と共有の ROM は足さない
 add_files -norecurse [list ./src/g22/g22_s45_core.v ./src/g22/g22_core.v ./src/g22/g22_spec.v ./src/g22/g22_pfb.v ./src/g22/g22_pfb_core.v \
-                           ./src/g22/g22_coef.v ./src/g22/g22_tw.v ./src/g22/g22_chain.v ./src/g22/g22_acc.v \
-                           ./src/common/core_cmn.v ./src/common/raw_core.v ./src/common/cmul.v ./src/common/dft16.v ./src/common/tp_core.v \
+                           ./src/g22/g22_coef.v ./src/g22/g22_tw.v ./src/g22/g22_acc.v \
+                           ./src/s2_sep.v ./src/s2_chain.v ./src/s2_q.v \
+                           ./src/common/core_cmn.v ./src/common/raw_core.v ./src/common/cmul.v ./src/common/dft16f.v ./src/common/tp_core.v \
                            ./src/common/rec_fr.v ./src/common/rec_arb.v ./src/common/adc_ev.v]
 # proj016〜: 時刻・リング・ギアボックスの見張り・入力の選び
 add_files -norecurse [list ./src/common/time_core.v ./src/common/s45_ring.v ./src/common/gb_adc.v ./src/common/gb_gate.v ./src/common/axis_sel4.v]

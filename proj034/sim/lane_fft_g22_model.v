@@ -6,6 +6,7 @@
 // 実機では build.tcl が Xilinx FFT IP を lane_fft_g22 の名前で生成する（手順 2f）。**モデルが守る約束**（IP の設定と対。S-1・S-2 の設定）:
 //   - 8192 点・固定長・順変換・unscaled（入力 15 bit を 16 bit に符号拡張、出力 28 bit = 15 + 13 を 32 bit に符号拡張）
 //   - **bit 反転順で出力**し、m_axis_data_tuser[12:0] に XK_INDEX（= そのサンプルの本当の k1。出る順は 0, 4096, 2048, …）を載せる
+// **proj034: 入力は複素**（tdata[15:0] = 実部、[31:16] = 虚部。2-for-1 で z = y_q + j·y_(q+8)。proj025 までは虚部を捨てていた。出力は 29 bit）。proj033 の直しと同じ
 //   - realtime・TLAST の検査・入力の途切れ（halt）・リセットの後の tready の遅れ・FFT_STALL_AT（流し始めの 1 回の tready の下げ）は lane_fft_w_model と同じ
 // 値は倍精度で計算した DFT を丸めたもの（floor(x + 0.5)）。**IP と bit 単位では一致しない**（自作部分の照合は、この出力を記録して模型に通す。Wide と同じ）。
 // 出力待ちのフレーム数 QF は 4（proj024 の lane_fft_g21_model と同じ。lane_fft_w_model は 16）。
@@ -64,6 +65,7 @@ module lane_fft_g22 #(
     localparam integer RD = READY_DELAY;
 `endif
     reg signed [15:0] xin [0:M-1];
+    reg signed [15:0] xim [0:M-1];
     integer cnt, rdy_cnt, started;
     integer n_acc, stall_st;    // 受けたビートの通算・FFT_STALL_AT の状態（0 まだ / 1 下げている / 2 済み）
     integer slip;               // rev5: 入力の途切れ 1 クロックごとに、TLAST の検査の数えだけが 1 進む（realtime の IP の振る舞いの模型）
@@ -85,7 +87,7 @@ module lane_fft_g22 #(
                 r = 0;
                 for (b = 0; b < LM; b = b + 1) r = r | (((n >> b) & 1) << (LM - 1 - b));
                 fr_[r] = xin[n];
-                fi_[r] = 0.0;
+                fi_[r] = xim[n];
             end
             len = 2;
             while (len <= M) begin
@@ -131,6 +133,7 @@ module lane_fft_g22 #(
                 started = 1;
                 n_acc = n_acc + 1;
                 xin[cnt] = s_axis_data_tdata[15:0];
+                xim[cnt] = s_axis_data_tdata[31:16];
                 if (cnt == 0) ev_fs_r <= 1'b1;
                 // 検査は (cnt + SKEW) mod M で行う。**枠（cnt）は変えない** — 実機の見立てと同じ形
                 if (s_axis_data_tlast && ((cnt + SKEW + slip) % M) != M-1) event_tlast_unexpected <= 1'b1;

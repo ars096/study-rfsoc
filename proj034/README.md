@@ -188,6 +188,33 @@ IP 1 個（lane_fft_g22、8192 点・unscaled・realtime）: **DSP 33・LUT 3,71
 - E-0 の見当（DSP ≒ 1,260・BRAM 620〜650・LUT ≒ 25 %）と同じ。DSP の差 −296 / コアは 2G-1（proj033）と同じ数（IP 8 個 × 33 ＋ 鎖 32）
 - 数えていないもの: コアに組むときの帳簿（flags[7] の見張り、dbg の IP の出口の詰め替え）、配置後の増減（proj033 は全体の LUT が E-1 より +1.3 k）
 
+## P-4 コアに組む（2026-10-29）
+
+**直したもの**（proj033 が g21_spec に入れた直しと同じ型。P-0 で写した proj025-m0 の木に）:
+- `src/g22/g22_spec.v`: IP 16 → **8 個 / コア**（tdata = {y_(q+8), y_q}）→ `s2_sep`（Z 29 bit）→ `s2_chain`（`g22_tw` はそのまま）→ `s2_q` → `g22_acc`（今のまま）。帳簿は直さない（s2_q の出口も各フレームの最初の行が 0・最後の行が 8191）。
+  flags[3]・[5] は IP 8 個で、**flags[7] = s2_q の ovf ｜ s2_sep の pos_mis ｜ 入口の 27 bit の飽和**（proj025 では 0 の予約）。dbg_ip_tdata は IP 8 個ぶんを下に詰めた
+- `sim/lane_fft_g22_model.v`（IP の行動模型）: 虚部の入力を読む（proj025 までは捨てていた）
+- `sim/check_g22.py`: 記録した IP の出口から先の模型を `F.chain_Y` から **`S2.power_s2(…, "(i)")`** に（spec・core・s45 の 3 か所）。`ds` は proj033 と同じく、IP q の出口の逆 FFT の実部をレーン q・虚部をレーン q＋8 に。s45 のレジスタの期待 PROJ を 0x0034_0100 に
+- Makefile の 2c・2d・2e・2e-2・4d-2 の RTL の一覧: g22_chain・dft16 → s2_sep・s2_chain・s2_q・dft16f（1d の g22_chain の単体の sim と ooc-ref は今の鎖のまま残す）
+- ID: build.tcl（`set proj proj034`・`add_files`・**PROJ 0x0034_0100**・`fft_out_w` の注）・build_post.tcl（資源の表示の期待値: IP 16 個・DSP 528 / 1,256、段ごとの数えに u_sep・u_q）・`g22_s45_core` の PROJ の既定（3408128）・`tb_g22_x2` のレジスタの期待・pynq/ の `PROJ_G22`・`widef2.py` の `--bitfile` の既定（proj034.bit）。
+  `timebase.CAL` に **0x0034_0100 を未較正（adc_to_core_ns None・pps_det_ns 71.5）で足した**（別の配置なので F-2 を測り直す、LESSONS）
+
+### P-4a コアの段の sim — 予言（走らせる前に書く、2026-10-29）
+
+並べ方: sim-g22s が入力 `build-sim/g22s_in/x.hex` を書き終えて tb を起こしてから、同じ入力を読む sim-g22core・g22s45・g22x2 と、sim-lane・g22ds を起こす（proj033 P-4a の並べ方の誤りの型を避ける）
+
+| sim | normal | 陽性対照 |
+|---|---|---|
+| sim-lane（2a） | plain・stall とも通過（tb の入力の虚部は 0 なので proj025 と同じ） | — |
+| sim-g22s（2c、SHIFT 4） | A2 ダンプ 2 本とも **65,536 ch が power_s2 と一致**・dsat 一致・CW ±0.05 dB・床の比 ±2 %・flags 00。**A1 PFB の出口は proj025 の 70,665 ビートより ≒ 2,050 多い**（s2_q の待ち行列の遅れ（最大 2,048 拍）の分、tb がダンプを待つ間に PFB が先へ進む。proj033 の +4,106 の半分） | ipq は flags 30 で落ちる |
+| sim-g22core（2d） | SPEC 65,544 語・中身の違う ch 0・TP の模型と違う 0・レジスタ 26 個の違い 0・flags 00 | posctl・tp は落ちる |
+| sim-g22s45（2e） | レジスタ 15 個の違い 0（**PROJ 0x0034_0100**）・SPEC の中身の違い 0・SNAP 2 個違い 0・捨てた数の帳尻が合う | drop は落ちる |
+| sim-g22x2（2e-2、2 コア） | **2 コアに同じ ADC でダンプが bit 単位で同じ（違う行 0 / 8,192）**・PROJ 0x0034_0100（コア 0・1） | X2_DLY は 8,192 行違って落ちる |
+| sim-g22ds（4d-2） | **D_S = +1・D_eff = 12,289 ビート（48.004 µs）のまま**（D_S は IP の出口で測り、フレームのラベルは入口の T で付くので s2_q の遅れはラベルを動かさない。proj033 と同じ）。IP の出口は 8 個ぶん | posctl は D_S 0 で落ちる |
+
+- 時間の見当: proj025 は 2c 1 本 2.5 分・2d 3 本 12 分・4d-2 14 分。proj033 は 2-for-1 で 2c が proj024 の数倍になった（iverilog の s2_* の段）ので、2c ≒ 10 分・4d-2 ≒ 30 分。2G-4 のビルドと同じ時間帯
+- 外れるとしたら: 2G-1 の寸法（16384・14 bit・30 bit）を写した照合の取り残し、tb がダンプを待つ時間（最後のフレームの行が ≒ 2,050 拍遅れる）
+
 ## 結果
 
 -
