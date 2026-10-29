@@ -7,7 +7,7 @@
 //     0x80 FFT_N は 0（SLICE の流れが無い）
 //   - g21_core（FULL の流れ s = 0）。入力は s_axis_full = 外の axis_sel4 が 4 ADC から選んだもの。選ぶのは g21_core の SRC（full_sel）
 //   - raw_core（RAW の流れ s = 1、D-13）。入力は s_axis_raw = 外の**もう 1 個の** axis_sel4 が選んだもの。選ぶのは raw_core の SRC（raw_sel）。
-//     **D-14（2026-10-18、西村さん）: RAW の入力も SRC で選んだ ADC**。FULL と RAW はそれぞれ自分の SRC（流れのブロックの 0x28）で選ぶ
+//     **D-14（2026-10-18、開発者）: RAW の入力も SRC で選んだ ADC**。FULL と RAW はそれぞれ自分の SRC（流れのブロックの 0x28）で選ぶ
 //   - AXI4-Lite の 1 → 3 の振り分け（wide_s45_core と同じ取り引き 1 つずつ・全部レジスタで受け渡す形）
 //   - レコードの束ね（rec_arb: コアの TP・g21_core（SPEC と FULL の TP）・SNAP（RAW））
 // ブロックデザインには module reference で `s45_core_0` として置く（PS はセルの名前でコアを見つける）。全部が DSP ドメイン（256 MHz）。
