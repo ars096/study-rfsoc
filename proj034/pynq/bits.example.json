@@ -1,0 +1,9 @@
+{
+  "default": "proj021",
+  "bits": {
+    "proj021": {"bit": "proj021.bit", "pydir": ".", "tp_cal": "tp_cal.json",
+                "note": "SAM45-Fine v2（INTERFACE v2・PL が書くリング）。sha256 は sha256sum proj021.bit で書き足す"},
+    "proj020": {"bit": "../proj020/proj020.bit", "pydir": "../proj020", "tp_cal": "../proj020/tp_cal.json",
+                "note": "SAM45-Fine v1（proj020。仮の読み窓・s45proto v1）。V2-d の往復の相手"}
+  }
+}
