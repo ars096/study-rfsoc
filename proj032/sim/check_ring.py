@@ -9,7 +9,8 @@
   - SEQ は 0 から 1 ずつ（受け手で捨てたダンプは SEQ を取らない）
   - 本体 = そのダンプ（窓 s・DUMP_K）の 4096 ch の u64 を f32 に丸めたもの（u < 2^53: float32(float64(u))）、ch の順
   - 頭の NS・SHIFT・G・DUMP_N が wsb_run.log の窓の設定と合う
-  - R-1: DUMP_F0 = (g0 ＋ K·ng)·2^(G_L2 − 12 − NS)、DUMP_T = そのフレームの頭の標本が入口に入ったビート（wsb_t.log）± 揺れ（≦ 16 ビート）
+  - R-1: DUMP_F0 = (g0a ＋ K·ng)·2^(G_L2 − 12 − NS)（P-4: g0a は T の原点から数えた格子。古い記録で G0A が無ければ g0）、DUMP_T = そのフレームの頭の標本が入口に入ったビート（wsb_t.log）± 揺れ（≦ 16 ビート）
+  - P-4: K_F = DUMP_T − L·DUMP_F0（L = 2^(12 + NS)）が窓ごとに一定。WRST の明けを格子に揃える tb（wsb_run.log に AL 1）では 0 ≦ K_F < L（フレームの頭が T の格子に揃う）
   - 流れの中の揃ったダンプは全部、レコードになっているか捨てた数（EXT_CNT）に入っている: 揃ったダンプ − レコード = EXT_CNT
 """
 import os
@@ -24,7 +25,11 @@ import numpy as np
 def main(d):
     run = open(os.path.join(d, "wsb_run.log")).read().split("\n")
     g_l2 = int(run[0].split()[3])
-    g0 = int(run[0].split()[1])
+    h0 = run[0].split()
+    g0 = int(h0[1])
+    g0a = int(h0[9]) if len(h0) > 9 else g0
+    al = len(h0) > 11 and h0[10] == "AL" and h0[11] == "1"
+    kf = {}
     tf = {}
     for l in open(os.path.join(d, "wsb_t.log")):
         a, b, c = l.split()
@@ -77,9 +82,14 @@ def main(d):
         c = cfg[s]
         if (ns, sh, g, dn) != (c["ns"], c["sh"], c["g"], 1 << (g_l2 - 12 - c["ns"])):
             errs.append("SEQ %d 窓 %d: NS %d SHIFT %d G %d DUMP_N %d" % (sq, s, ns, sh, g, dn))
-        f0 = (g0 + dk) << (g_l2 - 12 - c["ns"])           # ng = 1（tb）
-        if w[2] != f0:
-            errs.append("SEQ %d 窓 %d K %d: DUMP_F0 %d（期待 %d）" % (sq, s, dk, w[2], f0))
+        f0 = (g0 + dk) << (g_l2 - 12 - c["ns"])           # ng = 1（tb）。rst から数えたフレーム（wsb_t.log の番号）
+        f0a = (g0a + dk) << (g_l2 - 12 - c["ns"])
+        if w[2] != f0a:
+            errs.append("SEQ %d 窓 %d K %d: DUMP_F0 %d（期待 %d）" % (sq, s, dk, w[2], f0a))
+        k_f = w[3] - (w[2] << (12 + c["ns"]))
+        kf.setdefault(s, set()).add(k_f)
+        if al and not 0 <= k_f < (1 << (12 + c["ns"])):
+            errs.append("SEQ %d 窓 %d K %d: K_F %d が [0, L) の外" % (sq, s, dk, k_f))
         if (s, f0) in tf:
             dt = w[3] - tf[(s, f0)]
             tmax = max(tmax, abs(dt))
@@ -100,6 +110,10 @@ def main(d):
         recs[(s, dk)] = sq
         pos += 128 + P
     miss = [key for key in full if key not in recs]
+    for s_ in sorted(kf):
+        if len(kf[s_]) != 1:
+            errs.append("窓 %d: K_F が一定でない %s" % (s_, sorted(kf[s_])[:4]))
+    print("K_F（窓ごと）: " + " ".join("%d:%s" % (s_, ",".join(str(v) for v in sorted(kf[s_]))) for s_ in sorted(kf)))
     print("照らさないレコード（流れの記録を閉じた後）%d・DUMP_T を照らせないレコード %d・DUMP_T と入口の時刻の差の最大 %d ビート" % (late, nt, tmax))
     print("レコード %d（PAD %d）・REC_CNT %d・揃ったダンプ %d・レコードにないダンプ %d・EXT_CNT %d・DROP_CNT %d・PEAK %d B・sflags %s"
           % (len(recs), pads, rec_cnt, len(full), len(miss), ext_cnt, drop_cnt, peak, sflags))

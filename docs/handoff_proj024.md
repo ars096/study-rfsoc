@@ -6,7 +6,7 @@
 ## 1. 約束（どの会話でも同じ）
 
 - コミット: `git -c user.name="<作者>" -c user.email="<作者のアドレス>" commit`（作者は直前のコミットと同じにする。アドレスは本文に書かない）、メッセージは日本語、末尾は `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` だけ。
-  **Claude-Session の行・URL は入れない。push はしない（西村さんがする）**。status・log は `git --no-optional-locks`
+  **Claude-Session の行・URL は入れない。push はしない（開発者がする）**。status・log は `git --no-optional-locks`
 - リポジトリ（study-rfsoc）は公開。**ホスト名・SG やボードのアドレス・個人のパス・Host ID・データの口の相手の IP を書かない**（「Vivado サーバ」と書く）。コミットの前に公開の確かめ（grep）
 - ボードのコマンドは root で `python3 xxx.py …`。ボードは `$B`、SG は `$SG`（`--sg $SG`）。送るのは `scp build-PE/projNNN.bit build-PE/projNNN.hwh pynq/*.py xilinx@$B:~/projNNN/` の形
 - Makefile は直接書き換えにくい置き場所にあるので、Vivado サーバの側で python の読み書きで直す（proj023 の会話の手順）
@@ -16,10 +16,10 @@
 
 | もの | 持ち主 | proj024 の会話ですること |
 |---|---|---|
-| `INTERFACE.md`・`BITS.md` | **proj023 の会話**（Wide を閉じるまで） | 直したいことは `proj024/README.md` に「INTERFACE.md の変更案」として書き、proj023 の会話（か西村さん）が入れる |
+| `INTERFACE.md`・`BITS.md` | **proj023 の会話**（Wide を閉じるまで） | 直したいことは `proj024/README.md` に「INTERFACE.md の変更案」として書き、proj023 の会話（か開発者）が入れる |
 | `LESSONS.md`・`docs/lessons_all.md` | 両方（足すだけ。消さない） | 2G の知見を足す。同じ行を同時に書き換えない |
 | `proj023/` | proj023 の会話 | **読むだけ**。使う部品は proj024 に写してから変える（proj023 は proj021-m0 から写した。同じ形） |
-| Vivado サーバ・ボード | 共有 | モデルの間は使わない。ビルド・実機に進む前に西村さんと順番を決める（ビルドは 1 回 ≒ 数時間、Performance_Explore） |
+| Vivado サーバ・ボード | 共有 | モデルの間は使わない。ビルド・実機に進む前に開発者と順番を決める（ビルドは 1 回 ≒ 数時間、Performance_Explore） |
 
 土台にする commit: **この文書を足した commit**（proj023 の V2-b の陽性対照の後）。proj024 の README の頭に、写した commit の番号を書く。
 proj023 を閉じるときに、proj021 と同じく注釈つきのタグ（`proj023-m0` の案）と、bit・hwh の sha256・資源・WNS・CDC の表を残す（YATSUGATAKE の移植の M0。proj021 の README「移植元を決める」）。
@@ -47,7 +47,7 @@ proj023 を閉じるときに、proj021 と同じく注釈つきのタグ（`pro
 | 1 | **ch が 4096 を越える** | 1 本の流れで 32768〜131072 ch。INTERFACE の「S0 ≦ N/2 − 4096」、PS の `NCH = 4096`・`s45proto.IF_ORDER`（4096 固定）・`s45client` の `P.NCH` を一般化する。s45proto v2 の nch の欄は u32 で形は足りる |
 | 2 | **ADC の数（1 / 2 / 4）で中身が変わる** | 使わないコア・流れの自己記述（NSTREAM か NCH 0 の空の流れか）。2.1 の「空の流れ」の約束が使えるか |
 | 3 | **FFT の大きさと資源** | 1 ADC で 262144 点（131072 ch）。Wide は 4 × 32768 点で DSP 2,720（63.7 %）・BRAM 75.7 %・WNS +0.001 ns（余裕ほぼ 0）。積分器は 131072 ch × 64 bit × 2 面 = 16 Mbit。`tools/estimate.py` で先に数える |
-| 4 | **ネットワークの予算**（INTERFACE 8. の 10、**未決・西村さんの判断**） | 2G は float32 で 51.2 MB/s（10.24 ms）。今の予算 17.7 MB/s（ボードの送り出しが TCP で 25 MB/s で頭打ち）を越える。「PL は 10.24 ms、ネットワークは束ねて送る」と読み替えるか、ch を減らすか |
+| 4 | **ネットワークの予算**（INTERFACE 8. の 10、**未決・開発者の判断**） | 2G は float32 で 51.2 MB/s（10.24 ms）。今の予算 17.7 MB/s（ボードの送り出しが TCP で 25 MB/s で頭打ち）を越える。「PL は 10.24 ms、ネットワークは束ねて送る」と読み替えるか、ch を減らすか |
 | 5 | **PS の取得**（8. の 4・6） | Python ＋ numpy の 1 本は ≒ 114 MB/s で、2G は 10.24 ms に対して 94 %（proj021 M-5）。取得を C にするか（ARMv8 の CRC 命令・和・丸め・CRC を 1 回のなめで）、複数のプロセスに。CRC を全部見るか間引くか |
 | 6 | **リングとレコードの大きさ** | 1 レコード 131072 × 8 = 1 MiB。32 MiB のリングは ≒ 0.3 s しか持たない（Wide は 1.5 s）。CMA の大きさと合わせて |
 | 7 | **時刻の補正** | 2G の D_S・1.5·L（L はその FFT のフレーム）。**Wide は D_S = 0・D_eff = 1.5·L**（2026-10-17、`proj023` の `sim-wds`。tb_wide_ds・check_ds の型がそのまま使える）。要点: RAW は口のビートに 1 クロック前の T を付け、axis_sel4 の 1 段がそれを打ち消す → 2G で RAW・全帯域の入口の段数を変えたら D_S が動く |
@@ -72,8 +72,8 @@ proj023 を閉じるときに、proj021 と同じく注釈つきのタグ（`pro
 
 ## 7. 追記（2026-10-17、proj023 の会話から）
 
-- **D-9・D-10 を INTERFACE.md・BITS.md に入れた**（西村さんの決め）: BIT_KIND は 2G-4 = 3・2G-2 = 10・2G-1 = 11。流れは KIND 1 FULL・NCH 32768 / 65536 / 131072・FRAME_BEATS 4096 / 8192 / 16384。
+- **D-9・D-10 を INTERFACE.md・BITS.md に入れた**（開発者の決め）: BIT_KIND は 2G-4 = 3・2G-2 = 10・2G-1 = 11。流れは KIND 1 FULL・NCH 32768 / 65536 / 131072・FRAME_BEATS 4096 / 8192 / 16384。
   BITS.md の「各 bit の中の行はレジスタで」に 2G の例外を書いた。リングの大きさ（INTERFACE 8. の 11）とネットワークの予算（8. の 10）は未決のまま
 - 2G の RTL は**データの道の部品（新しいモジュール）と単体の sim から**始めてよい（インターフェースに触らない）。コアの外側（流れのブロック・レコード・build.tcl）は、
-  proj023 の RTL を写して書いてよい。**proj023 の RTL はビルド 11（567fda2）で凍結した**（2026-10-17、西村さん。proj023 の README「RTL の凍結」）。
+  proj023 の RTL を写して書いてよい。**proj023 の RTL はビルド 11（567fda2）で凍結した**（2026-10-17、開発者。proj023 の README「RTL の凍結」）。
   写す元は 567fda2（proj024 の README の頭に書く）。タイミングの余裕（Wide は WNS +0.001 ns）は 2G の側で扱う。2G で共通の部品を直したら、Wide に戻すかはマージのときに決める

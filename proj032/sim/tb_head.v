@@ -7,7 +7,7 @@ module tb_head;
     wire zv; wire signed [23:0] zr, zi; wire sat, ovr;
     // 入力 f = 23.4375 MHz（256 MS/s で）、NCO f0 = 20 MHz → 出口 3.4375 MHz（128 MS/s）
     localparam real F = 23.4375, F0 = 20.0, A = 1000000.0;
-    head_core dut (.clk(clk), .rst(rst), .y_valid(yv), .y_re(yr), .y_im(yi), .dphi(32'd335544320), .z_valid(zv), .z_re(zr), .z_im(zi), .sat(sat), .ovr(ovr));
+    head_core dut (.clk(clk), .rst(rst), .y_valid(yv), .y_re(yr), .y_im(yi), .dphi(32'd335544320), .byp(1'b0), .z_valid(zv), .z_re(zr), .z_im(zi), .sat(sat), .ovr(ovr));
     integer m, fo, novr;
     initial begin
         fo = $fopen(`ZOUT, "w"); novr = 0;

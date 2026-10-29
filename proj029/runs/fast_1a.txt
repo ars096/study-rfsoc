@@ -1,4 +1,4 @@
-# proj029 1a: ボード（aarch64、CPU 3・chrt -f 50）。2026-10-23、西村さんが打った出力の写し（プロンプトの行は外した）
+# proj029 1a: ボード（aarch64、CPU 3・chrt -f 50）。2026-10-23、開発者が打った出力の写し（プロンプトの行は外した）
 # bash build_fast.sh
 gcc (Ubuntu 11.2.0-19ubuntu1) 11.2.0
 libs45fast.so: CRC: 命令

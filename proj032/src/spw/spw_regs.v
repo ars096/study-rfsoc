@@ -5,7 +5,8 @@
 // **RUN・WRST はコアで 1 つ**（R-1 の決め、2026-10-28）: どの流れの CTRL に打っても、コアの全部の窓に効く。
 //   WRST: 書いておいた窓の設定（WK・WDPHI・WNS・WFL・WSL・WG）を全部の窓で取り込み、データの道（wsb・dsink・頭）を WRST_T クロックだけリセットする（wrst）。
 //         取り込む前に約束を数える（下の「約束」）。破れていれば **WRST を断り**、効いている設定もデータの道もそのまま（CORE_FLAGS[0]・0x8C WRST_BAD）
-//   RUN:  SHIFT（窓ごと）・NG・NDUMP・CFG_ID を取り込み、cmd_run を 1 クロック。WRST のリセット中に来た RUN はその明けまで待つ
+//   RUN:  SHIFT（窓ごと）・NG・NDUMP・CFG_ID を取り込み、cmd_run を 1 クロック。WRST のリセット中に来た RUN はその明けまで待つ。
+//         RUN の中の RUN は断り、STOP の直後の RUN は静まるまで待つ（下の「RUN の約束」）。NDUMP で止まった後も RUN の中のまま（STOP してから打つ）
 //   ARM_RUN・ARM_WRST: time_core の発火（fire = go_out）で RUN・WRST。同じ発火で両方なら WRST → 明けて RUN（SAM45-Fine の win_core と同じ）。
 //   予約は発火・STOP・取り消し（CTRL[3]）でしか消えない
 // 約束（WRST の前に H クロックで数える。fl ≧ E の窓は止める窓: 数えない）:
@@ -13,16 +14,24 @@
 //   [2] DDR の窓（WSL ≧ S）の幅の和 ≦ 256 MHz（D-1）
 //   [3] チップ内の履歴の枠（WSL < S）が重ならない・[4] DDR の枠（WSL − S）が NK 未満で重ならない
 //   [5] WNS が 1..5 の外
+//   [6] 粗い ch WK が 32 を越える、または PSPLIT のとき頭の組と偶奇が合わない（頭 0..H/2−1 は偶、残りは奇。pfb64_core は k の最下位 bit を
+//       頭の組で決めるので、取り違えると黙って隣の ch を出す）
 //   断った WRST を待っていた RUN も捨てる（run_wait を消す）
-//   **止める窓（WFL ≧ E）をデータの道（ddcb の lane の選び）がまだ扱えない**: R-1b ではレジスタだけ
+// 水抜き（P-2）: 約束が通ったら drain を立て、データの道が開いたレコードを送り終える（dp_idle）のを待ってから設定を取り込みリセットする。
+//   送っている途中のレコードを WRST で切ると、リング（ring128）が次のレコードの頭を本体として受け、CRC の合ったまま中身が壊れる。
+//   新しい設定が送っている途中のレコードの頭に入るのも防ぐ。DRN_MAX クロック待っても空かなければ構わずリセットし CORE_FLAGS[5] を立てる
+// 格子（P-4）: WRST の明け（データの道のリセットを解くクロック）を T ≡ 0 mod 2^AL_L2 に揃える。窓のフレームの頭は T ≡ K_F mod L（K_F は鎖の遅れ）になり、
+//   DUMP_F0 は T の原点から数えたフレーム番号、DUMP_T = K_F ＋ L·DUMP_F0（proj023 の形）。待ちは最長 2^AL_L2 クロック（G_L2 19 で 2 ms）
+// RUN の約束（P-4）: RUN の中に来た RUN は断る（CORE_FLAGS[6]、STOP してから打つ）。STOP の後 QUIET クロックかつ受け手が空く（dp_idle）までは RUN を待たせる。
+//   理由: レコードの頭の NG・g0 は今の値を読むので、送りかけのダンプの頭に新しい RUN の値が入り、DUMP_F0・DUMP_T・DUMP_N が黙って狂う
 // N_ACC・N_DUMP: SpW はコアで 1 つ（区切りの格子は全窓で同じ）。**0x84 NG（格子 G の数）・0x88 NDUMP に書く**（変更案）。
 //   流れのブロックの N_ACC は読むだけ = NG·2^(G_L2 − 12 − NS)（その窓のフレーム）、N_DUMP は NDUMP
 // 帳簿（SEQ・DUMP_*）はレコード（dsink）に入るので、流れのブロックの 0x1C・0x3C〜0x5C は 0 を返す（変更案）
 //
 // ---- 番地（コアの 64 KiB、AXI4-Lite 32 bit）----
 //   0x0000 IF_ID {2, BIT_KIND, BIT_REV, 1} / 0x04 PROJ / 0x08 NSTREAM = H / 0x0C CAPS [0] レコード / 0x10 BASE_BEATS / 0x14 BUILD / 0x18 CORE_PORT
-//   0x0080 CORE_FLAGS R（粘着、どの流れの CTRL[8] でも消える）: [0] WRST を断った [1] 機関の FLAGS の OR [2] DDR の道の FLAGS の OR [3] 受け手の FLAGS の OR
-//   0x0084 NG RW（RUN で取り込む、0 は 1）/ 0x88 NDUMP RW（0 = 止めるまで）/ 0x8C WRST_BAD R（最後に断った WRST の約束の印 [5:1]）/ 0x90 WRST_CNT R
+//   0x0080 CORE_FLAGS R（粘着、どの流れの CTRL[8] でも消える）: [0] WRST を断った [1] 機関の FLAGS の OR [2] DDR の道の FLAGS の OR [3] 受け手の FLAGS の OR [4] 前段（頭・ddcb）の FLAGS の OR [5] WRST の水抜きが時間切れ [6] RUN の中の RUN を断った
+//   0x0084 NG RW（RUN で取り込む、0 は 1）/ 0x88 NDUMP RW（0 = 止めるまで）/ 0x8C WRST_BAD R（最後に断った WRST の約束の印 [6:1]）/ 0x90 WRST_CNT R
 //   0x4000 + 0x400·s（s < H）流れ s のブロック:
 //     0x00 SID {2, 3, s, 0} / 0x04 PARAM {1（f32）, 64, 0, 12} / 0x08 CTRL / 0x0C N_ACC R / 0x10 N_DUMP R / 0x14 SHIFT RW / 0x18 FLAGS R（その窓の機関の FLAGS）/
 //     0x1C SEQ 0 / 0x20 NCH 4096 / 0x24 FRAME_BEATS = 2^(12 + NS) / 0x28 SRC = CORE_PORT[3:0] / 0x2C CFG_ID RW（コアで 1 つ）/ 0x30 RUN_CFG / 0x34 WRST_CFG /
@@ -46,7 +55,11 @@ module spw_regs #(
     parameter integer PROJ       = 3277312,     // 0x0032_0200（10 進で書く）
     parameter integer BUILD_TAG  = 0,
     parameter integer CORE_PORT  = 0,
-    parameter integer BASE_BEATS = 2621440
+    parameter integer BASE_BEATS = 2621440,
+    parameter integer PSPLIT     = 1,
+    parameter integer DRN_MAX    = 4194304,     // 水抜きの待ちの上限（16 ms）
+    parameter integer AL_L2      = G_L2,        // WRST の明けを揃える T の格子（sim で縮めるため別の名前）
+    parameter integer QUIET      = 12288        // STOP の後、送りかけのダンプが受け手に入りきるまでの待ち（枠 3 つ）
 )(
     input  wire                 clk,
     input  wire                 rst,
@@ -72,6 +85,8 @@ module spw_regs #(
     input  wire                 fire,
     // データの道へ（効いている値）
     output reg                  wrst,
+    output reg                  drain,          // 新しいレコードを始めない（水抜き）
+    input  wire                 dp_idle,        // 開いたレコードが無い
     output wire [H*6-1:0]       cfg_wk,
     output wire [H*32-1:0]      cfg_dphi,
     output wire [H*3-1:0]       cfg_ns,
@@ -88,7 +103,8 @@ module spw_regs #(
     input  wire [H*64-1:0]      t0,
     input  wire [E*16-1:0]      eng_flags,
     input  wire                 ddr_flag,
-    input  wire                 sink_flag
+    input  wire                 sink_flag,
+    input  wire                 front_flag
 );
     localparam [7:0] BK8 = BIT_KIND, BR8 = BIT_REV;
     integer i;
@@ -115,8 +131,8 @@ module spw_regs #(
     reg  [15:0]  wrst_t;
     reg  [63:0]  run_t;
     reg  [31:0]  wrst_cnt;
-    reg  [5:1]   wrst_bad;
-    reg  [3:0]   cflags;
+    reg  [6:1]   wrst_bad;
+    reg  [6:0]   cflags;
 
     // ---- AXI4-Lite の書き ----
     wire        wr_go = s_axi_awvalid && s_axi_wvalid && !s_axi_bvalid && !rst;
@@ -135,14 +151,17 @@ module spw_regs #(
 
     // ---- 制御: 予約・WRST（約束を数える → リセット）・RUN ----
     reg          arm_run, arm_wrst, run_wait, running;
-    localparam [1:0] W_IDLE = 2'd0, W_CHK = 2'd1, W_RST = 2'd2;
+    localparam [1:0] W_IDLE = 2'd0, W_CHK = 2'd1, W_RST = 2'd2, W_DRN = 2'd3;
     reg  [1:0]   wsm;
     reg  [4:0]   ci;                                 // 数えている窓
     reg  [5:0]   lsum [0:E-1];                       // lane ごとの幅（8 MHz 単位）
     reg  [5:0]   dsum;
     reg  [15:0]  sl_used;                            // 枠の使い（チップ内 0..S−1・DDR S..S+NK−1）
-    reg  [5:1]   bad;
+    reg  [6:1]   bad;
     reg  [15:0]  rcnt;
+    reg  [22:0]  dcnt;
+    reg  [15:0]  qcnt;                               // STOP からの時間（QUIET で止まる）
+    wire         quiet = (qcnt >= QUIET) && dp_idle;
     wire [2:0]   cns = w_ns[ci];
     wire [5:0]   unit = (cns >= 3'd1 && cns <= 3'd5) ? (6'd32 >> cns) : 6'd0;
     wire         con = w_fl[ci] < E;                 // 止める窓は数えない
@@ -151,8 +170,8 @@ module spw_regs #(
     always @(posedge clk) begin
         cmd_run <= 1'b0; cmd_stop <= 1'b0;
         if (rst) begin
-            wsm <= W_IDLE; wrst <= 1'b0; arm_run <= 1'b0; arm_wrst <= 1'b0; run_wait <= 1'b0; running <= 1'b0;
-            wrst_cnt <= 32'd0; wrst_bad <= 5'd0; cflags <= 4'd0; run_cfg <= 32'd0; wrst_cfg <= 32'd0; run_t <= 64'd0;
+            wsm <= W_IDLE; wrst <= 1'b0; drain <= 1'b0; arm_run <= 1'b0; arm_wrst <= 1'b0; run_wait <= 1'b0; running <= 1'b0;
+            wrst_cnt <= 32'd0; wrst_bad <= 6'd0; cflags <= 7'd0; qcnt <= QUIET; run_cfg <= 32'd0; wrst_cfg <= 32'd0; run_t <= 64'd0;
             ng <= 32'd5; ndump <= 32'd0;
             for (i = 0; i < H; i = i + 1) begin
                 c_wk[i] <= 6'd0; c_dp[i] <= 32'd0; c_ns[i] <= 3'd1; c_fl[i] <= 2'd3; c_sl[i] <= 4'd0; c_g[i] <= 4'd0; c_sh[i] <= 4'd4;
@@ -166,12 +185,13 @@ module spw_regs #(
             // WRST: 約束を数えてからリセット
             case (wsm)
                 W_IDLE: if (do_wrst) begin
-                    wsm <= W_CHK; ci <= 5'd0; dsum <= 6'd0; sl_used <= 16'd0; bad <= 5'd0;
+                    wsm <= W_CHK; ci <= 5'd0; dsum <= 6'd0; sl_used <= 16'd0; bad <= 6'd0;
                     for (i = 0; i < E; i = i + 1) lsum[i] <= 6'd0;
                 end
                 W_CHK: begin
                     if (con) begin
                         if (unit == 6'd0) bad[5] <= 1'b1;
+                        if (w_wk[ci] > 6'd32 || (PSPLIT != 0 && w_wk[ci][0] != (ci >= H / 2))) bad[6] <= 1'b1;
                         lsum[w_fl[ci]] <= lsum[w_fl[ci]] + unit;
 `ifndef REGS_POSCTL
                         if (lsum[w_fl[ci]] + unit > 6'd32) bad[1] <= 1'b1;     // 陽性対照 REGS_POSCTL: lane の和を数えない
@@ -189,33 +209,42 @@ module spw_regs #(
                 end
                 W_RST: begin
                     if (rcnt == 16'd0) begin
-                        if (bad != 5'd0) begin                       // 断る: 何も変えない
+                        if (bad != 6'd0) begin                       // 断る: 何も変えない
                             wrst_bad <= bad; cflags[0] <= 1'b1; wsm <= W_IDLE; run_wait <= 1'b0;
                         end else begin
-                            for (i = 0; i < H; i = i + 1) begin
-                                c_wk[i] <= w_wk[i]; c_dp[i] <= w_dp[i]; c_ns[i] <= w_ns[i]; c_fl[i] <= w_fl[i]; c_sl[i] <= w_sl[i]; c_g[i] <= w_g[i];
-                            end
-                            wrst_cfg <= w_cfg; wrst_cnt <= wrst_cnt + 32'd1; running <= 1'b0;
-                            wrst <= 1'b1; rcnt <= 16'd1;
+                            drain <= 1'b1; dcnt <= 23'd0; wsm <= W_DRN;
                         end
                     end else if (rcnt >= ((wrst_t == 16'd0) ? 16'd1 : wrst_t)) begin
-                        wrst <= 1'b0; wsm <= W_IDLE;
+                        if (&t_now[AL_L2-1:0]) begin wrst <= 1'b0; wsm <= W_IDLE; end   // 次のクロック（T ≡ 0）でデータの道が明ける
                     end else rcnt <= rcnt + 16'd1;
                 end
-                default: wsm <= W_IDLE;
+                W_DRN: begin                                     // 水抜き: 開いたレコードを送り終えるまで待つ（drain は次のクロックから効くので 1 クロック置く）
+                    dcnt <= dcnt + 23'd1;
+                    if ((dp_idle && dcnt >= 23'd2) || dcnt >= DRN_MAX) begin
+                        if (!dp_idle) cflags[5] <= 1'b1;
+                        for (i = 0; i < H; i = i + 1) begin
+                            c_wk[i] <= w_wk[i]; c_dp[i] <= w_dp[i]; c_ns[i] <= w_ns[i]; c_fl[i] <= w_fl[i]; c_sl[i] <= w_sl[i]; c_g[i] <= w_g[i];
+                        end
+                        wrst_cfg <= w_cfg; wrst_cnt <= wrst_cnt + 32'd1; running <= 1'b0;
+                        wrst <= 1'b1; drain <= 1'b0; rcnt <= 16'd1; wsm <= W_RST;
+                    end
+                end
             endcase
             // RUN（WRST の最中・同じ発火なら明けを待つ）
-            if (do_run && (wsm != W_IDLE || do_wrst)) run_wait <= 1'b1;
-            if ((do_run && wsm == W_IDLE && !do_wrst) || (run_wait && wsm == W_IDLE && !do_wrst)) begin
+            if (wrst) qcnt <= QUIET;
+            else if (qcnt < QUIET) qcnt <= qcnt + 16'd1;
+            if (do_run && running && wsm == W_IDLE && !do_wrst) cflags[6] <= 1'b1;               // RUN の中の RUN は断る
+            else if (do_run && (wsm != W_IDLE || do_wrst || !quiet)) run_wait <= 1'b1;
+            if ((do_run && !running && wsm == W_IDLE && !do_wrst && quiet) || (run_wait && wsm == W_IDLE && !do_wrst && quiet)) begin
                 run_wait <= 1'b0;
                 for (i = 0; i < H; i = i + 1) c_sh[i] <= w_sh[i];
                 ng <= (w_ng == 32'd0) ? 32'd1 : w_ng; ndump <= w_ndump; run_cfg <= w_cfg; run_t <= t_now;
                 cmd_run <= 1'b1; running <= 1'b1;
             end
-            if (q_stop) begin cmd_stop <= 1'b1; running <= 1'b0; run_wait <= 1'b0; end
+            if (q_stop) begin cmd_stop <= 1'b1; running <= 1'b0; run_wait <= 1'b0; if (running) qcnt <= 16'd0; end
             // 見張り
-            if (q_clr) cflags <= 4'd0;
-            else cflags[3:1] <= cflags[3:1] | {sink_flag, ddr_flag, |eng_flags};
+            if (q_clr) cflags <= 7'd0;
+            else cflags[4:1] <= cflags[4:1] | {front_flag, sink_flag, ddr_flag, |eng_flags};
         end
     end
 
@@ -276,10 +305,10 @@ module spw_regs #(
                     16'h0010: s_axi_rdata <= BASE_BEATS;
                     16'h0014: s_axi_rdata <= BUILD_TAG;
                     16'h0018: s_axi_rdata <= CORE_PORT;
-                    16'h0080: s_axi_rdata <= {28'd0, cflags};
+                    16'h0080: s_axi_rdata <= {25'd0, cflags};
                     16'h0084: s_axi_rdata <= w_ng;
                     16'h0088: s_axi_rdata <= w_ndump;
-                    16'h008C: s_axi_rdata <= {26'd0, wrst_bad, 1'b0};
+                    16'h008C: s_axi_rdata <= {25'd0, wrst_bad, 1'b0};
                     16'h0090: s_axi_rdata <= wrst_cnt;
                     default: ;
                 endcase

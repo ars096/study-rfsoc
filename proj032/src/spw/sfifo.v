@@ -8,6 +8,7 @@ module sfifo #(parameter integer DW = 8, parameter integer AW = 4) (
     input  wire          push, input wire [DW-1:0] din,
     input  wire          pop,
     output wire [DW-1:0] dout,
+    output wire [DW-1:0] dprev,      // 直前に取り出した語（rp − 1。取り出した次のクロックで読む。満ちていなければ上書きされない）
     output wire          empty,
     output reg           ovf
 );
@@ -16,6 +17,8 @@ module sfifo #(parameter integer DW = 8, parameter integer AW = 4) (
     wire full = (wp - rp) == (1 << AW);
     assign empty = (wp == rp);
     assign dout  = m[rp[AW-1:0]];
+    wire [AW-1:0] rpm = rp[AW-1:0] - 1'b1;          // 幅を決めて折り返す（番地の式のままだと −1 で配列の外になった: sim で X）
+    assign dprev = m[rpm];
     always @(posedge clk) begin
         ovf <= 1'b0;
         if (rst) begin wp <= 0; rp <= 0; end

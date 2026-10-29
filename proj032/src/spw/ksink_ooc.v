@@ -55,8 +55,8 @@ module ksink_ooc #(
     always @(posedge clk) begin r1 <= ~aresetn; rst <= r1; end
     wire [127:0] t_d; wire t_v, t_r, t_l; wire [E-1:0] drop;
     dsink #(.E(E), .H(H), .NU(NU)) u_sink (.clk(clk), .rst(rst), .d_v(d_v), .d_w(d_w), .d_k(d_k), .d_ch(d_ch), .d_data(d_data),
-        .cfg_ns(cfg_ns), .cfg_sh(cfg_sh), .cfg_g(cfg_g), .ng(ng), .g0(g0), .t0(t0), .m_tdata(t_d), .m_tvalid(t_v), .m_tready(t_r), .m_tlast(t_l),
-        .drop(drop), .flags(sflags));
+        .cfg_ns(cfg_ns), .cfg_sh(cfg_sh), .cfg_g(cfg_g), .ng(ng), .g0(g0), .g0a(g0), .t0(t0), .m_tdata(t_d), .m_tvalid(t_v), .m_tready(t_r), .m_tlast(t_l),
+        .drop(drop), .flags(sflags), .drain(1'b0), .idle());
     wire [2:0] aws, awp; wire [1:0] awb; wire awl; wire [3:0] awc, awq; wire [15:0] ws; wire bready;
     ring128 #(.NX(E)) u_ring (.aclk(clk), .aresetn(aresetn), .s_axis_tdata(t_d), .s_axis_tvalid(t_v), .s_axis_tready(t_r), .s_axis_tlast(t_l),
         .ext_drop(drop),

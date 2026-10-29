@@ -219,7 +219,7 @@ sim-all:
 clean:
 	rm -rf build build-* .Xil *.jou *.log runs
 
-# ---- F-2 の測り: g24_coef を 1 個だけ OOC で合成（Vivado。JOBS は最大 8、2026-10-23 西村さん）----
+# ---- F-2 の測り: g24_coef を 1 個だけ OOC で合成（Vivado。JOBS は最大 8、2026-10-23 開発者）----
 XILINX_VIVADO ?= /tools/Xilinx/Vivado/2024.1
 VIVADO        := $(XILINX_VIVADO)/bin/vivado
 JOBS          ?= 8
@@ -258,7 +258,7 @@ endif
 ifneq ($(IMPL),)
   OUTDIR := $(OUTDIR)-$(shell echo $(IMPL) | tr -cd 'A-Z')
 endif
-# launch_runs -jobs（効くのは OOC 合成だけ）。proj027: Vivado は並行で使うので上限 8（2026-10-23、西村さん。proj025 は 30）
+# launch_runs -jobs（効くのは OOC 合成だけ）。proj027: Vivado は並行で使うので上限 8（2026-10-23、開発者。proj025 は 30）
 BUILD_JOBS ?= 8
 export BOARD_REPO PART OUTDIR GB_K IMPL
 

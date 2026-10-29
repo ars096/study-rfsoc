@@ -12,9 +12,10 @@
 //   NU 2: 1 語 = 1 拍。NU 1: 2 語 = 1 拍（出口は最大 0.5 拍 / クロック = 2 GB/s）
 // 頭の語（u64、リトルエンディアン）:
 //   w0 magic "S45R" / rec_ver 2 / type 5（SpW の窓）/ core = ADC / s = 窓 w      w1 SEQ（この受け手のレコードの番号）/ DUMP_K
-//   w2 DUMP_F0 = (g0 ＋ k·ng)·2^(G_L2 − 12 − NS)（窓のフレーム）・w3 DUMP_T = t0[w] ＋ (g0 ＋ k·ng)·2^G_L2（R-1: ダンプの最初のフレームの z 0 のビート。ng は下 16 bit）
+//   w2 DUMP_F0 = (g0a ＋ k·ng)·2^(G_L2 − 12 − NS)（窓のフレーム、T の原点から。P-4）・w3 DUMP_T = t0[w] ＋ (g0 ＋ k·ng)·2^G_L2（R-1: ダンプの最初のフレームの z 0 のビート。ng は下 16 bit）
 //   w4 log2 NFFT 12 / NS / SHIFT / G / fmt 1（f32）/ src = ADC / DUMP_H 0        w5 DUMP_N = ng·2^(G_L2 − 12 − NS) / DUMP_SAT 0
 //   w6 DUMP_CFG 0 / FLAGS 0                                                       w7 本体のバイト数 16384 / 0
+// 水抜き（P-2）: drain の間は新しいレコードを始めない。idle = 開いたレコードが無く出口の FIFO も空（WRST はこれを待つ。spw_regs）
 // flags（粘着）: [0] 札の FIFO の溢れ [1] 出口の FIFO の溢れ [2] ダンプを捨てた [3] ダンプの途中で ch が飛んだ
 
 `timescale 1ns / 1ps
@@ -37,14 +38,17 @@ module dsink #(
     input  wire [H*4-1:0]       cfg_sh,
     input  wire [H*4-1:0]       cfg_g,
     input  wire [31:0]          ng,
-    input  wire [31:0]          g0,
+    input  wire [31:0]          g0,             // rst から数えた格子（DUMP_T 用）
+    input  wire [31:0]          g0a,            // T の原点から数えた格子（DUMP_F0 用）
     input  wire [H*64-1:0]      t0,
     output wire [127:0]         m_tdata,
     output wire                 m_tvalid,
     input  wire                 m_tready,
     output wire                 m_tlast,
     output reg  [E-1:0]         drop,
-    output reg  [3:0]           flags
+    output reg  [3:0]           flags,
+    input  wire                 drain,
+    output wire                 idle
 );
     localparam integer PW = 64 * NU;    // 語の幅
     localparam integer PK = 2 * NU;     // 語の中の f32
@@ -147,6 +151,7 @@ module dsink #(
     assign m_tvalid = !o_empty;
     assign m_tdata  = o_dout[127:0];
     assign m_tlast  = o_dout[128];
+    assign idle     = (rs == R_IDLE) && o_empty;
     // 読みの段の印: P0 出す → P1 mq → P2 mqr を選んで出口へ
     reg  [1:0]   s1, s2;
     reg          v1, v2, l1, l2, h1, h2;    // 有効・最後・（NU 1）2 語目
@@ -183,7 +188,7 @@ module dsink #(
                     // 頭が溜めに入ったダンプを持つ機関を、rr から順に
                     for (i = E - 1; i >= 0; i = i - 1)
                         if (!t_empty[(rr + i) % E]) cur <= (rr + i) % E;
-                    if (|(~t_empty)) begin
+                    if (|(~t_empty) && !drain) begin
                         rs <= R_PRE; pre <= 3'd0; hb <= 2'd0;
                     end
                 end
@@ -224,16 +229,17 @@ module dsink #(
     // 時刻: k·ng（DSP）→ g0 ＋ → 格子からフレーム・ビートへ
     reg  [47:0]  kn;
     reg  [63:0]  t0c, t0d;
-    reg  [47:0]  gk;
+    reg  [47:0]  gk, gka;
     reg  [2:0]   ns_d, ns_e;
     always @(posedge clk) begin
         kn   <= ck * ng[15:0];
         t0c  <= t0[cw*64 +: 64];
         ns_d <= ns_c;
         gk   <= {16'd0, g0} + kn;
+        gka  <= {16'd0, g0a} + kn;
         t0d  <= t0c;
         ns_e <= ns_d;
-        w2   <= {16'd0, gk} << (G_L2 - 12 - ns_e);
+        w2   <= {16'd0, gka} << (G_L2 - 12 - ns_e);
         w3   <= t0d + ({16'd0, gk} << G_L2);
     end
 

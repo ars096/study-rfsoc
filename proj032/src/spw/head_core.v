@@ -6,6 +6,7 @@
 //
 //   v[m] = round((y[m] · (cos φ − j sin φ)) / 2^SHV)、φ = 2π(a + 1/2) / 2^14、a = (m·Δ mod 2^32) の上位 14 bit
 //   組（偶 m, 奇 m + 1）にして hb2s へ（組は 2 クロックに 1 回 → C 2 で足りる）
+//   P-1: byp = 1（NS 1 の窓）のときは light 1 段目を通さず、NCO の出口 v を 1 標本 / クロックで出す（ddcb の約束: NS 1 は 256 MS/s）
 
 `timescale 1ns / 1ps
 
@@ -20,6 +21,7 @@ module head_core #(
     input  wire                 y_valid,
     input  wire signed [YW-1:0] y_re, y_im,
     input  wire [31:0]          dphi,
+    input  wire                 byp,
     output wire                 z_valid,
     output wire signed [VW-1:0] z_re, z_im,
     output wire                 sat,
@@ -95,7 +97,17 @@ module head_core #(
     // light: model/win64_model.py（M-0）の N 15・SH 17
     localparam [18*15-1:0] LIGHT_H = {-18'sd393, 18'sd0, 18'sd2436, 18'sd0, -18'sd9156, 18'sd0, 18'sd39878, 18'sd65542,
                                       18'sd39878, 18'sd0, -18'sd9156, 18'sd0, 18'sd2436, 18'sd0, -18'sd393};
+    wire                l_v;
+    wire signed [VW-1:0] l_re, l_im;
     hb2s #(.N(15), .SH(17), .H(LIGHT_H), .W(VW), .C(2)) u_l1 (
-        .clk(clk), .rst(rst), .in_v(pv), .e_re(pr), .e_im(pi), .o_re(por), .o_im(poi),
-        .out_v(z_valid), .y_re(z_re), .y_im(z_im), .sat(sat), .ovr(ovr));
+        .clk(clk), .rst(rst), .in_v(pv && !byp), .e_re(pr), .e_im(pi), .o_re(por), .o_im(poi),
+        .out_v(l_v), .y_re(l_re), .y_im(l_im), .sat(sat), .ovr(ovr));
+    reg                 o_v;
+    reg signed [VW-1:0] o_re, o_im;
+    always @(posedge clk) begin
+        o_v  <= byp ? nv6 : l_v;
+        o_re <= byp ? vr : l_re;
+        o_im <= byp ? vi : l_im;
+    end
+    assign z_valid = o_v, z_re = o_re, z_im = o_im;
 endmodule

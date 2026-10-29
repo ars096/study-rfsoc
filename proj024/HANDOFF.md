@@ -13,7 +13,7 @@
   ウィンドウを開き直すだけでは直らない。アプリを終了し、残ったプロセス（仮想環境を含む）を止めてから起動し直す（10/17 夜は 10/9 から動いていたものが止まっていた）
 - **git のコミットの後に `.git/HEAD.lock`・`tmp_obj_*` が残る**（削除の許可が無いと消せない）。残すと次の git が止まるので、会話ごとに削除の許可をもらって消す
 - **`Makefile` はファイルの書き戻しの道具では書けない**（保護されている）。別名（`Makefile.from_claude`）で書き戻し、コンピュータ側のシェルで md5 を確かめてから `mv` した
-- **Vivado のビルドはこの PC で走る**（`proj024/build*/vivado.log` をコンピュータ側のシェルから直接読める）。ただしコンピュータ側のシェルは隔離された環境で Vivado を起動できないので、`make build` は西村さんが叩く。
+- **Vivado のビルドはこの PC で走る**（`proj024/build*/vivado.log` をコンピュータ側のシェルから直接読める）。ただしコンピュータ側のシェルは隔離された環境で Vivado を起動できないので、`make build` は開発者が叩く。
   **ビルドの間は `src/` に触らない**（走っているビルドが書き換えたファイルを読む）
 
 ## 1. 今どこにいるか
@@ -38,10 +38,10 @@
 
 ## 2. 次にやること（3. PS → 4. 実機）
 
-- **（2026-10-18 昼の会話）3. PS を始めた**: 土台は **proj023/pynq の追跡 56 個を 1ebc92c から `pynq/` に写した**（西村さんの決め。YATSUGATAKE の M5a・M5b はマージのとき）。
-  3a（ID を 2G-1 に）・3b（s45client の軸を記録の nch から。s45proto は直す所なし。`python3 test_nch.py`）は済み。3c（G21Backend・FakeG21Backend・`specd.py --g21`、test_fake.sh に g21・g21p・g21cli）・3d（取得の速さ: Python 1 本で平均 61〜66 %、C は見送り）・3e（リング 64 MiB）も済み（西村さんの決め: D-11 の取得の分・D-15）。
+- **（2026-10-18 昼の会話）3. PS を始めた**: 土台は **proj023/pynq の追跡 56 個を 1ebc92c から `pynq/` に写した**（開発者の決め。YATSUGATAKE の M5a・M5b はマージのとき）。
+  3a（ID を 2G-1 に）・3b（s45client の軸を記録の nch から。s45proto は直す所なし。`python3 test_nch.py`）は済み。3c（G21Backend・FakeG21Backend・`specd.py --g21`、test_fake.sh に g21・g21p・g21cli）・3d（取得の速さ: Python 1 本で平均 61〜66 %、C は見送り）・3e（リング 64 MiB）も済み（開発者の決め: D-11 の取得の分・D-15）。
   **次は 4. 実機**: build-PE/ の proj024.bit・.hwh を載せて `specd.py --g21 --clkin 0 --ref 10`。最初に確かめることは README の 3c 結果の最後（SRC の読み返し・FULL の TP の F0 = RUN_F0 × 32・RUN_T・ch → IF・D_S）。
-  ボードは共有。使う前に西村さんと順番を決める。測る道具は `pynq/bench_g21.py`（PL なし）と test_fake.sh（19 試験）
+  ボードは共有。使う前に開発者と順番を決める。測る道具は `pynq/bench_g21.py`（PL なし）と test_fake.sh（19 試験）
   test_fake.sh はこの PC のコンピュータ側のシェルで回る（numpy あり）が、**呼び出しが返ると裏のプロセスが止まる**ので `all` は入らない。試験の名前を 7〜8 個ずつ並べて 3 回に分ける
 
 - **3. PS**: specd の FULL（NCH 131072・1 MiB のレコード）、取得を C に（D-11、Python 1 本では 102.4 MB/s が回らない）。リングの大きさ（INTERFACE 8. の 11 の前半）
@@ -56,7 +56,7 @@
 ## 2.5 3. PS を始めるときの材料（まだ読んでいない。最初に読む）
 
 - PS の部品は `proj023/pynq/`（s45proto.py・s45client.py・s45ring.py・s45core.py・s45acq.py・plring.py など、SAM45-Wide の specd 側）と `../YATSUGATAKE/sw/`（マージ先）。どちらが正かを最初に決める（docs/handoff_proj024.md の線引き）
-- INTERFACE 8. の 4（PS の処理量: Python 1 本 ≒ 114 MB/s、2G は 102.4 MB/s で回らない → C か複数のプロセス）・8. の 11（リング 1 MiB × …、PYNQ の allocate は 64 MiB まで）・8. の 10（ネットワークの予算、西村さんの判断）
+- INTERFACE 8. の 4（PS の処理量: Python 1 本 ≒ 114 MB/s、2G は 102.4 MB/s で回らない → C か複数のプロセス）・8. の 11（リング 1 MiB × …、PYNQ の allocate は 64 MiB まで）・8. の 10（ネットワークの予算、開発者の判断）
 - `NCH = 4096`・`s45proto.IF_ORDER`・`s45client` の `P.NCH` を NCH から作る形に（README の「INTERFACE.md の変更案」の 3）
 
 ## 3. sim の回し方（この会話で決めた）
@@ -92,5 +92,5 @@
 - コミット: `git -c user.name="<作者>" -c user.email="<作者のアドレス>" commit`（作者は直前のコミットと同じにする。アドレスは本文に書かない）、メッセージは日本語、末尾は `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` だけ。
   **Claude-Session の行・URL は入れない。push はしない**。status・log は `git --no-optional-locks`。コミットの前に公開の確かめ（ホームのパス・IP アドレス・ホスト名・メールなどの grep）
 - INTERFACE.md・BITS.md は proj023 の会話の持ち物（D-9・D-10 は入った）。LESSONS.md・docs/lessons_all.md は足すだけ
-- Vivado サーバとボードは共有。使う前に西村さんと順番を決める
+- Vivado サーバとボードは共有。使う前に開発者と順番を決める
 - この PC のシェルでは、git が一時ファイル（tmp_obj・HEAD.lock）を消せずに残すことがある（削除の許可が無いとき）。残ったら次の git が止まるので、許可をもらって消す（この会話の終わりには消した）

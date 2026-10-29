@@ -516,7 +516,7 @@ X11 転送は実用に耐えないことが多い。VNC か（サーバが対応
 
 PYNQ のボードの Ubuntu は、既定で apt-daily.timer（パッケージ情報の取得）と apt-daily-upgrade.timer（更新の適用）が毎日動く。
 proj030 R-3（2026-10-27）では apt-daily と PackageKit が CPU を 19 秒使い、tint 10.24 ms の取得の 1 周が 313 ms 止まって、PL のリング（64 MiB）が 60 MB まで溜まった。
-**2026-10-27 にボードで 2 つとも止めた**（西村さんの判断）:
+**2026-10-27 にボードで 2 つとも止めた**（開発者の判断）:
 
 ```bash
 sudo systemctl disable --now apt-daily.timer apt-daily-upgrade.timer

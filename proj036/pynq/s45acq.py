@@ -136,7 +136,7 @@ def g_if_mhz(c):
     return W_FS_MHZ - np.asarray(c, np.float64) * (G_DF_HZ / 1e6)
 
 
-G_RING_MIB = 64                            # proj024 3e（西村さん、2026-10-18）: allocate の上限 64 MiB = 63 BASE ≒ 0.65 s（INTERFACE 4.1 の 1 s は 2G で読み替え）
+G_RING_MIB = 64                            # proj024 3e（開発者、2026-10-18）: allocate の上限 64 MiB = 63 BASE ≒ 0.65 s（INTERFACE 4.1 の 1 s は 2G で読み替え）
 
 
 def ring_mib_of(o, default):

@@ -78,7 +78,7 @@ set_property -dict [list \
 
 # ---- MIG（読み返して照らす）----
 # 部品は実物に合わせて 8 Gb × 16 の MT40A512M16HA-075E・アドレス 32 bit（4 GiB）。S-2e の実機で、PYNQ の base overlay の設定（MT40A1G16RC-062E、16 Gb・33 bit）は
-# 4 GiB で番地が折り返し、実物の容量は 4 GB だった（2026-10-23、西村さんの決め: 実物に合わせる）。CL 17・CWL 12 はこの部品の既定と同じ
+# 4 GiB で番地が折り返し、実物の容量は 4 GB だった（2026-10-23、開発者の決め: 実物に合わせる）。CL 17・CWL 12 はこの部品の既定と同じ
 set mig [create_bd_cell -type ip -vlnv xilinx.com:ip:ddr4 ddr4_0]
 set mig_req {
     CONFIG.C0.DDR4_MemoryType         Components

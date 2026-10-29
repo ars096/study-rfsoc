@@ -11,7 +11,7 @@
 //   light 2 段目: lane l が頭 4l..4l+3（入口は 1 頭 0.25 組 / クロック → 4 頭で 1）
 //   light 3 段目: lane m が窓 8m..8m+7（2 段目の lane 2m・2m+1 の出口）、4 段目: lane k が窓 16k..（3 段目の lane 2k・2k+1）
 //   **light は NS ≧ 2 のどの窓も全段に通す**（割り当てが静的になる。狭くない窓の 3・4 段目は捨てるだけ）。H 14 で lane 4 + 2 + 1 = 7
-//   final: NF 本の lane。窓 w は cfg_fl[w] の lane（PS が WRST で、lane ごとの幅の和 ≦ 256 MHz になるよう決める）
+//   final: NF 本の lane。窓 w は cfg_fl[w] の lane（PS が WRST で、lane ごとの幅の和 ≦ 256 MHz になるよう決める）。cfg_fl ≧ NF は止める窓（final に入れない）
 //   final の入口は窓ごとに 4 組まで待たせ、lane は「NS の小さい（速い）窓から先に」選ぶ（周期が 2 のべきなので、和 ≦ 1 組 / クロックなら間に合う）
 //
 // 見張り（粘着、rst で消す）: flags[0] light の入口の溜めが溢れた / [1] final の入口の待ち（窓ごとに 4 組）が溢れた / [2] hbmc の飽和
@@ -168,7 +168,7 @@ module ddcb #(
 
     // ======== final の入口: 窓ごとに NS で選んだ流れを組にし、FIFO（4 組）で待たせる ========
     wire [H-1:0]   fq_e, fq_ov, fpop;
-    wire [4*W-1:0] fq_d [0:H-1];
+    wire [4*W-1:0] fq_d [0:H-1], fq_p [0:H-1];
     generate for (g = 0; g < H; g = g + 1) begin : fw
         reg          sv; reg [W-1:0] sr, si;
         always @(posedge clk) begin
@@ -178,7 +178,7 @@ module ddcb #(
                 3'd5:    begin sv <= o4_v[g/16] && o4_ch[g/16] == g % 16; sr <= o4_r[g/16]; si <= o4_i[g/16]; end
                 default: begin sv <= x_v[g];  sr <= x_re[g*W +: W];  si <= x_im[g*W +: W];  end
             endcase
-            if (rst) sv <= 1'b0;
+            if (rst || cfg_fl[g*2 +: 2] >= NF) sv <= 1'b0;   // 止める窓（lane ≧ NF）は final に入れない（取り出す lane が無く待ちが溢れる）
         end
         reg have; reg [2*W-1:0] eh; reg pv; reg [4*W-1:0] pd;
         always @(posedge clk) begin
@@ -190,7 +190,7 @@ module ddcb #(
                 have <= ~have;
             end
         end
-        sfifo #(.DW(4*W), .AW(2)) q (.clk(clk), .rst(rst), .push(pv), .din(pd), .pop(fpop[g]), .dout(fq_d[g]), .empty(fq_e[g]), .ovf(fq_ov[g]));
+        sfifo #(.DW(4*W), .AW(2)) q (.clk(clk), .rst(rst), .push(pv), .din(pd), .pop(fpop[g]), .dout(fq_d[g]), .dprev(fq_p[g]), .empty(fq_e[g]), .ovf(fq_ov[g]));
     end endgenerate
     wire ovf_f = |fq_ov;
 
@@ -215,6 +215,13 @@ module ddcb #(
         reg  [H-1:0] rdy, oh;
         reg  [3:0]   best;
         reg          found;
+        // P-2: 選びと取り出しを 2 クロックに分ける（OOC で最悪経路 −0.19 ns: 待ちの rp → 選び → 14 窓 × 80 bit の選び）。
+        //   t: 窓を選んで待ちから取り出し、one-hot をレジスタに。t+1: 取り出した組（待ちの rp − 1）を AND-OR で選ぶ。final に入るのが 1 クロック遅れるだけで値は同じ
+        reg  [4*W-1:0] sel;
+        reg  [H-1:0]   oh_r;
+        reg  [3:0]     best_r;
+        reg            found_r;
+        integer        v_;
         always @(*) begin
             rdy = {H{1'b0}};
             for (c = 5; c >= 1; c = c - 1)
@@ -227,12 +234,17 @@ module ddcb #(
             best = 4'd0;
             for (w = 0; w < H; w = w + 1) if (oh[w]) best = best | w[3:0];
         end
+        always @(*) begin
+            sel = {4*W{1'b0}};
+            for (v_ = 0; v_ < H; v_ = v_ + 1) sel = sel | (fq_p[v_] & {4*W{oh_r[v_]}});
+        end
         assign lpop[g*H +: H] = oh;
         reg          iv; reg [3:0] ic; reg [W-1:0] ier, iei, ior, ioi;
         always @(posedge clk) begin
-            iv <= found & ~rst;
-            ic <= best;
-            {ier, iei, ior, ioi} <= fq_d[best];
+            oh_r <= rst ? {H{1'b0}} : oh; best_r <= best; found_r <= found & ~rst;
+            iv <= found_r & ~rst;
+            ic <= best_r;
+            {ier, iei, ior, ioi} <= sel;
         end
         hbmc #(.N(FINAL_N), .SH(FINAL_SH), .H(FINAL_H), .W(W), .NCH(16), .CW(4), .R(R)) u (
             .clk(clk), .rst(rst), .in_v(iv), .in_ch(ic),

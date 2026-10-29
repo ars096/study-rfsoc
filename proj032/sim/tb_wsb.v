@@ -103,7 +103,7 @@ module tb_wsb;
     end
 
     reg  run = 0, stop = 0;
-    wire go; wire [31:0] g0;
+    wire go; wire [31:0] g0, g0a;
     wire [E-1:0] dv; wire [E*4-1:0] dw; wire [E*32-1:0] dk; wire [E*12-1:0] dch; wire [E*64-1:0] dd; wire [E*16-1:0] flags;
     wire [2*E+1:0] dflags;
     wire [H*64-1:0] t0w;
@@ -114,7 +114,7 @@ module tb_wsb;
         .cfg_ns(cfg_ns), .cfg_fl(cfg_fl), .cfg_sl(cfg_sl), .cfg_sh(cfg_sh), .cfg_g(cfg_g), .ddr_base(32'd0),
         .ng(32'd1), .ndump(32'd2), .cmd_run(run), .cmd_stop(stop),
         .t_now(tnow), .t0(t0w),
-        .go(go), .g0(g0), .d_v(dv), .d_w(dw), .d_k(dk), .d_ch(dch), .d_data(dd), .flags(flags), .dflags(dflags),
+        .go(go), .g0(g0), .g0a(g0a), .d_v(dv), .d_w(dw), .d_k(dk), .d_ch(dch), .d_data(dd), .flags(flags), .dflags(dflags),
         .m_awaddr(awaddr), .m_awlen(awlen), .m_awvalid(awvalid), .m_awready(awready), .m_wdata(wdata), .m_wlast(wlast),
         .m_wvalid(wvalid), .m_wready(wready), .m_bvalid(bvalid),
         .m_araddr(araddr), .m_arvalid(arvalid), .m_arready(arready), .m_rdata(rdata), .m_rvalid(rvalid), .m_rlast(rlast));
@@ -126,8 +126,8 @@ module tb_wsb;
     // ---- K-2: 受け手 → リング → PS の DDR の模型 ----
     wire [127:0] st_d; wire st_v, st_r, st_l; wire [E-1:0] sdrop; wire [3:0] sflags;
     dsink #(.E(E), .H(H), .NU(`TB_NU), .G_L2(`G_L2), .ADC(0)) u_sink (.clk(clk), .rst(rst),
-        .d_v(dv), .d_w(dw), .d_k(dk), .d_ch(dch), .d_data(dd), .cfg_ns(cfg_ns), .cfg_sh(cfg_sh), .cfg_g(cfg_g), .ng(32'd1), .g0(g0), .t0(t0w),
-        .m_tdata(st_d), .m_tvalid(st_v), .m_tready(st_r), .m_tlast(st_l), .drop(sdrop), .flags(sflags));
+        .d_v(dv), .d_w(dw), .d_k(dk), .d_ch(dch), .d_data(dd), .cfg_ns(cfg_ns), .cfg_sh(cfg_sh), .cfg_g(cfg_g), .ng(32'd1), .g0(g0), .g0a(g0a), .t0(t0w),
+        .m_tdata(st_d), .m_tvalid(st_v), .m_tready(st_r), .m_tlast(st_l), .drop(sdrop), .flags(sflags), .drain(1'b0), .idle());
     reg  [11:0] la_aw, la_ar; reg la_awv = 0, la_wv = 0, la_arv = 0; reg [31:0] la_wd;
     wire la_awr, la_wr, la_bv, la_arr, la_rv; wire [31:0] la_rd; wire [1:0] la_br, la_rr;
     wire [48:0] h_awaddr; wire [7:0] h_awlen; wire [2:0] h_awsize, h_awprot; wire [1:0] h_awburst; wire h_awlock; wire [3:0] h_awcache, h_awqos;
@@ -230,7 +230,7 @@ module tb_wsb;
         run <= 1; @(posedge clk); run <= 0;
         @(posedge clk);
         frun = $fopen("wsb_run.log", "w");
-        $fwrite(frun, "g0 %0d G_L2 %0d E %0d CFG %0d\n", g0, `G_L2, E, `CFG);
+        $fwrite(frun, "g0 %0d G_L2 %0d E %0d CFG %0d G0A %0d\n", g0, `G_L2, E, `CFG, g0a);
         for (w = 0; w < H; w = w + 1) $fwrite(frun, "w %0d %0d %0d %0d %0d %0d %0d\n", w, act[w], ns[w], fl[w], 5 + w % 3, w >= `TB_S, 10);
         $fclose(frun);
         repeat (`NCYC) @(posedge clk);

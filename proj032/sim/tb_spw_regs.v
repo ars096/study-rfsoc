@@ -1,4 +1,5 @@
-// proj032 R-1b — spw_regs の単体の sim。T1 自己記述 / T2 WRST（約束を守る）/ T3 約束を破る WRST を断る（5 種）/ T4 予約と発火 / T5 取り消し・STOP
+// proj032 R-1b — spw_regs の単体の sim。T1 自己記述 / T2 WRST（約束を守る）/ T3 約束を破る WRST を断る（7 種: 5 種 ＋ k の偶奇・k > 32）/ T4 予約と発火 / T5 取り消し・STOP / T6 水抜き（dp_idle を待つ・時間切れ）/ T7 RUN の約束（RUN の中の RUN を断る・STOP の後は静まるまで待つ）。
+//   WRST の明けは T の格子（AL_L2 5 = 32 クロック）に揃う（照らし 8）
 //   陽性対照 -DREGS_POSCTL（spw_regs が lane の和を数えない）: T3 の lane の和の超えが通り、不合格になる
 `timescale 1ns / 1ps
 module tb_spw_regs;
@@ -9,16 +10,17 @@ module tb_spw_regs;
     wire awready, wready, bvalid, arready, rvalid; wire [31:0] rdata; wire [1:0] bresp, rresp;
     reg  [63:0] tnow = 64'h0000_0001_0000_0000; always @(posedge clk) tnow <= tnow + 1;
     reg  fire = 0;
+    reg  dpi = 1; wire drain;
     wire wrst, cmd_run, cmd_stop; wire [31:0] ng, ndump;
     wire [H*6-1:0] cwk; wire [H*32-1:0] cdp; wire [H*3-1:0] cns; wire [H*2-1:0] cfl; wire [H*4-1:0] csl, cg, csh;
     reg  [H*64-1:0] t0 = 0;
-    spw_regs #(.H(H), .E(E), .S(S), .NK(NK), .G_L2(G_L2), .CORE_PORT(2)) dut (.clk(clk), .rst(rst),
+    spw_regs #(.H(H), .E(E), .S(S), .NK(NK), .G_L2(G_L2), .CORE_PORT(2), .DRN_MAX(1000), .AL_L2(5)) dut (.clk(clk), .rst(rst),
         .s_axi_awaddr(awaddr), .s_axi_awvalid(awvalid), .s_axi_awready(awready), .s_axi_wdata(wdata), .s_axi_wvalid(wvalid), .s_axi_wready(wready),
         .s_axi_bvalid(bvalid), .s_axi_bresp(bresp), .s_axi_bready(1'b1),
         .s_axi_araddr(araddr), .s_axi_arvalid(arvalid), .s_axi_arready(arready), .s_axi_rdata(rdata), .s_axi_rvalid(rvalid), .s_axi_rresp(rresp), .s_axi_rready(1'b1),
         .t_now(tnow), .fire(fire), .wrst(wrst), .cfg_wk(cwk), .cfg_dphi(cdp), .cfg_ns(cns), .cfg_fl(cfl), .cfg_sl(csl), .cfg_g(cg), .cfg_sh(csh),
         .ng(ng), .ndump(ndump), .cmd_run(cmd_run), .cmd_stop(cmd_stop),
-        .g0(32'd77), .t0(t0), .eng_flags(48'd0), .ddr_flag(1'b0), .sink_flag(1'b0));
+        .g0(32'd77), .t0(t0), .eng_flags(48'd0), .ddr_flag(1'b0), .sink_flag(1'b0), .front_flag(1'b0), .drain(drain), .dp_idle(dpi));
     task wr(input [15:0] a, input [31:0] d);
         begin
             @(negedge clk); awaddr = a; wdata = d; awvalid = 1; wvalid = 1;
@@ -37,6 +39,7 @@ module tb_spw_regs;
             rv = rdata; @(posedge clk);
         end
     endtask
+    function [5:0] wkv(input integer w_); wkv = (w_ < H / 2) ? 2 * (w_ + 3) : 2 * (w_ - H / 2) + 5; endfunction   // PSPLIT: 偶 6..18 / 奇 5..17
     function [15:0] sb(input integer s, input [9:0] o); sb = 16'h4000 + 16'h400 * s + o; endfunction
     integer fails = 0, w, nw, wl, runs, stops;
     reg [63:0] t_run, t_wrst_end;
@@ -58,7 +61,7 @@ module tb_spw_regs;
     //   DDR の窓（w 6..13）の和 = 128 + 128 + 16 + 16 + 32 + 64·3 = 512 → 約束 [2] を破る。T2 では w 6・7 をチップ内（枠 4・5 と入れ替え）にする
     reg [2:0] ns [0:H-1]; reg [1:0] fl [0:H-1]; reg [3:0] sl [0:H-1];
     task set_all; begin for (w = 0; w < H; w = w + 1) begin wr(sb(w, 10'h108), ns[w]); wr(sb(w, 10'h120), fl[w]); wr(sb(w, 10'h124), sl[w]);
-        wr(sb(w, 10'h100), w + 3); wr(sb(w, 10'h104), 32'h1000_0000 + w); wr(sb(w, 10'h128), 4'd9); wr(sb(w, 10'h014), 4'd5 + w % 3); end end endtask
+        wr(sb(w, 10'h100), wkv(w)); wr(sb(w, 10'h104), 32'h1000_0000 + w); wr(sb(w, 10'h128), 4'd9); wr(sb(w, 10'h014), 4'd5 + w % 3); end end endtask
     task do_wrst(input [15:0] s_, output integer ok);
         integer c0;
         begin c0 = wcnt; wr(sb(s_, 10'h008), 32'h1000); repeat (H + 80) @(posedge clk); ok = (wcnt == c0 + 1); end
@@ -87,32 +90,35 @@ module tb_spw_regs;
         set_all;
         wr(sb(0, 10'h11C), 10);
         do_wrst(5, ok);
-        chk(ok, 7); // T2 の WRST が通らない chk(wl == 10, 8); // wrst の長さ
+        chk(ok, 7); // T2 の WRST が通らない
+        chk(wl >= 10 && wl < 10 + 32 && t_wrst_end[4:0] == 5'd0, 8); // wrst の長さ（10 ＋ 格子の待ち）・明けが T ≡ 0 mod 32
         for (w = 0; w < H; w = w + 1) begin
-            chk(cns[w*3 +: 3] == ns[w] && cfl[w*2 +: 2] == fl[w] && csl[w*4 +: 4] == sl[w] && cwk[w*6 +: 6] == w + 3 && cdp[w*32 +: 32] == 32'h1000_0000 + w && cg[w*4 +: 4] == 9,
+            chk(cns[w*3 +: 3] == ns[w] && cfl[w*2 +: 2] == fl[w] && csl[w*4 +: 4] == sl[w] && cwk[w*6 +: 6] == wkv(w) && cdp[w*32 +: 32] == 32'h1000_0000 + w && cg[w*4 +: 4] == 9,
                 "T2 の設定の取り込み");
         end
-        rd(sb(4, 10'h10C)); chk(rv == {21'd0, 3'd5, 2'd0, 6'd7}, 9); // WCUR 4
+        rd(sb(4, 10'h10C)); chk(rv == {21'd0, 3'd5, 2'd0, 6'd14}, 9); // WCUR 4
         rd(16'h0090); chk(rv == 1, 10); // WRST_CNT
         $display("T2 WRST: 不合格 %0d", fails);
         // T3 約束を破る 5 種（それぞれ 1 か所だけ変えて、断られ、設定はそのまま）
         begin : t3
-            integer k; reg [5:1] want;
-            for (k = 1; k <= 5; k = k + 1) begin
+            integer k; reg [6:1] want;
+            for (k = 1; k <= 7; k = k + 1) begin
                 case (k)
-                    1: begin wr(sb(6, 10'h120), 2); wr(sb(7, 10'h120), 2); want = 5'b00001; end   // 機関 2（16・16・32・8・8・8 = 88）に 128 × 2 → 344
+                    1: begin wr(sb(6, 10'h120), 2); wr(sb(7, 10'h120), 2); want = 6'b000001; end   // 機関 2（16・16・32・8・8・8 = 88）に 128 × 2 → 344
                     2: begin wr(sb(0, 10'h124), 8); wr(sb(8, 10'h124), 0);          // DDR の窓は T2 で 104 MHz。w 0（8）と w 8（16）の枠を入れ替えて 96、
-                             wr(sb(6, 10'h124), 9); want = 5'b00010; end            // w 6（128）を DDR の枠 3 へ 224、下で w 7（128）も枠 4 へ → 352 > 256            // w 6（128）を DDR 3 へ → DDR 104 − 16 + 8 + 128 = 224 … まだ: さらに w 7 も
-                    3: begin wr(sb(1, 10'h124), 2); want = 5'b00100; end           // チップ内の枠 2 が w 1 と w 2 で重なる
-                    4: begin wr(sb(13, 10'h124), 15); want = 5'b01000; end         // DDR の枠 15 − 6 = 9 ≧ NK
-                    5: begin wr(sb(3, 10'h108), 0); want = 5'b10000; end           // WNS 0
+                             wr(sb(6, 10'h124), 9); want = 6'b000010; end            // w 6（128）を DDR の枠 3 へ 224、下で w 7（128）も枠 4 へ → 352 > 256            // w 6（128）を DDR 3 へ → DDR 104 − 16 + 8 + 128 = 224 … まだ: さらに w 7 も
+                    3: begin wr(sb(1, 10'h124), 2); want = 6'b000100; end           // チップ内の枠 2 が w 1 と w 2 で重なる
+                    4: begin wr(sb(13, 10'h124), 15); want = 6'b001000; end         // DDR の枠 15 − 6 = 9 ≧ NK
+                    5: begin wr(sb(3, 10'h108), 0); want = 6'b010000; end          // WNS 0
+                    6: begin wr(sb(2, 10'h100), 11); want = 6'b100000; end         // 頭 2（偶の組）に奇の k
+                    7: begin wr(sb(9, 10'h100), 33); want = 6'b100000; end         // k 33 > 32
                 endcase
                 if (k == 2) wr(sb(7, 10'h124), 10);
                 do_wrst(0, ok);
                 rd(16'h008C);
                 chk(!ok, 11); // T3 の WRST が断られない
-                chk((rv[5:1] & want) != 0, 12); // WRST_BAD の印
-                if (ok || (rv[5:1] & want) == 0) $display("    T3 の %0d: WRST_BAD %b", k, rv[5:1]);
+                chk((rv[6:1] & want) != 0, 12); // WRST_BAD の印
+                if (ok || (rv[6:1] & want) == 0) $display("    T3 の %0d: WRST_BAD %b", k, rv[6:1]);
                 chk(cfl[6*2 +: 2] == 1 && csl[13*4 +: 4] == 13 && cns[3*3 +: 3] == 3, 13); // T3 で効いている設定が変わった
                 // 元に戻す
                 case (k)
@@ -121,6 +127,8 @@ module tb_spw_regs;
                     3: wr(sb(1, 10'h124), 1);
                     4: wr(sb(13, 10'h124), 13);
                     5: wr(sb(3, 10'h108), 3);
+                    6: wr(sb(2, 10'h100), wkv(2));
+                    7: wr(sb(9, 10'h100), wkv(9));
                 endcase
             end
         end
@@ -134,8 +142,9 @@ module tb_spw_regs;
         rd(sb(0, 10'h008)); chk(rv[6:5] == 2'b11, 16); // 予約の読み
         chk(runs == 0, 17); // 発火の前に RUN
         repeat (20) @(posedge clk); @(negedge clk); fire = 1; @(negedge clk); fire = 0;
-        repeat (H + 40) @(posedge clk);
-        chk(runs == 1, 18); // T4 の RUN が 1 回でない chk(t_run > t_wrst_end - 1, 19); // RUN が WRST の明けより前
+        repeat (H + 80) @(posedge clk);
+        chk(runs == 1, 18); // T4 の RUN が 1 回でない
+        chk(t_run > t_wrst_end - 1, 19); // RUN が WRST の明けより前
         chk(ng == 5 && ndump == 3, 20); // NG・NDUMP の取り込み
         for (w = 0; w < H; w = w + 1) chk(csh[w*4 +: 4] == 4'd2 + w % 4, 21); // SHIFT の取り込み
         rd(sb(1, 10'h030)); chk(rv == 32'hC0FFEE, 22); // RUN_CFG
@@ -150,6 +159,44 @@ module tb_spw_regs;
         wr(sb(0, 10'h008), 32'h2); repeat (3) @(posedge clk);
         chk(stops == 1, 27); // STOP
         $display("T5 取り消し・STOP: 不合格 %0d", fails);
+        // T6 水抜き: 開いたレコードがある間（dp_idle 0）は WRST を始めず、RUN も待つ。空いたら WRST → RUN。空かなければ DRN_MAX で構わずに
+        begin : t6
+            integer c0, r0;
+            c0 = wcnt; r0 = runs; dpi = 0;
+            wr(sb(0, 10'h008), 32'h1001);                                    // WRST ＋ RUN
+            repeat (300) @(posedge clk);
+            chk(wcnt == c0 && runs == r0 && drain == 1, 28); // 水抜きの間に WRST か RUN が出た
+            rd(sb(0, 10'h008)); chk(rv[4] == 1 && rv[7] == 1, 29); // 水抜きの間の CTRL の読み（WRST の中・RUN が待つ）
+            @(negedge clk); dpi = 1; repeat (H + 80) @(posedge clk);
+            chk(wcnt == c0 + 1 && runs == r0 + 1 && drain == 0 && t_run > t_wrst_end - 1, 30); // 空いた後の WRST → RUN
+            rd(16'h0080); chk(rv[5] == 0, 31); // 時間切れの印が立った
+            c0 = wcnt; dpi = 0;
+            wr(sb(0, 10'h008), 32'h1000);
+            repeat (900) @(posedge clk); chk(wcnt == c0, 32); // DRN_MAX より前に WRST
+            repeat (200) @(posedge clk); chk(wcnt == c0 + 1 && drain == 0, 33); // 時間切れで WRST が出ない
+            rd(16'h0080); chk(rv[5] == 1, 34); // CORE_FLAGS[5]
+            dpi = 1;
+        end
+        $display("T6 水抜き: 不合格 %0d", fails);
+        // T7 RUN の約束
+        begin : t7
+            integer r0;
+            wr(sb(0, 10'h008), 32'h100); r0 = runs;
+            wr(sb(0, 10'h008), 32'h1); repeat (5) @(posedge clk);
+            chk(runs == r0 + 1, 35); // WRST の後の RUN が通らない
+            wr(sb(3, 10'h008), 32'h1); repeat (5) @(posedge clk);
+            chk(runs == r0 + 1, 36); // RUN の中の RUN が通った
+            rd(16'h0080); chk(rv[6] == 1, 37); // CORE_FLAGS[6]
+            wr(sb(0, 10'h008), 32'h2); wr(sb(0, 10'h008), 32'h1); repeat (100) @(posedge clk);
+            rd(sb(0, 10'h008)); chk(runs == r0 + 1 && rv[7] == 1 && rv[0] == 0, 38); // STOP の直後の RUN が待たない
+            repeat (12288) @(posedge clk);
+            chk(runs == r0 + 2, 39); // 静まった後に RUN が出ない
+            wr(sb(0, 10'h008), 32'h2); dpi = 0; wr(sb(0, 10'h008), 32'h1); repeat (12500) @(posedge clk);
+            chk(runs == r0 + 2, 40); // 受け手が空く前に RUN
+            @(negedge clk); dpi = 1; repeat (5) @(posedge clk);
+            chk(runs == r0 + 3, 41); // 受け手が空いた後に RUN が出ない
+        end
+        $display("T7 RUN の約束: 不合格 %0d", fails);
 `ifdef REGS_POSCTL
         if (fails > 0) $display("結果: 陽性対照は落ちた（期待どおり）"); else $display("結果: 陽性対照が落ちなかった ×");
 `else

@@ -6,7 +6,8 @@
 // 全機関で共通のもの:
 //   - 枠の中の番地 a（P0）。全機関の FFT の tready が 1 になってから回し始め（go）、以後は止めない
 //   - PFB の係数 ROM（番地 a。Fine の pfb4_rom を 1 組）。履歴の枠は全部の面を番地 a で毎クロック読む（読みの番地の選びが要らない）
-//   - 時刻の格子: rst から 2^G_L2 クロックごとに gidx を数え、RUN で g0 = gidx + 2
+//   - 時刻の格子（P-4）: T の格子 2^G_L2。rst の明けの格子 gbase（spw_regs が明けを T ≡ 0 に揃える。揃わなければ近いほうに丸める）。
+//     RUN で g0a = T[G_L2 +: 32] ＋ 2（T の原点から数えた格子、DUMP_F0・RUN_F0 用）、g0 = g0a − gbase（rst から数えた格子、機関の F0 用）
 // D-2: 枠 S 以上の窓は DDR に履歴を置く（DDR の枠 k = cfg_sl[w] − S < NK）。書き手 ddrw 1 つ・読み手 ddrr を機関ごとに。DDR の口は AXI4（書き 64 bit・読み 128 bit）
 // 積分器 w の読み書きは、機関 cfg_fl[w] のものだけを受ける。読みは機関の S2 に番地 → S3 番地のレジスタ → S4 読み → S5 出力のレジスタ → S6 機関ごとの選び
 
@@ -37,6 +38,7 @@ module wsb #(
     input  wire                 cmd_run, cmd_stop,
     output reg                  go,
     output reg  [31:0]          g0,
+    output reg  [31:0]          g0a,
     output wire [E-1:0]         d_v,
     output wire [E*4-1:0]       d_w,
     output wire [E*32-1:0]      d_k,
@@ -70,17 +72,16 @@ module wsb #(
     // ---- 番地 a・格子 ----
     reg  [11:0]          a;
     wire [E-1:0]         rdy;
-    reg  [G_L2-1:0]      gsub;
-    reg  [31:0]          gidx;
+    reg  [31:0]          gbase;
+    wire [31:0]          gnow = t_now[G_L2 +: 32];
     always @(posedge clk) begin
         if (rst) begin
-            go <= 1'b0; a <= 12'd0; gsub <= 0; gidx <= 32'd0; g0 <= 32'd0;
+            go <= 1'b0; a <= 12'd0; g0 <= 32'd0; g0a <= 32'd0;
+            gbase <= gnow + t_now[G_L2-1];
         end else begin
             if (&rdy) go <= 1'b1;
             if (go) a <= a + 12'd1;
-            gsub <= gsub + 1'b1;
-            if (&gsub) gidx <= gidx + 32'd1;
-            if (cmd_run) g0 <= gidx + 32'd2;
+            if (cmd_run) begin g0a <= gnow + 32'd2; g0 <= gnow + 32'd2 - gbase; end
         end
     end
     // ---- R-1: 窓ごとのフレーム 0 の時刻 ----
@@ -153,7 +154,8 @@ module wsb #(
         integer      q;
         always @(*) begin
             own_c = 2'd0;
-            for (q = 0; q < H; q = q + 1) if (cfg_sl[q*4 +: 4] == g) own_c = cfg_fl[q*2 +: 2];
+            // 止める窓（cfg_fl ≧ E）は枠を持たない（spw_regs は止める窓の枠を数えないので、動く窓と同じ番号でありうる）
+            for (q = 0; q < H; q = q + 1) if (cfg_sl[q*4 +: 4] == g && cfg_fl[q*2 +: 2] < E) own_c = cfg_fl[q*2 +: 2];
         end
         always @(posedge clk) own <= own_c;
         reg          wv;
@@ -180,7 +182,8 @@ module wsb #(
     wire [63:0]          iq [0:H-1];
     generate for (g = 0; g < H; g = g + 1) begin : ig
         reg  [1:0]   own;
-        always @(posedge clk) own <= cfg_fl[g*2 +: 2];
+        reg          act;                          // 止める窓（cfg_fl ≧ E）は書かない（機関の番号が配列の外）
+        always @(posedge clk) begin own <= (cfg_fl[g*2 +: 2] < E) ? cfg_fl[g*2 +: 2] : 2'd0; act <= cfg_fl[g*2 +: 2] < E; end
         reg  [11:0]  ra, wa;
         reg          we;
         reg  [63:0]  wd;
@@ -188,7 +191,7 @@ module wsb #(
         reg  [63:0]  q1, q2;
         always @(posedge clk) begin
             ra <= i_ra[own];
-            we <= !rst && i_we[own] && i_ww[own] == g;
+            we <= !rst && act && i_we[own] && i_ww[own] == g;
             wa <= i_wa[own]; wd <= i_wd[own];
             if (we) m[wa] <= wd;
             q1 <= m[ra];
