@@ -709,6 +709,24 @@ LUT の内訳は f32cv 300 × 3・ring128 1,458（CRC の XOR の木を含む）
 - 注: 鎖の sim は 3 万クロックの予定が、サーバのメモリ不足（別作業の Vivado）で 2.8 万ビートの所で止められた。照合は止まるまでの記録（書きかけの最後の行を除く）で行った
 - 残り: TP・ギアボックスの共通部、BD に載せて実機
 
+### P-6: コアの共通部（TP・ギアボックス）とレコードの合流（2026-10-30）
+
+- `src/common/core_cmn.v`・`tp_core.v`・`adc_ev.v` を proj031（12681f1）から**中身を変えずに**写し、spw_core に置いた（SAM45-Fine と同じ共通部: IF_ID・PROJ・NSTREAM・CAPS・BASE_BEATS・BUILD・CORE_PORT・
+  0x20 CTRL（TP_RUN・TP_ARM・TANCH）・TFIN・GB_K・GB_STAT・ADC_STAT・ANCH_*・TP_RUN_T・OVR_CNT・GAP_CNT・0x100〜 TP のレジスタ・0x2000〜 TP のリング、ギアボックスの制御 gb_*）。TP の入力はこのコアの ADC
+- 番地の振り分け（spw_core、g24_s45_core と同じ取り引き 1 つずつの形）: 0x0000〜0x007F・0x0100〜0x3FFF → core_cmn、0x0080〜0x00FF・0x4000〜 → spw_regs。
+  **0x80 は SAM45-Fine では FFT_N（SLICE の流れを持つコアだけ）、SpW では CORE_FLAGS**（R-1 の変更案のまま）。CAPS = 3（[0] レコード・[1] TP をレコードで）
+- `src/spw/rmux128.v`: 窓のレコード（dsink、128 bit）と TP のレコード（64 bit、2 語を 1 拍に。先の語が下位）を**レコード単位で** ring128 の 1 本の入口へ。空いたときは前に出さなかった口を先に（TP を待たせ続けない）。
+  捨てた TP のレコードは drop[E] で ring128 の DROP_CNT・EXT_CNT に足す（ring128 の NX = E ＋ 1）
+- sim（`sim/tb_core.v`）: 共通部の読み書き（IF_ID・PROJ・NSTREAM・CAPS・GB_K の既定と書き・gb_k の出口・GB_STAT・ADC_STAT・TP_PARAM・TP_NEFF、0x80・0x84 が spw_regs に行くこと）を照らし、
+  TP_N 2・TP_REC_CTRL（4 個で 1 レコード）・TP_RUN を打つ。tb はリセットの明けからの 512 ビートのフレームごとに Σ(x16 >>> 2)² を `tp_x.log` に書き（TP の独立の模型）、
+  `check_ring.py` が TP のレコード（type 2）の尾・CRC・SEQ の続き・F0・詰め・個のフレームの続きと、**個の和 = 模型の和**を照らす
+  - 通し（P-2 と同じ 13 万クロック）: **前段 6 窓とも不一致 0・FFT の入口 45 枠 / 出口 42 枠とダンプ 12 個が bit 一致・窓のレコード 12 と TP のレコード 33（個 129）が同じリングに混ざって全部一致・
+    REC_CNT 45・DROP 0・CORE_FLAGS 0**。粗い PFB の鎖（P-5 の照合）も**6 窓 × 110,009 フレームが bit 一致**（P-5 でメモリ不足で止められた分の通しの確認を兼ねる）
+  - 陽性対照: TPX_POSCTL（模型のフレーム 40 の和に 1）→ **フレーム 40 を含む個だけが 1 違いで落ちた**。RMUX_POSCTL（2 語の順を入れ替える）→ リングが頭を読めずに全部捨て（DROP_CNT 11・REC_CNT 0）、check_ring が落とした
+- OOC（H 14・E 3・S 6・NU 2、配置後）: **DSP 838・LUT 81,478・FF 83,734・BRAM 224.5・URAM 20・WNS +0.258 ns**、Synth 8-3848 なし。
+  P-4 から DSP +24・BRAM +2 は E-1 で数えた SAM45-Fine の TP（DSP 24・BRAM 2）とちょうど同じ。LUT +1,754（TP ≒ 1,230 ＋ 振り分け・合流）
+- 残り: BD に載せて実機（ギアボックス・time_core・ring128・PL の DDR を SAM45-Fine の BD から）、PS の手順（specd の SpW の窓のキー）
+
 ## 結果
 
 -

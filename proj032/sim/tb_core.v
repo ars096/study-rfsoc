@@ -8,6 +8,10 @@
 //     lane 0: 窓 0 NS1・1 NS2・2 NS2（256 MHz）/ lane 1: 窓 3 NS2・5 NS1 / lane 2: 窓 4 NS2。DDR の窓の和 = 64 + 64 + 128 = 256 MHz
 //   変種 -DCORE_STOP: 窓 2 を止める窓（WFL 3）にし、その枠を窓 0 と同じ 0 にする（spw_regs は止める窓の枠を数えない）。窓 2 は何も出さず、ほかの窓はそのまま
 //   陽性対照 -DCORE_POSCTL: レジスタに書く窓 1 の NCO の増分を 1 だけ変える（記録の front_cfg は変えない）→ check_front の窓 1 が落ちる
+//   P-6: コアの共通（core_cmn）と TP のレコード。共通部の読み書き（IF_ID・PROJ・NSTREAM・CAPS・GB_K・GB_STAT・ADC_STAT と 0x80 CORE_FLAGS の振り分け）を照らし、
+//     TP_N 2・TP_REC_CTRL（4 個で 1 レコード）・TP_RUN を打つ。tb はリセットの明けから数えた 512 ビートのフレームごとに Σ(x16 >>> 2)² を tp_x.log に書き、
+//     check_ring が TP のレコード（type 2）の個をこれと照らす（窓のレコードと同じリングに混ざる）
+//   陽性対照 -DTPX_POSCTL: tp_x.log のフレーム 40 の和に 1 を足す（記録の側）→ その区切りを含む TP のレコードだけが落ちる
 `timescale 1ns / 1ps
 module tb_core;
     localparam integer H = 6, E = 3, S = 3, NK = 8, W = 20, G_L2 = 14;
@@ -56,12 +60,13 @@ module tb_core;
     wire ca_awr, ca_wr, ca_bv, ca_arr, ca_rv; wire [31:0] ca_rd; wire [1:0] ca_br, ca_rr;
     wire [31:0] awaddr; wire [7:0] awlen; wire awvalid, awready, wlast, wvalid, wready, bvalid; wire [63:0] wdata;
     wire [E*32-1:0] araddr; wire [E-1:0] arvalid, arready, rvalid, rlast; wire [E*128-1:0] rdata;
-    wire [127:0] st_d; wire st_v, st_r, st_l; wire [E-1:0] sdrop;
+    wire [127:0] st_d; wire st_v, st_r, st_l; wire [E:0] sdrop; wire [5:0] gbk;
     spw_core #(.H(H), .E(E), .S(S), .NK(NK), .W(W), .G_L2(G_L2), .NU(2), .ADC(0)) dut (.clk(clk), .rst(rst),
         .s_axi_awaddr(ca_aw), .s_axi_awvalid(ca_awv), .s_axi_awready(ca_awr), .s_axi_wdata(ca_wd), .s_axi_wvalid(ca_wv), .s_axi_wready(ca_wr),
         .s_axi_bvalid(ca_bv), .s_axi_bresp(ca_br), .s_axi_bready(1'b1),
         .s_axi_araddr(ca_ar), .s_axi_arvalid(ca_arv), .s_axi_arready(ca_arr), .s_axi_rdata(ca_rd), .s_axi_rvalid(ca_rv), .s_axi_rresp(ca_rr), .s_axi_rready(1'b1),
         .s_tdata(x), .s_tvalid(xv), .t_now(tnow), .fire(1'b0),
+        .gb_hold(), .gb_adj(), .gb_dn_rstn(), .gb_k(gbk), .gb_stat(32'h5A5A_0011), .adc_stat(32'h0000_C3C3),
         .m_awaddr(awaddr), .m_awlen(awlen), .m_awvalid(awvalid), .m_awready(awready), .m_wdata(wdata), .m_wlast(wlast),
         .m_wvalid(wvalid), .m_wready(wready), .m_bvalid(bvalid),
         .m_araddr(araddr), .m_arvalid(arvalid), .m_arready(arready), .m_rdata(rdata), .m_rvalid(rvalid), .m_rlast(rlast),
@@ -76,7 +81,7 @@ module tb_core;
     wire [48:0] h_awaddr; wire [7:0] h_awlen; wire [2:0] h_awsize, h_awprot; wire [1:0] h_awburst; wire h_awlock; wire [3:0] h_awcache, h_awqos;
     wire h_awvalid, h_wlast, h_wvalid, h_bready; wire [127:0] h_wdata; wire [15:0] h_wstrb;
     reg  h_awready = 0, h_wready = 0, h_bvalid = 0;
-    ring128 #(.NX(E)) u_ring (.aclk(clk), .aresetn(!rst), .s_axis_tdata(st_d), .s_axis_tvalid(st_v), .s_axis_tready(st_r), .s_axis_tlast(st_l),
+    ring128 #(.NX(E + 1)) u_ring (.aclk(clk), .aresetn(!rst), .s_axis_tdata(st_d), .s_axis_tvalid(st_v), .s_axis_tready(st_r), .s_axis_tlast(st_l),
         .ext_drop(sdrop),
         .s_axi_awaddr(la_aw), .s_axi_awprot(3'd0), .s_axi_awvalid(la_awv), .s_axi_awready(la_awr), .s_axi_wdata(la_wd), .s_axi_wstrb(4'hF),
         .s_axi_wvalid(la_wv), .s_axi_wready(la_wr), .s_axi_bresp(la_br), .s_axi_bvalid(la_bv), .s_axi_bready(1'b1),
@@ -219,6 +224,20 @@ module tb_core;
         end
     end endgenerate
 
+    // P-6: TP の模型（リセットの明けから数えた 512 ビートのフレームごとの Σ(x16 >>> 2)²。core_cmn の a_cnt と同じビートを数える）
+    integer ftp, tpl; reg [8:0] tpb = 0; reg [31:0] tpf = 0; reg [63:0] tps = 0; reg signed [15:0] tq; reg signed [31:0] tq2;
+    initial ftp = $fopen("tp_x.log", "w");
+    always @(posedge clk) if (!rst && xv) begin
+        for (tpl = 0; tpl < 16; tpl = tpl + 1) begin tq = $signed(x[tpl*16 +: 16]) >>> 2; tq2 = tq * tq; tps = tps + tq2; end   // 符号つきの 32 bit で二乗してから足す
+        if (tpb == 9'd511) begin
+`ifdef TPX_POSCTL
+            if (tpf == 40) tps = tps + 1;
+`endif
+            $fwrite(ftp, "%0d %0d\n", tpf, tps); tps = 0; tpf = tpf + 1;
+        end
+        tpb <= tpb + 9'd1;
+    end
+
     // ---- PS の手順 ----
     integer frun, fails = 0;
     initial begin
@@ -226,6 +245,19 @@ module tb_core;
         rst <= 0;
         repeat (20) @(posedge clk);
         rd(16'h0000); if (rv !== 32'h0207_0101) begin fails = fails + 1; $display("IF_ID %h", rv); end
+        // P-6: コアの共通（core_cmn）と振り分け
+        rd(16'h0004); if (rv !== 32'h0032_0200) begin fails = fails + 1; $display("PROJ %h", rv); end
+        rd(16'h0008); if (rv !== H) begin fails = fails + 1; $display("NSTREAM %0d", rv); end
+        rd(16'h000C); if (rv !== 32'd3) begin fails = fails + 1; $display("CAPS %h", rv); end
+        rd(16'h002C); if (rv !== 32'd2 || gbk !== 6'd2) begin fails = fails + 1; $display("GB_K の既定 %0d・%0d", rv, gbk); end
+        wr(16'h002C, 5); rd(16'h002C); if (rv !== 32'd5 || gbk !== 6'd5) begin fails = fails + 1; $display("GB_K %0d・%0d", rv, gbk); end
+        rd(16'h0034); if (rv !== 32'h5A5A_0011) begin fails = fails + 1; $display("GB_STAT %h", rv); end
+        rd(16'h0038); if (rv !== 32'h0000_C3C3) begin fails = fails + 1; $display("ADC_STAT %h", rv); end
+        wr(16'h0084, 7); rd(16'h0084); if (rv !== 32'd7) begin fails = fails + 1; $display("NG（spw_regs）%0d", rv); end
+        rd(16'h0080); if (rv !== 32'd0) begin fails = fails + 1; $display("CORE_FLAGS（spw_regs）%h", rv); end
+        rd(16'h0114); if (rv !== 32'h0200_1002) begin fails = fails + 1; $display("TP_PARAM %h", rv); end
+        wr(16'h0100, 2); wr(16'h011C, 32'h0000_0401); wr(16'h0020, 1);      // TP_N 2・TP_REC_CTRL（4 個・有効）・TP_RUN
+        rd(16'h0104); if (rv !== 32'd2) begin fails = fails + 1; $display("TP_NEFF %0d", rv); end
         for (w = 0; w < H; w = w + 1) begin
             wr(sb(w, 10'h100), wk[w]);
 `ifdef CORE_POSCTL
@@ -247,6 +279,8 @@ module tb_core;
         repeat (`NCYC) @(posedge clk);
         dm_on = 0; $fclose(fc); $fclose(fy); $fclose(fin); $fclose(ftl); $fclose(ffi); $fclose(ffo); $fclose(fdm);
         repeat (`TAIL) @(posedge clk);
+        $fclose(ftp);
+        rd(16'h0108); $display("TP_WP %0d", rv);
         ps_drain;
         rd(16'h0080);
         $display("flags = %h dflags = %h CORE_FLAGS = %h front %b", dut.eng_flags, dut.dflags, rv, dut.fflags);

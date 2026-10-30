@@ -12,6 +12,9 @@
   - R-1: DUMP_F0 = (g0a ＋ K·ng)·2^(G_L2 − 12 − NS)（P-4: g0a は T の原点から数えた格子。古い記録で G0A が無ければ g0）、DUMP_T = そのフレームの頭の標本が入口に入ったビート（wsb_t.log）± 揺れ（≦ 16 ビート）
   - P-4: K_F = DUMP_T − L·DUMP_F0（L = 2^(12 + NS)）が窓ごとに一定。WRST の明けを格子に揃える tb（wsb_run.log に AL 1）では 0 ≦ K_F < L（フレームの頭が T の格子に揃う）
   - 流れの中の揃ったダンプは全部、レコードになっているか捨てた数（EXT_CNT）に入っている: 揃ったダンプ − レコード = EXT_CNT
+  - P-6: TP のレコード（type 2、rec_ver 1、s 0xFF）が混ざる。tp_x.log（tb の TP の模型: リセットの明けからの 512 ビートのフレームごとの Σx²）があれば:
+    尾・CRC、SEQ（= 最初の個の TP_WP）が前の TP のレコードの SEQ ＋ DUMP_N、頭の F0 = 最初の個のフレーム、中身 = 16 バイトの個 × DUMP_N ＋ 0 の詰め（64 バイトの倍数）、
+    個の和 = 模型の和（個の最初のフレームからフレーム数ぶん）、個のフレームが続いている。TP のレコードが 1 個以上
 """
 import os
 import re
@@ -20,6 +23,40 @@ import sys
 import zlib
 
 import numpy as np
+
+
+def tp_rec(w, h, body, tail, tpx, tps, errs):
+    """TP のレコード（INTERFACE 4.6）を 1 個照らす。"""
+    ver, core, s = (w[0] >> 32) & 0xFF, (w[0] >> 48) & 0xFF, (w[0] >> 56) & 0xFF
+    sq, n, P = w[1] & 0xFFFFFFFF, w[5] & 0xFFFFFFFF, w[7] & 0xFFFFFFFF
+    tps["n"] += 1
+    tag = "TP SEQ %d" % sq
+    if (ver, core, s) != (1, 0, 0xFF) or n == 0 or P != (16 * n + 63) // 64 * 64:
+        errs.append("%s: 頭の欄 ver %d core %d s %d DUMP_N %d P %d" % (tag, ver, core, s, n, P)); return
+    if tail[0] & 0xFFFFFFFF != 0x45353453 or tail[0] >> 32 != sq:
+        errs.append("%s: 尾 %016x" % (tag, tail[0]))
+    if (tail[1] & 0xFFFFFFFF) != zlib.crc32(h + body):
+        errs.append("%s: CRC %08x（期待 %08x）" % (tag, tail[1] & 0xFFFFFFFF, zlib.crc32(h + body)))
+    if tps["seq"] is not None and sq != tps["seq"]:
+        errs.append("%s（期待 %d）" % (tag, tps["seq"]))
+    tps["seq"] = sq + n
+    if any(body[16 * n:]):
+        errs.append("%s: 詰めが 0 でない" % tag)
+    ents = [struct.unpack("<QII", body[16 * i:16 * i + 16]) for i in range(n)]
+    if (w[2] & 0xFFFFFFFF) != ents[0][1]:
+        errs.append("%s: F0 %d ≠ 最初の個のフレーム %d" % (tag, w[2], ents[0][1]))
+    for i, (sm, f, fl) in enumerate(ents):
+        nf = fl & 0xFFFFFF
+        if i and f != ents[i - 1][1] + (ents[i - 1][2] & 0xFFFFFF):
+            errs.append("%s 個 %d: フレーム %d が続いていない" % (tag, i, f))
+        if not tpx:
+            continue
+        if any(f + j not in tpx for j in range(nf)):
+            tps["late"] += 1; continue
+        exp = sum(tpx[f + j] for j in range(nf))
+        tps["chk"] += 1
+        if sm != exp:
+            errs.append("%s 個 %d（フレーム %d・%d 個、FLAGS %02x）: 和 %d（模型 %d）" % (tag, i, f, nf, fl >> 24, sm, exp))
 
 
 def main(d):
@@ -51,6 +88,13 @@ def main(d):
     rec_cnt, drop_cnt, ext_cnt, peak, sflags = int(m[1]), int(m[2]), int(m[3]), int(m[4]), m[5]
     # PAD の後ろ（リングの端まで）は書かれない場所なので x のまま。0 に読み替える（PAD で飛ばすので照らさない）
     raw = bytes.fromhex("".join(l.strip() for l in open(os.path.join(d, "wsb_ring.log"))).replace("x", "0"))
+    tpx = {}
+    tpf = os.path.join(d, "tp_x.log")
+    if os.path.exists(tpf):
+        for l in open(tpf):
+            a, b = l.split()
+            tpx[int(a)] = int(b)
+    tps = {"n": 0, "chk": 0, "late": 0, "seq": None}
     errs = []
     pos, seq, recs, pads, late, nt = 0, 0, {}, 0, 0, 0
     while pos < len(raw):
@@ -70,6 +114,10 @@ def main(d):
         P = w[7] & 0xFFFFFFFF
         body = raw[pos + 64:pos + 64 + P]
         tail = struct.unpack("<8Q", raw[pos + 64 + P:pos + 128 + P])
+        if typ == 2:
+            tp_rec(w, h, body, tail, tpx, tps, errs)
+            pos += 128 + P
+            continue
         if (ver, typ, core, fmt, l2n, src, P) != (2, 5, 0, 1, 12, 0, 16384):
             errs.append("SEQ %d: 頭の欄 ver %d type %d core %d fmt %d log2N %d src %d P %d" % (sq, ver, typ, core, fmt, l2n, src, P))
         if tail[0] & 0xFFFFFFFF != 0x45353453 or tail[0] >> 32 != sq:
@@ -117,8 +165,12 @@ def main(d):
     print("照らさないレコード（流れの記録を閉じた後）%d・DUMP_T を照らせないレコード %d・DUMP_T と入口の時刻の差の最大 %d ビート" % (late, nt, tmax))
     print("レコード %d（PAD %d）・REC_CNT %d・揃ったダンプ %d・レコードにないダンプ %d・EXT_CNT %d・DROP_CNT %d・PEAK %d B・sflags %s"
           % (len(recs), pads, rec_cnt, len(full), len(miss), ext_cnt, drop_cnt, peak, sflags))
-    if len(recs) != rec_cnt:
-        errs.append("レコードの数 %d ≠ REC_CNT %d" % (len(recs), rec_cnt))
+    if tpx:
+        print("TP のレコード %d（個を照らした %d・模型の記録の外 %d）" % (tps["n"], tps["chk"], tps["late"]))
+        if tps["n"] == 0 or tps["chk"] == 0:
+            errs.append("TP のレコードを照らせていない")
+    if len(recs) + tps["n"] != rec_cnt:
+        errs.append("レコードの数 %d ＋ TP %d ≠ REC_CNT %d" % (len(recs), tps["n"], rec_cnt))
     # 捨てたダンプは、流れの記録を閉じた後のものもありうる（EXT_CNT はその分も数える）
     if len(miss) > ext_cnt or (ext_cnt == 0 and miss):
         errs.append("レコードにないダンプ %d ≠ EXT_CNT %d: %s" % (len(miss), ext_cnt, miss[:6]))
