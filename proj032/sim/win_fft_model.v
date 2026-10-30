@@ -11,7 +11,8 @@
 //   - 入力の途切れ（フレームの途中の tvalid = 0）は data_in_channel_halt を立てる（wspec_core は溜めから途切れなく流すので起きないはず）
 //   - **s_axis_data_tready**（rev2。実機 1 回目で IP が WRST の直後に tready = 0 の間の語を受けなかったのを受けて）:
 //     IP は tvalid = tready = 1 の語だけを受けて数える。tready は aresetn の解除から +FFT_RDLY= クロック 0（既定 5）、
-//     +FFT_STALL=n（既定 0）なら、解除から 4100 クロック目を皮切りに +FFT_SPER= クロック（既定 3·4096 + 1234）ごとに n クロック 0 にする。
+//     +FFT_STALL=n なら、解除から 4100 クロック目を皮切りに +FFT_SPER= クロック（既定 3·4096 + 1234）ごとに n クロック 0 にする。
+//     **既定（+FFT_STALL を渡さない）は 4100 クロック目に 1 回だけ 1 クロック 0**（proj032 P-7。P-6 までの既定は 0 = 下げない）
 //     tready を守らない送り手（rev1、-DWSPEC_NOREADY の陽性対照）では、受けなかった語のぶん IP の枠がずれる
 `timescale 1ns / 1ps
 module win_fft #(
@@ -54,8 +55,12 @@ module win_fft #(
     integer rdly, stall, sper, tclk;
     initial begin
         if (!$value$plusargs("FFT_RDLY=%d", rdly))  rdly  = 5;
-        if (!$value$plusargs("FFT_STALL=%d", stall)) stall = 0;
-        if (!$value$plusargs("FFT_SPER=%d", sper))  sper  = 3 * M + 1234;
+        // P-7: 既定は「流し始めに 1 回だけ 1 クロック下げる」（実機の振る舞い。P-2〜P-6 の既定は 0 で、eng が tready を守らないのを sim が通した）。
+        //   下げないのは +FFT_STALL=0。+FFT_STALL=n だけを渡したときの周期は今までどおり 3·4096 + 1234
+        if (!$value$plusargs("FFT_STALL=%d", stall)) begin
+            stall = 1;
+            if (!$value$plusargs("FFT_SPER=%d", sper)) sper = 100000000;
+        end else if (!$value$plusargs("FFT_SPER=%d", sper)) sper = 3 * M + 1234;
         rdy_r = 1'b0;
     end
     assign event_frame_started  = 1'b0;

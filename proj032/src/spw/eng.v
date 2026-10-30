@@ -35,7 +35,7 @@
 // 段（出口）: S0 FFT の出口（k = 0 で札を取る）→ S1 → S2 q・積分器の読みを出す → S3 二乗 → S4 p → S5 → S6 積分器の値（上位から）→ S7 書き・流す
 //
 // flags（粘着、rst で消す）: [0] 溜まった印が残っているうちに次が溜まった / [1] 履歴の書き込みが未読の番地に来た / [2] FFT が tready を下げた /
-//   [3] PFB の出口の飽和 / [4] RUN の最初のフレームを過ぎていた / [5] 札の FIFO の溢れ・空 / [6] 入口の z の飽和 / [7] FFT の事象（TLAST・halt） /
+//   （P-7: [2] は IP の手前の溜めの溢れ）[3] PFB の出口の飽和 / [4] RUN の最初のフレームを過ぎていた / [5] 札の FIFO の溢れ・空 / [6] 入口の z の飽和 / [7] FFT の事象（TLAST・halt） /
 //   [8] DDR の窓の 8 bit の飽和
 // ENG_POSCTL: 陽性対照。優先を窓の番号だけにする（NS を見ない）→ 幅の広い窓が締め切りに遅れて flags[1]・値の不一致
 
@@ -447,15 +447,29 @@ module eng #(
     // =====================================================================
     // FFT（build では Xilinx FFT IP、sim では sim/win_fft_model.v、OOC では黒箱）
     // =====================================================================
-    wire [47:0]      s_td = {{6{fi8[17]}}, fi8, {6{fr8[17]}}, fr8};
+    // P-7: IP の手前の溜め（深さ 16）。realtime の IP は流し始めた後に 1 回（入力が途切れた後の面の頭ごとにも）tready を 1 クロック下げる
+    //   （LESSONS。P-7 の実機の 1 回目で FLAGS[2]・[7] が全窓で立った: tready を守らず 1 語が消え、IP の枠がずれたまま）。
+    //   段の流れは止めず、溜めで受けて IP が受けたときだけ取り出す。溜めが溢れたら FLAGS[2]（P-6 までは「tready が下がった」）
+    //   陽性対照 IPQ_POSCTL: 溜めを通さず、今までどおり tready を見ずに送る
+    wire [48:0]      q_d;
+    wire             q_empty, q_ovf, s_tready;
+`ifdef IPQ_POSCTL
+    assign q_d = {pl[8], {6{fi8[17]}}, fi8, {6{fr8[17]}}, fr8};
+    assign q_empty = !pv[8];
+    assign q_ovf = pv[8] && !s_tready;
+`else
+    sfifo #(.DW(49), .AW(4)) u_ipq (.clk(clk), .rst(rst), .push(pv[8]), .din({pl[8], {6{fi8[17]}}, fi8, {6{fr8[17]}}, fr8}),
+                                    .pop(s_tready), .dout(q_d), .dprev(), .empty(q_empty), .ovf(q_ovf));
+`endif
+    wire [47:0]      s_td = q_d[47:0];
     wire [63:0]      m_td;
     wire [15:0]      m_tu;
-    wire             m_tv, m_tl, s_tready;
+    wire             m_tv, m_tl;
     wire             ev_tu, ev_tm, ev_halt, ev_fs;
     win_fft u_fft (
         .aclk(clk), .aresetn(~rst),
         .s_axis_config_tdata(8'h01), .s_axis_config_tvalid(1'b1), .s_axis_config_tready(),
-        .s_axis_data_tdata(s_td), .s_axis_data_tvalid(pv[8]), .s_axis_data_tready(s_tready), .s_axis_data_tlast(pl[8]),
+        .s_axis_data_tdata(s_td), .s_axis_data_tvalid(!q_empty), .s_axis_data_tready(s_tready), .s_axis_data_tlast(q_d[48]),
         .m_axis_data_tdata(m_td), .m_axis_data_tuser(m_tu), .m_axis_data_tvalid(m_tv), .m_axis_data_tlast(m_tl),
         .event_frame_started(ev_fs), .event_tlast_unexpected(ev_tu), .event_tlast_missing(ev_tm),
         .event_data_in_channel_halt(ev_halt));
@@ -529,6 +543,6 @@ module eng #(
     always @(posedge clk) begin
         if (rst) flags <= 16'd0;
         else flags <= flags | {7'd0, hsat, ev_tu | ev_tm | ev_halt, zsat, tq_ovf | tq_und, start_miss, pfb_sat,
-                               pv[8] && !s_tready, h_ovr, pend_ovf};
+                               q_ovf, h_ovr, pend_ovf};
     end
 endmodule

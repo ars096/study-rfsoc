@@ -727,6 +727,79 @@ LUT の内訳は f32cv 300 × 3・ring128 1,458（CRC の XOR の木を含む）
   P-4 から DSP +24・BRAM +2 は E-1 で数えた SAM45-Fine の TP（DSP 24・BRAM 2）とちょうど同じ。LUT +1,754（TP ≒ 1,230 ＋ 振り分け・合流）
 - 残り: BD に載せて実機（ギアボックス・time_core・ring128・PL の DDR を SAM45-Fine の BD から）、PS の手順（specd の SpW の窓のキー）
 
+### P-7: SpW のコア 1 個を実機に（b1、2026-10-30）
+
+- `b1/`（Makefile・build.tcl・build_post.tcl・pynq/spw_b1.py。plring.py・s45core.py・extref.py は proj031 から）。
+  `src/common/` の time_core.v・gb_adc.v・gb_gate.v と `src/board/`（timing.xdc・pps.xdc・ps_preset.tcl）は proj031 から**中身を変えずに**写した。
+  `src/spw/spw_s45_core.v` は BD に置くラッパ（PL の DDR の口は 0 で縛る）
+- 形: ADC_A（Tile 226 / slice 2）→ RFDC → ギアボックス → s45_core_0（spw_s45_core、H 14・E 3・S 6・G_L2 19）→ s45_ring_0（ring128、NX 4）→ HP0。
+  時刻は time_core_0 と 1PPS。**PL の DDR（MIG）は載せない**（窓の枠はチップ内の WSL < 6 だけ）。
+  番地: rfdc 0xA000_0000（256 KiB）・s45_core_0 0xA010_0000（64 KiB）・time_core_0 0xA011_0000・s45_ring_0 0xA011_1000。ID: BIT_KIND 7・PROJ 0x0032_0300
+- **1 回目（BIT_REV 1、`build_r1/`、sha256 736c7cb0…）**: WNS +0.033 ns・WHS +0.010 ns・CRITICAL WARNING 0、DSP 838・BRAM 219・URAM 20・LUT 90,020。
+  配置配線の後の report_drc で親の Vivado が segfault で落ちた → report_drc を外し（DRC は write_bitstream の中で走る）、後段を build_post.tcl に分けて `make post` で回し直せるようにした
+- 実機の 1 回目（`spw_b1.py --clkin 0 --ref 10 --sec 10`、runs/p7_1・p7_2）: ID・ギアボックス（開始・空振り 0）・T の進み・窓 6 本のレコード（10 s で 974〜1022 個ずつ）・
+  CRC・SEQ・DUMP_K・頭の欄・K_F が一定（NS 1 = 89・NS 2 = 178・NS 3 = 352、sim と同じ）・TP のレコード・DROP 0・EXT 0 は通った。
+  **不合格は 1 点: RUN の直後から 6 窓とも機関の FLAGS = 132（[2] FFT が tready を下げた・[7] FFT の TLAST 事象）・CORE_FLAGS 0x2**
+- 診断: LESSONS の既知の穴（realtime の FFT IP は流し始めた後に 1 回 tready を 1 クロック下げる。手前が守らないと 1 語が消え、枠がずれたまま）。
+  eng.v は tready を見ずに送っていた。`sim/win_fft_model.v` は P-2 で写したときから既定で tready を下げない（`+FFT_STALL` 既定 0）ので sim をすり抜けた
+  （skill の「模型の振る舞いも引き継ぐ」の型。proj014・proj023 に続き 3 回目）。1 回目の実機のスペクトルは枠がずれたまま FFT に入っているので、値は使わない
+- 直し（eng.v）: FFT の手前に深さ 16 の溜め（sfifo `u_ipq`）。IP の tvalid は「溜めが空でない」、取り出しは tready のときだけ、段の流れは止めない。
+  FLAGS[2] の意味は溜めの溢れに変えた。陽性対照 `-DIPQ_POSCTL` は溜めを通さない（今までの形）。注: 機関の FLAGS は WRST でしか消えない（CTRL[8] で消えるのは CORE_FLAGS）
+- sim（tb_core の通し、13 万クロック）:
+
+  | 変種 | 条件 | 予言 | 結果 |
+  |---|---|---|---|
+  | p7_stall | 直した RTL ＋ `+FFT_STALL=1 +FFT_SPER=100000000`（流し始めに 1 回下げる） | 通る | **通過**（flags 0・CORE_FLAGS 0・check_wsb 45 枠 / 42 枠 / ダンプ 12 一致・check_ring 通過） |
+  | p7_nostall | 直した RTL・今までの条件 | 通る | **通過**（同上） |
+  | p7_posctl | `-DIPQ_POSCTL` ＋ 下げる | 落ちる | **落ちた**: flags = 0x0084 × 3 機関・CORE_FLAGS 0x2（**実機の 1 回目と同じ印**）、check_wsb 42 件不一致（FFT の出口が枠ずれ）。check_ring は通る（レコードの形は壊れない） |
+
+  陽性対照が実機の印（FLAGS 132・CORE_FLAGS 0x2）をそのまま再現したので、1 回目の不合格の診断はこれで確かめた
+- **sim の既定を変えた**: `sim/win_fft_model.v` は +FFT_STALL を渡さなければ**流し始め（解除から 4100 クロック目）に 1 回だけ 1 クロック下げる**（= p7_stall の条件）。
+  下げないのは `+FFT_STALL=0`、`+FFT_STALL=n` だけなら今までどおり 3·4096 + 1234 クロックごと。周期で下げる形を既定にしないのは、
+  実機の IP が下げるのは流し始め（と入力の途切れの後）で、周期の下げは実機に無い条件だから（溜めが抜けるかは eng の入力の隙間しだいで、確かめていない）。模型だけの小さな tb で 3 通りの下げ方を確かめた（tb_core の通しは p7_stall で済み）
+- 2 回目のビルド（BIT_REV 1 のまま、既定の戦略）: **WNS −0.102 ns（TNS −2.88、75 端点）**で閉じなかった。違反は 2 種類:
+  eng の `s3_w` → 窓の状態の表 `it`（LUTRAM）の読み → 比べ（CARRY 5 段）→ `it` の書き込み（WE・I）が最悪 −0.102 ns、
+  粗い PFB の頭の出口（`g_h.xr` → 回転 → 丸め・飽和 → `o_i`）が最悪 −0.064 ns。足した溜めは違反に無い（1 回目が +0.033 ns のぎりぎりで、配置が動いて割れた）。
+  LESSONS の型どおり RTL は変えず、戦略を並べた（`make IMPL=…` を proj031 から写した。出力は `build-PE/` など）。
+  あわせて **BIT_REV を 2 に**した（1 回目と同じ ID だと交互の起動で取り違えに気づけない）。spw_b1.py は既定で rev 2 を求め、旧版は `--rev 1`。起動時に .bit の sha256 を記録に残す
+- 戦略を並べたビルド（BIT_REV 2、JOBS 4）: 既定 WNS +0.009 ns・**Performance_Explore +0.087 ns**（WHS +0.010 ns）・Performance_ExplorePostRoutePhysOpt は impl の中で Vivado が segfault（回し直さない）。
+  3 本とも CRITICAL WARNING 0・DSP 838・BRAM 219・URAM 20、LUT 90,148 / **90,101** / —（1 回目 90,020、溜めの分）。.hwh の BIT_REV は 3 セルとも 2。
+  **実機には `build-PE/`（sha256 7780fba3…）を使う**。ボードでは新版を `proj032b1.bit`、旧版を `proj032b1_r1.bit` に置いた
+- **実機の 2 回目（2026-10-30）**。構成: 配線 N/S（SG → 2 分配器 A → PATT → 2 分配器 B → ATT 3 dB → 4 分配器 → ADC）・ノイズソース ON・**PATT 13 dB（run の前後に毎回読んだ）**・
+  SG E8257D（基準 EXT）。`spw_b1.py --clkin 0 --ref 10 --sec 10`（旧版は `--bitfile proj032b1_r1.bit --rev 1`）。TP はノイズ ON で **−31.2 dBFS**（0 dBFS = 8192²/2。proj024 4c の −31.3 と合う。
+  ボードのログの「−34.2 dBFS」は直す前の換算（8192² 基準））
+
+  | run | 版 | 機関の FLAGS（RUN の 0.5 s 後・終わり） | CORE_FLAGS | 結果 |
+  |---|---|---|---|---|
+  | p7_r2c | 新（rev 2） | 0 × 6 | 0x0 | 全部通過 |
+  | p7_r1c | 旧（rev 1） | 132 × 6 | 0x2 | 不合格（終わりの見張り） |
+  | p7_r2d | 新 | 0 × 6 | 0x0 | 全部通過 |
+  | p7_r1d | 旧 | 132 × 6 | 0x2 | 不合格（終わりの見張り） |
+
+  ほかはどの run も同じ（窓 6 本 × 1022〜1024 レコード・TP 1024〜1026・照らしの誤り 0・DROP 0・EXT 0・K_F 89 / 178 / 352）。**印は版にだけついてくる**（交互に並べたので、その日の条件の変化では説明できない）。
+  **雑音のスペクトルは新旧で見分けられない**: 同じ ch ごとの比の揺れが 新/新 0.25〜0.50 %・新/旧 0.25〜0.51 %（1 語の枠のずれは 4096 標本の 1 つで、雑音の電力スペクトルを変えない）。見張りの印だけが手がかりだった
+- **CW の位置（新版、SG +9 dBm、ノイズ ON）**: 窓の中心は f_bb = k·64 MHz、f_RF = 4096 − f_bb（第 2 ナイキスト帯）、**ch 0 = 窓の中心で、ch は f_bb とともに増える（RF とは逆）**と読んで、測る前に書いた予言と比べた
+
+  | SG | w0（k 8・NS 1、31.25 kHz） | w1（k 8・NS 2、15.625 kHz） | w7（k 9・NS 1） | 予言 |
+  |---|---|---|---|---|
+  | 3574 MHz（f_bb 522） | **ch 320**（ピーク / 中央値 41.2 dB） | **ch 640**（43.2 dB） | **ch 2368**（41.4 dB） | 320・640・2368 |
+  | 3594 MHz（f_bb 502） | **ch 3776**（40.0 dB） | **ch 3456**（43.3 dB） | 出ない（窓の外 −74 MHz） | 3776・3456・出ない |
+
+  ずれは 0 ch。他の窓（k 12・21・25）には出ない。FLAGS 0・CORE_FLAGS 0 のまま
+- **重なりの診断は 1 回目の版で ch の並びを取り違えていた**（`m0[1024:3072]` を中央と見たが、ch 0 が窓の中心なので窓の縁の側を比べていた）。fftshift し、NS 1 の ch j を NS 2 の ch 2j − 2048 とその両隣の半分（境目が半 ch ずれる）で
+  重ね、中心の線と縁の 64 ch を外す形に直した: ノイズ ON で比 2.000・揺れ 0.0114・相関 0.996（新旧とも同じ）。2 ch ずつ足す形（直す前）は揺れが 2 倍以上になる（ノイズの来ていない床で 0.035 対 0.015）。
+  **重なりは枠がずれても合う**ので正しさの検査にならない。spw_b1.py に窓ごとの平らさ（fftshift の 16 区間）と TP の dBFS を足した
+- 途中で踏んだこと（測りの条件）:
+  - 1 回目（p7_1・p7_2）は入力が今より 28 dB 強く、スペクトルが 0.81〜1.26 に傾いていた（ノイズソースの帯域の形。この日の 2 回目もノイズ ON では 0.66〜1.58）。枠のずれのせいと読みかけたが、交互の比べで外れた
+  - **2 回目の前半（p7_r2a・r1a・r2b・r1b・cw3574・cw3594・cw3574_p9・ns_on_sgoff）は PATT が 100 dB で、ADC には何も来ていなかった**（TP −64.3 dBFS の床。CW が見えず、スペクトルは平ら）。
+    13:34 UTC ごろに 13 dB と読んだ後、別作業が 100 dB にしていた。これらの run は印（FLAGS）の比べにだけ使い、スペクトルと CW には使わない。以降は run の前後に毎回 ATT? を読み、13 dB でなければ止める形にした
+  - 最初の新版の起動で**ボードが落ちた**: 別作業の specd が RUN の最中（DMA でリングに書いている）に Overlay で PL を書き換えた（specd の記録が START の 1 s 後で途切れ、journal も同じ時刻で途切れる）。
+    以降は起動の前に specd などが動いていないかを見て、動いていれば止める形にした。新版の .bit が落としたのではない（同じ .bit でその後 10 回起動して落ちていない）
+- 結論: **SpW のコア 1 個が実機で動いた**（ID・ギアボックス・T・窓 6 本のレコードと TP のレコードが 1 本のリングに・CRC・SEQ・K_F・見張り 0・CW が予言の ch に 0 ch のずれで）。
+  1 回目の不合格（FLAGS 132）は FFT の tready を守らなかったためで、sim の陽性対照が実機の印を再現し、直した版は交互の比べで印が消えた
+- 残り: PL の DDR（MIG、D-1 の形）を b1 に足して DDR の枠の窓を使う → 4 ADC → PS の手順（specd の SpW の窓のキー）。
+  b1 のタイミングは余裕が小さい（既定の戦略で +0.009 ns）ので、足すときは Performance_Explore を既定にするか、`it` の読みと粗い PFB の出口の丸めを段に分ける
+
 ## 結果
 
 -
