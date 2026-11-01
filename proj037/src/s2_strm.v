@@ -55,6 +55,7 @@ module s2_strm #(
     parameter integer N_ACC_DEFAULT = 160,
     parameter integer SHIFT_DEFAULT = 7,
     parameter integer LBL_FIX       = 0,
+    parameter integer REC_W         = 114688,      // 本体の語の数（語 7 の P = 8·REC_W だけに効く。sim でスタブに合わせて縮める）
     parameter integer BUILD_TAG     = 0,
     parameter LO_FILE = "fine_coef_lo.hex",
     parameter HI_FILE = "fine_coef_hi.hex",
@@ -402,7 +403,7 @@ module s2_strm #(
                 hdr[255:192] <= {10'd0, li_dh[g_i], 4'd0, li_src[g_i], 8'd0, 8'd0, 4'd0, li_sh[g_i], 8'd6, 8'd17}; // w4
                 hdr[319:256] <= {g_sat, 16'd0, g_n};                                             // w5 {DUMP_SAT, DUMP_N}
                 hdr[383:320] <= {flags, li_cfg[g_i]};                                            // w6 {FLAGS, DUMP_CFG}
-                hdr[447:384] <= {s0, CHS * 32'd8};                                               // w7 {S0, 917,504}
+                hdr[447:384] <= {s0, REC_W * 32'd8};                                             // w7 {S0, P = 8·REC_W = 917,504}
                 if (g_bad) flg3 <= 1'b1;
                 else begin                                                                       // 流れのブロックの DUMP_* は捨てなかったレコードの値
                     d_k <= g_c; d_n <= {16'd0, g_n}; d_sat <= g_sat; d_cfg <= li_cfg[g_i]; d_t <= li_t[g_i];
@@ -410,10 +411,10 @@ module s2_strm #(
                 end
             end
             nd_prev <= rdo_nd;
-            if (rdo_nd != nd_prev || (g_sh[1] && g_bad)) begin
-                rec_drop <= 1'b1;
-                if (rec_late != 32'hFFFF_FFFF) rec_late <= rec_late + 32'd1;
-            end
+            // rec_drop は読み始めなかったレコード（fine_rdo の n_drop）だけ。帳簿に無いレコードは tuser = 1 で出し、
+            // リングが DROP_CNT に数える（両方で数えると 1 本が 2 になる。U-d の 1 回目）。REC_LATE はどちらも数える
+            if (rdo_nd != nd_prev) rec_drop <= 1'b1;
+            if ((rdo_nd != nd_prev || (g_sh[1] && g_bad)) && rec_late != 32'hFFFF_FFFF) rec_late <= rec_late + 32'd1;
             if (cmd_fclr) flg3 <= 1'b0;
         end
     end

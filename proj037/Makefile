@@ -65,10 +65,11 @@ clean:
 	rm -rf build build-* .Xil *.jou *.log
 
 # ---- sim（U の判定と、proj028 から写した部品の回帰）。成否は make の終了状態でなく各ログの「結果:」で読む ----
-# U: ブロックの位相（U-a）・RUN の印と区切り（U-b）・D_S（U-e）・頭と帳簿（U-c、10 分を越える）・ct_wr の印
+# U: ブロックの位相（U-a）・RUN の印と区切り（U-b）・D_S（U-e）・頭と帳簿（U-c）・リングの尾（U-d、≒ 3 分）・ct_wr の印
 SIM_U   := cpfbph:"tools/sim_cpfb_ph.py" cpfbph_bad:"tools/sim_cpfb_ph.py --bad" cpfbph_gapt:"tools/sim_cpfb_ph.py --gapt" \
            s2_ub:"tools/sim_s2_strm.py ub" s2_ub_bad:"tools/sim_s2_strm.py ub --bad" s2_ue:"tools/sim_s2_strm.py ue" \
            s2_ue_bad:"tools/sim_s2_strm.py ue --bad" s2_uc:"tools/sim_s2_strm.py uc" s2_uc_bad:"tools/sim_s2_strm.py uc --bad" \
+           s2_ud:"tools/sim_s2_ring.py" s2_ud_bad:"tools/sim_s2_ring.py --bad" \
            ctwr_mark:"tools/sim_ct_wr.py --mark" ctwr_mark64:"tools/sim_ct_wr.py --mark --qb 64" ctwr_markbad:"tools/sim_ct_wr.py --mark-bad"
 # proj028 の回帰（口を変えた部品の照合を 4.4 の頭に直したもの）
 SIM_REG := cpfb:"tools/sim_coarse_pfb.py" cpfb_gap:"tools/sim_coarse_pfb.py --gap" cpfb_bad:"tools/sim_coarse_pfb.py --bad" \

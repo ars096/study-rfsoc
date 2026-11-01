@@ -27,6 +27,7 @@ module s2_s45_core #(
     parameter integer B_C                = 20971520,  // 1 チャンクの荒いブロック（286.72 ms）
     parameter integer BASE_BEATS         = 73400320,  // = 3.5·B_C
     parameter integer SHIFT_DEFAULT      = 7,
+    parameter integer REC_W              = 114688,    // STAGE2 の本体の語の数（sim だけ縮める）
     parameter integer RAW_N_ACC_DEFAULT  = 143360,    // 286.72 ms（RAW のフレーム 512 ビート）
     parameter LO_FILE = "fine_coef_lo.hex",
     parameter HI_FILE = "fine_coef_hi.hex",
@@ -166,7 +167,7 @@ module s2_s45_core #(
         .rec_drop(c_drop));
 
     // ---- STAGE2 の流れ 0 ----
-    s2_strm #(.SID_S(0), .REC_CORE(CORE_PORT % 16), .B_C(B_C), .BASE_BEATS(BASE_BEATS), .SHIFT_DEFAULT(SHIFT_DEFAULT),
+    s2_strm #(.SID_S(0), .REC_CORE(CORE_PORT % 16), .B_C(B_C), .BASE_BEATS(BASE_BEATS), .SHIFT_DEFAULT(SHIFT_DEFAULT), .REC_W(REC_W),
               .BUILD_TAG(BUILD_TAG), .LO_FILE(LO_FILE), .HI_FILE(HI_FILE), .TA_FILE(TA_FILE), .TB_FILE(TB_FILE)) u_s2 (
         .aclk(aclk), .aresetn(rstn_l), .s_axis_tdata(s_axis_s2_tdata), .s_axis_tvalid(s_axis_s2_tvalid),
         .s_axi_awaddr(q_addr[9:0]), .s_axi_awvalid(d_aw && q_dst == 2'd1), .s_axi_awready(awr[1]),

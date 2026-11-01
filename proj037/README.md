@@ -202,8 +202,27 @@ ADC ─ gb ─┬─ s2_s45_core（module reference、セルの名前 s45_core_0
 | ct_wr の印（`sim_ct_wr.py --mark`、U-3 で足した） | ごみ（群の半分 ＋ 3 ブロック）の後の印から、印の無いときと同じ中身 | QB 4・QB 64 とも中身の違い 0・chunk_done 0..6 ○。陽性対照（印を見ない ct_wr）は 36,863 / 36,864 値違う ○。proj028 の 4 本（ふつう・QB 64・陽性対照・STALL）も今までどおり |
 | proj028 の回帰 | 写した部品の口を変えても今までどおり | sim-cpfb 3 本・sim-cstage 2 本・sim-facc 3 本・**sim-fcore 4 本**（ふつう・陽性対照・速さ・速さの陽性対照。頭は外から渡す形に、照合は 4.4 の w0 に直した。4 本並べて ≒ 50 分）が今までどおり ○ |
 
+| U-d リングの尾（`sim_s2_ring.py`） | リング = コアの出口の tuser 0 のレコード・尾の CRC = zlib・DROP_CNT 1・REC_CNT 5。陽性対照は CRC の外れ 1・語の違い 1 | **5 本（RAW 2・STAGE2 3）とも頭と本体が語ごとに同じ・尾 w0 = {SEQ, "S45E"}・w1 = zlib.crc32・残り 0**・REC_CNT 5・ERR 0・記憶の見張りの NG 0（バースト 137）・STAGE2 の語 7 = {k·114,688, 32} ○。**1 回目は DROP_CNT 2 で外れた**（下）。直した後は DROP_CNT 1 ○。陽性対照（-DRING_FLIP）は CRC の外れ 1・語の違い 1 で落ちる ○。1 本 ≒ 3 分 |
+
+- **U-d の 1 回目の外れ: 帳簿に無いレコード（c 5）が DROP_CNT で 2 と数えられた**。s2_strm が、そのレコードを tuser 1 で出し（リングが DROP_CNT +1）、同時に rec_drop も立てていた（リングがもう +1）。
+  interface.md 4.2 の DROP_CNT は「捨てたレコードの数」で、rec_drop は「読み始めなかったダンプ」（g21_core の rec_fr と同じ）。rec_drop を fine_rdo の n_drop（読み始めなかったレコード）だけにし、REC_LATE は両方を数えるままにした。
+  U-c はリングを通さず、REC_LATE だけを見ていたので出なかった。U を全部回し直した（`make sim-u` 14 本、3 分 11 秒、全部予言どおり）
+- U-d は本体を縮めるため、s2_strm に REC_W（語 7 の P = 8·REC_W だけに効く。既定 114,688）を足した。リングを読むのは終わりの 1 回だけ（リングの巻き戻りと PAD は proj021 の sim-ringu が見ている）
 - LBL_FIX（ラベルの補正）は 0 のままで D_S = 0 だった（axis_sel4 の 1 段と s2_strm の受けの 1 段が「t_loc − 1」で合っている）
 - U-c の 1 回目で、捨てたレコード（帳簿に無い c）の頭の値が流れのブロックの DUMP_*（0x3C など）に残った（DUMP_K 0xFFFF0005）。捨てなかったレコードの値だけを残すように直し、U を全部回し直した（`make sim-u` 12 本、2 分 21 秒）
+
+### U-d の作りと予言（走らせる前に書く、2026-11-01）
+
+- 作り（`tb/tb_s2_ring.v`・`tools/sim_s2_ring.py`）: s2_s45_core（fine_core はスタブ）→ s45_ring（NIN 1）→ 止まりをランダムに入れる記憶（proj021 の tb_ring_u の HP0 の代わり。SIZE 64 KiB、終わりに 1 回だけ読む）。
+  B_C 64・BASE 224・N_DUMP 3 は U-c と同じ。STAGE2 は ARM_RUN、RAW（N_ACC 1・N_DUMP 2・ALL）も同じ go で ARM_RUN。
+  細かい側には U-c と同じ (c, k) = (0, 0)・(1, 1)・(2, 31)・(5, 3) を流す（(5, 3) は帳簿に無い → tuser 1）
+- **本体の大きさの引数 REC_W を s2_strm に足す**（既定 114,688 語、語 7 の P = 8·REC_W だけに効く。S0 = k·114,688 は変えない）。スタブの本体は 4 語なので tb は REC_W 4。
+  s45_ring は P でレコードの長さを決めるので、P と本体の語の数が食い違うと尾の位置がずれる（本物の大きさは 1 レコード 114,696 語で、荒い段と回すと 20 分を越える）
+- 予言:
+  1. リングのレコード = コアの出口（m_axis_rec）の tuser 0 のレコード（STAGE2 3 本・RAW 2 本）、順もそのまま、頭と本体が語ごとに同じ。TP のレコードは出ない（TP_RUN を書かない）
+  2. 尾 8 語が w0 = {SEQ（頭の w1 の下位 32 bit）, "S45E"}・w1 = zlib.crc32（頭 ＋ 本体の little endian のバイト）・残り 0
+  3. DROP_CNT 1（(5, 3) の 1 本）・REC_CNT 5・ERR 0・記憶の見張りの NG 0。STAGE2 の語 7 = {k·114,688, 32}
+  4. 陽性対照（-DRING_FLIP）: 記憶に書かれた最初のレコードの本体の 1 語を 1 bit 反転 → CRC の外れ 1 本・語の違い 1 で落ちる
 
 ## 変更案（YATSUGATAKE の `docs/spec/` に入れる候補）
 
@@ -220,6 +239,7 @@ ADC ─ gb ─┬─ s2_s45_core（module reference、セルの名前 s45_core_0
 - 2026-11-01: U（RTL）。流れは STAGE2 ＋ RAW の 2 本、RTL と実機は proj037 の続き（開発者）。proj028 の `src/`・`sim/`・`tb/`・`tools/`（684b630）と YATSUGATAKE の `hw/common/`（54ce5e3）の要るものを写した（proj028 の BD の包み `fine_top.v` は写さない: 細かい側は s2_strm の中）。
   coarse_pfb（の生成器）にブロックの位相を T に固定する照らし、coarse_post に飽和の口、ct_wr に印、fine_rdo の頭を 4.4 に、fine_core に帳簿の口。
   新しく `src/s2_strm.v`（STAGE2 の流れ）・`src/s2_s45_core.v`（コアの包み、g21_s45_core から）。sim は `make sim-all`
+- 2026-11-01: U-d（`tb/tb_s2_ring.v`・`tools/sim_s2_ring.py`）。s2_strm の rec_drop の二重の数えを直し、REC_W を足した
 
 ## 結果
 
@@ -232,11 +252,11 @@ ADC ─ gb ─┬─ s2_s45_core（module reference、セルの名前 s45_core_0
 - 2026-10-30: R の決め・S-1 の表は開発者が案どおりに決めた。V-1〜V-3 は YATSUGATAKE の ADR 0027 と `docs/spec/` の変更にして PR #75（ブランチ `2g-1-fine/spec-records-time`、docs だけ）に出した
 - RTL（S-2・T-2・T-3）は YATSUGATAKE の PR #74 のマージの後、その `hw/common/` の上で。sim の判定と陽性対照は S-2・T-1 に書いた
 - 2026-11-01: U の RTL を書き、U-a・U-b・U-e・ct_wr の印が予言どおり（U-5 の結果）。**D_S = 0**（STAGE2 の D_eff は 688,180.25 ビートのまま）。
+- 2026-11-01: U-c・U-d も予言どおり（U-d の 1 回目で DROP_CNT の二重の数えを見つけて直した）。sim の段（U-5）はこれで全部。
   次にやること:
-  1. U-d（s45_ring まで通して尾の CRC）は s2_s45_core ＋ s45_ring の試験台で（U-c と同じく fine_core はスタブで）
-  2. build.tcl: proj028 の build_f5.tcl（MIG・ct_wr・ct_rd・SmartConnect）と YATSUGATAKE 2G-1-Fast の build.tcl（time_core・1PPS の口と LPF・axis_sel4 2 個・s45_core_0・s45_ring_0・照合）を合わせる。
+  1. build.tcl: proj028 の build_f5.tcl（MIG・ct_wr・ct_rd・SmartConnect）と YATSUGATAKE 2G-1-Fast の build.tcl（time_core・1PPS の口と LPF・axis_sel4 2 個・s45_core_0・s45_ring_0・照合）を合わせる。
      ct_wr・ct_rd の設定（BASE・CHSTRIDE・PLANE_STRIDE・GPD 10240・NPLANE 3・HB）は Overlay を載せたときに PS が書く
-  3. 実機（ボードを使う試験は 1 つの会話に）: specd の STAGE2 の束ね（32 本 × n_sum）・RAW の F-2、DUMP_T = RUN_T ＋ c·BASE の見張り、proj028 の F-4 の照合
+  2. 実機（ボードを使う試験は 1 つの会話に）: specd の STAGE2 の束ね（32 本 × n_sum）・RAW の F-2、DUMP_T = RUN_T ＋ c·BASE の見張り、proj028 の F-4 の照合
 - 知見: 次の proj でも踏みそうなものを `../docs/lessons_all.md` に足した（要点なら `../LESSONS.md` にも）
 
 ## 再現手順
