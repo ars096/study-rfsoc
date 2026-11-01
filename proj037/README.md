@@ -133,6 +133,78 @@ proj028 F-8 は**雑音源を切った**入力（σ_x 5.2〜8.7 LSB）で、荒�
 - **2G-1-Fine の D_eff = 688,180.25 ビート = 2,688,204.1 ns**（RTL の遅れ D_S = 0 の前提。D_S は RTL の sim で出す）。
   サンプルの瞬間を区間 [t − ½, t + ½) と読むかどうかの ½ サンプル（0.12 ns）は入れていない（SLICE の 1.5·L も同じ読み）
 
+## U RTL — 作り（2026-11-01。S-2・T-2・T-3 を製品の形に）
+
+出発点: study-rfsoc proj028（commit 684b630）の `src/`・`sim/`・`tb/`・`tools/` と、YATSUGATAKE main 54ce5e3 の `hw/common/`（core_cmn・time_core・tp_core・raw_core・rec_arb・s45_ring・adc_ev・axis_sel4・gb_*）。
+写した部品はこの proj の中に置く（`src/` は proj028 の並び、`src/common/` に hw/common の写し）。2G-1-Fast（YATSUGATAKE `hw/bits/2g-1-fast/`、g21_s45_core・g21_core）を流れのブロックの手本にする。
+
+### U-1 決めたこと（2026-11-01、開発者）
+
+- **流れは 2 本**: s = 0 STAGE2・s = 1 RAW（2G-1-Fast の FULL ＋ RAW と同じ形。F-2・specd の SNAP は RAW の道具のまま）。NSTREAM 2
+- RTL と実機は proj037 の続きでやり、移植元のタグも proj037 で打つ
+
+### U-2 コアの形（案）
+
+```
+ADC ─ gb ─┬─ s2_s45_core（module reference、セルの名前 s45_core_0）──────────────────────────┐
+          │    core_cmn（BIT_KIND 12・NSTREAM 2・BASE_BEATS 73,400,320）                     │
+          │    s2_strm（流れ 0、KIND 5）: 流れのブロック・ARM_RUN・帳簿・荒い段（coarse_stage） │
+          │       └ m_axis_ct（512 bit ＋ tuser の印）→ ct_wr ─ MIG ─ ct_rd ─ s_axis_ct ┐      │
+          │       fine_core（fine_rdo の頭を 4.4 に）← ─────────────────────────────── ┘      │
+          │    raw_core（流れ 1、KIND 4）                                                    │
+          │    rec_arb（コアの TP・STAGE2・RAW）→ m_axis_rec ─────────────────────────────── s45_ring
+          └─ axis_sel4（RAW の SRC）
+```
+
+- **荒い段はコアの中、corner turn（ct_wr・ct_rd）はコアの外**（MIG への AXI4 の主は BD のセルのまま。設定のレジスタ BASE・CHSTRIDE・… は Overlay を載せたときに PS が書く。約束の外）
+- **荒い段の設定は流れのブロックの種類に固有の場所へ**: 0x100 + 4k GAIN[k]（k = 0..31）・0x200 + 8k POW[k]・0x300 + 4k CLIP[k]・0x380 NACC・0x384 POW の SEQ（今の coarse_post の 0x100・0x200・0x400・0x004・0x008 を移す）。GAIN は specd が書く（運転の設定）、POW・CLIP は診断
+- 流れのブロックの 0x000〜0x0FF は g21_core と同じ並び。STAGE2 の読み方: SID {2, 5, 0, 0}・PARAM {0, 64, 0, 17}・NCH 3,670,016・FRAME_BEATS 458,752（細かいフレーム = 131,072 ブロック × 3.5 ビート = 458,752 ビート）・N_ACC 160（固定。書けるが効かない）・NFFT_MIN_MAX {0, 0, 17, 17}・SHIFT は細かい側の SHIFT（RUN で取り込む）
+
+### U-3 ブロックの位相（T-2）
+
+- coarse_pfb の 7 拍の数え b7 を、**受けた拍の T mod 7** から作る（今は「valid が初めて立った拍から」）。T mod 7 は 8 ≡ 1 (mod 7) なので 64 bit の 8 進の桁の和で、段に分けて出す。
+  数えの規則は今の coarse_pfb のまま（b7 = 3 で対の 1 つ目のブロック、b7 = 6 で 2 つ目）で、**b7 = (T_beat − PH) mod 7**、PH は「T ≡ 0 (mod 7) の拍がブロックの対の頭」になる定数（v1 の段の分、sim で決める）
+- 見張り: 数え（ふつうに +1 で回す）と T mod 7 から出した値を毎拍比べ、違えば粘着の FLAGS（TFIN の書き換えなどで T が飛んだとき）。違ったら数えを T に合わせ直す
+- **RUN の印**: go（START_AT の拍）で RUN を受け、その拍が頭のブロックの対の、**最初のブロックの番号 n_run** を覚える（荒い段の入口で数えたブロックの番号）。荒い段の出口（順序は変わらず欠けない）で同じ番号を数え、n_run のブロックに tuser[0] = 1（印）を付ける。
+  以後 N_DUMP チャンクぶん（0 なら止めるまで）のブロックだけ m_axis_ct に valid を出す。ct_wr は印のブロックで数えを 0 にしてチャンク 0 を始める（今の CTRL の RUN 0 → 1 と同じ消し方）
+- START_AT が 7 の倍数でない（specd の誤り）: RUN は受けず、FLAGS の [?] を立てる（DUMP_T の式が崩れるので黙って始めない）
+
+### U-4 チャンクごとの帳簿（T-3）
+
+- **入口の側**（荒い段の入口で、T の区間 [RUN_T ＋ c·BASE, RUN_T ＋ (c+1)·BASE) ごと）: DUMP_T のスタンプ（チャンクの頭のブロックの最初のサンプルが入った拍の T）・DUMP_H（ev の OR、g21_core と同じ 6 bit ＋ [15] H_OPEN）
+- **出口の側**（荒い段の出口で、ブロックの番号 [c·B_C, (c+1)·B_C) ごと、B_C = 20,971,520 ブロック）: 荒い ch k ごとの 8 bit の飽和の数え（re・im の成分ごと、coarse_post の CLIP と同じ数え方）
+- 帳簿は **4 面**（c mod 4。DDR は 3 面だが、チャンク c の最後のレコード（k = 31）が出るのはチャンク c + 2 の頭に近い。余裕に 1 面）。面に c を書き、fine_rdo が引くときに c が違えば粘着の FLAGS と、そのレコードを tuser = 1（捨てる）
+- fine_rdo の頭（4.4）: w0 {s 0, core, type 1, rec_ver 1, "S45R"}・w1 {DUMP_K = c, SEQ}・w2 DUMP_F0 = c·B_C・w3 DUMP_T（帳簿のスタンプ）・w4 {DUMP_H, src, fmt 0, G, SHIFT, NS 6, 17}・w5 {DUMP_SAT[k], DUMP_N（積んだフレーム）}・w6 {FLAGS, DUMP_CFG}・w7 {S0 = k·114,688, 917,504}
+- **SEQ**: レコードを始めるたびに +1（RUN をまたいで続く、g21 と同じ）。fine_rdo が捨てたレコード（busy 中の start）も SEQ は進める（欠け = SEQ の飛び）。流れのブロックの 0x1C は最後に始めたレコードの SEQ、DUMP_K・DUMP_* は最後のレコードの値
+- REC_CTRL: ALL = 全部・ONE = 次のチャンクの 32 本を出したら 0 に。出さないレコードは fine_rdo の読みを回して中身を捨てる（fine_acc の面を空けるため）。REC_LATE は fine_rdo の n_drop
+- **DUMP_T の見張り**: スタンプと式（RUN_T ＋ c·BASE_BEATS）が違えば粘着の FLAGS
+
+### U-5 判定（sim、予言は走らせる前に）
+
+本物の大きさ（1 チャンク = 7,340 万ビート）は iverilog で回らないので、**大きさの引数を縮めて**回す（ブロック数 B_C・群 GPD・細かい側の N_f はそのまま回せないので、fine_core は proj028 の sim-fcore の大きさのまま、帳簿と頭は fine_rdo を単体で）:
+
+| | 中身 | 予言 |
+|---|---|---|
+| U-a ブロックの位相 | coarse_pfb を T を付けて回し、T の始まりを 7 通りに変える。対の頭が T ≡ 0 (mod 7) | 7 通りとも、b7 = 3 のブロックの最初のサンプルの T が 7 の倍数。模型（coarse_pfb_ref）と bit 単位で同じ。陽性対照（PH ＋ 1）は 7 通りとも外れる |
+| U-b RUN の印と F0 | s2_strm を B_C 縮めて（例 2048 ブロック）、START_AT を 3 通り。印のブロック・チャンクの区切り・DUMP_T のスタンプ | 印のブロックの最初のサンプルの T = START_AT。スタンプ = RUN_T ＋ c·BASE（B_C に合わせて縮めた BASE）。START_AT ＋ 1（7 の倍数でない）は RUN を受けず FLAGS |
+| U-c 頭と帳簿 | fine_rdo ＋ 帳簿を単体で、3 チャンク × 32 本 | 32·3 本の頭が式（SEQ 連続・DUMP_K・S0 = k·114,688・DUMP_F0 = c·B_C・DUMP_SAT が帳簿の値）と一致。中身は proj028 の sim-facc の照合のまま。陽性対照: S0 を 1 本ずらす（k ＋ 1）で落ちる |
+| U-d 尾 | s45_ring まで通し、尾の CRC を zlib で | 一致 |
+| U-e D_S | 孤立したサンプル（1 拍だけ大きい値）を START_AT の後に入れ、荒い段の出口でそのサンプルが効くブロックの番号と DUMP_F0 の式から、入口の拍と DUMP_T の差 | D_S = 0（印がデータと一緒に流れるので、遅れの定数が無い）。陽性対照: 印を 1 ブロック遅らせると D_S = 3.5 ビート |
+
+### U-5 の結果（2026-11-01、`build-sim/`）
+
+| | 予言 | 結果 |
+|---|---|---|
+| U-a ブロックの位相（`sim_cpfb_ph.py`） | 7 通りとも対の頭が T ≡ 0 (mod 7)・z は模型と同じ。陽性対照は 7 通りとも外れる | **7 通りとも位相の外れ 0・z の違うブロック 0 / 69〜70・lock 1・err 0** ○。陽性対照（-DCPFB_PH_ERR）は 7 通りとも 47〜48 ブロック外れる ○。足した見張り: 本物の T で valid を落とす（--gapt）と ph_err が立つ ○ |
+| U-b RUN の印と区切り（`sim_s2_strm.py ub`） | 印のブロックの T = START_AT・スタンプ = 式。7 の倍数でない START_AT は受けず FLAGS | **START_AT 2800・2807・3059 とも出口 192 ブロック（3 チャンク × 64）・印 1（最初のブロック）・RUN_T = START_AT・FLAGS 0（スタンプが式どおり）** ○。START_AT ＋ 1 の 3 通りは出口 0・FLAGS[1] ○ |
+| U-e D_S（`sim_s2_strm.py ue`） | D_S = 0。陽性対照（印を 1 ブロック遅らせる）で 3.5 ビート | **D_S = 0 サンプル**（孤立したサンプルが効く 31 ブロックの z が全部、DUMP_T と印から数えた位置 s = 805 の g[56m + 55 − s] と合い、合う s は 1 つ）○。陽性対照は s = 749（**+56 サンプル = 3.5 ビート**）○ |
+| U-c 頭と帳簿（`sim_s2_strm.py uc`） | 頭が式と一致・S0 を 1 本ずらす陽性対照で落ちる | **(c, k) = (0, 0)・(1, 1)・(2, 31) の 3 本とも頭 8 語が式と一致**（SEQ 0・1・2 の連続・DUMP_K・DUMP_F0 = c·B_C・DUMP_T = START_AT ＋ c·BASE・語 4・DUMP_SAT が出口で数え直した値（127・118・123）・DUMP_N・DUMP_CFG・S0 = k·114,688）○。帳簿に無いチャンク（c 5）は tuser 1・FLAGS[3]・REC_LATE 1 ○。陽性対照（-DS2_S0_ERR）は落ちる ○。**fine_core は口だけ同じスタブ**（`tb/fine_core_stub.v`）: 本物は荒い段といっしょだと iverilog で ≒ 86 拍/秒、レコード 4 本に 1.5 時間を越える。中身の道は sim-fcore・sim-facc（頭を外から渡す形）が見る |
+| ct_wr の印（`sim_ct_wr.py --mark`、U-3 で足した） | ごみ（群の半分 ＋ 3 ブロック）の後の印から、印の無いときと同じ中身 | QB 4・QB 64 とも中身の違い 0・chunk_done 0..6 ○。陽性対照（印を見ない ct_wr）は 36,863 / 36,864 値違う ○。proj028 の 4 本（ふつう・QB 64・陽性対照・STALL）も今までどおり |
+| proj028 の回帰 | 写した部品の口を変えても今までどおり | sim-cpfb 3 本・sim-cstage 2 本・sim-facc 3 本・**sim-fcore 4 本**（ふつう・陽性対照・速さ・速さの陽性対照。頭は外から渡す形に、照合は 4.4 の w0 に直した。4 本並べて ≒ 50 分）が今までどおり ○ |
+
+- LBL_FIX（ラベルの補正）は 0 のままで D_S = 0 だった（axis_sel4 の 1 段と s2_strm の受けの 1 段が「t_loc − 1」で合っている）
+- U-c の 1 回目で、捨てたレコード（帳簿に無い c）の頭の値が流れのブロックの DUMP_*（0x3C など）に残った（DUMP_K 0xFFFF0005）。捨てなかったレコードの値だけを残すように直し、U を全部回し直した（`make sim-u` 12 本、2 分 21 秒）
+
 ## 変更案（YATSUGATAKE の `docs/spec/` に入れる候補）
 
 - **V-2（S から）**: interface.md 2.1 の KIND の表に **5 STAGE2** を足す（ch → IF は (S0 + i)·fs / (56·2^PARAM[7:0])、S0 は語 7 の上位）。2.5・4.4 に「STAGE2 は荒い ch ごとに 1 レコード、SEQ はレコードごと、DUMP_K はチャンク、DUMP_SAT は荒い ch の 8 bit の飽和」。5.1 に「STAGE2 のダンプ m は 32 本で揃う」
@@ -145,6 +217,9 @@ proj028 F-8 は**雑音源を切った**入力（σ_x 5.2〜8.7 LSB）で、荒�
 - 2026-10-30: R-1 を走らせた（`model/fast_coarse.py`・`model/r1_lines.py`）。丸めと語長は変えない案にした
 - 2026-10-30: S（レコードの形）と T（ブロックの位相・DUMP_T・帳簿）の設計を書いた。T-4 の D_eff を模型（`model/t4_deff.py`）で確かめた
 - 2026-10-30: 開発者が R・S を案どおりに決めた。YATSUGATAKE PR #75（ADR 0027）
+- 2026-11-01: U（RTL）。流れは STAGE2 ＋ RAW の 2 本、RTL と実機は proj037 の続き（開発者）。proj028 の `src/`・`sim/`・`tb/`・`tools/`（684b630）と YATSUGATAKE の `hw/common/`（54ce5e3）の要るものを写した（proj028 の BD の包み `fine_top.v` は写さない: 細かい側は s2_strm の中）。
+  coarse_pfb（の生成器）にブロックの位相を T に固定する照らし、coarse_post に飽和の口、ct_wr に印、fine_rdo の頭を 4.4 に、fine_core に帳簿の口。
+  新しく `src/s2_strm.v`（STAGE2 の流れ）・`src/s2_s45_core.v`（コアの包み、g21_s45_core から）。sim は `make sim-all`
 
 ## 結果
 
@@ -156,6 +231,12 @@ proj028 F-8 は**雑音源を切った**入力（σ_x 5.2〜8.7 LSB）で、荒�
 
 - 2026-10-30: R の決め・S-1 の表は開発者が案どおりに決めた。V-1〜V-3 は YATSUGATAKE の ADR 0027 と `docs/spec/` の変更にして PR #75（ブランチ `2g-1-fine/spec-records-time`、docs だけ）に出した
 - RTL（S-2・T-2・T-3）は YATSUGATAKE の PR #74 のマージの後、その `hw/common/` の上で。sim の判定と陽性対照は S-2・T-1 に書いた
+- 2026-11-01: U の RTL を書き、U-a・U-b・U-e・ct_wr の印が予言どおり（U-5 の結果）。**D_S = 0**（STAGE2 の D_eff は 688,180.25 ビートのまま）。
+  次にやること:
+  1. U-d（s45_ring まで通して尾の CRC）は s2_s45_core ＋ s45_ring の試験台で（U-c と同じく fine_core はスタブで）
+  2. build.tcl: proj028 の build_f5.tcl（MIG・ct_wr・ct_rd・SmartConnect）と YATSUGATAKE 2G-1-Fast の build.tcl（time_core・1PPS の口と LPF・axis_sel4 2 個・s45_core_0・s45_ring_0・照合）を合わせる。
+     ct_wr・ct_rd の設定（BASE・CHSTRIDE・PLANE_STRIDE・GPD 10240・NPLANE 3・HB）は Overlay を載せたときに PS が書く
+  3. 実機（ボードを使う試験は 1 つの会話に）: specd の STAGE2 の束ね（32 本 × n_sum）・RAW の F-2、DUMP_T = RUN_T ＋ c·BASE の見張り、proj028 の F-4 の照合
 - 知見: 次の proj でも踏みそうなものを `../docs/lessons_all.md` に足した（要点なら `../LESSONS.md` にも）
 
 ## 再現手順
