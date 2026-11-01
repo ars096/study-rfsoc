@@ -47,6 +47,7 @@ set gb_k_rst   2
 set spw_h 14; set spw_e 3; set spw_s 6; set spw_nk 8; set spw_gl2 19
 set spw_kind 7
 set spw_rev 2                  ;# P-7: 1 = 1 回目（build_r1、eng が tready を見ない）・2 = IP の手前に溜め（eng の u_ipq）
+# rev 2 の src/spw はコミット 31d2ef8。eng.v は b2 の rev 4 で直したので、今の src で作るなら rev を上げる
 set spw_proj [expr {0x00320300}]
 set win_range 65536
 puts "PART      : $part / OUTDIR : $outdir / JOBS : $jobs"

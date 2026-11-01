@@ -54,24 +54,21 @@ proj001〜023 で踏んだ穴と、次以降の proj でも従う決まりを 1 
 - 自作のセルの OOC のログに Synth 8-3848（ドライバの無いネット）があれば止める。— AXI の arready の駆動漏れを Vivado は警告していたが拾っておらず、PS は別のレジスタを読んでいた（proj023）
 - `$readmemh` の hex は絶対パスで渡し、ラッパの文字列・Synth 8-4445 の有無・配置後の BRAM の数で照合する。URAM は初期値を持てないので ROM は BRAM に置く。— 読めないと ROM が 0 になり、BRAM が消えるだけでビルドが通る（proj023）
 - Vivado 2024.1 は OOC・synth_1・impl_1 で終わり際に落ちる（segfault・tcmalloc・Stack limit。毎回違う run）。落ちた印のある run と、それに依って始まらなかった run だけを 2 回まで回し直す（proj012〜015・023）。**親の Vivado も `open_run` で落ちる**（run の外）ので、後段だけを回す口（`make post`）を持つ（proj025）
-- 取得の 1 周の時間（loop_max）は余裕の物差しにならない。1 BASE の処理 ＋ 寝る 3 ms が BASE を越えると 1 周が 2 BASE を抱え、時間が二値的に倍に跳ぶ。余裕は loops / dumps から 1 BASE の処理時間に直して読む（proj025 4c）
 - `ram_style = "ultra"` の溢れは、コアごとの OOC の run の中では見えない（place の前の UTLZ-1 で止まる）。複数コアは URAM・BRAM の総数をビルドの前に足す（proj025）。URAM の推論は型どおりの小さなモジュールに切り出す（Synth 8-5792 は WARNING 1 行で黙って BRAM に落ちる、proj031）
 - run は名前の文字列で持ち、その場で `[get_runs $n]` を渡す。dcp を読むときは `set proj` の名前で 1 個に絞る（glob しない）。— 同じ build/ に残っていた古い proj の dcp を読み、取り違えた（proj015・021）
 - 速度グレードの検証用ビルドの .bit を実機に載せない。BUILD_TAG の指紋（速度グレード・プリセットの有無）を PS が読む。指紋に commit やビルド時刻を入れない（配置が組み替わり、同じ RTL の作り直しが WNS まで再現しなくなる）（proj011・021）
 - CRITICAL WARNING は runme.log だけでなく vivado.log の本体（BD を組むとき）も拾う。— BD 41-759 を 3 回のビルドで見落とした（proj024 2f）
-- report_power（ベクタなし）の VCCINT は実測と −5〜+13 % 違う。電流の予言の幅は ±15 %（proj030）
 - → 全部: docs/lessons_all.md の「Vivado・build.tcl の見張り」
 
 ## タイミングの定石（`-1`・256 MHz）
 
-- 合否は `-1` で閉じること。既定の戦略で閉じなければ `IMPL=Performance_Explore` を回す（並べて回すなら `Performance_ExtraTimingOpt`・`…PostRoutePhysOpt` も）。数 ps なら配線後の `phys_opt_design`（`make physopt`）（proj015・020・021・023）
+- 合否は `-1` で閉じること。既定の戦略で閉じなければ `IMPL=Performance_Explore` を回す（並べて回すなら `Performance_ExtraTimingOpt`・`…PostRoutePhysOpt`・`Performance_NetDelay_high` も。proj032 の b2・b4 では PND が最も余裕を出した）。数 ps なら配線後の `phys_opt_design`（`make physopt`）（proj015・020・021・023）
+- 分散 RAM（reg の配列）の読み → 改め → 書きを同じ段に置かない。読みを前の段で取り、書きを 1 段後ろに割る。— 改めの比べの鎖が WE に届いた（eng.v の `it`、−0.452 → +0.069 ns）（proj032）
+- 大きな bit は LUT の % でなく **CLB の %** と混みの段で「入るか」を読む。CLB 98 % を越えると外れが全体に散り、戦略では閉じない（256 MHz・4 ADC: LUT 84 %・CLB 99.5 % は配線できず、LUT 74 %・CLB 98.7 % は −0.09 ns、LUT 58 %・CLB 88 % で +0.035 ns）（proj032）
 - WNS は配置の組み替わりだけで ±0.1〜0.2 ns 動く。予言は幅で書き、余裕が数十 ps の bit は、RTL を少し変えると負に戻る前提で扱う（proj011・023）
 - フレームの頭でしか使わない幅のある加算・比較は、前もって `pre_*` レジスタに計算しておく。— spec_core で直した型を、写した wide_spec が再び持ち込んだ（−0.561 ns）（proj011・023）
 - ファブリックの加算の出口を、レジスタを挟まずに DSP の入口に入れない。飽和・和の後のレジスタを DSP に吸わせたくないときは `dont_touch`（proj012・021・023）
 - 準静的な高ファンアウト信号は `max_fanout` の複製で配る。リセットはコアの中で 3 段受け、FFT IP のリセットはレーンごとに 1 段（dont_touch）受けてから配る。IP の tready を段全体の CE に配らない（proj016・020・021・023）
-- CRC は for 文でなく展開した XOR の式で書き、入力を 1 段受ける。— for 文は 13 段の LUT の鎖になった（proj021）
-- 1 か所に集まるもの（大きい FIFO・選択器）と大ファンアウトが効く。gb_gate → gb_fifo の読み出し許可はスキッドバッファで切ってある（群 C。遅れが +2 語変わる）（proj012・021）
-- DSP の出口どうしの加算にレジスタを付けると、加算木の最初の段も DSP に載る。見積もりに含める（proj013・014）
 - → 全部: docs/lessons_all.md の「タイミングの定石（`-1`・256 MHz）」
 
 ## 設計の規約
@@ -99,6 +96,7 @@ proj001〜023 で踏んだ穴と、次以降の proj でも従う決まりを 1 
 - 刺激に満杯の区間（±最大値）を入れる。確かめたいことを試験台の側で仮定しない（proj014・017）
 - 大きな N では、ひねり係数の番地の 1 ずれが浮動小数点との比べ（B 層）でほとんど見えない（2G-1: 雑音の ε 8.7e-6 → 1.2e-4、CW の ch は 0.0000 dB）。番地の誤りは bit 単位の照合（A2）と tw_k1 の見張りで捕まえる（proj024 M-8）
 - 変種と陽性対照は `make sim-…` で並べて回し、成否は各ログの「結果: 全部通過」で読む（proj011 以降）
+- 振る舞いを変えないはずの直しは、旧版の RTL で同じ tb を回し、記録のファイルを全部 cmp で比べる（違う変種どうしで比べが空振りしないことも見る）（proj032）
 - **別の KIND の部品を写したら、その KIND だけの例外を持ち込んでいないかを INTERFACE と照らす**。tb が 2 つの時機に同じ値を渡すと、取り込む時機の誤りは sim を通る。— 2G-1（FULL）の g21_spec が Wide（SLICE）の「SHIFT は WRST で」を持ち込み、2c の sim は通っていた（proj024 2d）
 - → 全部: docs/lessons_all.md の「sim と模型」
 - インパルスで遅れを測る sim は、探す窓を足の範囲に限る（広いと前のインパルスの足を拾う）。RAW の SNAP はダンプが閉じてから出るので、それまで待って止める（proj024）

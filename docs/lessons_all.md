@@ -119,6 +119,7 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 ### Vivado が落ちる
 - Vivado 2024.1 は OOC・synth_1・impl_1 で終わり際に落ちる（`Abnormal program termination (11)`・tcmalloc abort (6)・Synth 8-7098 Stack limit。毎回違う run）。runme.log の `^ERROR` では見えないので落ちた印を探し、落ちた run と、それに依って始まらなかった run（runme.log が無い）だけを 2 回まで回し直す（JOBS 8）。`wait_on_run` の Tcl のエラーは catch で受ける（proj012〜015・023）
 - run は名前の文字列で持ち、その場で `[get_runs $n]` を渡す（proj015）
+- 4 ADC・LUT 60〜85 % のビルドは impl_1 が 16〜18 GB を使う。この機械（125 GB）で 2 本並べると、別の会話のビルドと重なったときに足りなくなる（proj032 P-9: 2 本並べて止めた。1 本でも、別の作業の 3 本と重なって空きが 4 GB まで下がった）。**自分のビルドは 1 本ずつにし、空きを見張る**
 - 負の経路の塊の集計は build.tcl の中で設計を開いたまま出す。— `make worst-paths` で配置後の dcp を開くと segfault した（proj023）
 - 親の Vivado も落ちる。impl_1 が write_bitstream まで完走した直後の `open_run impl_1` で segfault（hs_err: `HANENetlist::copyAttrsToAttrMap`）し、後段の照合と build/ への写しが 1 つも走らなかった。run の外なので、落ちた run の回し直しでは拾えない。**後段を別ファイル（build_post.tcl）にし、既存の xpr を開いて後段だけを回す口（`make post`、RESUME=1）を持つ**。再開は create_project -force を通らないこと・NEEDS_REFRESH・.bit より新しい src が無いことを照合する。回し直しは 3 分で、落ちなかった（proj025 2f）
 - dcp は glob でなく `set proj` の名前で 1 個に絞る。ビルドのディレクトリに古い proj の成果物を残さない。— 古い proj020.runs の dcp を読んで取り違えた（proj021）
@@ -132,9 +133,22 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 ## タイミングの定石（`-1`・256 MHz）
 
 - 合否は `-1` で閉じること（資料が食い違うので遅い方に合わせた）（proj012・013）
-- 既定の戦略で閉じなければ `IMPL=Performance_Explore`。並べるなら `Performance_ExtraTimingOpt`・`Performance_ExplorePostRoutePhysOpt` も（良し悪しは毎回入れ替わる）。PEPRPO は WNS が負でなければ PE と同じ結果。`Performance_NetDelay_high` はかえって悪い（proj015・020・021・023）
+- 既定の戦略で閉じなければ `IMPL=Performance_Explore`。並べるなら `Performance_ExtraTimingOpt`・`Performance_ExplorePostRoutePhysOpt` も（良し悪しは毎回入れ替わる）。PEPRPO は WNS が負でなければ PE と同じ結果。`Performance_NetDelay_high` はかえって悪い（proj015・020・021・023）。← proj032 で覆った: MIG と SmartConnect を足した b2（rev 3）では 既定 −0.452・PE −0.014・PEPRPO −0.014・**PND +0.034**・PETO +0.011 ns で、閉じたのは PND と PETO だけ。PND も並べる（proj032 P-8）
 - 数 ps なら作り直さず配線後の `phys_opt_design`（`make physopt`: AggressiveExplore → AggressiveFanoutOpt → AlternateReplication → Explore）。— −0.0045 → +0.011 ns（proj021）
 - WNS は配置の組み替わり（ID の定数 1 つでも）で ±0.1〜0.2 ns 動く。予言は幅で書く。`-1` の方が `-2` より余裕が出ることもある。余裕が数十 ps の bit は、RTL を少し変えると負に戻る前提で扱う（proj011・013・014・023）
+- **分散 RAM（reg の配列）の読み → 改め → 書きを同じ段に置かない。** 合成は「元のまま」の場合を WE に畳み、改めの比べ（32 bit の `==` など）の鎖が WE に届く。読みを前の段で FF に取り、書き（と書きに伴う札）を 1 段後ろに割る。書きの遅れが振る舞いを変えないこと（読み直すまでの間合い）を先に確かめる。— eng.v の `it[s3_w] <= {nk, nj}` が 8 段で WE に届き、b1 −0.102・b2 −0.452 ns。t4 に割って既定で +0.069 ns・資源は同じ・sim の記録は旧版と bit で同じ（proj032 P-7・P-8）
+- MIG と SmartConnect（≒ 20k LUT）を足すと、配置が混んで、それまでの最悪経路が悪くなる（b1 既定 −0.102 → b2 −0.452 ns、同じ経路）。足す前に余裕の小さい経路を直しておく（proj032 P-8）
+- **大きな bit は LUT の % でなく CLB の %（`report_utilization` の「CLB」の行）と混みの段（runme.log の Congestion Report・`report_design_analysis -congestion`）で「入るか」を読む。** 256 MHz・4 ADC の SpW（proj032 P-9）:
+
+  | 版 | LUT | CLB | 混み | 結果（PND） |
+  |---|---|---|---|---|
+  | b3（MIG あり・H 12） | 84.4 % | 99.5 % | level 6〜7 | 配線できず |
+  | b4 rev 7（MIG なし・H 12） | 73.8 % | 98.7 % | level 5 | 配線は通る・WNS −0.093 ns（既定 −0.711・ETO −0.124） |
+  | b4 rev 8（MIG なし・H 6） | 58.1 % | 88.0 % | — | **WNS +0.035 ns** |
+
+  LUT 74 % でも CLB は 99 % 近くまで埋まる（語の幅の広い PFB は LUT の入力が少なく、CLB を薄く使う）。**CLB 98 % を越えると、外れはどこか 1 か所でなく全体に散る**（rev 7 の既定で 22,227 端点、最悪の経路は戦略ごとに PFB・ddcb・wsb と移った）。戦略や段の足しでは直らず、資源を減らすのが効いた
+- 配線の途中の WNS（Route 35-416 Intermediate）は最終の値の予言にならない。— b4 rev 7 で ETO は途中 −0.046（PND は −0.156）だったが、最後は ETO −0.124・PND −0.093 ns と逆転した（proj032 P-9）
+- 準静的な制御の扇出は、前の proj で直した型（c_ns・リセット）が新しいコアに戻ってくる。— spw_regs の wrst（dp_rst、扇出 ≒ 3,080 / コア、LUT3 から）と c_ns が、b4 rev 7 の既定で外れた端点の半分（11,451）を占めた（proj032 P-9）。wrst はデータの道の明けを T ≡ 0 に揃える用なので、段を足すなら明けを同じだけ前にずらす
 - `-1` で閉じないときは `make worst-paths` で群に分けて段を入れる（選択の後・和を 2 項ずつの木に・BRAM の書き込みを 2 段で受ける・DSP の手前の hist をリセットしない・読み出しの mux を 1 段）（proj015）
 - フレームの頭でしか使わない幅のある加算・比較は `pre_*` レジスタに前もって計算する。— spec_core の `cur_k → t_last`（proj011）を、写した wide_spec が再び持ち込んだ（論理 14 段、−0.561 ns）（proj011・023）
 - ファブリックの加算の出口をレジスタを挟まずに DSP の A/B に入れない（AREG/BREG = 2・MREG・PREG）。加算木は 1 段ごとにレジスタで区切る（proj012・013）
@@ -194,6 +208,7 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 ### 多 ch・共有
 - 多 ch の生サンプルは `axis_combiner` で 1 本に束ね、ゲートと同期器を 1 個に（CONFIG は `NUM_SI`・`TDATA_NUM_BYTES`）。— 4 レーンに並べると「ときどき 8 サンプルずれる」が起きうる（proj006）
 - 生サンプルの取得長は FIFO 深さで上限し、build.tcl の帯域の検査を残す（4ch フルレートは HP0 で流せない）（proj006）
+- **口をまとめる前に、帯域を平均でなく山（同時に動く数 × 1 本の速さ）で数える。** DDR の読み手 3 本（機関ごと）を 1 本の 128 bit の口にまとめた ddrr_mux3 は、平均では口の 50 % だが、機関が 3 本同時に読む枠では 150 % になり、sim で wsb の後が崩れた（proj032 P-9 rev 6）
 - 共有の ROM は番地も一緒に返し、各コアが自分の番地と照合して粘着の coef_mis・tw_mis を立てる（proj023）
 - BUILD_TAG に ch の番号を載せ、PS はセル名と突き合わせる（proj012）
 - 共有の係数を URAM に置くなら、PS が AXI4-Lite で行ごとに書き、PL が CRC-32 で bit に焼いた値と照らして OK を立て、OK が立つまでコアの口を開けない。ROW の書きと VERIFY で OK を下げる（CLR は OK を変えない）。2G-4 で 4096 × 576 bit = URAM288 × 8、書き 0.72 s（proj031）
@@ -248,6 +263,8 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 - valid の段は全部リセットで 0 にする（段の数がリセットの長さより多いと、sim では明けた後も不定が残り、下流の数えを不定のまま固める）。sim の時間切れの上限は規模に合わせて小さく置く。— F-4 で 1 回目の sim が IP から何も出ないまま 22 時間走った（proj028）
 
 - **遅れ 0 のメモリの模型は、読みの速さの不足を隠す。** ct_rd の sim は AXI の模型が即答するので、読みの要求を 1 本ずつしか出さない形でも間に合って見えた。実機の MIG では 1 チャンクの読みが間に合わず、要求を 4 本まで重ねて直した（195 ms / チャンク）。速さを判定する sim には実機の遅れ（数十〜百クロック）を持つ模型を置く（proj028 F-5e）
+
+- **振る舞いを変えないはずの直し（段を割る・名前を変える）は、旧版の RTL で同じ tb を回し、記録のファイルを全部 cmp で比べる。** 「全部通過」だけでは、照合の外（記録はするが照らさない欄）の違いを見落とす。比べが空振りしないこと（違う変種どうしは違うと出ること）も見る。— eng.v の t4 は 7 本・1 本 18 万〜270 万行で全部同じ（proj032 P-8）
 
 ## PS・PYNQ
 
@@ -316,7 +333,7 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 - ボードのスクリプトは root で動かす（`sudo` なら `sudo -E $(which python3)`。素の sudo は venv を外れる）（proj004）
 - 道具を別の bit の proj に写したら、**開き方が写し元の bit の決め打ちでないか**を読む（discover の BIT_KIND・流れの s・CAL の鍵・既定の .bit の名前）。widef2.py は wide.open_board（BIT_KIND 1 と SLICE を要求）を呼んでいて、2G-1 では起動で止まるところだった（proj024 4d-1）
 
-- `pkill -f`・`pgrep -f` は自分のコマンド行にも当たる。止めたい名前が同じコマンド行に入っていると、走らせたシェルごと止まる（proj028 F-8 で再び踏んだ）。`ps -eo pid,args | awk '$2 == "vvp"'` のように実行ファイルの名前で選ぶ。待つループ（`while pgrep -f X`）は自分に当たって終わらない（proj030: 2 時間 40 分待った）。ssh の `bash -c '… pgrep -f specd.py …'` も自分に当たって「動いている」と出る（proj030 R-5）。`[s]pecd.py` の形か `kill -0 $pid` で。proj032 P-7 でも、作業ディレクトリで絞って止めるループ（`pgrep -f "vivado|…"`）が、その作業ディレクトリにいる自分のシェルを止めた
+- `pkill -f`・`pgrep -f` は自分のコマンド行にも当たる。止めたい名前が同じコマンド行に入っていると、走らせたシェルごと止まる（proj028 F-8 で再び踏んだ）。`ps -eo pid,args | awk '$2 == "vvp"'` のように実行ファイルの名前で選ぶ。待つループ（`while pgrep -f X`）は自分に当たって終わらない（proj030: 2 時間 40 分待った）。ssh の `bash -c '… pgrep -f specd.py …'` も自分に当たって「動いている」と出る（proj030 R-5）。`[s]pecd.py` の形か `kill -0 $pid` で。proj032 P-7 でも、作業ディレクトリで絞って止めるループ（`pgrep -f "vivado|…"`）が、その作業ディレクトリにいる自分のシェルを止めた。proj032 P-9 では、待つループ（`pgrep -f "…vivado … -log build/vivado.log" | cwd で絞る`）が、同じディレクトリにいる自分のシェルを待ち続けた（2 回: 1 回は終わりに気づかず、1 回はビルドの終わりから 6 時間）。**PID は `readlink /proc/$p/exe` が `…/unwrapped/lnx64.o/vivado` かで照らす**か、起こしたときの `$!` を持つ
 
 - **ボードの OS の apt の定時の仕事（apt-daily.service・PackageKit）が取得の 1 周を 313 ms 止めた**（CPU 19 秒、load1 1.2）。tint 10.24 ms・51 MB/s で PL のリング 64 MiB の 94 %（60 MB）まで溜まった（pl_drop 0）。長い取得の溜まりの山が 1 回だけ跳ねたら journal をその分で引く。2026-10-27 にボードで apt-daily.timer・apt-daily-upgrade.timer を止めた（proj030 R-3、手順は proj001/docs/runbook.md の 08）
 - **ボードを別の会話・別作業と分け合っているとき、Overlay を載せる前に、ボードで specd などが動いていないかを見る**。— 別作業の specd が RUN の最中（DMA でリングに書いている）に Overlay で PL を書き換え、**ボードごと落ちた**（ping も ssh も返らず、電源を入れ直した。journal は直前の ssh で途切れる）。

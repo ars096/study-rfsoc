@@ -12,6 +12,8 @@
 //     TP_N 2・TP_REC_CTRL（4 個で 1 レコード）・TP_RUN を打つ。tb はリセットの明けから数えた 512 ビートのフレームごとに Σ(x16 >>> 2)² を tp_x.log に書き、
 //     check_ring が TP のレコード（type 2）の個をこれと照らす（窓のレコードと同じリングに混ざる）
 //   陽性対照 -DTPX_POSCTL: tp_x.log のフレーム 40 の和に 1 を足す（記録の側）→ その区切りを含む TP のレコードだけが落ちる
+//   P-9（b3 rev 6）-DRDMUX: 読み手 3 本を ddrr_mux3 で 1 本にまとめて DDR の模型（読みの口 1 本）へ。記録は既定と bit で同じになるはず
+//     陽性対照 -DRDMUX -DDDRR_MUX_POSCTL: 2 本以上の読みが出ているときに R を別の読み手へ返す → DDR の窓（3..5）が落ちる
 `timescale 1ns / 1ps
 module tb_core;
     localparam integer H = 6, E = 3, S = 3, NK = 8, W = 20, G_L2 = 14;
@@ -71,9 +73,22 @@ module tb_core;
         .m_wvalid(wvalid), .m_wready(wready), .m_bvalid(bvalid),
         .m_araddr(araddr), .m_arvalid(arvalid), .m_arready(arready), .m_rdata(rdata), .m_rvalid(rvalid), .m_rlast(rlast),
         .m_tdata(st_d), .m_tvalid(st_v), .m_tready(st_r), .m_tlast(st_l), .drop(sdrop));
+`ifdef RDMUX
+    // P-9（b3 rev 6）: 読み手 3 本を ddrr_mux3 で 1 本にまとめてから DDR の模型（読みの口 1 本）へ
+    wire [31:0] m1_araddr; wire m1_arvalid, m1_arready, m1_rvalid, m1_rlast; wire [127:0] m1_rdata, rd1;
+    assign rdata = {E{rd1}};
+    ddrr_mux3 u_rdmux (.clk(clk), .rst(rst), .s_araddr(araddr), .s_arvalid(arvalid), .s_arready(arready),
+        .s_rdata(rd1), .s_rvalid(rvalid), .s_rlast(rlast),
+        .m_araddr(m1_araddr), .m_arvalid(m1_arvalid), .m_arready(m1_arready),
+        .m_rdata(m1_rdata), .m_rvalid(m1_rvalid), .m_rlast(m1_rlast), .m_rready());
+    axi_mem_model #(.NR(1)) u_mem (.clk(clk), .rst(rst), .awaddr(awaddr), .awvalid(awvalid), .awready(awready),
+        .wdata(wdata), .wvalid(wvalid), .wready(wready), .wlast(wlast), .bvalid(bvalid),
+        .araddr(m1_araddr), .arvalid(m1_arvalid), .arready(m1_arready), .rdata(m1_rdata), .rvalid(m1_rvalid), .rlast(m1_rlast));
+`else
     axi_mem_model #(.NR(E)) u_mem (.clk(clk), .rst(rst), .awaddr(awaddr), .awvalid(awvalid), .awready(awready),
         .wdata(wdata), .wvalid(wvalid), .wready(wready), .wlast(wlast), .bvalid(bvalid),
         .araddr(araddr), .arvalid(arvalid), .arready(arready), .rdata(rdata), .rvalid(rvalid), .rlast(rlast));
+`endif
 
     // ---- リング → PS の DDR の模型（tb_wsb と同じ）----
     reg  [11:0] la_aw, la_ar; reg la_awv = 0, la_wv = 0, la_arv = 0; reg [31:0] la_wd;

@@ -51,7 +51,7 @@ set gb_k_rst   2
 # SpW のコア（spw_core と対）
 set spw_h 14; set spw_e 3; set spw_s 6; set spw_nk 8; set spw_gl2 19
 set spw_kind 7
-set spw_rev 3                  ;# P-8: 3 = b2（MIG あり）。b1 は 1 = 1 回目（build_r1）・2 = IP の手前に溜め（eng の u_ipq）
+set spw_rev 4                  ;# P-8: 3 = b2（MIG あり、build_r3-PND）・4 = eng の it の書きを 1 段割った（t4）。b1 は 1 = 1 回目（build_r1）・2 = IP の手前に溜め（eng の u_ipq）
 set spw_proj [expr {0x00320300}]
 set win_range 65536
 puts "PART      : $part / OUTDIR : $outdir / JOBS : $jobs"

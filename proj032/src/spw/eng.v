@@ -241,7 +241,7 @@ module eng #(
     assign hw_d = dq[35:0];
 
     // =====================================================================
-    // 選び（枠の頭の前、a = SEL .. SEL + 3）
+    // 選び（枠の頭の前、a = SEL .. SEL + 4。t4 で札を書く）
     // =====================================================================
     reg  [H-1:0]     cm_c [0:4], cm [0:4];        // NS の級ごとの窓（設定から。@(*) は設定が変わったときだけ動く）
     integer          q;
@@ -287,14 +287,18 @@ module eng #(
         jwb  <= pend2[s2_w] ? bplus(jq2[2:0], 3'd4) : jq2[2:0];
     end
     wire [1:0]       jnf = (jr >= 32'd3) ? 2'd3 : jr[1:0];
+    // it は s2 のクロックに引いてレジスタに取る（jq2 と同じ。書くのは t4 で、同じ窓が次に選ばれるのは 1 枠後なので古い値を引かない）。
+    // P-8: s3 で引いて比べて同じクロックに書く形は、合成が「元の値のまま」を WE に畳み、比べ → WE が 8 段で b2 の最悪の経路だった
     (* ram_style = "distributed" *) reg [63:0] it [0:H-1];       // {k, j}
     reg  [H-1:0]     on, stt;
-    wire [63:0]      iq  = it[s3_w];
+    reg  [63:0]      iq;
+    reg  [31:0]      f0w, nw;
+    always @(posedge clk) begin
+        iq  <= it[s2_w];
+        f0w <= g0 << ewin(cfg_ns[s2_w*3 +: 3]);
+        nw  <= ng << ewin(cfg_ns[s2_w*3 +: 3]);
+    end
     wire [31:0]      ik  = iq[63:32], ij = iq[31:0];
-    wire [2:0]       ns3 = cfg_ns[s3_w*3 +: 3];
-    wire [2:0]       e3  = ewin(ns3);
-    wire [31:0]      f0w = g0 << e3;
-    wire [31:0]      nw  = ng << e3;
     reg  [2:0]       md;
     reg  [31:0]      nk, nj;
     reg              n_on, n_st, smiss;
@@ -318,6 +322,19 @@ module eng #(
             end
         end
     end
+    // t4（選びの s4）: s3 で決めたものをレジスタに取ってから書く（it の WE は t4_v だけ）。
+    // s3 のクロックに来た RUN・STOP は、s3 で書いていた形では on・stt の書きに勝っていたので、t4 では on・stt を書かない（同じ結果）
+    reg              t4_v, t4_cmd, t4_on, t4_st, t4_miss;
+    reg  [3:0]       t4_w;
+    reg  [63:0]      t4_it;
+    reg  [2:0]       t4_md, t4_b;
+    reg  [1:0]       t4_nf;
+    reg  [31:0]      t4_dk;
+    always @(posedge clk) begin
+        t4_v <= s3_v && !rst; t4_cmd <= cmd_run || cmd_stop; t4_w <= s3_w;
+        t4_it <= {nk, nj}; t4_on <= n_on; t4_st <= n_st; t4_miss <= smiss;
+        t4_md <= md; t4_dk <= ik - 32'd1; t4_b <= jwb; t4_nf <= jnf;
+    end
     // 次の枠の仕事（札）: {v, w, 枠 s, 面 wb, タップの有効 vm, mode, dk, sh}
     reg              nx_v;
     reg  [3:0]       nx_w, nx_sh, nx_s, nx_g;
@@ -335,13 +352,13 @@ module eng #(
             on <= {H{1'b0}}; stt <= {H{1'b0}}; nx_v <= 1'b0;
         end else begin
             if (go && a == 12'd4095) nx_v <= 1'b0;          // 枠の頭で cur に移した
-            if (s3_v) begin
-                it[s3_w] <= {nk, nj};
-                on[s3_w] <= n_on; stt[s3_w] <= n_st;
-                start_miss <= smiss;
-                nx_v <= 1'b1; nx_w <= s3_w; nx_s <= cfg_sl[s3_w*4 +: 4]; nx_b <= jwb;
-                nx_vm <= {1'b1, jnf >= 2'd1, jnf >= 2'd2, jnf == 2'd3};
-                nx_md <= md; nx_dk <= ik - 32'd1; nx_sh <= cfg_sh[s3_w*4 +: 4]; nx_g <= cfg_g[s3_w*4 +: 4];
+            if (t4_v) begin
+                it[t4_w] <= t4_it;
+                if (!t4_cmd) begin on[t4_w] <= t4_on; stt[t4_w] <= t4_st; end
+                start_miss <= t4_miss;
+                nx_v <= 1'b1; nx_w <= t4_w; nx_s <= cfg_sl[t4_w*4 +: 4]; nx_b <= t4_b;
+                nx_vm <= {1'b1, t4_nf >= 2'd1, t4_nf >= 2'd2, t4_nf == 2'd3};
+                nx_md <= t4_md; nx_dk <= t4_dk; nx_sh <= cfg_sh[t4_w*4 +: 4]; nx_g <= cfg_g[t4_w*4 +: 4];
             end
             if (cmd_run)  begin on <= {H{1'b1}}; stt <= {H{1'b0}}; end
             if (cmd_stop) on <= {H{1'b0}};

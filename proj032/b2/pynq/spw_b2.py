@@ -42,7 +42,7 @@ BITFILE = "proj032b2.bit"
 LMK_FREQ, LMX_FREQ = 245.76, 491.52
 H, E, S, G_L2 = 14, 3, 6, 19
 PROJ = 0x0032_0300
-REV = 3                                          # BIT_REV。3 = b2（MIG あり）。b1 は 1・2
+REV = 4                                          # BIT_REV。3 = b2（MIG あり）・4 = it の書きを 1 段割った。b1 は 1・2
 
 
 def ids_for(rev):

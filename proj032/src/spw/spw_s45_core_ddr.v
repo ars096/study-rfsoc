@@ -9,6 +9,7 @@
 //     AxSIZE・AxBURST・WSTRB・BREADY・RREADY は ddrw・ddrr の中の定数と同じ値をここで出す（spw_core はこれらを外に出さない）。
 //     **RREADY・BREADY は常に 1**（ddrr・ddrw は R・B を止めずに受ける作り）。BRESP・RRESP は見ない
 //   - E は 3 に固定（読みの口を 3 本の名前で出すため）
+//   - P-9（b3）: DDR_BASE（このコアの DDR の区画の頭。4 コアで MIG を分ける）を spw_core に渡す。既定 0 は b2 と同じ
 `timescale 1ns / 1ps
 
 module spw_s45_core_ddr #(
@@ -22,7 +23,8 @@ module spw_s45_core_ddr #(
     parameter integer BIT_KIND   = 7,
     parameter integer BIT_REV    = 3,
     parameter integer PROJ       = 3277568,     // 0x0032_0300（10 進で書く）
-    parameter integer GB_K_RST   = 2
+    parameter integer GB_K_RST   = 2,
+    parameter integer DDR_BASE   = 0
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
     (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axis:s_axi:m_axis_rec:m_ddrw:m_ddrr0:m_ddrr1:m_ddrr2, ASSOCIATED_RESET aresetn:gb_dn_rstn" *)
@@ -139,7 +141,7 @@ module spw_s45_core_ddr #(
     assign m_ddrr2_araddr = araddr[2*32 +: 32], m_ddrr2_arvalid = arvalid[2];
 
     spw_core #(.H(H), .E(E), .S(S), .NK(NK), .G_L2(G_L2), .ADC(ADC), .BUILD_TAG(BUILD_TAG),
-               .BIT_KIND(BIT_KIND), .BIT_REV(BIT_REV), .PROJ(PROJ), .GB_K_RST(GB_K_RST)) u_core (
+               .BIT_KIND(BIT_KIND), .BIT_REV(BIT_REV), .PROJ(PROJ), .GB_K_RST(GB_K_RST), .DDR_BASE(DDR_BASE)) u_core (
         .clk(aclk), .rst(!rstn_l),
         .s_axi_awaddr(s_axi_awaddr), .s_axi_awvalid(s_axi_awvalid), .s_axi_awready(s_axi_awready),
         .s_axi_wdata(s_axi_wdata), .s_axi_wvalid(s_axi_wvalid), .s_axi_wready(s_axi_wready),
