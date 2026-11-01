@@ -224,6 +224,90 @@ ADC ─ gb ─┬─ s2_s45_core（module reference、セルの名前 s45_core_0
   3. DROP_CNT 1（(5, 3) の 1 本）・REC_CNT 5・ERR 0・記憶の見張りの NG 0。STAGE2 の語 7 = {k·114,688, 32}
   4. 陽性対照（-DRING_FLIP）: 記憶に書かれた最初のレコードの本体の 1 語を 1 bit 反転 → CRC の外れ 1 本・語の違い 1 で落ちる
 
+## V .bit（2026-11-01。`make`、この PC の Vivado 2024.1）
+
+### V-1 作り
+
+出発点: YATSUGATAKE 54ce5e3 の `hw/bits/2g-1-fast/build.tcl`（2G-1-Fast の製品の形: ADC 4 本のギアボックス・axis_sel4 2 個・time_core と 1PPS・s45_core_0・s45_ring_0・照合）を写し、
+study-rfsoc proj028 の `build_f5.tcl`（MIG・ct_wr・ct_rd・smc_ddr・clk_mon）を足した。
+
+```
+ADC_A..D ─ gb_* ─ gb_bc_i ─┬─ s45_core_0/s_axis（ch 0 だけ、コアの TP）
+                           ├─ s2_sel（axis_sel4、sel = s45_core_0/s2_sel）─ s45_core_0/s_axis_s2
+                           └─ raw_sel（axis_sel4、sel = s45_core_0/raw_sel）─ s45_core_0/s_axis_raw
+s45_core_0（s2_s45_core）/ct_y・ct_mark・ct_valid → ct_wr_0 ─┐
+                                                           ├─ smc_ddr（256 MHz → UI）─ ddr4_0（PL DDR4 4 GiB）
+s45_core_0/s_axis_ct ← ct_rd_0 ─────────────────────────────┘   （chunk_done・chunk_idx: ct_wr_0 → ct_rd_0）
+s45_core_0/m_axis_rec → s45_ring_0 → PS の S_AXI_HP0_FPD
+time_core_0（1PPS: pps_trig・pps_comp）→ s45_core_0/t_in・go_in・tev_in
+smc_ctrl（pl_clk0 / DSP）: M00 rfdc・M01 s45_core_0・M02 time_core_0・M03 s45_ring_0・M04 ct_wr_0・M05 ct_rd_0・M06 clk_mon_0（pl_clk0）
+```
+
+- ID: BIT_KIND 12・BIT_REV 1・PROJ 0x0037_0100（s45_core_0・time_core_0・s45_ring_0）。part は -1（2G-1-Fast と同じ。PS には `src/board/ps_preset.tcl`）
+- コアの荒い段の出口は tready が無いので AXIS にせず、素のピン（ct_y・ct_mark・ct_valid）にした（BD が口を推論すると ct_wr の s_y・s_mark・s_valid につなげない）
+- 制約: `src/board/timing.xdc`・`pps.xdc`（YATSUGATAKE 54ce5e3 の hw/board、写し）・`ddr4.xdc`・`clk_mon.xdc`（proj028）。UI クロックは群に入れない（proj028 と同じ。乗り換えは smc_ddr と clk_mon の中）
+- corner turn の設定（BASE・CHSTRIDE・PLANE_STRIDE・GPD 10240・NPLANE 3・HB）は Overlay を載せたときに PS が書く（proj028 の f5.py と同じ）
+
+### V-2 予言（走らせる前に書く）
+
+- 照合（設定の読み返し・結線・番地・ROM のラッパ・ROM の BRAM・足・自作のセルの OOC）は全部通る。初回は書き換えの Tcl の誤りで 1〜2 回止まる見込み
+- 資源: proj028 F-5e（BRAM 440・DSP 1,835・URAM 66・LUT 16.3 万）に、ギアボックス 3 本・axis_sel4 2・time_core・raw_core（記憶 2 面 = RAMB36 8）・core_cmn の TP・s2_strm の帳簿を足して
+  **DSP ≒ 1,850・BRAM ≒ 455〜465・URAM 66・LUT ≒ 17.5〜18 万**
+- タイミング: proj028 の F-5 は WNS +0.007〜+0.022 ns でぎりぎり。足した部品は 2G-1-Fast で閉じた形なので経路は増えないが、混みで配置が動き、**既定の戦略で閉じない確率は半分くらい**。閉じなければ Performance_Explore を並べる（proj028 と同じ手順）
+- CDC: 自作の乗り換えは time_core の EPOCH（2G-1-Fast と同じ）と clk_mon だけ
+
+### V-3 結果
+
+**1 回目（既定の戦略、`build/`、USR_ACCESS 0xf752b041 = f752b04 ＋ 未コミットの変更あり）: タイミングが閉じない（WNS −1.903 ns・WHS +0.007 ns）。実機に使わない**
+
+- 照合は全部通った（PS のプリセット・MIG の 14 項目・FFT のポート・結線 126 行と陽性対照・番地・ROM のラッパ 4 本・自作のセルの OOC 16 個・DDR の足 5 本・clk_mon の同期器 4 個・lane_fft_f 16 個）
+- ROM の BRAM: u_coef RAMB36 換算 4.0（予言 4）・u_tw 11.5（予言 11.5）
+- 資源: LUT 177,021・FF 294,024・BRAM 449.5・URAM 66・DSP 1,862。予言（LUT 17.5〜18 万・BRAM 455〜465・URAM 66・DSP ≒ 1,850）のうち BRAM だけ 6 少ない側に外れた
+- 違反: 最悪の 20 本は全部 MIG の UI クロック（mmcm_clkout0、3.333 ns）。遅れの 87〜98 % が配線（論理 0 段で 4.8 ns の経路もある）。群の数えでは MIG の中（cal・ui・axi）と smc_ddr の m00 側が大半で、ほかに s45_core_0 の u_s2/u_post（最悪 −1.0 ns）と u_s2 → ct_wr_0（−0.77 ns）
+- 混み: 配線の前の見積もりで Global・Short とも level 5（32×32）。最も混んだ所は INT X56〜71・Y284〜327
+- CRITICAL WARNING: BD 41-759 × 3（リングの使わない口、2G-1-Fast と同じ）と Timing 38-282（閉じない）だけ
+- 読み: 予言の「半分くらいで閉じない」の側。MIG の論理が混んだ所を通って引き伸ばされた形で、proj028（同じ MIG で +0.007 ns）より細かい段のぶんだけ混んだ
+- 次: Performance_Explore（`build-PE/`）と Congestion_SpreadLogic_high（`build-CSL/`）を並べて回す（2026-11-02 03:20 開始）
+
+**2 回目（Performance_Explore、`build-PE/`）: WNS −0.183 ns・WHS +0.007 ns。閉じない**
+
+**3 回目（Congestion_SpreadLogic_high、`build-CSL/`）: WNS +0.046 ns・WHS +0.007 ns。閉じた → 実機（W）はこれを使う**
+
+- 照合は 1 回目と同じく全部通った（結線 126 行と陽性対照・ROM の BRAM 4.0 / 11.5・clk_mon 4・lane_fft_f 16）。資源は LUT 177,310・BRAM 449.5・URAM 66（1 回目とほぼ同じ）
+- bitinfo: USR_ACCESS f752b041（f752b04 ＋ 未コミットの変更あり）、照合 通過。CRITICAL WARNING は BD 41-759 × 3 だけ
+- 読み: 混みをほぐす戦略で閉じたので、外れの原因は MIG の論理が混んだ所で引き伸ばされたこと、という見立てと合う。余裕は +0.046 ns と薄く、RTL を変えて作り直すと再び外れうる
+
+## W 実機（2026-11-01〜。`pynq/s2run.py`、ボードを使う試験はこの会話にまとめる）
+
+### W-1 作りと予言（走らせる前に書く）
+
+道具: `pynq/s2run.py`（proj028 の `pynq/f5.py` を写し、荒い段・細かい側の口を流れのブロック 0 に、始めを ARM_RUN と time_core の START_AT に、照合を INTERFACE 4.4 の頭にした）。
+配線と状態: ADC_A（いつもの配線）・ノイズソース ON（15.0 V）・ATT 13 dB（2026-11-01 22:25 に読んだ。回す前と後に毎回読む）・出荷時のクロック。
+
+| | 中身 | 予言 |
+|---|---|---|
+| W-1a 流れ | `--chunks 12`（≒ 3.4 s）、RAW も同じ go | STAGE2 のレコード 384 / 384・CRC と尾の外れ 0・SEQ 0〜383 が (c, k) の順・語 0・DUMP_F0 = c·B_C・**RUN_T = START_AT・DUMP_T = RUN_T ＋ c·BASE**・語 4 {SHIFT 7, 6, 17}・DUMP_N 157（c 0）/ 160・FLAGS 0（細かい PFB の飽和だけ許す）・REC_LATE 0・DROP 0・ct_wr の溢れ 0・印 1・チャンク 12・ct_rd の捨て 0。RAW: SNAP 12 本・DUMP_T の進み = 143,360 × 512 = BASE |
+| W-1b 陽性対照 | `--start-off 1`（START_AT を 7 の倍数から 1 ずらす） | STAGE2 のレコード 0・流れ 0 の FLAGS[1]・ct_wr の印 0（RAW は出る: 下の注） |
+| W-1c proj028 と並べる | proj028 F-5 の .bit（`build-f5/`、`f5.py`）と proj037 を交互に 2 回ずつ（A B A B）。利得はどちらも同じ手順で σ 12 LSB に合わせる。比べは `tools/cmp_spec.py` | 1024 bin の中央値の比 proj037 / proj028: **水準**（荒い ch ごとの比の中央値）1 ± 0.03（利得の合わせの差。Overlay の読み直しの揺れ ≒ 1.6 %、proj028 F-5h）・**形**（荒い ch ごとに割った残りの 1〜99 % 点）1 ± 0.01。同じ .bit の 2 回も同じ幅に入る。陽性対照（`--posctl`、荒い ch を 1 つずらす）は形で落ちる |
+
+- W-1b の注: time_core の go は流れ 0・1 の両方に配られる。RAW は START_AT の 7 の倍数を見ないので、W-1b で RAW の SNAP は出るのが正しい（道具は STAGE2 だけを 0 本と判定し、RAW は数えるだけ）
+
+### W-1 結果（2026-11-02。.bit は `build-CSL/`、md5 9c0330e8…、USR_ACCESS 0xf752b041。ATT は毎回の前後とも +13 dB、ノイズソース ON 14.998 V）
+
+| | 結果 |
+|---|---|
+| W-1a | **全部通過**（予言どおり）。384 / 384・CRC 外れ 0・SEQ 0〜383・RUN_T = START_AT・DUMP_T 外れ 0・DUMP_N 157 / 160・FLAGS 0・REC_LATE 0・DROP 0・ct_wr の溢れ 0・印 1。RAW: SNAP 12・DUMP_T の進み 73,400,320 = BASE。RAW の DUMP_T[0] − RUN_T = 631 ビート |
+| W-1b | **陽性対照として正しく RUN を受けなかった**。STAGE2 0 本・FLAGS 0x2・ct_wr の印 0。RAW の SNAP 5（リングの REC_CNT は 7。差の 2 本は止めた後に来た分と見ているが、まだ確かめていない） |
+| W-1c | **不合格**（予言の外れ）。B / A の水準 0.939〜1.088（予言 ±0.03）・形 0.762〜1.295（予言 ±0.01）。同じ .bit の 2 回は揃う（A2 / A1 の形 0.9945〜1.0089、B2 / B1 0.9966〜1.0032。B2 / B1 の水準 0.9575 は B2 の利得の合わせで σ が 12.35 まで出た 1 ch）。陽性対照は正しく落ちた（形 0.33〜3.6） |
+
+W-1c の外れの中身（診断、`runs/w1c.png`。判定の条件は変えない）:
+
+- B / A は荒い ch ごとののこぎり形。ch の中で 1 から外れ、端で 0.7〜1.4。入力の形が急な ch 0〜5 では A と B はよく重なる（一様なずれではない）
+- 荒い ch の中の形（512 bin ごと）を B_k ≈ a·A_k ＋ b·reverse(A_k) で当てると、残りの平均が 0.094（A だけ）→ 0.037 に下がる（半 ch ずらした写しを足す当て方は 0.054、ch 32−k の反転を混ぜる当て方は合わない）。b は ch ごとにばらつき（ch 0〜6 で ≒ 0、ch 7・9・23 で 0.7〜0.9、ch 14〜29 で 0.3〜0.5、負になる ch もある）
+- 読み: 荒い ch の複素の時系列で、f と −f が ch ごとに違う割合で混ざっている（I/Q の像の形）。A（proj028）と B（proj037）のどちらに像があるかは、この比べだけでは決まらない
+- RAW の SNAP（荒い段を通らない、36 本、2 MHz）と ch の中の形を突き合わせたが、A も B も残りが 0.1〜1.1 と大きく、周波数の当て方（ch の中心と細かい bin の対応）がまだ合っていない。決め手にならなかった
+- s2run に RAW の SNAP の中身を `<out>_raw.npy` に残す口を足した
+
 ## 変更案（YATSUGATAKE の `docs/spec/` に入れる候補）
 
 - **V-2（S から）**: interface.md 2.1 の KIND の表に **5 STAGE2** を足す（ch → IF は (S0 + i)·fs / (56·2^PARAM[7:0])、S0 は語 7 の上位）。2.5・4.4 に「STAGE2 は荒い ch ごとに 1 レコード、SEQ はレコードごと、DUMP_K はチャンク、DUMP_SAT は荒い ch の 8 bit の飽和」。5.1 に「STAGE2 のダンプ m は 32 本で揃う」
@@ -256,7 +340,7 @@ ADC ─ gb ─┬─ s2_s45_core（module reference、セルの名前 s45_core_0
   次にやること:
   1. build.tcl: proj028 の build_f5.tcl（MIG・ct_wr・ct_rd・SmartConnect）と YATSUGATAKE 2G-1-Fast の build.tcl（time_core・1PPS の口と LPF・axis_sel4 2 個・s45_core_0・s45_ring_0・照合）を合わせる。
      ct_wr・ct_rd の設定（BASE・CHSTRIDE・PLANE_STRIDE・GPD 10240・NPLANE 3・HB）は Overlay を載せたときに PS が書く
-  2. 実機（ボードを使う試験は 1 つの会話に）: specd の STAGE2 の束ね（32 本 × n_sum）・RAW の F-2、DUMP_T = RUN_T ＋ c·BASE の見張り、proj028 の F-4 の照合
+  2. 実機（ボードを使う試験は 1 つの会話に）: specd の STAGE2 の束ね（32 本 × n_sum）・RAW の F-2、DUMP_T = RUN_T ＋ c·BASE の見張り、proj028 の F-5c の照合（384/384・CRC・尾・捨て 0）
 - 知見: 次の proj でも踏みそうなものを `../docs/lessons_all.md` に足した（要点なら `../LESSONS.md` にも）
 
 ## 再現手順

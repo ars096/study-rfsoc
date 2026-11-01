@@ -1,51 +1,55 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# Vivado のインストール先をここで持つ。
-# settings64.sh を .bashrc で source しないこと（Xilinx 同梱の古い共有ライブラリが
-# LD_LIBRARY_PATH の先頭に入り、git / ssh / python が壊れる）。
-# bin/vivado は起動スクリプト自身が環境を組み立てるので、絶対パスで叩けば動く。
+# proj037 — 2G-1-Fine の RTL の sim（U）と .bit（V、`make`）。build の部分は YATSUGATAKE 54ce5e3 の hw/bits/2g-1-fast/Makefile を写した
 #
-# proj001 は 2023.2。proj002 から 2024.1 に上げる（BSP と PYNQ v3.1.1 が前提とする版）。
+# Vivado のインストール先。settings64.sh を .bashrc で source しないこと（VERSIONS.md）
 XILINX_VIVADO ?= /tools/Xilinx/Vivado/2024.1
 VIVADO        := $(XILINX_VIVADO)/bin/vivado
-
-# RealDigitalOrg/RFSoC4x2-BSP を clone した先の board_files ディレクトリ。
-# Vivado のインストールツリーの中には置かない（VERSIONS.md 参照）。
+# RealDigitalOrg/RFSoC4x2-BSP を clone した先の board_files（-2 のビルドだけが使う）
 BOARD_REPO ?= $(HOME)/src/RFSoC4x2-BSP/board_files
-
-# part。速度グレードは BSP board_files の宣言値が -2、RefMan A5 は -1 と読める記載で
-# 未決着（VERSIONS.md 参照）。**-1 で閉じる設計は -2 でも必ず閉じる**ので、
-# タイミングが効く設計は `make timing-check` で -1 でも通しておく。
-PART_DEFAULT := xczu48dr-ffvg1517-2-e
+# part。既定は -1（実機の .bit。PS には src/board/ps_preset.tcl を当てる）。-2 は PART=xczu48dr-ffvg1517-2-e → build-2-e/
+PART_DEFAULT := xczu48dr-ffvg1517-1-e
 PART         ?= $(PART_DEFAULT)
-
-# 既定以外の part は別ディレクトリに出し、検証済みの成果物を上書きしない。
+# gb_gate のしきい値の既定（core_cmn の GB_K_RST）
+GB_K_DEFAULT := 2
+GB_K ?= $(GB_K_DEFAULT)
+# 実装の戦略（impl_1 の strategy）。空なら既定。例: make IMPL=Performance_Explore → build-PE/
+IMPL ?=
 ifeq ($(PART),$(PART_DEFAULT))
   OUTDIR := build
 else
   OUTDIR := build-$(patsubst xczu48dr-ffvg1517-%,%,$(PART))
 endif
-
-# 同時に走らせる run の数（launch_runs -jobs）。
-# **効くのは IP の OOC 合成だけ。**impl_1 は単一の run なので、いくつにしても 1 つしか走らない。
-# 2026-09-17 の proj006 の実測: IP 合成 + synth = 3分43秒 / impl = 5分44秒。
-# つまり **-jobs が効くのは全体の 4 割**で、残りは general.maxThreads（既定 8）の領域。
-#
-# ビルドサーバの nproc = 32 に合わせてある。
-# **コア数やメモリの少ない機械では下げること** — run 1 個が独立した Vivado プロセスで
-# 数 GB 食うので、8 コアの機械で 30 にするとメモリを食い潰して逆に遅くなる。
-# `make JOBS=8` で上書きできる。
-JOBS ?= 30
+ifneq ($(GB_K),$(GB_K_DEFAULT))
+  OUTDIR := $(OUTDIR)-k$(GB_K)
+endif
+ifneq ($(IMPL),)
+  OUTDIR := $(OUTDIR)-$(shell echo $(IMPL) | tr -cd 'A-Z')
+endif
+# launch_runs -jobs（効くのは OOC 合成だけ）
+BUILD_JOBS ?= 16
+# .bit の USR_ACCESS に焼く値（YATSUGATAKE の M5b と同じ形。ここでは study-rfsoc の commit）: [31:4] commit の短いハッシュ 7 桁・[3:1] 0・
+#   [0] proj037 の追跡しているファイルに未コミットの変更がある（rfsoc の他の proj の変更は見ない）。make を始めた時点で 1 回だけ決める。USR_ACCESS=none で焼かない
+ifeq ($(origin USR_ACCESS),undefined)
+  USR_ACCESS := $(shell h=$$(git rev-parse --short=7 HEAD 2>/dev/null | cut -c1-7); \
+                  [ $${#h} = 7 ] && printf '0x%s%s' $$h $$(git status --porcelain --untracked-files=no -- . | grep -q . && echo 1 || echo 0))
+endif
+export BOARD_REPO PART OUTDIR GB_K IMPL USR_ACCESS
 PROJ ?= proj037
-
-export BOARD_REPO PART OUTDIR
-
 PYTHON ?= python3
 SIM_J  ?= 16
 
-.PHONY: all prog id timing-check clean sim-all sim-u sim-reg
+.PHONY: all build prog id clean sim-all sim-u sim-reg
 
-all: $(OUTDIR)
-	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(JOBS)
+all: build
+
+# 合成〜ビットストリーム（1 時間を越える）。成果物は $(OUTDIR)/proj037.bit・.hwh。成否は make の終了状態でなくログの ERROR・TIMING (確定) で読む
+build:
+	@test -n "$(USR_ACCESS)" || { echo "USR_ACCESS を git から作れない（git の作業ツリーの中で make する。焼かないなら USR_ACCESS=none）"; exit 1; }
+	@echo "USR_ACCESS: $(USR_ACCESS)"
+	mkdir -p $(OUTDIR)
+	$(VIVADO) -mode batch -nojournal -log $(OUTDIR)/vivado.log -source build.tcl -tclargs $(BUILD_JOBS)
+	@# 書き出した .bit を読み返し、焼くはずの値と照らす（在るかと、値が合うかの両側。none なら「無いこと」）
+	@$(PYTHON) tools/bitinfo.py $(OUTDIR)/$(PROJ).bit --expect $(USR_ACCESS) > $(OUTDIR)/bitinfo.txt; s=$$?; cat $(OUTDIR)/bitinfo.txt; exit $$s
 
 prog:
 	$(VIVADO) -mode batch -nojournal -nolog -source program.tcl
@@ -53,13 +57,6 @@ prog:
 # JTAG チェーンのデバイスを表示するだけ（合成ライセンス不要）
 id:
 	$(VIVADO) -mode batch -nojournal -nolog -source program.tcl -tclargs id
-
-# 速度グレード -1 で通るかを確かめる。成果物は build-1-e/ に出るので build/ は無傷。
-timing-check:
-	$(MAKE) PART=xczu48dr-ffvg1517-1-e
-
-$(OUTDIR):
-	mkdir -p $(OUTDIR)
 
 clean:
 	rm -rf build build-* .Xil *.jou *.log

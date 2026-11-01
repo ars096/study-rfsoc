@@ -6,7 +6,7 @@
 // 中身:
 //   - core_cmn（コアの共通 2.4: IF_ID（BIT_KIND 12）・NSTREAM 2・BASE_BEATS 73,400,320・ギアボックスの制御・コアの TP・TANCH）。FFT_N は 0
 //   - s2_strm（STAGE2 の流れ s = 0）。入力は s_axis_s2 = 外の axis_sel4 が選んだ ADC（選ぶのは s2_strm の SRC、s2_sel）。
-//     荒い段の出口 m_axis_ct → ct_wr、ct_rd → s_axis_ct（corner turn と MIG はコアの外のセル）
+//     荒い段の出口 ct_y・ct_mark・ct_valid → ct_wr、ct_rd → s_axis_ct（corner turn と MIG はコアの外のセル）
 //   - raw_core（RAW の流れ s = 1）。入力は s_axis_raw = 外のもう 1 個の axis_sel4（raw_sel）
 //   - AXI4-Lite の 1 → 3 の振り分け（g21_s45_core と同じ取り引き 1 つずつ）
 //   - レコードの束ね（rec_arb: コアの TP・STAGE2・SNAP（RAW））
@@ -35,7 +35,7 @@ module s2_s45_core #(
     parameter TB_FILE = "fine_tw_b.hex"
 )(
     (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 aclk CLK" *)
-    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axis:s_axis_s2:s_axis_raw:s_axi:m_axis_rec:m_axis_ct:s_axis_ct, ASSOCIATED_RESET aresetn:gb_dn_rstn" *)
+    (* X_INTERFACE_PARAMETER = "ASSOCIATED_BUSIF s_axis:s_axis_s2:s_axis_raw:s_axi:m_axis_rec:s_axis_ct, ASSOCIATED_RESET aresetn:gb_dn_rstn" *)
     input  wire          aclk,
     (* X_INTERFACE_INFO = "xilinx.com:signal:reset:1.0 aresetn RST" *)
     (* X_INTERFACE_PARAMETER = "POLARITY ACTIVE_LOW" *)
@@ -47,9 +47,9 @@ module s2_s45_core #(
     input  wire          s_axis_s2_tvalid,
     output wire          s_axis_s2_tready,
     output wire [1:0]    s2_sel,
-    output wire [511:0]  m_axis_ct_tdata,       // 荒い段の出口 → ct_wr
-    output wire          m_axis_ct_tuser,
-    output wire          m_axis_ct_tvalid,
+    output wire [511:0]  ct_y,                  // 荒い段の出口 → ct_wr の s_y・s_mark・s_valid（tready が無いので AXIS にしない: BD が口を推論すると素のピンにつなげない）
+    output wire          ct_mark,
+    output wire          ct_valid,
     input  wire [511:0]  s_axis_ct_tdata,       // ct_rd → 細かい側
     input  wire [21:0]   s_axis_ct_tuser,
     input  wire          s_axis_ct_tlast,
@@ -176,7 +176,7 @@ module s2_s45_core #(
         .s_axi_araddr(q_addr[9:0]), .s_axi_arvalid(d_ar && q_dst == 2'd1), .s_axi_arready(arr[1]),
         .s_axi_rdata(rd[1]), .s_axi_rvalid(rv[1]), .s_axi_rready(d_r && q_dst == 2'd1),
         .src_sel(s2_sel), .t_in(t_in), .go_in(go_in), .tev_in(tev_in),
-        .m_axis_ct_tdata(m_axis_ct_tdata), .m_axis_ct_tuser(m_axis_ct_tuser), .m_axis_ct_tvalid(m_axis_ct_tvalid),
+        .m_axis_ct_tdata(ct_y), .m_axis_ct_tuser(ct_mark), .m_axis_ct_tvalid(ct_valid),
         .s_axis_ct_tdata(s_axis_ct_tdata), .s_axis_ct_tuser(s_axis_ct_tuser), .s_axis_ct_tlast(s_axis_ct_tlast),
         .s_axis_ct_tvalid(s_axis_ct_tvalid), .s_axis_ct_tready(s_axis_ct_tready),
         .m_axis_rec_tdata(g_d), .m_axis_rec_tvalid(g_v), .m_axis_rec_tready(g_r), .m_axis_rec_tlast(g_l), .m_axis_rec_tuser(g_u),

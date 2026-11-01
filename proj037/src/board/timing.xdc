@@ -1,8 +1,4 @@
 # SPDX-License-Identifier: BSD-3-Clause
-# proj028 F-5: proj024 の src/board/timing.xdc（HEAD）をそのまま写した。クロックの名前は BD の名前（system）・セルの名前（clk_wiz_adc）が同じなので同じ。
-#   **MIG の UI クロック（c0_ddr4_ui_clk）はどの群にも入れない**: DSP ↔ UI の乗り換えは smc_ddr（SmartConnect）の中、UI ↔ pl_clk0 は clk_mon（clk_mon.xdc の false path）。
-#   S-2 の .bit は群の宣言なしで閉じた（SmartConnect が自分の制約を持つ）
-# 以下は proj024 の注釈
 # proj012 — クロックドメイン間の扱い（proj011 と同一。4ch でもクロックは増えない）
 #
 # **XDC では一般の Tcl が使えない。**if / foreach などは CRITICAL WARNING

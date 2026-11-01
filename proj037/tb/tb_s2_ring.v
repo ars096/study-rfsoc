@@ -40,7 +40,7 @@ module tb_s2_ring;
     s2_s45_core #(.B_C(`B_C), .BASE_BEATS(`BASE), .REC_W(4), .RAW_N_ACC_DEFAULT(1)) dut (.aclk(clk), .aresetn(aresetn),
         .s_axis_tdata(d), .s_axis_tvalid(aresetn), .s_axis_tready(),
         .s_axis_s2_tdata(d), .s_axis_s2_tvalid(aresetn), .s_axis_s2_tready(), .s2_sel(),
-        .m_axis_ct_tdata(ct_d), .m_axis_ct_tuser(ct_u), .m_axis_ct_tvalid(ct_v),
+        .ct_y(ct_d), .ct_mark(ct_u), .ct_valid(ct_v),
         .s_axis_ct_tdata(f_d), .s_axis_ct_tuser(f_u), .s_axis_ct_tlast(f_l), .s_axis_ct_tvalid(f_v), .s_axis_ct_tready(f_r),
         .s_axis_raw_tdata(d), .s_axis_raw_tvalid(aresetn), .s_axis_raw_tready(), .raw_sel(),
         .s_axi_awaddr(aw), .s_axi_awprot(3'd0), .s_axi_awvalid(awv), .s_axi_awready(awr),
