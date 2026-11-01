@@ -351,6 +351,12 @@ W-1c の外れの中身（診断、`runs/w1c.png`。判定の条件は変えな�
   1. build.tcl: proj028 の build_f5.tcl（MIG・ct_wr・ct_rd・SmartConnect）と YATSUGATAKE 2G-1-Fast の build.tcl（time_core・1PPS の口と LPF・axis_sel4 2 個・s45_core_0・s45_ring_0・照合）を合わせる。
      ct_wr・ct_rd の設定（BASE・CHSTRIDE・PLANE_STRIDE・GPD 10240・NPLANE 3・HB）は Overlay を載せたときに PS が書く
   2. 実機（ボードを使う試験は 1 つの会話に）: specd の STAGE2 の束ね（32 本 × n_sum）・RAW の F-2、DUMP_T = RUN_T ＋ c·BASE の見張り、proj028 の F-5c の照合（384/384・CRC・尾・捨て 0）
+- 2026-11-02: V の .bit は Congestion_SpreadLogic_high で閉じた（WNS +0.046）。W-1a 通過・W-1b 陽性対照 OK。W-1c は不合格だが、RAW の SNAP と比べて**狂っているのは proj028 F-5 の側**と確かめた（proj037 は RAW と区別できない）。
+  **1PPS は開発の段階では ADC に入れない（開発者の方針、2026-11-02）**。そのため、RAW の F-2（ADC に入れた 1PPS の縁で D を測る）は開発の段階ではやらない。
+  次にやること:
+  1. 実機: specd の STAGE2 の束ね（32 本 × n_sum）、長い運転（取りこぼし 0）、DUMP_T = RUN_T ＋ c·BASE の見張り。DUMP_T の照合は time_core の T（1PPS は time_core の口だけ）で行う
+  2. proj028 F-5 の像の原因（未確定。ct_wr の印・fine_core の帳簿・PS の組み立て・位相の起点のどれか）。proj028 の F-5 の結論のうち、ch の中の形に頼るものの見直し
+  3. 知見を LESSONS に足す（「2 つの .bit を並べるだけでは相手の正しさが分からない。荒い段を通らない参照を比べに入れる」「DROP_CNT の二重の数え」）
 - 知見: 次の proj でも踏みそうなものを `../docs/lessons_all.md` に足した（要点なら `../LESSONS.md` にも）
 
 ## 再現手順
