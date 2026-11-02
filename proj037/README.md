@@ -318,6 +318,83 @@ W-1c の外れの中身（診断、`runs/w1c.png`。判定の条件は変えな�
 - proj028 F-5 の像の原因は突き止めていない。荒い段の模型で見ると、ブロックの位相の起点のずれは全ブロックの一様な時間のずれで、像は作らないはず。proj028 と proj037 の違い（位相の起点・ct_wr の印・fine_core の帳簿・PS の組み立て）のどれかは未確定
 - W-1c の見張りの穴: 「2 つの .bit を並べて比べる」は、相手が正しいことを確かめてからでないと判定にならない。荒い段を通らない参照（RAW の SNAP）を初めから比べに入れるべきだった
 
+### W-2 長い運転（作りと予言、走らせる前に書く。2026-11-02）
+
+道具: `pynq/s2run.py --sec S`。N_DUMP = ceil(S / 0.28672 s) チャンク（止めるまでにはせず、最後のチャンクまで自然に閉じる）。
+レコードを溜めずに 1 本ずつ照らし（W-1a と同じ項目を「次に来るはずの値」と比べる）、`--status` 秒ごとにリング・REC_LATE・ct の見張り・読みの CPU を記録する。
+配線と状態は W-1 と同じ（ATT 13 dB・ノイズ ON・出荷時のクロック、.bit は `build-CSL/`）。1PPS は ADC に入れない（開発の方針）ので、DUMP_T は time_core の T だけで照らす。
+
+| | 中身 | 予言 |
+|---|---|---|
+| W-2a 陽性対照 | `--sec 10 --ring-mib 4 --slow 0.5`（読み手を遅くしてリングを溢れさせる） | DROP_CNT > 0・SEQ の飛び（「SEQ・(c, k) の順」の外れ）・レコードが足りない → 不合格。照らしが取りこぼしを拾う印 |
+| W-2b 30 分 | `--sec 1800`（6,278 チャンク・200,896 レコード・RAW の SNAP 6,278 本） | 全部通過: 外れ 0・DROP 0・REC_LATE 0・ct_wr の溢れ 0・ct_rd の捨て 0・RUN_T = START_AT・DUMP_T = START_AT ＋ c·BASE が最後まで。リングの PEAK < 32 MiB（W-1a は 11.9 MB）。読みの CPU 35〜50 %（W-1a の内訳: CRC 2.7 ms・写し 0.4 ms / レコード ＋ 和 0.5 ms、1 チャンク 287 ms に 32 本） |
+
+### W-2 結果（2026-11-02。ATT は前後とも +13 dB）
+
+| | 結果 |
+|---|---|
+| W-2a 陽性対照 | **予言どおり不合格**: DROP_CNT 1,049・SEQ の飛び 19 本・RAW の飛び 8 本・レコード 80 / 1,120・PEAK がリングの大きさ（4 MiB）に張り付く。ct_wr の溢れ・ct_rd の捨ては 0（落ちたのは PS の側だけ） |
+| W-2b 30 分 | **全部通過**: 200,896 / 200,896 レコード（6,278 チャンク）・1 本ずつの照らしの外れ 0・DUMP_T = START_AT ＋ c·BASE が最後まで・RUN_T = START_AT・FLAGS 0・REC_LATE 0・DROP 0・ct_wr の溢れ 0・ct_rd の捨て 0・RAW の SNAP 6,278。リングの PEAK 16.6 MB（予言 < 32 MiB）。ギアボックスの空振り 0・ADC の落ち 0 |
+
+- **予言の外れ: 読みの CPU 74〜75 %（予言 35〜50 %）**。内訳はリングの数え: CRC 2.59 ms・写し 0.66 ms・invalidate 0.09 ms / レコードで計 38 %。残りの ≒ 37 % は Python の側（レコードごとの `acc += body / n` の float64 の作り直しと照らし）。写しは予言（0.4 ms）より重い。運用（specd）は C で読むので、この数字は s2run のものとして読む
+- 平均のスペクトル `runs/w2b_mean.npy`（チャンク 1〜6,277、ボードの上）
+
+## X specd の STAGE2（2026-11-02〜。置き場所は proj037 に写す、開発者）
+
+出発点: YATSUGATAKE 54ce5e3 の `sw/pynq/` を `pynq/` に写した（64 本。`extref.py` は proj028 の写しと同じ中身）。写した直後の `test_fake.sh all` は PC で全部通過（土台の確かめ）。
+
+### X-1 作り（書いてから作る）
+
+- `specd.py --g2f`（bits.json の `"kind": "g2f"`）で 2G-1-Fine の取得。窓は A0 の 1 本（3,670,016 ch、IF の昇順 = レコード k の順、ゾーン 1）。SET は 2G-1 と同じ鍵（tint・fmt・cfg・shift。src は A だけ: 下の TP）
+- **tint は 286.72 ms の倍数**（n_sum = tint / 286.72 ms）。網の予算 30 MB/s で f32 は n_sum ≥ 2（573.44 ms、25.6 MB/s）。SET の照合（check_net）で断る
+- **組み立て `Stage2Asm`**: 流れ 0 のレコードを DUMP_K ごとに 32 本並べ、SEQ・S0 = k·114,688・DUMP_T・DUMP_F0・DUMP_N がそろったダンプだけを 1 本（3,670,016 × u64）にして窓 A0 へ。そろわないダンプは丸ごと捨てて数える。実機と偽物で同じ部品を通す
+- **束ね**: 今の Bundler に基準の長さ（base）を渡せるようにし、STAGE2 は 73,400,320 ビート（286.72 ms）で m を数える。チャンク 0（DUMP_N 157）は Bundler の「DUMP_N ≠ pl_nacc（160）は束ごと捨てる」で落ちる（INTERFACE 5.1 の 4。ADR 0027 の「PS が捨てる」）
+- 記録: s45proto v2、kind 5・bit_kind 12・nch 3,670,016・if_mhz = 2047·df・df = 558.04 Hz（受け側の IF(i) = if_mhz ＋ (i − 2047)·df が i·df になる）。並びはひっくり返さない。utc_ns は D_eff 688,180.25 ビートを引く（interface 5.2）
+- 起動（start）: STOP → corner turn の設定と読み返し → 細かい側の SRST → **荒い段の利得を σ 12 に合わせる**（s2run と同じ 3 回、START ごと）→ SHIFT・N_DUMP 0・REC ALL・FCLR → ct_rd・ct_wr RUN → ARM_RUN → time_core を tint の格子で（tint は 7 の倍数なので START_AT も 7 の倍数）。begin で RUN_T = START_AT を照らす
+- TP: 流れのブロックの 0x100〜 は STAGE2 では GAIN なので FULL の TP は無い。コアの TP（ADC_A）を欄 A に。だから src は A だけ（他の ADC を選ぶと TP が合わない）
+- 偽物 `FakeG2FBackend`: 286.72 ms ごとに 32 本のレコード（INTERFACE 4.4 の頭、中身は k と bin で決まる値）を作り、実機と同じ `Stage2Asm` と Bundler に通す。陽性対照 `--posctl-s2-drop N`: N ダンプごとにレコードを 1 本落とす
+
+### X-1 予言（偽物、PC）
+
+| 試験 | 予言 |
+|---|---|
+| t_g2f: `SET tint=0.57344 fmt=both`・`START n=10` | SPEC 20（u64・f32 の 10 組）・f32 の不一致 0・nch 3,670,016・軸が i·df の昇順・kind 5・束 k = 0..9 が続く・DUMP_T の進み 2·73,400,320・BDROP 1（チャンク 0 の束、理由 N） |
+| t_g2fp 陽性対照（SET） | tint 0.04096（286.72 ms の倍数でない）・tint 0.28672（n_sum 1 は 51.2 MB/s で予算を越える）・src=B は ERR |
+| t_g2fdrop 陽性対照（組み立て） | `--posctl-s2-drop 4`: 4 ダンプに 1 つが組み立てで捨てられ、その束が欠ける（受け側の DUMP_K の飛び）。説明のない欠け 0 は求めない |
+| 既存の試験 | `test_fake.sh all` が今までどおり全部通過（Bundler の base の既定は 10.24 ms のまま） |
+
+### X-1 結果（2026-11-02、PC）
+
+**`test_fake.sh all` は 34 本とも通過（今までの 31 本 ＋ g2f・g2fp・g2fdrop）**。予言どおり。
+
+- t_g2f: SPEC 20・組 10・f32 の不一致 0・DUMP_K の飛び 0・DUMP_T の外れ 0・kind 5・nch 3,670,016・軸 i·df の昇順・**中身 = 2·基準 ＋ (2c0 ＋ 1) が 10 束とも一致**（荒い ch 0 と 1 を入れ替えた期待は 10 束とも外れる）・k の連続・BDROP 1（理由 N）
+- t_g2fp: tint 0.04096（286.72 ms の倍数でない）・0.28672（51.2 MB/s で予算を越える）・src=B が ERR、0.86016 は通る
+- t_g2fdrop: DUMP_K の飛び 5・組み立ての捨て 6（理由「並び」。途中の 1 本が抜けると次の本の k が合わない。予言の表は理由を書いていなかった）
+- 受け側の照合（specrecv）が kind 5 を知らず落ちたので、1 フレーム 458,752 ビート（STAGE2 の FRAME_BEATS）を足した
+
+### X-2 実機（予言、走らせる前に書く）
+
+ボードの specd（`--g2f --bitfile proj037.bit`、.bit は `build-CSL/`）→ PC の specrecv。配線と状態は W と同じ。`SET tint=0.57344 fmt=f32` → `START n=100`（≒ 57 s）→ `SEND ON`。
+
+| | 予言 |
+|---|---|
+| 起動 | clk_mon・discover（BIT_KIND 12）・ct_wr・ct_rd の ID が通る。START で荒い段の利得 σ 11.9〜12.1 |
+| 流れ | SPEC 100・照合 通過・DUMP_K の飛び 0・DUMP_T の外れ 0・BDROP 1（理由 N）・組み立ての捨て 0・読み落とし 0・リングの DROP 0・TP は欄 A だけ |
+| 速さ | 1 束の PS の処理（組み立ての写し 29 MB × 2 ＋ 束ねの和 ＋ f32 の丸めと CRC 14.7 MB）が 0.2〜0.4 s で tint 0.573 s に収まる。網 25.6 MB/s は送り出し（≒ 43 MB/s、proj035）に収まる |
+| 中身 | 受けた平均を s2run の W-2b の平均と比べ、荒い ch ごとに割った形の比が 1 ± 0.01（同じ .bit・同じ利得の手順）。陽性対照（荒い ch を 1 つずらす）は外れる |
+
+### X-2 結果（2026-11-02。ATT は前後とも +13 dB）
+
+**流れ・速さ・中身とも予言どおり**（ボードの specd `--g2f` → PC の specrecv、`SET tint=0.57344 fmt=f32`・`START n=100 force=1`）:
+
+- 流れ: SPEC 100・照合 通過・DUMP_K の飛び 0・DUMP_T の外れ 0・BDROP 1（理由 N、チャンク 0 の束）・組み立て 202 ダンプで捨て 0・読み落とし 0・リングの DROP 0・PEAK 25.8 MB。STOP の見張り（STAGE2 の FLAGS・細かい側の FLAGS・REC_LATE・ct_wr の溢れ・ct_rd の捨て）は全部 0、WARN（RUN_T）なし。TP は欄 A だけ（56,870 個）
+- 速さ: 1 周の最長 181.6 ms・p99 100 ms（tint 573.44 ms に収まる）・loop_slow 0。受けた量 1,401.8 MB / 57 s ≒ 24.6 MB/s
+- 中身: 100 束の平均 / W-2b の平均で、荒い ch ごとに割った形の残り 0.9974〜1.0043（予言 ±0.01）。水準 0.986〜1.007（START ごとの利得の合わせの差と、下の LMX の違い）。陽性対照（荒い ch を 1 つずらす）は 0.30〜2.75 で外れる
+- 起動で直した 2 つ: (1) timebase の time_core の ID の表に 0x020C_0102（2G-1-Fine）を足した (2) ADC のナイキストゾーンを 1 に（2G-1 の道を写したのでゾーン 2 になっていた。STAGE2 の IF の式は 0〜fs/2 で、W もゾーン 1）
+- **時刻**: 出荷時のクロック（10 MHz の基準に繋いでいない）なので、41 秒で PPS 41 発に対して T が −12 ppm ずれ、timebase の照合が START を断る。`force=1` で回した（記録の health に H_NOTIME・H_FORCED）。DUMP_H の [1]（PPS の間隔が ±許容を外れた）も同じ原因で立つ。外部の 10 MHz（`--clkin 0 --ref 10`）では消えるはず（確かめていない）
+- specd は起動で LMX2594 の出力の強さを 31 → 3 に書き直す（YATSUGATAKE の運用の設定）。W（s2run）は触っていないので、中身の比べにはこの違いも乗っている
+- 荒い段の利得を START の EVENT「GAIN」（32 ch の g・σ・飽和）に残すようにした（1 回目は begin の戻り値に入れただけで記録に出ていなかった）。5 束の短い回で σ 11.98〜12.04 が記録に出ることを確かめた
+
 ## 変更案（YATSUGATAKE の `docs/spec/` に入れる候補）
 
 - **V-2（S から）**: interface.md 2.1 の KIND の表に **5 STAGE2** を足す（ch → IF は (S0 + i)·fs / (56·2^PARAM[7:0])、S0 は語 7 の上位）。2.5・4.4 に「STAGE2 は荒い ch ごとに 1 レコード、SEQ はレコードごと、DUMP_K はチャンク、DUMP_SAT は荒い ch の 8 bit の飽和」。5.1 に「STAGE2 のダンプ m は 32 本で揃う」

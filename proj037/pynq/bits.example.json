@@ -1,0 +1,17 @@
+{
+  "default": "proj021",
+  "bits": {
+    "proj021": {"bit": "proj021.bit", "pydir": ".",
+                "note": "SAM45-Fine v2（INTERFACE v2・PL が書くリング）。sha256 は sha256sum proj021.bit で書き足す"},
+    "proj020": {"bit": "../proj020/proj020.bit", "pydir": "../proj020", "tp_cal": "../proj020/tp_cal.json",
+                "note": "SAM45-Fine v1（proj020。仮の読み窓・s45proto v1）。V2-d の往復の相手。tp_cal は前の版の PS の形なので、その項目だけ自分のファイルを指す"},
+    "sam45-wide": {"bit": "proj023.bit", "pydir": ".", "kind": "wide",
+                "note": "SAM45-Wide（BIT_KIND 1）。kind は wide（SLICE の流れの取得）。TP の dBm の較正はボードの /etc/yatsugatake/tp_cal.json（ADR 0025）"},
+    "2g-4": {"bit": "proj031.bit", "pydir": ".", "kind": "g24",
+                "note": "2G-4（BIT_KIND 3）。kind は g24（FULL の流れ 4 本の取得）。bit の隣に係数の hex（g24_coef_lo.hex・g24_coef_hi.hex）。specd は --fast --fast-ring（build_fast.sh で libs45fast.so）"},
+    "2g-1-fast": {"bit": "proj033.bit", "pydir": ".", "kind": "g21",
+                "note": "2G-1-Fast（BIT_KIND 11）。kind は g21（FULL の流れ 1 本・131072 ch）。係数は bit の中の ROM（hex は要らない）。specd は --prefault --fast --fast-ring（build_fast.sh で libs45fast.so）"},
+    "2g-2": {"bit": "proj034.bit", "pydir": ".", "kind": "g22",
+                "note": "2G-2（BIT_KIND 10）。kind は g22（FULL の流れ 2 本・65536 ch × 2、鍵は A0・B0）。係数は bit の中の ROM（hex は要らない）。specd は --prefault --fast --fast-ring（build_fast.sh で libs45fast.so）"}
+  }
+}

@@ -23,6 +23,10 @@ proj028 pynq/f5.py（F-5）を写して直した。順序:
 8. 止めて、見張りの数えを全部読む（流れ 0 の FLAGS・REC_LATE・細かい側の FLAGS・N_REC・ct_wr の溢れ・ct_rd の捨て・リングの DROP）
 9. 保存: <out>_spec.npy（チャンク × 3,670,016 点、積んだフレームの数で割った電力、float32）・<out>_meta.json
 
+長い運転（--sec S、W-2）: N_DUMP = ceil(S / 0.28672 s) チャンク。レコードを溜めずに 1 本ずつ照らし（7. と同じ項目。SEQ・(c, k) の順・DUMP_T は
+次に来るはずの値と比べる）、荒い ch ごとの和だけを持つ。--status 秒ごとにリングの PEAK・DROP・溜まり（W − R）・REC_LATE・ct_wr の溢れ・
+ct_rd の捨て・読みの CPU の割合を記録。保存: <out>_mean.npy（全チャンク 1 以降の平均、float32）・<out>_meta.json（状態の時系列）
+
 周波数: つないだ bin G（0..3,670,015）の周波数は f = G · fs / (56 · 131072)（≒ 558.04 Hz の刻み、0〜2.048 GHz。proj028 の M-4・F-3）
 """
 import argparse
@@ -374,9 +378,14 @@ def main():
     ap.add_argument("--ring-mib", type=int, default=64)
     ap.add_argument("--out", default="runs/w1")
     ap.add_argument("--no-load", action="store_true", help="Overlay を読み直さない（載っている .bit をそのまま）")
+    ap.add_argument("--sec", type=float, default=0, help="長い運転（W-2）: この秒数ぶんのチャンクを流しながら照らす（--chunks は使わない）")
+    ap.add_argument("--status", type=float, default=60, help="長い運転の状態の記録の間隔（秒）")
+    ap.add_argument("--slow", type=float, default=0, help="長い運転の陽性対照: 読みのループごとにこの秒数だけ寝る（小さい --ring-mib と組み、取りこぼしを起こす）")
     a = ap.parse_args()
-    if not 1 <= a.chunks <= 64:
-        log("ERROR: --chunks は 1〜64")
+    if a.sec:
+        a.chunks = int(np.ceil(a.sec / (BASE_BEATS / BEATS)))
+    elif not 1 <= a.chunks <= 64:
+        log("ERROR: --chunks は 1〜64（長い運転は --sec）")
         sys.exit(2)
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
 
@@ -491,6 +500,8 @@ def main():
     meta.update(start_at=start_at, t_arm=t_now)
     log(f"ARM_RUN: START_AT {start_at}（今 {t_now} ＋ {(start_at - t_now) / BEATS:.3f} s、mod 7 = {start_at % 7}）・{a.chunks} チャンク × 32 レコード"
         f"{'・RAW も' if use_raw else ''}")
+    if a.sec:
+        return run_long(a, meta, core, s2, raw, ctw, ctr, ring, start_at, t_run, use_raw, raw_nacc if use_raw else 0)
 
     raw_spec = np.zeros((a.chunks, NTOT), dtype=np.uint64)
     seen = np.zeros((a.chunks, NCH), dtype=bool)
@@ -634,6 +645,128 @@ def main():
         log(f"チャンク {c}: 中央値 {med:.4g}・最大 bin {G}（{G * DF / 1e6:.6f} MHz、中央値の {10 * np.log10(s[G] / med):.1f} dB 上）")
     log("結果: " + ("全部通過" if not ngs else f"不合格（{len(ngs)}）") +
         ("（細かい PFB の飽和は立った: 入力が強すぎるか S が大きい）" if fl & SAT_OK else ""))
+    return 0 if not ngs else 1
+
+
+def run_long(a, meta, core, s2, raw, ctw, ctr, ring, start_at, t_run, use_raw, raw_nacc):
+    """W-2: 溜めずに流しながら照らす。照らしの項目は短い運転と同じで、次に来るはずの値と比べる"""
+    nch = a.chunks
+    acc = np.zeros(NTOT, dtype=np.float64)
+    n_acc = 0
+    exp_seq, n_rec, raw_n, raw_k, raw_t = 0, 0, 0, 0, None
+    bad, fl, other = {}, 0, []
+    w4_want = (a.shift << 16) | (6 << 8) | 17
+    status, t_last = [], time.time()
+    cpu0, wall0 = time.process_time(), time.time()
+
+    def miss(why, d):
+        e = bad.setdefault(why, [0, []])
+        e[0] += 1
+        if len(e[1]) < 5:
+            e[1].append(d)
+
+    tmo = a.start_delay + (nch + 3) * BASE_BEATS / BEATS + 5
+    try:
+        while (n_rec < nch * NCH or (use_raw and raw_n < nch)) and time.time() - t_run < tmo:
+            for h, body, crc_ok, tail_ok in ring.read():
+                s, ty = h[0] >> 56, (h[0] >> 40) & 0xFF
+                if s == 1 and ty == 4:
+                    k, t = h[1] >> 32, h[3]
+                    if k != raw_k or not (crc_ok and tail_ok) or (h[7] & 0xFFFFFFFF) != RAW_BYTES or \
+                            (raw_t is not None and t - raw_t != raw_nacc * 512):
+                        miss("RAW の SNAP（DUMP_K・CRC・尾・P・DUMP_T の進み）", dict(k=k, want=raw_k, t=t, crc=crc_ok, tail=tail_ok))
+                    raw_k, raw_t, raw_n = k + 1, t, raw_n + 1
+                    continue
+                if not (s == 0 and ty == 1):
+                    other.append(dict(s=s, ty=ty, w0=h[0]))
+                    continue
+                c, seq = h[1] >> 32, h[1] & 0xFFFFFFFF
+                s0, pb, n = h[7] >> 32, h[7] & 0xFFFFFFFF, h[5] & 0xFFFF
+                ce, ke = divmod(exp_seq, NCH)
+                d = dict(seq=seq, want=exp_seq, c=c, s0=s0)
+                if not (crc_ok and tail_ok):
+                    miss("CRC・尾", d)
+                if seq != exp_seq or c != ce or s0 != ke * NKEEP or pb != REC_BYTES:
+                    miss("SEQ・(c, k) の順・S0・P", d)
+                if h[0] & 0xFFFFFFFFFFFF != (1 << 40 | 1 << 32 | MAGIC_R) or (h[0] >> 48) & 0xFF:
+                    miss("語 0", d)
+                if h[2] != c * CHUNK_BLK or h[3] != start_at + c * BASE_BEATS:
+                    miss("DUMP_F0・DUMP_T", dict(d, f0=h[2], t=h[3]))
+                if h[4] & 0xFFFFFF != w4_want:
+                    miss("語 4", dict(d, w4=h[4]))
+                if n != (157 if c == 0 else 160):
+                    miss("DUMP_N", dict(d, n=n))
+                fl |= h[6] >> 32
+                if c >= 1 and pb == REC_BYTES:
+                    acc[ke * NKEEP:(ke + 1) * NKEEP] += body / max(n, 1)
+                    if ke == NCH - 1:
+                        n_acc += 1
+                exp_seq, n_rec = seq + 1, n_rec + 1
+            if time.time() - t_last >= a.status:
+                t_last = time.time()
+                rg = ring.regs()
+                st = dict(t=round(t_last - t_run, 1), rec=n_rec, raw=raw_n, bad=sum(v[0] for v in bad.values()), drop=rg["drop"], peak=rg["peak"],
+                          fill=(ring.g.rd(ring.R_W) - ring.r) & 0xFFFFFFFF, rec_late=s2.rd(S_REC_LATE), ovf=ctw.rd(0x28), ct_drop=ctr.rd(0x28),
+                          cpu=round((time.process_time() - cpu0) / (t_last - wall0), 3))
+                status.append(st)
+                log(f"  {st['t']:7.1f} s: レコード {st['rec']}（チャンク {st['rec'] // NCH}）・RAW {st['raw']}・外れ {st['bad']}・DROP {st['drop']}・"
+                    f"PEAK {st['peak']}・溜まり {st['fill']}・REC_LATE {st['rec_late']}・溢れ {st['ovf']}・捨て {st['ct_drop']}・CPU {st['cpu']:.0%}")
+            time.sleep(a.slow or 0.01)
+    finally:
+        t_end = time.time()
+        time.sleep(0.3)
+        for b in (s2, raw):
+            b.wr(S_CTRL, CTRL_STOP)
+        ctw.wr(0x04, 0)
+        t0 = time.time()
+        while ctw.rd(0x20) & 1 and time.time() - t0 < 2:
+            time.sleep(0.01)
+        time.sleep(CHUNK_BLK / BLK_RATE * 1.2)
+        for h, body, crc_ok, tail_ok in ring.read():
+            other.append(dict(s=h[0] >> 56, ty=(h[0] >> 40) & 0xFF, w0=h[0], late=True))
+        ctr.wr(0x04, 0)
+        w = watch(s2, raw, ctw, ctr, ring)
+        ring.close()
+    t_el = t_end - t_run
+    txt, gbs, adcs = gb_text(core)
+    log(txt)
+    r = w["ring"]
+    log(f"流れ 0: FLAGS 0x{w['s2']['flags']:x}（{flag_text(w['s2']['flags'])}）・REC_LATE {w['s2']['rec_late']}・RUN_T {w['s2']['run_t']}・"
+        f"細かい側 FLAGS 0x{w['s2']['fflags']:03x}・N_REC {w['s2']['fnrec']} / ct_wr: チャンク {w['ct_wr']['chunks']}・溢れ {w['ct_wr']['ovf']}・"
+        f"印 {w['ct_wr']['marks']} / ct_rd: 捨てた {w['ct_rd']['drop']} / リング: REC_CNT {r['rec']}・DROP {r['drop']}・ERR {r['err']}・PEAK {r['peak']}")
+    log(f"読みの時間: {ring.prof['n']} レコード・CRC {ring.prof['crc']:.1f} s・写し {ring.prof['copy']:.1f} s・invalidate {ring.prof['inval']:.1f} s / 経過 {t_el:.1f} s")
+    ngs = []
+
+    def judge(ok, msg):
+        log(("OK  " if ok else "NG  ") + msg)
+        if not ok:
+            ngs.append(msg)
+
+    judge(n_rec == nch * NCH, f"STAGE2 のレコード {n_rec} / {nch * NCH}（{nch} チャンク、{nch * BASE_BEATS / BEATS:.1f} s）")
+    for why, (cnt, ex) in bad.items():
+        judge(False, f"{why}: {cnt} 本（例 {ex[:2]}）")
+    if not bad:
+        judge(True, "1 本ずつの照らし（CRC・尾・SEQ・(c, k) の順・S0・P・語 0・DUMP_F0・DUMP_T = START_AT ＋ c·BASE・語 4・DUMP_N）の外れ 0")
+    judge(w["s2"]["run_t"] == start_at, f"RUN_T {w['s2']['run_t']} = START_AT {start_at}")
+    judge(fl & ~SAT_OK == 0 and w["s2"]["flags"] & ~SAT_OK == 0, f"FLAGS（頭の OR 0x{fl:x}・流れ 0x{w['s2']['flags']:x}）: {flag_text(fl | w['s2']['flags'])}")
+    judge(w["s2"]["rec_late"] == 0 and r["drop"] == 0 and not r["err"], f"REC_LATE {w['s2']['rec_late']}・DROP_CNT {r['drop']}・ERR {r['err']}")
+    judge(w["ct_wr"]["ovf"] == 0 and w["ct_wr"]["flags"] == 0 and w["ct_wr"]["marks"] == 1 and w["ct_wr"]["chunks"] == nch,
+          f"ct_wr: 溢れ {w['ct_wr']['ovf']}・FLAGS 0x{w['ct_wr']['flags']:x}・印 {w['ct_wr']['marks']}（1）・チャンク {w['ct_wr']['chunks']}（{nch}）")
+    judge(w["ct_rd"]["drop"] == 0 and w["ct_rd"]["flags"] == 0, f"ct_rd: 捨てた {w['ct_rd']['drop']}・FLAGS 0x{w['ct_rd']['flags']:x}")
+    judge(not [o for o in other if not o.get("late")], f"ほかのレコード {len([o for o in other if not o.get('late')])}（止めた後の {len([o for o in other if o.get('late')])} 本は数えない）")
+    if use_raw:
+        judge(raw_n == nch, f"RAW の SNAP {raw_n}（{nch}）")
+        judge(w["raw"]["rec_late"] == 0, f"RAW の REC_LATE {w['raw']['rec_late']}・FLAGS 0x{w['raw']['flags']:x}")
+    if status:
+        judge(max(x["peak"] for x in status) < ring.size // 2, f"リングの PEAK の最大 {max(x['peak'] for x in status)}（大きさ {ring.size} の半分未満）・"
+              f"読みの CPU {min(x['cpu'] for x in status):.0%}〜{max(x['cpu'] for x in status):.0%}")
+    if n_acc:
+        np.save(a.out + "_mean.npy", (acc / n_acc).astype(np.float32))
+    meta.update(watch=w, gb_stat1=gbs, adc_stat1=adcs, seconds=t_el, n_rec=n_rec, raw_n=raw_n, bad=bad, other=other, status=status,
+                prof=ring.prof, n_acc=n_acc, ng=ngs)
+    json.dump(meta, open(a.out + "_meta.json", "w"), indent=1, default=int)
+    log(f"保存: {a.out}_mean.npy（チャンク 1〜{nch - 1} の平均 {n_acc} 本）・{a.out}_meta.json")
+    log("結果: " + ("全部通過" if not ngs else f"不合格（{len(ngs)}）"))
     return 0 if not ngs else 1
 
 
