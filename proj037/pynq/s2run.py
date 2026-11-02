@@ -373,6 +373,7 @@ def main():
     ap.add_argument("--gains-from", default=None, help="利得を合わせずに、この meta.json の gain を使う")
     ap.add_argument("--gain-only", action="store_true")
     ap.add_argument("--no-raw", action="store_true", help="RAW（流れ 1）を回さない")
+    ap.add_argument("--no-spec", action="store_true", help="STAGE2 のスペクトル（<out>_spec.npy、1 チャンク 14.7 MB）を保存しない（RAW と meta だけ）")
     ap.add_argument("--start-delay", type=float, default=0.5, help="START_AT を今から何秒後に置くか")
     ap.add_argument("--start-off", type=int, default=0, help="START_AT に足すビート（1 で 7 の倍数でない: 陽性対照）")
     ap.add_argument("--ring-mib", type=int, default=64)
@@ -630,12 +631,13 @@ def main():
     for c in range(a.chunks):
         spec[c] = raw_spec[c] / np.repeat(np.maximum(nact[c], 1), NKEEP)
     del raw_spec
-    np.save(a.out + "_spec.npy", spec)
+    if not a.no_spec:                                       # 44 チャンクで 646 MB。ボードの SD が一杯になった（Y-5）
+        np.save(a.out + "_spec.npy", spec)
     if raw_body:                                            # RAW の SNAP の中身（荒い段を通らない参照。W-1c の診断）
         np.save(a.out + "_raw.npy", np.stack([b for _, b in sorted(raw_body, key=lambda x: x[0])]))
     meta["ng"] = ngs
     json.dump(meta, open(a.out + "_meta.json", "w"), indent=1, default=int)
-    log(f"保存: {a.out}_spec.npy（{a.chunks} × {NTOT}、float32）・{a.out}_meta.json")
+    log(f"保存: {'' if a.no_spec else f'{a.out}_spec.npy（{a.chunks} × {NTOT}、float32）・'}{a.out}_meta.json")
     for c in range(a.chunks):
         if not seen[c].all():
             continue
