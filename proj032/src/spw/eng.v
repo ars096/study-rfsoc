@@ -121,8 +121,18 @@ module eng #(
     reg              v0;
     reg  [3:0]       w0;
     reg  signed [W-1:0] yr0, yi0;
+    // 窓ごとの設定（bs・枠・g）は入口の段で in_w から引いて w0 と並べる（rev 10: cfg を w0 で選んでから同じクロックで z を作ると、
+    //   c_ns・w0 → zrs が b5 の外れの 1/4 を占めた）。値は w0 から引くのと同じ
+    reg  [2:0]       ns0;
+    reg  [3:0]       sl0, g0i;
     always @(posedge clk) begin
         v0 <= in_v && !rst; w0 <= in_w; yr0 <= in_re; yi0 <= in_im;
+`ifdef ENG_CFG_POSCTL
+        ns0 <= cfg_ns[w0*3 +: 3];                   // 陽性対照: 1 拍前の窓の NS（rev 9 と比べた記録が違ってくるはず）
+`else
+        ns0 <= cfg_ns[in_w*3 +: 3];
+`endif
+        sl0 <= cfg_sl[in_w*4 +: 4]; g0i <= cfg_g[in_w*4 +: 4];
     end
     (* ram_style = "distributed" *) reg [48:0] ws [0:H-1];       // {fin, nf, wb, wa}
     (* ram_style = "distributed" *) reg [34:0] jt [0:H-1];       // {fin, wb}
@@ -132,7 +142,6 @@ module eng #(
     wire [2:0]       wb  = st[14:12];
     wire [1:0]       nf  = st[16:15];
     wire [31:0]      fin = st[48:17];
-    wire [2:0]       ns0 = cfg_ns[w0*3 +: 3];
     wire [1:0]       bs  = (ns0 <= 3'd2) ? 2'd0 : (ns0 <= 3'd4) ? 2'd1 : 2'd2;
     localparam signed [W:0] ZMAX = 131071, ZMIN = -131072;
     wire signed [W:0] tr = ($signed({yr0[W-1], yr0}) + ((bs == 2'd0) ? 0 : (1 <<< (bs - 1)))) >>> bs;
@@ -141,7 +150,6 @@ module eng #(
     wire [17:0]      zi = (ti > ZMAX) ? 18'h1FFFF : (ti < ZMIN) ? 18'h20000 : ti[17:0];
     wire             zsat = v0 && ((tr > ZMAX) || (tr < ZMIN) || (ti > ZMAX) || (ti < ZMIN));
     wire             fdone = v0 && (wa == 12'd4095);
-    wire [3:0]       sl0 = cfg_sl[w0*4 +: 4];
     wire             ddr0 = (sl0 >= S);
     // DDR の窓: 8 bit に（h = sat8(round(z / 2^g))）、4 標本を語に（as[w] = 前の 3 標本）。z を作る段の 1 つ後（I2）で
     //   （D-2 の OOC の 1 回目は z と同じ段に縦に並べ、WNS −1.528 ns）
@@ -152,7 +160,7 @@ module eng #(
     reg  signed [17:0] zrs, zis;
     always @(posedge clk) begin
         d1_v <= v0 && ddr0 && !rst; d1_w <= w0; d1_k <= sl0 - S; d1_f <= fin[2:0]; d1_a <= wa;
-        g0w <= cfg_g[w0*4 +: 4]; zrs <= zr; zis <= zi;
+        g0w <= g0i; zrs <= zr; zis <= zi;
     end
     wire signed [18:0] ur = ($signed({zrs[17], zrs}) + ((g0w == 4'd0) ? 0 : (1 <<< (g0w - 1)))) >>> g0w;
     wire signed [18:0] ui = ($signed({zis[17], zis}) + ((g0w == 4'd0) ? 0 : (1 <<< (g0w - 1)))) >>> g0w;
@@ -207,7 +215,7 @@ module eng #(
             end
             if (fdone) jt[w0] <= {fin, wb};
         end
-        h1_v <= v0 && !ddr0; h1_w <= w0; h1_s <= cfg_sl[w0*4 +: 4]; h1_b <= wb; h1_a <= wa; h1_d <= {zi, zr};
+        h1_v <= v0 && !ddr0; h1_w <= w0; h1_s <= sl0; h1_b <= wb; h1_a <= wa; h1_d <= {zi, zr};
     end
     // 遅れ D: 小さければ SRL、≧ 128 は BRAM の輪（読んでから書く、遅れ D）。valid も輪に入れ、rst の後 D クロックは 0 と読む
     wire [59:0]      dq_all;

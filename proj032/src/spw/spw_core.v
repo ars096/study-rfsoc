@@ -153,6 +153,28 @@ module spw_core #(
         if (rst) cfg_ok <= 1'b0; else if (wrst) cfg_ok <= 1'b1;
         rst_d <= dp_rst;
     end
+    // rev 10: WRST で替わる設定（WK・WDPHI・WNS・WFL・WSL・WG）を、受け手（前段・wsb・dsink）ごとに CFG_D 段の写しで配る。
+    //   設定は wrst の立ち上がりで替わり、受け手は wrst の間リセットの中（spw_regs が wrst を WMIN 8 クロック以上にする）なので、
+    //   写しの遅れは振る舞いを変えない。SHIFT（cfg_sh）は RUN で替わるので写さない。
+    //   理由: b5（H 8・S 8）で u_regs の c_ns の扇出が外れた経路の 1/4（466 本）。keep で受け手ごとの写しを Vivado にまとめさせない
+    localparam integer CFG_D = 2;
+    localparam integer FW = H * (6 + 32 + 3 + 2), WW = H * (3 + 2 + 4 + 4), SW = H * (3 + 4);
+    (* keep = "true" *) reg [FW-1:0] cf_f [0:CFG_D-1];       // 前段: WK・WDPHI・WNS・WFL
+    (* keep = "true" *) reg [WW-1:0] cf_w [0:CFG_D-1];       // wsb: WNS・WFL・WSL・WG
+    (* keep = "true" *) reg [SW-1:0] cf_s [0:CFG_D-1];       // dsink: WNS・WG
+    integer cd;
+    always @(posedge clk) begin
+        cf_f[0] <= {cfg_wk, cfg_dphi, cfg_ns, cfg_fl}; cf_w[0] <= {cfg_ns, cfg_fl, cfg_sl, cfg_g}; cf_s[0] <= {cfg_ns, cfg_g};
+        for (cd = 1; cd < CFG_D; cd = cd + 1) begin cf_f[cd] <= cf_f[cd-1]; cf_w[cd] <= cf_w[cd-1]; cf_s[cd] <= cf_s[cd-1]; end
+    end
+    wire [H*6-1:0]  f_wk;
+    wire [H*32-1:0] f_dphi;
+    wire [H*3-1:0]  f_ns, w_ns, s_ns;
+    wire [H*2-1:0]  f_fl, w_fl;
+    wire [H*4-1:0]  w_sl, w_g, s_g;
+    assign {f_wk, f_dphi, f_ns, f_fl} = cf_f[CFG_D-1];
+    assign {w_ns, w_fl, w_sl, w_g} = cf_w[CFG_D-1];
+    assign {s_ns, s_g} = cf_s[CFG_D-1];
 
     spw_regs #(.H(H), .E(E), .S(S), .NK(NK), .G_L2(G_L2), .BUILD_TAG(BUILD_TAG), .CORE_PORT(ADC), .PSPLIT(PSPLIT), .BASE_BEATS(BASE_BEATS),
               .BIT_KIND(BIT_KIND), .BIT_REV(BIT_REV), .PROJ(PROJ)) u_regs (
@@ -173,7 +195,7 @@ module spw_core #(
     spw_front #(.H(H), .E(E), .PSPLIT(PSPLIT), .BW(W)) u_front (
         .clk(clk), .rst_pfb(rst), .rst(dp_rst),
         .s_tdata(s_tdata), .s_tvalid(s_tvalid),
-        .cfg_wk(cfg_wk), .cfg_dphi(cfg_dphi), .cfg_ns(cfg_ns), .cfg_fl(cfg_fl),
+        .cfg_wk(f_wk), .cfg_dphi(f_dphi), .cfg_ns(f_ns), .cfg_fl(f_fl),
         .y_v(y_v), .y_ch(y_ch), .y_re(y_re), .y_im(y_im), .c_re(), .c_im(), .c_v(), .flags(fflags));
 
     wire [E-1:0]    d_v;
@@ -183,7 +205,7 @@ module spw_core #(
     wire [E*64-1:0] d_data;
     wsb #(.H(H), .E(E), .S(S), .W(W), .G_L2(G_L2), .D(D), .NK(NK)) u_wsb (
         .clk(clk), .rst(rst_d), .y_v(y_v & {E{!rst_d}}), .y_ch(y_ch), .y_re(y_re), .y_im(y_im),
-        .cfg_ns(cfg_ns), .cfg_fl(cfg_fl), .cfg_sl(cfg_sl), .cfg_sh(cfg_sh), .cfg_g(cfg_g), .ddr_base(DDR_BASE),
+        .cfg_ns(w_ns), .cfg_fl(w_fl), .cfg_sl(w_sl), .cfg_sh(cfg_sh), .cfg_g(w_g), .ddr_base(DDR_BASE),
         .ng(ng), .ndump(ndump), .cmd_run(cmd_run), .cmd_stop(cmd_stop),
         .go(), .g0(g0), .g0a(g0a), .d_v(d_v), .d_w(d_w), .d_k(d_k), .d_ch(d_ch), .d_data(d_data), .flags(eng_flags), .dflags(dflags),
         .t_now(t_now), .t0(t0),
@@ -197,7 +219,7 @@ module spw_core #(
     wire         b_v, b_r, b_l;
     dsink #(.E(E), .H(H), .NU(NU), .G_L2(G_L2), .ADC(ADC)) u_sink (
         .clk(clk), .rst(rst_d), .d_v(d_v), .d_w(d_w), .d_k(d_k), .d_ch(d_ch), .d_data(d_data),
-        .cfg_ns(cfg_ns), .cfg_sh(cfg_sh), .cfg_g(cfg_g), .ng(ng), .g0(g0), .g0a(g0a), .t0(t0),
+        .cfg_ns(s_ns), .cfg_sh(cfg_sh), .cfg_g(s_g), .ng(ng), .g0(g0), .g0a(g0a), .t0(t0),
         .m_tdata(a_d), .m_tvalid(a_v), .m_tready(a_r), .m_tlast(a_l), .drop(drop[E-1:0]), .flags(sflags), .drain(drain), .idle(dp_idle));
 
     // ---- コアの共通（SAM45-Fine と同じ。入力はこのコアの ADC。FFT_N（0x80）は持たない: 0x80 は spw_regs へ振り分ける）----

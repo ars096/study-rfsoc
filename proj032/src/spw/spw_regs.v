@@ -37,7 +37,7 @@
 //     0x1C SEQ 0 / 0x20 NCH 4096 / 0x24 FRAME_BEATS = 2^(12 + NS) / 0x28 SRC = CORE_PORT[3:0] / 0x2C CFG_ID RW（コアで 1 つ）/ 0x30 RUN_CFG / 0x34 WRST_CFG /
 //     0x38 RUN_SHIFT / 0x60·64 RUN_T / 0x68·6C RUN_F0 = g0·2^(G_L2 − 12 − NS) / 0x80 NFFT_MIN_MAX {12, 12}
 //     0x100 WK [5:0] / 0x104 WDPHI / 0x108 WNS [2:0] / 0x10C WCUR {WNS, WK} / 0x110 WCUR_DPHI / 0x114·118 WSTART = t0[w]（フレーム 0 の z 0 の T）/
-//     0x11C WRST_T（コアで 1 つ、[15:0]、0 は 1、既定 64）/ 0x120 WFL [1:0] / 0x124 WSL [3:0] / 0x128 WG [3:0] / 0x12C WCUR2 {WG, WSL, WFL}
+//     0x11C WRST_T（コアで 1 つ、[15:0]、8 未満は 8（rev 10: 設定を受け手へ写す CFG_D 段より長く）、既定 64）/ 0x120 WFL [1:0] / 0x124 WSL [3:0] / 0x128 WG [3:0] / 0x12C WCUR2 {WG, WSL, WFL}
 //   CTRL の書き: [0] RUN [1] STOP [2] ARM_RUN [3] 予約の取り消し [8] FLAGS を消す [12] WRST [13] ARM_WRST（全部コアに効く）
 //   CTRL の読み: [0] RUN の中 [4] WRST の中 [5] ARM_RUN 中 [6] ARM_WRST 中 [7] WRST の明けを待つ RUN
 // 空きは 0
@@ -152,6 +152,7 @@ module spw_regs #(
     // ---- 制御: 予約・WRST（約束を数える → リセット）・RUN ----
     reg          arm_run, arm_wrst, run_wait, running;
     localparam [1:0] W_IDLE = 2'd0, W_CHK = 2'd1, W_RST = 2'd2, W_DRN = 2'd3;
+    localparam [15:0] WMIN = 16'd8;                // wrst の長さの下限（rev 10、spw_core の CFG_D 段の写しがリセットの中で揃う）
     reg  [1:0]   wsm;
     reg  [4:0]   ci;                                 // 数えている窓
     reg  [5:0]   lsum [0:E-1];                       // lane ごとの幅（8 MHz 単位）
@@ -214,7 +215,7 @@ module spw_regs #(
                         end else begin
                             drain <= 1'b1; dcnt <= 23'd0; wsm <= W_DRN;
                         end
-                    end else if (rcnt >= ((wrst_t == 16'd0) ? 16'd1 : wrst_t)) begin
+                    end else if (rcnt >= ((wrst_t < WMIN) ? WMIN : wrst_t)) begin
                         if (&t_now[AL_L2-1:0]) begin wrst <= 1'b0; wsm <= W_IDLE; end   // 次のクロック（T ≡ 0）でデータの道が明ける
                     end else rcnt <= rcnt + 16'd1;
                 end
