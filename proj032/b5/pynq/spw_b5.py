@@ -9,6 +9,10 @@ spw_b4.py（b4 rev 8、H 6・S 6）からの差:
   - 既定の構成 b5: 窓 8 本（128・64・64・16 / 128・64・32・8 MHz）で、チップ内の枠 0..7 を全部使う。16 MHz（NS 4）と 8 MHz（NS 5）の窓を初めて実機に入れる
     lane 0 = 128 + 64 + 16・1 = 64 + 128・2 = 64 + 32 + 8 MHz
   - 構成 b1（P-7 と同じ 6 窓）も残す（b2 の頭の番号 0..2 → 0..2・7..9 → 4..6）
+  - P-10: --win "IF:幅,IF:幅,..." で窓を spwplan.py の計画から入れる（WDPHI ≠ 0・2 番目に近い粗い ch を初めて実機に）。
+    --alt i,j: 窓 i を 2 番目に近い粗い ch で作り、同じ IF・幅で近い ch の窓 j と双子にする（比の揺れ ≦ 独立な雑音の 1/4 を合否に）。
+    --tone F: SG の CW（IF F MHz、SG は手で設定する）が、F を含む窓で計画の予言の ch に立つかを合否に（ピーク / 中央値 ≧ 20 dB の窓だけ）。
+    --wrst-test: コア 0 に約束 [1]〜[6] を 1 つずつ破る設定を書いて WRST し、PL の WRST_BAD と spwplan.check() の印が同じかを合否に（設定は効かない）
 以下は spw_b4.py の注
 
 spw_b3.py（b3、MIG あり。配線できず .bit は無い）からの差:
@@ -162,12 +166,36 @@ def main():
     p.add_argument("--settle", type=float, default=0.5, help="RUN の後、FLAGS を読んで消すまで [s]（起動の時だけの印を分ける）")
     p.add_argument("--cfg", default="b5", choices=sorted(CFGS), help="窓の構成（b5 = 8 窓・既定、b1 = P-7 と同じ 6 窓。PL の DDR が無いので A・B は断る）")
     p.add_argument("--wg", type=int, default=4, help="DDR の窓の 8 bit の利得 WG（右シフト 0..10）")
+    p.add_argument("--win", default=None, help="P-10: 窓を IF:幅 MHz の並びで（spwplan.py で計画）。--cfg より先")
+    p.add_argument("--alt", default=None, help="P-10: i,j = 窓 i を 2 番目に近い粗い ch で、近い ch の窓 j と双子に（同じ IF・幅）")
+    p.add_argument("--tone", type=float, default=None, help="P-10: SG の CW の IF [MHz]（SG は手で）。含む窓で予言の ch を照らす")
+    p.add_argument("--wrst-test", action="store_true", help="P-10: 約束を破る設定で PL の WRST_BAD と spwplan.check() を照らす（コア 0）")
     p.add_argument("--tp-min", type=float, default=-40.0, help="双子の比を合否に入れるコアの TP の下限 [dBFS]")
     p.add_argument("--out", default=None)
     a = p.parse_args()
     if CFGS[a.cfg] is None:
         p.error(f"--cfg {a.cfg} は H 8 の頭に収まらない")
     WINS, TWINS = CFGS[a.cfg]
+    DPHI, PLAN = {}, None
+    if a.win:
+        import spwplan
+        req = [tuple(float(v) for v in x.split(":")) for x in a.win.split(",")]
+        fk, tw_ij = {}, None
+        if a.alt:
+            i, j = (int(v) for v in a.alt.split(","))
+            if req[i] != req[j]:
+                p.error(f"--alt {a.alt}: 窓 {i} と {j} の IF・幅が違う")
+            fk, tw_ij = {i: "alt", j: "near"}, (i, j)
+        try:
+            PLAN = spwplan.plan(req, H=H, E=E, S=S, ddr=False, force_k=fk)
+        except spwplan.PlanError as e:
+            p.error(f"--win を計画できない: {e}")
+        log(spwplan.table(PLAN))
+        if spwplan.check(PLAN["streams"], E=E, S=S):
+            p.error("計画が約束を破る（spwplan の誤り）")
+        WINS = [(x["s"], x["k"], x["ns"], x["fl"], x["sl"]) for x in PLAN["wins"]]
+        DPHI = {x["s"]: x["dphi"] for x in PLAN["wins"]}
+        TWINS = {PLAN["wins"][tw_ij[0]]["s"]: PLAN["wins"][tw_ij[1]]["s"]} if tw_ij else {}
     if any(sl >= S for _, _, _, _, sl in WINS):
         p.error(f"--cfg {a.cfg} は DDR の枠（WSL ≧ {S}）を使う。b5 には PL の DDR が無い")
     cores = sorted({int(c) for c in a.cores})
@@ -230,6 +258,35 @@ def main():
     if not 200e6 < t2 - t1 < 400e6:
         bad.append(f"T が進まない（{t2 - t1}）")
 
+    if a.wrst_test:
+        import spwplan
+        r = cr[0]
+        base = [dict(WK=(0 if s < H // 2 else 1), WDPHI=0, WNS=1, WFL=E, WSL=0, WG=0) for s in range(H)]
+        for s, k, ns, fl, sl in CFGS["b5"][0]:
+            base[s] = dict(WK=k, WDPHI=0, WNS=ns, WFL=fl, WSL=sl, WG=0)
+        muts = {1: [(s, "WFL", 0) for s in range(4)], 2: [(0, "WSL", S), (4, "WSL", S + 1), (1, "WSL", S + 2)], 3: [(1, "WSL", 0)],
+                4: [(7, "WSL", S), (6, "WSL", S)], 5: [(2, "WNS", 6)], 6: [(4, "WK", 8)], 0: []}
+        wt = {}
+        for bit, mu in muts.items():
+            st = [dict(x) for x in base]
+            for s, k, v in mu:
+                st[s][k] = v
+            want = spwplan.check(st, E=E, S=S)
+            for s in range(H):
+                for reg, k in ((S_WK, "WK"), (S_WDPHI, "WDPHI"), (S_WNS, "WNS"), (S_WFL, "WFL"), (S_WSL, "WSL"), (S_WG, "WG")):
+                    r.wr(blk(s, reg), st[s][k])
+            r.wr(blk(0, S_CTRL), CT_FCLR)
+            n0 = r.rd(C_WRST_CNT)
+            r.wr(blk(0, S_CTRL), CT_WRST)
+            time.sleep(0.05)
+            got_cf, got_bad, n1 = r.rd(C_CORE_FLAGS), r.rd(C_WRST_BAD), r.rd(C_WRST_CNT)
+            refused = bool(got_cf & 1)
+            ok = (refused and n1 == n0 and got_bad == want) if want else (not refused and n1 == n0 + 1)
+            wt[bit] = dict(want=want, wrst_bad=got_bad, core_flags=got_cf, wrst_cnt=(n0, n1), ok=ok)
+            log(f"WRST の約束 [{bit}]: check {want:#x}・PL WRST_BAD {got_bad:#x}・CORE_FLAGS {got_cf:#x}・WRST_CNT {n0} → {n1}: {'合う' if ok else '合わない'}")
+            if not ok:
+                bad.append(f"WRST の約束 [{bit}] の照らし")
+        r.wr(blk(0, S_CTRL), CT_FCLR)
     ring = plring.Ring(MMIO(ol.ip_dict["s45_ring_0"]["phys_addr"], 0x1000), a.ring_mib << 20)
     ring.enable(True)
     act = {}
@@ -244,7 +301,7 @@ def main():
             r.wr(blk(s, S_WK), 2 * s if s < H // 2 else 2 * (s - H // 2) + 1)
             r.wr(blk(s, S_WSL), 0)
         for s, k, ns, fl, sl in WINS:
-            for reg, v in ((S_WK, k), (S_WDPHI, 0), (S_WNS, ns), (S_WFL, fl), (S_WSL, sl), (S_WG, a.wg if sl >= S else 0), (S_SHIFT, a.shift)):
+            for reg, v in ((S_WK, k), (S_WDPHI, DPHI.get(s, 0)), (S_WNS, ns), (S_WFL, fl), (S_WSL, sl), (S_WG, a.wg if sl >= S else 0), (S_SHIFT, a.shift)):
                 r.wr(blk(s, reg), v)
             act[(c, s)] = dict(k=k, ns=ns, fl=fl, sl=sl)
         r.wr(C_NG, a.ng)
@@ -381,6 +438,25 @@ def main():
             d["flat"] = (float(seg[1:-1].min()), float(seg[1:-1].max()))
         diag[f"{c}.{s}"] = d
         log(f"コア {c} 窓 {s}（k {act[cs]['k']}・NS {act[cs]['ns']}）: n {d['n']}・中央値 {med:.4g}・最大 / 中央値 {d['max_over_med']}・最大の ch {d['argmax']}・平らさ {d.get('flat')}")
+    # P-10: CW が計画の予言の ch に立つか（含む窓のうちピーク / 中央値 ≧ 20 dB のもの）
+    tone = {}
+    if a.tone is not None and PLAN:
+        import spwplan
+        for c in cores:
+            for x in PLAN["wins"]:
+                pr = spwplan.ch_of(a.tone, x)
+                d = diag.get(f"{c}.{x['s']}")
+                if pr is None or not d or not d.get("max_over_med"):
+                    continue
+                hit = d["max_over_med"] >= 100
+                key = f"{c}.{x['s']}"
+                tone[key] = dict(pred=pr[0], frac=pr[1], argmax=d["argmax"], pk_db=10 * np.log10(d["max_over_med"]), judged=hit)
+                log(f"CW IF {a.tone}: コア {c} 窓 {x['s']}（k {x['k']}{'*' if x['alt'] else ''}・{x['w']:g} MHz）予言 ch {pr[0]}（端数 {pr[1]:+.3f}）・"
+                    f"最大の ch {d['argmax']}・ピーク / 中央値 {tone[key]['pk_db']:.1f} dB" + ("" if hit else "（20 dB 未満、合否にしない）"))
+                if hit and d["argmax"] != pr[0]:
+                    bad.append(f"CW の ch（コア {c} 窓 {x['s']}: {d['argmax']} ≠ {pr[0]}）")
+        if not any(v["judged"] for v in tone.values()):
+            bad.append("CW が立った窓が無い")
     # P-8: 双子の比（DDR の窓 / チップ内の窓）。fftshift の中央 14/16（縁の 2 区間を除く）、中心の 5 ch（DC の線）を除く
     for c in cores:
         for sd, sc in TWINS.items():
@@ -399,7 +475,7 @@ def main():
             judged = tp_dbfs[c] is not None and tp_dbfs[c] >= a.tp_min
             tw["judged"] = judged
             diag[f"twin_{c}_{sd}_{sc}"] = tw
-            log(f"コア {c} 双子 {sd}（DDR）↔ {sc}（チップ内）: 比の中央値 {tw['ratio_median']:.5f}・比の相対の揺れ {tw['ratio_rel_std']:.4f}"
+            log(f"コア {c} 双子 {sd} ↔ {sc}: 比の中央値 {tw['ratio_median']:.5f}・比の相対の揺れ {tw['ratio_rel_std']:.4f}"
                 f"（独立な雑音なら ≒ {tw['indep']:.4f}）・形の相関 {tw['corr']:.5f}・最大の ch {tw['argmax']}・8 bit の rms の見当 {tw['sigma8']}"
                 + ("" if judged else "（TP が低いので合否にしない）"))
             if judged and tw["ratio_rel_std"] > 0.25 * tw["indep"]:
@@ -411,7 +487,7 @@ def main():
             json.dump(dict(args=vars(a), bit_sha256=bit_sha, ids=ids, mig=mig, wins=WINS, twins=TWINS, flags_early=fl_early,
                            core_flags_early=cf_early, gb=[g1, g2], nrec={f"{c}.{s}": v for (c, s), v in nrec.items()}, ntp=ntp, tp_dbfs=tp_dbfs,
                            nerr=nerr, kf={f"{c}.{s}": sorted(v) for (c, s), v in kf.items()}, core_flags=cf,
-                           flags={f"{c}.{s}": v for (c, s), v in fl.items()}, ring=rr, ext=ext, diag=diag, bad=bad), f, indent=1, ensure_ascii=False)
+                           flags={f"{c}.{s}": v for (c, s), v in fl.items()}, ring=rr, ext=ext, diag=diag, tone=tone, plan=PLAN, bad=bad), f, indent=1, ensure_ascii=False)
         log(f"→ {a.out}.json・.npz")
     log("結果: " + ("全部通過" if not bad else "不合格: " + "・".join(bad)))
     sys.exit(0 if not bad else 1)
