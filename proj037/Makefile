@@ -14,6 +14,8 @@ GB_K_DEFAULT := 2
 GB_K ?= $(GB_K_DEFAULT)
 # 実装の戦略（impl_1 の strategy）。空なら既定。例: make IMPL=Performance_Explore → build-PE/
 IMPL ?=
+# proj037 Y-4 の診断の変種: ADC1=1 で ADC_A の 1 本だけ（→ build-a1*/）。実機の .bit に置き換えない
+ADC1 ?=
 ifeq ($(PART),$(PART_DEFAULT))
   OUTDIR := build
 else
@@ -21,6 +23,9 @@ else
 endif
 ifneq ($(GB_K),$(GB_K_DEFAULT))
   OUTDIR := $(OUTDIR)-k$(GB_K)
+endif
+ifeq ($(ADC1),1)
+  OUTDIR := $(OUTDIR)-a1
 endif
 ifneq ($(IMPL),)
   OUTDIR := $(OUTDIR)-$(shell echo $(IMPL) | tr -cd 'A-Z')
@@ -33,7 +38,7 @@ ifeq ($(origin USR_ACCESS),undefined)
   USR_ACCESS := $(shell h=$$(git rev-parse --short=7 HEAD 2>/dev/null | cut -c1-7); \
                   [ $${#h} = 7 ] && printf '0x%s%s' $$h $$(git status --porcelain --untracked-files=no -- . | grep -q . && echo 1 || echo 0))
 endif
-export BOARD_REPO PART OUTDIR GB_K IMPL USR_ACCESS
+export BOARD_REPO PART OUTDIR GB_K IMPL USR_ACCESS ADC1
 PROJ ?= proj037
 PYTHON ?= python3
 SIM_J  ?= 16

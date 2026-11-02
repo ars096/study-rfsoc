@@ -64,7 +64,14 @@ proc fft_req {n in_w order clk_mhz} {
 # proj017: 4 本に戻す（proj016 は ADC_A の 1 本だけ）
 set chans      {{2 2} {2 0} {0 2} {0 0}}
 set ch_labels  {ADC_A ADC_B ADC_C ADC_D}
+# proj037 Y-4（診断の変種）: ADC1=1 で ADC_A の 1 本だけを立てる（ほかの ADC を立てると ADC_A の形が変わるかを見る）
+if {[info exists ::env(ADC1)] && $::env(ADC1) eq "1"} {
+    set chans     {{2 2}}
+    set ch_labels {ADC_A}
+    puts "ADC1       : ADC_A の 1 本だけ（proj037 Y-4 の診断の変種。実機の .bit に置き換えない）"
+}
 set adc_tiles  {0 2}
+if {[llength $chans] == 1} { set adc_tiles {2} }    ;# proj037 Y-4（ADC1）: ADC_A のタイル 226 だけ
 set nch        [llength $chans]
 if {$nch != [llength $ch_labels] || $nch > 4} {
     puts "ERROR: chans（$nch 本）と ch_labels（[llength $ch_labels] 本）が合わない。BUILD_TAG の ch の番号は 2 bit"
@@ -1378,11 +1385,15 @@ foreach t $adc_tiles {
 }
 # 陽性対照: (a) 在るべき相手を他の ch にする（(1) が落ちるべき）/ (b) 正しいネットを他の ch の番号で照らす（(2) が落ちるべき）
 set pc_ok 1
-set pa [net_check 0 pin s45_core_0/gb_hold [list gb_adc_1/hold] 0]
-set pb [net_check 1 pin s45_core_0/gb_hold [list gb_adc_0/hold] 0]
-if {[llength $pa] == 0} { set pc_ok 0; lappend nc_log "陽性対照 (a) が通ってしまった（在るべき相手の照合が壊れている）" }
-if {[llength $pb] == 0} { set pc_ok 0; lappend nc_log "陽性対照 (b) が通ってしまった（他の ch の照合が壊れている）" }
-lappend nc_log "陽性対照: (a) [llength $pa] 件・(b) [llength $pb] 件で落ちた（どちらも 1 件以上が期待）"
+if {$nch >= 2} {
+    set pa [net_check 0 pin s45_core_0/gb_hold [list gb_adc_1/hold] 0]
+    set pb [net_check 1 pin s45_core_0/gb_hold [list gb_adc_0/hold] 0]
+    if {[llength $pa] == 0} { set pc_ok 0; lappend nc_log "陽性対照 (a) が通ってしまった（在るべき相手の照合が壊れている）" }
+    if {[llength $pb] == 0} { set pc_ok 0; lappend nc_log "陽性対照 (b) が通ってしまった（他の ch の照合が壊れている）" }
+    lappend nc_log "陽性対照: (a) [llength $pa] 件・(b) [llength $pb] 件で落ちた（どちらも 1 件以上が期待）"
+} else {
+    lappend nc_log "陽性対照: (a)(b) は ch 1 を名指しするので省いた（ADC1 の変種、ch 1 本）"
+}
 # (c)(d) 時刻のネット / (h) 入力の選びの取り違え（s2_sel の sel に raw_sel を期待する）。どれも落ちるべき
 set pcc [net_check 0 pin time_core_0/t_out  [list s45_core_0/go_in] 1]
 set pcd [net_check 0 pin time_core_0/go_out [list s45_core_0/t_in] 1]
@@ -1403,9 +1414,13 @@ if {[llength $pcj] == 0} { set pc_ok 0; lappend nc_log "陽性対照 (j) が通�
 if {!$pck} { set pc_ok 0; lappend nc_log "陽性対照 (k) が落ちた（ct_wr_0/clk のネットに clk_out2 が見えない: 在ってはいけない側の読みが壊れている）" }
 lappend nc_log "陽性対照: (j) [llength $pcj] 件で落ちた（1 件以上が期待）・(k) ct_wr_0/clk の相手に clk_out2 が [expr {$pck ? "見えた" : "見えない（NG）"}]"
 # (g) ch 1 のネットを ch 2 として照らす（gb_tie_* を共有と扱わない形で: (2) が gb_adc_1 を「他の ch」と言うべき）
-set pcg [lsearch -all -inline [net_check 2 pin gb_adc_1/gb_rstn [list gb_up_1/aresetn] 0] "*ch 1 のピン*"]
-if {[llength $pcg] == 0} { set pc_ok 0; lappend nc_log "陽性対照 (g) が通ってしまった（ch の照合が壊れている）" }
-lappend nc_log "陽性対照: (g) [llength $pcg] 件で落ちた（1 件以上が期待）"
+if {$nch >= 3} {
+    set pcg [lsearch -all -inline [net_check 2 pin gb_adc_1/gb_rstn [list gb_up_1/aresetn] 0] "*ch 1 のピン*"]
+    if {[llength $pcg] == 0} { set pc_ok 0; lappend nc_log "陽性対照 (g) が通ってしまった（ch の照合が壊れている）" }
+    lappend nc_log "陽性対照: (g) [llength $pcg] 件で落ちた（1 件以上が期待）"
+} else {
+    lappend nc_log "陽性対照: (g) は ch 1・2 を名指しするので省いた（ADC1 の変種）"
+}
 # (i) 上の「コアの gb_* の出口に繋がっていない」を ch 0 に当てる（ch 0 はコアが握るので、繋がっていると言うべき）
 set pci 0
 foreach p {gb_adc_0/hold gb_gate_0/k gb_gate_0/aresetn} { lassign [from_core_gb $p] peers bad; if {[llength $bad] > 0} { incr pci } }
@@ -1717,8 +1732,9 @@ foreach n $ooc_names {
     }
 }
 puts "ドライバ   : 自作のセルの OOC の run $nd_seen 個のログに Synth 8-3848（ドライバの無いネット）$nd_ng 行"
-# 期待: s45_core_0 1・time_core_0 1・s45_ring_0 1・gb_adc 4・gb_gate 4・s2_sel 1・raw_sel 1・ct_wr_0 1・ct_rd_0 1・clk_mon_0 1 = 16
-if {$nd_seen != 16} { puts "ERROR: 自作のセルの OOC の run が $nd_seen 個（期待 16。run の名前が変わった？ $ooc_names）"; exit 1 }
+# 期待: s45_core_0 1・time_core_0 1・s45_ring_0 1・gb_adc nch・gb_gate nch・s2_sel 1・raw_sel 1・ct_wr_0 1・ct_rd_0 1・clk_mon_0 1 = 8 ＋ 2·nch（4 本で 16）
+set nd_want [expr {8 + 2 * $nch}]
+if {$nd_seen != $nd_want} { puts "ERROR: 自作のセルの OOC の run が $nd_seen 個（期待 $nd_want。run の名前が変わった？ $ooc_names）"; exit 1 }
 if {$nd_ng > 0} { puts "ERROR: ドライバの無いネットがある（RTL の書き漏れ）"; exit 1 }
 if {$rm_seen != 1} { puts "ERROR: s45_core_0 の OOC の run が 1 個でない（$rm_seen）。run の名前: $ooc_names"; exit 1 }
 if {$rm_ng > 0} { puts "ERROR: ROM の中身（hex）を合成が読めていない"; exit 1 }
