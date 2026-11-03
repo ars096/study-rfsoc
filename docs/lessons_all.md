@@ -219,6 +219,7 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 - PL → DDR の書き手は自作の AXI4（INCR、バースト ≦ 16 拍、4 KiB の境を越えない）。W はレコードの BRESP が全部 OKAY で返ってから進める（DataMover はやめた）（proj021）
 - リングはレコード単位で順番に回し、空きが無ければ丸ごと捨てて DROP_CNT +1。凍ったバンクが読み終える前に上書きされたら tuser = 1 で捨て REC_LATE と DROP_CNT を増やす（DROP_CNT = SEQ の飛びの合計）（proj021）
 - SEQ より先に上書きされる記憶（スナップショット）は `snap_ok` を 2 回見る（proj021）
+- **1 つのレコードを 2 か所で「捨てた」と数えない。** s2_strm がレコードを tuser 1 で出し（リングが DROP_CNT +1）、同時に rec_drop も立てていて、1 本が 2 と数えられた。DROP_CNT は「捨てたレコード」、rec_drop は「読み始めなかったもの」だけ（proj037 U-d）
 - レコードの出口のリセット（rst_rec）を起動のやり直しのリセットと分ける。— SRST がレコードの途中に来ると rec_arb が tlast を待ち続けた（proj021）
 - rec_fr の数えの幅は NCH から作る（NCH 4096 の決め打ちだった: rd_ch 12 bit・語 7 の 32768）。2G-1 の 1 MiB のレコードは NCH 131072 で（proj024 2d）
 
@@ -340,6 +341,10 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 - **ボードを別の会話・別作業と分け合っているとき、Overlay を載せる前に、ボードで specd などが動いていないかを見る**。— 別作業の specd が RUN の最中（DMA でリングに書いている）に Overlay で PL を書き換え、**ボードごと落ちた**（ping も ssh も返らず、電源を入れ直した。journal は直前の ssh で途切れる）。
   道具は起こす前に `pgrep -af "[s]pecd|…"` を見て、動いていれば止まる形に（proj032 P-7）。前の起動の journal（`journalctl -b -1`）の bitstream の読み込みと ssh の時刻で、誰が使っていたかを辿れる
 - specd の `SHUTDOWN` は `confirm=1` が要り、無いと ERR で断るだけで動き続ける。止めた後の手順（Overlay を載せ直す widef2 など）の前に、止まったかを確かめる（`pgrep -af "[s]pecd.py"`）（proj030 R-5: 待機中の specd を残したまま widef2 が Overlay を載せ直した）
+- **ボードを分け合う長い試験は、各手順の前に PYNQ の載り（`pynq/pl_server/global_pl_state_.json` の bitfile_name・timestamp）を見る**（proj037 `pynq/pl_guard.py`）。変わっていたら SG を切り、載せ直さずに止まる。— 走っている途中に別の作業が .bit を載せ、こちらの道具は SG の CW を回し続けて相手の測りに入れ、終わりに相手の .bit の上に載せ直した（proj037 Y-7）。別の作業の .bit が載ったまま RFDC を読むと Bus error
+- **xrfdc の CalFreeze（DisableFreezePin 1）は GCB・OCB2・TSCB を止めるが、OCB1 は止めない。** 止まったかは係数で確かめる。xrfdc の `GetCalCoefficients` の包みは引数が足りず呼べないので、`xrfdc._lib.XRFdc_GetCalCoefficients(r._instance, tile, block, cb, ffi.new("XRFdc_Calibration_Coefficients *"))` を直接呼ぶ（cb 0〜3 = OCB1・OCB2・GCB・TSCB）（proj037 Y-7）
+- s2run（proj037）の `--no-load` の回は SEQ が前の回の続きから数え、「SEQ が 0 から」の 1 件が NG になる（ほかが通れば正常）。`_spec.npy` は 44 チャンクで 646 MB でボードの SD を一杯にした（`--no-spec`）。載せ直しの終わり際に Segmentation fault がまれに出る（判定と保存の後、原因は未確認）（proj037 Y-4・Y-5・W-1e）
+
 
 ## 実機・測定
 
@@ -410,6 +415,12 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 - **2G-4 の VCCINT は proj027 で 41.5〜43.4 A**（ボードが外からの POR で 3 回落ちた。ファンの配置を変えた後は 4 時間 41 分落ちていない）、**proj030（2-for-1）で 31.6〜32.4 A・PL 54〜59 ℃**（Wide 38 A）。電流は INA220 の 0x40（`amslog.py --period 1`）で bit を載せる前から測る（proj027 4e・proj030 R-2）
 - ノイズ OFF の ADC の床（中央値）は Overlay の載せ直しごとに 0.3〜0.6 dB 動く。bit の違いを床の ±0.1 dB で判定する予言は立たない（proj031 R-3・rev 2）
 - 係数を URAM に置いて DSP を 256 個減らしても VCCINT は減らなかった（proj030 より +0.5 A、見積もりは −0.8 A）。ベクタなしの report_power は共有の幅広い配線（1152 bit を 4 コアへ）のトグルを低く見ているかもしれない。資源の節約を電流の節約と読まない（proj031 R-3）
+
+- **2 つの .bit の細かいスペクトルを比べるときは、参照（荒い段を通らない RAW）も .bit ごとに取る。** 立てる ADC の組で ADC_A の入力の形が変わり（ADC_A だけの .bit と 4 ADC の .bit で ±2 dB、往復 ≒ 3.3 ns の反射の波）、W-1c で「proj028 の処理が狂っている」と読み誤った。どちらの DSP も自分の RAW とは床で合う（proj037 W-1c・Y-2・Y-4・Y-8・W-1e）。帯の較正は .bit・配線ごとに取る
+- **荒い ch ごとに中央値で割る尺は、なめらかな広い傾きを ch ごとの傾きに見せる。** 周期 ≒ 300 MHz の波が「ch ごとののこぎり形」に見え、ADC の後ろの段を疑った。境をまたいで dB のまま並べてから読む（proj037 Y-7）
+- **ノイズと CW で、同じ反射の波の振れと位相が違う**（CW はノイズの ≒ 2 倍、位相はほぼ逆）。ノイズで取った帯の較正は、CW の強さを測る試験（リニアリティ・dBc）に ±3 dB 残る（proj037 Y-9）
+- **ノイズソース（増幅器 JCA 24-200 × 2 ＋ BPF 2.1〜3.9 GHz）は、入れて 15 分ほど通過域の中の形が ≒ 0.25 dB 動く**（128〜1024 MHz、入れた直後は前日の形に近く、15 分で温まった形に落ち着く）。ノイズを使う試験と帯の較正は入れて 15 分以上たってから取り、入れた時刻と電源の電流を記録する。BPF の外（RF 3986 MHz より上 = IF 110 MHz より下）は入れ直しで ≒ 5 dB 変わり戻らない（proj037 W-1g）
+- **物差しを決める前に、配線の部品の帯域（BPF の通過域）とナイキストの折り返し（RF = 4096 − IF）を引く。** 50〜1024 MHz の区間の rms にした物差しが、BPF の外の 1 区間の段（−2.7 dB）に支配されて判定できなかった。区間の rms は 1 区間の段で決まる（proj037 W-1g）
 
 ## 公開
 

@@ -107,7 +107,7 @@ proj001〜023 で踏んだ穴と、次以降の proj でも従う決まりを 1 
 
 - `import xrfdc` は `Overlay()` より前。当たったかを `isinstance(ol.rfdc, xrfdc.RFdc)` で確かめる。.bit と .hwh は同じ basename（proj003・004）
 - `xrfclk` のディレクトリに `_` を 2 つ以上含む .txt を置かない（proj004）
-- ボードと実験室の器（PATT など）は別作業と分け合っている。Overlay の前に specd などが動いていないかを見る（RUN 中の PL を書き換えてボードごと落ちた）。PATT は run の前後に読み、TP の dBFS で入力が来ているかを見る（proj032 P-7）
+- ボードと実験室の器（PATT など）は別作業と分け合っている。Overlay の前に specd などが動いていないかを見る（RUN 中の PL を書き換えてボードごと落ちた）。PATT は run の前後に読み、TP の dBFS で入力が来ているかを見る（proj032 P-7）。長い試験は各手順の前に載っている .bit を見る（pl_guard、proj037 Y-7）
 - 起動直後の粘着 FLAGS は消す前に読む（`--keep-startup-flags`・wide.py の起動の見張り）（proj011・023）
 - MMIO は 1 回 ≒ 10 µs。RUN を順に書くと 1 本あたり 5 フレームずれるので、帳簿（DUMP_F0）で揃える。速い dt は AXI4-Lite でなくリング（DMA）で読む（proj012・019・021）
 - HP0 は coherent でない。キャッシュありのバッファを使い、読む前に [R, W) をまとめて `bo.sync(FROM_DEVICE, size, offset)` で捨てる（PYNQ 3.1.1 の `invalidate()` は全体を同期する）。CMA の allocate は 64 MiB まで（proj021）
@@ -134,6 +134,7 @@ proj001〜023 で踏んだ穴と、次以降の proj でも従う決まりを 1 
 - 1PPS・10 MHz の入口に LPF（BLP-10.7+、常設）。M は ≒ 71.5 ns 小さくなる。混信の効きは携帯電話では比べられない（送信の強さ・帯域が通話ごとに違う）→ SG の CW で（proj026）
 - 入力レベルは HOT/R で −10 dBFS 以下（運転 ≒ −16〜−21 dBFS）。窓の CW 試験は −20 dBm・SHIFT 11。試験の後は SG の出力を OFF に戻す（proj019・020・021）
 - 配線に依る値は絶対値で予言せず、同じ配線のまま旧 bit を載せて比べる（proj021）
+- .bit を比べるときは参照（RAW）も .bit ごとに取る。立てる ADC の組で ADC の入力の形が ±2 dB 変わる（反射の波）。帯の較正は .bit・配線ごと。ノイズソースは入れて 15 分たってから使い、物差しは BPF の通過域の内で取る（proj037 Y-4・Y-8・W-1g）
 - 0.02 dB を判定する掃引は SG（E8257D）を 300 s 温めてから。入れた直後は 95 s で −0.08 dB 漂う。繰り返しの点はモードごとに ch の中心に（proj023 H-1）
 - 出荷時の基準の ppm は 1 か月で 2.3 ppm 動いた。周波数を使う測定は外部 10 MHz で（CW は計算どおりの bin、≦ 0.007 ppm）（proj028 F-7）
 - RUN で PL が 4 °C 温まり電力が −0.5 %（10 分）。Overlay の読み直しで 0.5 %（ON）・4 %（ADC の床）の段。比べる測定は同じ読み込みの中で、10 分空回ししてから（proj028 F-6）
