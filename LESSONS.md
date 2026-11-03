@@ -111,7 +111,7 @@ proj001〜023 で踏んだ穴と、次以降の proj でも従う決まりを 1 
 - 起動直後の粘着 FLAGS は消す前に読む（`--keep-startup-flags`・wide.py の起動の見張り）（proj011・023）
 - MMIO は 1 回 ≒ 10 µs。RUN を順に書くと 1 本あたり 5 フレームずれるので、帳簿（DUMP_F0）で揃える。速い dt は AXI4-Lite でなくリング（DMA）で読む（proj012・019・021）
 - HP0 は coherent でない。キャッシュありのバッファを使い、読む前に [R, W) をまとめて `bo.sync(FROM_DEVICE, size, offset)` で捨てる（PYNQ 3.1.1 の `invalidate()` は全体を同期する）。CMA の allocate は 64 MiB まで（proj021）
-- リングを閉じるときは REC_CTRL を 0 にし、busy が落ちてからバッファを返す（返すと Segmentation fault）（proj021）
+- リングを閉じるときは REC_CTRL を 0 にし、busy が落ちてからバッファを返す（返すと Segmentation fault）（proj021）。pyxrt の BO（`buf.bo`）を lambda などに握ったまま返しても、後の二重の munmap で落ちる。返す前に参照を捨てる（proj037 Z-1）
 - 時刻は整数 ns で引き算してから float にする（float64 の UTC ns は 256 ns 刻み）。較正定数は bit の ID と対にして持ち、一致しなければ適用を拒否する（proj007・008・021）
 - A53 の Python の速さはボードで 1 呼び出しずつ測る（PC の見積もりの 10 倍遅い）。長い記録をリストに溜めない（proj013・021）
 - specd は起動のたびに SET し、GET・STATUS を確かめてから START。LOAD は spawn で起こし、通し番号を続ける（proj019・021）

@@ -334,7 +334,8 @@ class Ring:
         self.prof["parse"] += time.perf_counter() - tp
         return out
 
-    def close(self):
+    def close(self, keep=False, keep_bo=False):
+        """keep = True: 止めるが、バッファは返さない（Z-1 の切り分け: 返した後に PL が書いているか）"""
         self.enable(False)
         t0 = time.time()
         while self.g.rd(self.R_CTRL) & 2:
@@ -342,6 +343,22 @@ class Ring:
                 log("WARNING: リングが 1 s たっても止まらない（busy）。バッファは返さずに残す")
                 return
             time.sleep(0.001)
+        if keep:
+            # Z-1c: 止めた後に PL がバッファに書くかを見る。印で埋めて CPU のキャッシュから書き出し、2 s 後に読み直して変わった語を数える
+            w0, c0 = self.g.rd(self.R_W), self.g.rd(self.R_RECCNT)
+            self.a64[:] = 0xA5A5A5A5A5A5A5A5
+            self.buf.flush()
+            time.sleep(2.0)
+            self.buf.invalidate()
+            ch = np.flatnonzero(self.a64 != 0xA5A5A5A5A5A5A5A5)
+            rng = f"・位置 {ch[0] * 8}〜{ch[-1] * 8 + 7}（W % size {w0 % self.size}）" if ch.size else ""
+            log(f"ring: バッファは返さない（--keep-buf）。止めた後 2 s で変わった語 {ch.size}{rng}・"
+                f"W {w0} → {self.g.rd(self.R_W)}・REC_CNT {c0} → {self.g.rd(self.R_RECCNT)}")
+            return
+        if not keep_bo:
+            # Z-1d: bo_sync の lambda が pyxrt の BO を握っていると、freebuffer の `del self.bo` で BO が消えず、
+            # Ring が片付くとき（main から戻ったとき）に XRT が同じ番地をもう一度 munmap する。その間に同じ番地に取った numpy の配列が消え、free() で落ちる
+            self.bo_sync = None
         self.buf.freebuffer()
 
 
@@ -373,6 +390,8 @@ def main():
     ap.add_argument("--gains-from", default=None, help="利得を合わせずに、この meta.json の gain を使う")
     ap.add_argument("--gain-only", action="store_true")
     ap.add_argument("--no-raw", action="store_true", help="RAW（流れ 1）を回さない")
+    ap.add_argument("--keep-buf", action="store_true", help="終わりにリングのバッファを返さない（Z-1 の切り分け）")
+    ap.add_argument("--keep-bo", action="store_true", help="Z-1d の直しを外す（bo_sync を捨てずにバッファを返す。落ちることの陽性対照）")
     ap.add_argument("--no-spec", action="store_true", help="STAGE2 のスペクトル（<out>_spec.npy、1 チャンク 14.7 MB）を保存しない（RAW と meta だけ）")
     ap.add_argument("--start-delay", type=float, default=0.5, help="START_AT を今から何秒後に置くか")
     ap.add_argument("--start-off", type=int, default=0, help="START_AT に足すビート（1 で 7 の倍数でない: 陽性対照）")
@@ -553,7 +572,7 @@ def main():
             other.append(dict(s=h[0] >> 56, ty=(h[0] >> 40) & 0xFF, w0=h[0], late=True))
         ctr.wr(0x04, 0)
         w = watch(s2, raw, ctw, ctr, ring)
-        ring.close()
+        ring.close(a.keep_buf, a.keep_bo)
     t_el = t_end - t_run
     txt, gbs, adcs = gb_text(core)
     log(txt)
@@ -728,7 +747,7 @@ def run_long(a, meta, core, s2, raw, ctw, ctr, ring, start_at, t_run, use_raw, r
             other.append(dict(s=h[0] >> 56, ty=(h[0] >> 40) & 0xFF, w0=h[0], late=True))
         ctr.wr(0x04, 0)
         w = watch(s2, raw, ctw, ctr, ring)
-        ring.close()
+        ring.close(a.keep_buf, a.keep_bo)
     t_el = t_end - t_run
     txt, gbs, adcs = gb_text(core)
     log(txt)

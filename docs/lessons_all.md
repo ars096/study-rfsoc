@@ -343,7 +343,8 @@ LESSONS.md は毎回全部読むもの、ここは**診断のときに語で引�
 - specd の `SHUTDOWN` は `confirm=1` が要り、無いと ERR で断るだけで動き続ける。止めた後の手順（Overlay を載せ直す widef2 など）の前に、止まったかを確かめる（`pgrep -af "[s]pecd.py"`）（proj030 R-5: 待機中の specd を残したまま widef2 が Overlay を載せ直した）
 - **ボードを分け合う長い試験は、各手順の前に PYNQ の載り（`pynq/pl_server/global_pl_state_.json` の bitfile_name・timestamp）を見る**（proj037 `pynq/pl_guard.py`）。変わっていたら SG を切り、載せ直さずに止まる。— 走っている途中に別の作業が .bit を載せ、こちらの道具は SG の CW を回し続けて相手の測りに入れ、終わりに相手の .bit の上に載せ直した（proj037 Y-7）。別の作業の .bit が載ったまま RFDC を読むと Bus error
 - **xrfdc の CalFreeze（DisableFreezePin 1）は GCB・OCB2・TSCB を止めるが、OCB1 は止めない。** 止まったかは係数で確かめる。xrfdc の `GetCalCoefficients` の包みは引数が足りず呼べないので、`xrfdc._lib.XRFdc_GetCalCoefficients(r._instance, tile, block, cb, ffi.new("XRFdc_Calibration_Coefficients *"))` を直接呼ぶ（cb 0〜3 = OCB1・OCB2・GCB・TSCB）（proj037 Y-7）
-- s2run（proj037）の `--no-load` の回は SEQ が前の回の続きから数え、「SEQ が 0 から」の 1 件が NG になる（ほかが通れば正常）。`_spec.npy` は 44 チャンクで 646 MB でボードの SD を一杯にした（`--no-spec`）。載せ直しの終わり際に Segmentation fault がまれに出る（判定と保存の後、原因は未確認）（proj037 Y-4・Y-5・W-1e）
+- **pyxrt の BO（`buf.bo`）を lambda などに閉じ込めたまま `PynqBuffer.freebuffer()` しない。** freebuffer は libc の munmap で写像を外してから `del self.bo` するが、BO が生き残り、後で片付くときに XRT が同じ番地をもう一度 munmap する。その間に同じ番地に取った numpy の配列が消え、解放の `free()` で Segmentation fault（s2run はチャンク 2〜4 で毎回、6 以上で出ない: 返した後の確保が 64 MiB の穴に収まるか）。返す前に閉じ込めた参照を捨てる。「PL が返した後に書いた」と読みがちだが、止めた後 2 s で PL はバッファに 1 語も書いていなかった（proj037 Z-1）
+- s2run（proj037）の `--no-load` の回は SEQ が前の回の続きから数え、「SEQ が 0 から」の 1 件が NG になる（ほかが通れば正常）。`_spec.npy` は 44 チャンクで 646 MB でボードの SD を一杯にした（`--no-spec`）。（proj037 Y-4・Y-5・W-1e）
 
 
 ## 実機・測定
