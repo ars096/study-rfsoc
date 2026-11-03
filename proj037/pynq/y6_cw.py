@@ -33,14 +33,19 @@ def main():
     ap.add_argument("--tag", required=True)
     ap.add_argument("--dbm", type=float, default=9.0)
     ap.add_argument("--prefix", default="y6", help="出力の名の頭（Y-7 は y7）")
+    ap.add_argument("--freqs", help="start:stop:step（MHz、stop を含む）。無ければ Y-6 の 80 点（Y-9 は 50.3:2000.3:10）")
     ap.add_argument("--guard", help="pl_guard.py save の file。各点の前に載りを見て、変わっていたら SG を切って止まる（Y-7）")
     a = ap.parse_args()
+    freqs = FREQS
+    if a.freqs:
+        lo, hi, st = map(float, a.freqs.split(":"))
+        freqs = [round(lo + st * n, 6) for n in range(int(round((hi - lo) / st)) + 1)]
     sg = SG()
     rows = []
     sg.set_output(False)
     rows.append(dict(i=0, f=None, rc=grab(f"runs/{a.prefix}_{a.tag}_0")))
     sg.set_dbm(a.dbm)
-    for i, f in enumerate(FREQS, 1):
+    for i, f in enumerate(freqs, 1):
         if a.guard and not pl_guard.check(a.guard)[0]:
             sg.set_output(False)
             print(f"ERROR: {f} MHz の前に、載っている .bit が変わった（{pl_guard.check(a.guard)[1]}）。SG を切って止まる")
@@ -53,7 +58,7 @@ def main():
         rc = grab(f"runs/{a.prefix}_{a.tag}_{i}")
         rows.append(dict(i=i, f=f, rc=rc))
     sg.set_output(False)
-    rows.append(dict(i=len(FREQS) + 1, f=None, rc=grab(f"runs/{a.prefix}_{a.tag}_{len(FREQS) + 1}")))
+    rows.append(dict(i=len(freqs) + 1, f=None, rc=grab(f"runs/{a.prefix}_{a.tag}_{len(freqs) + 1}")))
     json.dump(dict(tag=a.tag, dbm=a.dbm, sg=sg.state(), rows=rows), open(f"runs/{a.prefix}_{a.tag}.json", "w"), indent=1)
     sg.close()
     bad = [r for r in rows if "結果:" not in r["rc"][1]]
