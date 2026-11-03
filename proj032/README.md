@@ -1346,6 +1346,24 @@ SpW の DUMP_T のもと t0[w] は wsb の入口（ddcb の final の lane）で
   見送った案: 整数ビートに丸める（差 0.07 ビート以下で、Fine の表と形が違うだけ）
 - 注（決めではなく既存の規則）: 10.24 ms × 32 窓は 51.2 MB/s（float32、4096 ch × 32）で、ネットワークの予算（1 ボード 30 MB/s、interface.md 4.5）を超える。specd は SET でネットワークの tint 10.24 ms を断り、20.48 ms（25.6 MB/s）からになる。PL と PS の取得は 10.24 ms のまま（P-13）
 
+## 移植元を決める（2026-11-03）
+
+YATSUGATAKE への SpW8 の移植（YATSUGATAKE の `docs/migration-spw8.md`）の移植元は **このタグ `proj032-m0` の b5 rev 10**。運用に使う bit は **`b5/build-PEPRPO/`**（P-9 で判定した bit）。
+
+| 項目 | 値 |
+|---|---|
+| bit の sha256 | `232c92fe758a1ffc69c60eec1478a48e2762bf093984524d1b502f7b55b2cb5f`（34,437,476 B） |
+| hwh の sha256 | `b761c6d59effd8f4d551d60db975444f4d49b6055bd3e5ffb3de8af7ab877b5b` |
+| FDRI（YATSUGATAKE の `sw/pynq/bitinfo.py`） | 8,608,824 語・sha256 `de7e9d882f560f05b288a591edf8e3a8a7c5e42099e059d69c3b58036a7b3225` |
+| ID | BIT_KIND 7・BIT_REV 10・PROJ 0x0032_0300。USR_ACCESS なし |
+| `-1` の WNS / WHS | +0.015935 ns / +0.009527 ns（PEPRPO）。CRITICAL WARNING 0 |
+| LUT / FF / CLB | 265,530 / 308,700 / 50,243（94.51 %） |
+| DSP / BRAM タイル / URAM | 2,896 / 982 / 56 |
+| `report_cdc`（配線後の dcp で数えた） | CDC-3 Info 105・CDC-6 Warning 5・CDC-15 Warning 3,137 |
+
+- .bit は e8ff602（rev 10 を入れた commit）の前の作業ツリーから作った。e8ff602 から このタグまでに `src/`・`b5/` の Tcl と Makefile は変わっていない。P-11 の粗い PFB の書き換え（捨てた）がビルドに入っていたかは記録から言えないので、YATSUGATAKE の M3 の FDRI で確かめる
+- 移すのは b5 と、b5 と sim が読むものだけ（b1〜b4・d1・d3 は移さない）
+
 ## 再現手順
 
 ```bash
