@@ -13,6 +13,9 @@ spw_b4.py（b4 rev 8、H 6・S 6）からの差:
     --alt i,j: 窓 i を 2 番目に近い粗い ch で作り、同じ IF・幅で近い ch の窓 j と双子にする（比の揺れ ≦ 独立な雑音の 1/4 を合否に）。
     --tone F: SG の CW（IF F MHz、SG は手で設定する）が、F を含む窓で計画の予言の ch に立つかを合否に（ピーク / 中央値 ≧ 20 dB の窓だけ）。
     --wrst-test: コア 0 に約束 [1]〜[6] を 1 つずつ破る設定を書いて WRST し、PL の WRST_BAD と spwplan.check() の印が同じかを合否に（設定は効かない）
+  - P-13: --fast で窓のレコードを C（spwfast.c → libspwfast.so）で読む: 写さずに（plring の LazyRec）、PL の CRC と器への足し込みを 1 回のなめで
+    （YATSUGATAKE specd の --fast-ring と同じ形。Python の道は 1 本ずつ zlib・写し・float64 への変換で、10.24 ms × 32 窓に追いつかなかった）。
+    読みの手間（輪の中の時間の割合・1 本あたり）を出す。--fast-posctl: C の CRC の期待値を 1 bit 反転 → 窓のレコードが全部 CRC の誤りになるはず
 以下は spw_b4.py の注
 
 spw_b3.py（b3、MIG あり。配線できず .bit は無い）からの差:
@@ -51,11 +54,13 @@ spw_b1.py（P-7）からの差:
   （ch 0 は窓の中心。fftshift し、NS 2 の 0.5・1・0.5 を NS 1 の 1 ch に合わせ、比の揺れ）。重なりは枠がずれても合う（P-7 の 1 回目）ので、正しさは平らさと CW の位置で見る。--out に .json（要約）と .npz（平均スペクトル）
 """
 import argparse
+import ctypes
 import json
 import os
 import struct
 import sys
 import time
+import zlib
 
 import numpy as np
 
@@ -171,6 +176,8 @@ def main():
     p.add_argument("--tone", type=float, default=None, help="P-10: SG の CW の IF [MHz]（SG は手で）。含む窓で予言の ch を照らす")
     p.add_argument("--wrst-test", action="store_true", help="P-10: 約束を破る設定で PL の WRST_BAD と spwplan.check() を照らす（コア 0）")
     p.add_argument("--tp-min", type=float, default=-40.0, help="双子の比を合否に入れるコアの TP の下限 [dBFS]")
+    p.add_argument("--fast", action="store_true", help="P-13: 窓のレコードを C で（libspwfast.so）")
+    p.add_argument("--fast-posctl", action="store_true", help="P-13: 陽性対照（C の CRC の期待値を反転）")
     p.add_argument("--out", default=None)
     a = p.parse_args()
     if CFGS[a.cfg] is None:
@@ -288,6 +295,12 @@ def main():
                 bad.append(f"WRST の約束 [{bit}] の照らし")
         r.wr(blk(0, S_CTRL), CT_FCLR)
     ring = plring.Ring(MMIO(ol.ip_dict["s45_ring_0"]["phys_addr"], 0x1000), a.ring_mib << 20)
+    fastlib = None
+    if a.fast:
+        fastlib = ctypes.CDLL(os.path.join(HERE, "libspwfast.so"))
+        fastlib.spw_rec_acc.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_uint32)]
+        fastlib.spw_rec_acc.restype = ctypes.c_int
+        log(f"P-13: --fast（libspwfast.so、CRC 命令 {fastlib.spw_hw_crc()}）" + ("・陽性対照（CRC の期待値を反転）" if a.fast_posctl else ""))
     ring.enable(True)
     act = {}
     for c in cores:
@@ -330,6 +343,12 @@ def main():
     dk_last, kf = {}, {}
     acc = {cs: np.zeros(4096) for cs in act}
     nerr = 0
+    crc_c = ctypes.c_uint32()
+    n_xchk = 0                                       # C の CRC を zlib と照らした数（初めの 50 本）
+    t_busy, n_loop, t_lmax, nbyte = 0.0, 0, 0.0, 0
+    acc_p = {cs: v.ctypes.data for cs, v in acc.items()}     # ndarray.ctypes.data は 1 回 16 µs（ボード）。番地は先に引いておく
+    ring_p = ring.a8.ctypes.data
+    crc_r = ctypes.byref(crc_c)
 
     def err(msg):
         nonlocal nerr
@@ -338,10 +357,27 @@ def main():
             log("  " + msg)
 
     t_end = time.time() + a.sec
+    t_start = time.time()
+    lazy = (lambda c, s, ty: ty == 5) if a.fast else None
     while time.time() < t_end:
-        for c, s, sq, hw, pay, crc_ok, tail_ok in ring.read():
+        tl0 = time.perf_counter()
+        for c, s, sq, hw, pay, crc_ok, tail_ok in ring.read(lazy=lazy):
             w = [int(x) for x in hw]
             typ = (w[0] >> 40) & 0xFF
+            if crc_ok is None:                       # --fast: 窓のレコード（LazyRec）。CRC と足し込みは C で、下の本体で
+                cs = (c, s)
+                if cs in act:
+                    nb = fastlib.spw_rec_acc(ring_p + pay.p, pay.pb >> 2, acc_p[cs], 0, crc_r)
+                    crc_ok = (crc_c.value ^ (1 if a.fast_posctl else 0)) == pay.crc_exp
+                    if n_xchk < 50:                  # C の CRC を zlib と照らす
+                        n_xchk += 1
+                        if crc_c.value != zlib.crc32(ring.a8[pay.p:pay.p + 64 + pay.pb]):
+                            err(f"コア {c} 窓 {s} SEQ {sq}: C の CRC {crc_c.value:#x} ≠ zlib")
+                    if nb:
+                        err(f"コア {c} 窓 {s} SEQ {sq}: 本体に負か有限でない値 {nb} 個")
+                    nbyte += 128 + pay.pb
+                else:
+                    crc_ok = True                    # 下で「動いていない窓」として数える
             if not (crc_ok and tail_ok):
                 err(f"コア {c} type {typ} s {s} SEQ {sq}: CRC {crc_ok}・尾 {tail_ok}")
             if c not in seq:
@@ -382,18 +418,30 @@ def main():
             kf.setdefault(cs, set()).add(k_f)
             if not 0 <= k_f < L:
                 err(f"コア {c} 窓 {s} K {dk}: K_F {k_f} が [0, {L}) の外")
-            x = pay.view(np.float32).astype(np.float64)
-            if not np.all(np.isfinite(x)) or np.any(x < 0):
-                err(f"コア {c} 窓 {s} K {dk}: 本体に負か有限でない値")
-            acc[cs] += x
+            if not a.fast:
+                x = pay.view(np.float32).astype(np.float64)
+                if not np.all(np.isfinite(x)) or np.any(x < 0):
+                    err(f"コア {c} 窓 {s} K {dk}: 本体に負か有限でない値")
+                acc[cs] += x
+                nbyte += pay.nbytes + 128
             nrec[cs] = nrec.get(cs, 0) + 1
+        ring.release()
+        dt = time.perf_counter() - tl0
+        t_busy += dt; n_loop += 1; t_lmax = max(t_lmax, dt)
         time.sleep(0.01)
+    t_run = time.time() - t_start
+    nwin = sum(nrec.values())
+    rd_stat = dict(fast=a.fast, t_run=t_run, busy=t_busy / t_run, loops=n_loop, loop_max_ms=1e3 * t_lmax,
+                   us_per_rec=1e6 * t_busy / max(1, nwin), mb_s=nbyte / t_run / 1e6, xchk=n_xchk)
+    log(f"読み: {'C（--fast）' if a.fast else 'Python'}・{nbyte / t_run / 1e6:.1f} MB/s・輪の中の時間の割合 {100 * t_busy / t_run:.1f} %"
+        f"・1 本 {rd_stat['us_per_rec']:.0f} µs・1 周の最長 {1e3 * t_lmax:.1f} ms・C の CRC を zlib と照らした {n_xchk} 本")
     for c in cores:
         cr[c].wr(blk(0, S_CTRL), CT_STOP)
         cr[c].wr(C_TP_CTRL, 0)
     time.sleep(0.1)
     for _ in ring.read():
         pass                                         # STOP の後に閉じたダンプ（照らさない、数えない）
+    ring.release()
     rr = ring.regs()
     fl = {cs: cr[cs[0]].rd(blk(cs[1], S_FLAGS)) for cs in act}
     cf = {c: cr[c].rd(C_CORE_FLAGS) for c in cores}
@@ -487,7 +535,7 @@ def main():
             json.dump(dict(args=vars(a), bit_sha256=bit_sha, ids=ids, mig=mig, wins=WINS, twins=TWINS, flags_early=fl_early,
                            core_flags_early=cf_early, gb=[g1, g2], nrec={f"{c}.{s}": v for (c, s), v in nrec.items()}, ntp=ntp, tp_dbfs=tp_dbfs,
                            nerr=nerr, kf={f"{c}.{s}": sorted(v) for (c, s), v in kf.items()}, core_flags=cf,
-                           flags={f"{c}.{s}": v for (c, s), v in fl.items()}, ring=rr, ext=ext, diag=diag, tone=tone, plan=PLAN, bad=bad), f, indent=1, ensure_ascii=False)
+                           flags={f"{c}.{s}": v for (c, s), v in fl.items()}, ring=rr, ext=ext, diag=diag, tone=tone, plan=PLAN, rd=rd_stat, bad=bad), f, indent=1, ensure_ascii=False)
         log(f"→ {a.out}.json・.npz")
     log("結果: " + ("全部通過" if not bad else "不合格: " + "・".join(bad)))
     sys.exit(0 if not bad else 1)
